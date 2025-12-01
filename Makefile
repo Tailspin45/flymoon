@@ -1,17 +1,9 @@
 SHELL=/bin/bash
 
 
-OS := $(shell uname 2>/dev/null || echo Windows)
-
-ifeq ($(OS), Windows_NT)
-	CMD_ACTIVATE_VENV = .venv\Scripts\activate
-	CMD_CHECK_ENV = if not exist .env copy .env.mock .env
-	PYTHON = python
-else
-	CMD_ACTIVATE_VENV = source .venv/bin/activate
-	CMD_CHECK_ENV = [ ! -f .env ] && cp .env.mock .env || :
-	PYTHON = python3.9
-endif
+CMD_ACTIVATE_VENV = source .venv/bin/activate
+CMD_CHECK_ENV = [ ! -f .env ] && cp .env.mock .env || :
+PYTHON = python3.9
 
 
 install:

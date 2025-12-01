@@ -19,11 +19,12 @@ The results show the difference in alt-azimuthal coordinates. Typically, you can
 
 **Pre-requisites**
 
-- Python 3.9
+- Python +3.9
+- Download or clone this project from GitHub (if you download a zip file, please extract it first, please).
 
-**Install dependencies**
+**Linux distros and MacOS**
 
-1) Run setup, this will create a virtual environment
+1) Run setup, this will create a virtual environment and install required python libraries.
 
 ```shell
 make setup
@@ -35,14 +36,31 @@ make setup
 source .venv/bin/activate
 ```
 
-For Windows you can use:
+**Windows**
+
+1) Open the CMD and move to the project path
+2) Run this command to create the `.env` file:
+```shell
+copy .env.mock .env 
+```
+3) Create a virtual environment:
+```shell
+python -m venv .venv 
+```
+4) Activate the virtual environment:
 ```shell
 .venv\Scripts\activate
+```
+5) Install all the required python dependencies:
+```shell
+pip install -r requirements.txt
 ```
 
 **Configuration**
 
 Open the `.env` file. You may need to display the hidden files.
+
+In Windows, if you don't have a text editor to open the `.env` file, you can download and install [Notepad++](https://notepad-plus-plus.org/downloads/)
 
 1) Set `AEROAPI_API_KEY`. Sign up on [FlightAware AeroAPI](https://www.flightaware.com/commercial/aeroapi/) and use the [Personal free tier](https://www.flightaware.com/aeroapi/signup/personal) to generate an API KEY.
 
@@ -75,6 +93,11 @@ Launch the web server from a terminal.
 
 ```shell
 python3 app.py
+```
+
+Windows:
+```shell
+python app.py
 ```
 
 The IP address in LAN network will be displayed, use it to access from any device inside the same network.

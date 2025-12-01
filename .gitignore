@@ -164,7 +164,8 @@ cython_debug/
 # data
 de421.bsp
 notes.txt
-data/possible-transits/*.txt
+data/possible-transits/*.csv
+data/possible-transits/log-backup.txt
 
 # misc
 exp.ipynb
