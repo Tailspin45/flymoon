@@ -143,9 +143,11 @@ function fetchFlights() {
     let hasVeryPossibleTransits = false;
 
     const bodyTable = document.getElementById('flightData');
-    let alertMessage = document.getElementById("noResults");
+    let alertNoResults = document.getElementById("noResults");
+    let alertTargetUnderHorizon = document.getElementById("targetUnderHorizon");
     bodyTable.innerHTML = '';
-    alertMessage.innerHTML = '';
+    alertNoResults.innerHTML = '';
+    alertTargetUnderHorizon = '';
 
     const endpoint_url = (
         `/flights?target=${encodeURIComponent(target)}`
@@ -160,7 +162,11 @@ function fetchFlights() {
     .then(data => {
 
         if(data.flights.length == 0) {
-            alertMessage.innerHTML = "No flights!"
+            alertNoResults.innerHTML = "No flights!"
+        }
+
+        if(data.targetCoordinates.altitude < 0) {
+            alertNoResults.innerHTML = "The " + target + " is under horizon! No flights to check..."
         }
 
         data.flights.forEach(item => {

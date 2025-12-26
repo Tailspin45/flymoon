@@ -241,35 +241,40 @@ def get_transits(
 
     logger.info(celestial_obj.__str__())
 
-    if test_mode:
-        raw_flight_data = load_existing_flight_data(TEST_DATA_PATH)
-        logger.info("Loading existing flight data since is using TEST mode")
-    else:
-        raw_flight_data = get_flight_data(area_bbox, API_URL, API_KEY)
-
-    flight_data = list()
-
-    for flight in raw_flight_data["flights"]:
-        flight_data.append(parse_fligh_data(flight))
-
-    logger.info(f"there are {len(flight_data)} flights near")
-
     data = list()
 
-    for flight in flight_data:
-        celestial_obj.update_position(ref_datetime=ref_datetime)
+    if current_target_coordinates["altitude"] > 0:
+        if test_mode:
+            raw_flight_data = load_existing_flight_data(TEST_DATA_PATH)
+            logger.info("Loading existing flight data since is using TEST mode")
+        else:
+            raw_flight_data = get_flight_data(area_bbox, API_URL, API_KEY)
 
-        data.append(
-            check_transit(
-                flight,
-                window_time,
-                ref_datetime,
-                MY_POSITION,
-                celestial_obj,
-                EARTH,
+        flight_data = list()
+
+        for flight in raw_flight_data["flights"]:
+            flight_data.append(parse_fligh_data(flight))
+
+        logger.info(f"there are {len(flight_data)} flights near")
+
+        for flight in flight_data:
+            celestial_obj.update_position(ref_datetime=ref_datetime)
+
+            data.append(
+                check_transit(
+                    flight,
+                    window_time,
+                    ref_datetime,
+                    MY_POSITION,
+                    celestial_obj,
+                    EARTH,
+                )
             )
-        )
 
-        logger.info(data[-1])
+            logger.info(data[-1])
+    else:
+        logger.warning(
+            f"{target_name} target is under horizon, skipping checking for transits..."
+        )
 
     return {"flights": data, "targetCoordinates": current_target_coordinates}
