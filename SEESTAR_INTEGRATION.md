@@ -270,28 +270,30 @@ python3 examples/seestar_transit_trigger.py --discover
 
 Shows a guide with likely method names to try.
 
-### Likely Method Names
+### Discovered Commands
 
-Based on Seestar command patterns:
-- `iscope_start_record`
-- `iscope_stop_record`
-- `video_start_recording`
-- `video_stop_recording`
-- `start_video_capture`
+Video recording commands have been discovered from the seestar_alp source code:
 
-### Update Implementation
+- **Start recording**: `start_record_avi`
+  - Parameters: `{"raw": false}` for processed MP4 video
+  - Must be in solar or lunar viewing mode first
 
-Once discovered, update these methods in `src/seestar_client.py`:
+- **Stop recording**: `stop_record_avi`
+  - No parameters required
+  - Recording is saved as MP4 on Seestar
+
+### Implementation
+
+These commands are now implemented in `src/seestar_client.py`:
 
 ```python
 def start_recording(self, duration_seconds=None):
-    # Replace this line:
-    # logger.warning("Video recording command needs to be discovered")
+    params = {"raw": False}  # Processed MP4 video
+    response = self._send_command("start_record_avi", params=params)
+    # ...
 
-    # With actual command:
-    response = self._send_command("iscope_start_record", params={
-        "duration": duration_seconds
-    })
+def stop_recording(self):
+    response = self._send_command("stop_record_avi")
     # ...
 ```
 
@@ -413,8 +415,7 @@ SEESTAR_PORT=8080
 
 ### ⚠️ Requires Hardware Testing
 
-- **Video recording commands** - Need actual Seestar to discover API
-- Port number verification
+- Port number verification (confirmed 4700)
 - Timing precision validation
 - Error handling for edge cases
 
@@ -422,12 +423,11 @@ SEESTAR_PORT=8080
 
 To complete the integration:
 
-- [ ] Discover video recording JSON-RPC methods
+- [x] Discover video recording JSON-RPC methods (start_record_avi, stop_record_avi)
+- [x] Update `start_recording()` method
+- [x] Update `stop_recording()` method
 - [ ] Test with actual Seestar hardware
-- [ ] Update `start_recording()` method
-- [ ] Update `stop_recording()` method
-- [ ] Verify port number (4700 vs 4720)
-- [ ] Test timing precision with real transits
+- [ ] Verify timing precision with real transits
 - [ ] Document any quirks or limitations
 - [ ] Add error recovery for network issues
 

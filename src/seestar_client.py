@@ -98,9 +98,10 @@ class SeestarClient:
         if not self._connected or not self.socket:
             raise RuntimeError("Not connected to Seestar")
 
-        # Build JSON-RPC 2.0 message
+        # Build Seestar JSON message
+        # Note: Seestar does NOT use standard JSON-RPC 2.0 format for requests
+        # The "jsonrpc" field only appears in responses, not requests
         message = {
-            "jsonrpc": "2.0",
             "method": method,
             "id": self._get_next_id(),
         }
@@ -112,23 +113,51 @@ class SeestarClient:
             # Send message with \r\n delimiter
             data = json.dumps(message) + "\r\n"
             self.socket.sendall(data.encode())
-            logger.debug(f"Sent: {method}")
+            logger.debug(f"Sent: {method} (id={message['id']})")
 
             if expect_response:
-                # Receive response
-                response = self.socket.recv(4096).decode()
+                # Seestar sends multiple types of messages:
+                # 1. Responses with "jsonrpc" field (what we want)
+                # 2. Event messages with "Event" field (unsolicited)
+                # We need to loop and skip Event messages until we find our response
 
-                # Handle multiple messages (split by \r\n)
-                for line in response.split("\r\n"):
-                    if line.strip():
-                        result = json.loads(line)
-                        if result.get("id") == message["id"]:
-                            if "error" in result:
-                                error = result["error"]
-                                raise RuntimeError(
-                                    f"Seestar error: {error.get('message', 'Unknown error')}"
-                                )
-                            return result.get("result")
+                start_time = time.time()
+                buffer = ""
+
+                while time.time() - start_time < self.timeout:
+                    # Receive data in chunks
+                    chunk = self.socket.recv(4096).decode()
+                    buffer += chunk
+
+                    # Process complete messages (delimited by \r\n)
+                    while "\r\n" in buffer:
+                        line, buffer = buffer.split("\r\n", 1)
+                        if not line.strip():
+                            continue
+
+                        try:
+                            result = json.loads(line)
+
+                            # Skip Event messages
+                            if "Event" in result:
+                                logger.debug(f"Skipping event: {result.get('Event')}")
+                                continue
+
+                            # Check if this is our response
+                            if result.get("id") == message["id"]:
+                                if "error" in result:
+                                    error = result["error"]
+                                    raise RuntimeError(
+                                        f"Seestar error: {error.get('message', 'Unknown error')}"
+                                    )
+                                return result.get("result")
+
+                        except json.JSONDecodeError as e:
+                            logger.warning(f"Failed to parse message: {line[:100]}")
+                            continue
+
+                # If we get here, we timed out waiting for response
+                raise RuntimeError(f"Timeout waiting for response to {method}")
 
             return None
 
@@ -136,9 +165,6 @@ class SeestarClient:
             logger.error(f"Socket error: {e}")
             self._connected = False
             raise RuntimeError(f"Communication failed: {e}")
-        except json.JSONDecodeError as e:
-            logger.error(f"Invalid JSON response: {e}")
-            raise RuntimeError(f"Invalid response from Seestar: {e}")
 
     def _heartbeat_loop(self):
         """Background thread that sends periodic heartbeat messages."""
@@ -278,27 +304,17 @@ class SeestarClient:
 
         Notes
         -----
-        TODO: Video recording command still needs to be discovered.
+        Uses the 'start_record_avi' JSON-RPC method to begin video recording.
+        The Seestar must already be in viewing mode (solar or lunar) before calling this.
 
-        Known workflow (from Seestar app):
-        1. iscope_start_view with mode "sun" or "moon"
-        2. [Unknown command to start video recording]
-        3. [Unknown command to stop video recording]
-        4. get_albums to list recorded files
+        Workflow:
+        1. Call start_solar_mode() or start_lunar_mode()
+        2. Call this method to start recording
+        3. Call stop_recording() when done
+        4. Use list_files() to get recorded file paths
         5. Download via HTTP: http://<host>/<path>/<filename>
 
-        Tested methods that did NOT work:
-        - start_exposure with type "video"
-        - iscope_start_video
-        - video_start
-        - start_video_record
-
-        The recording likely requires:
-        - Being in gazing/view mode first
-        - Possibly a state check or initialization
-        - May be part of start_exposure with specific params
-
-        To discover: Capture network traffic when Seestar app records video
+        The recording is saved as MP4 (processed video) on the Seestar.
         """
         if not self._connected:
             raise RuntimeError("Cannot start recording: not connected to telescope")
@@ -308,18 +324,14 @@ class SeestarClient:
             return True
 
         try:
-            # TODO: Replace with actual Seestar video recording command
-            logger.warning("Video recording command needs to be discovered through testing")
-            logger.info("See Notes in start_recording() docstring for discovery methods")
-
-            # Placeholder implementation:
-            # response = self._send_command("iscope_start_record", params={
-            #     "duration": duration_seconds
-            # })
+            # Start video recording with start_record_avi
+            # raw=False gives us processed MP4 video
+            params = {"raw": False}
+            response = self._send_command("start_record_avi", params=params)
 
             self._recording = True
             self._recording_start_time = datetime.now()
-            logger.info(f"Started recording (placeholder - command not yet implemented)")
+            logger.info(f"Started video recording (MP4 format)")
 
             # TODO: If duration specified, schedule auto-stop
             # if duration_seconds:
@@ -342,12 +354,9 @@ class SeestarClient:
 
         Notes
         -----
-        TODO: The exact JSON-RPC method name for stopping video recording needs to be discovered.
-
-        Possible method names to try:
-        - "iscope_stop_record"
-        - "video_stop_recording"
-        - "stop_video_capture"
+        Uses the 'stop_record_avi' JSON-RPC method to stop video recording.
+        The recorded video is saved on the Seestar and can be retrieved via HTTP
+        by first calling list_files() to get the file path.
         """
         if not self._recording:
             logger.warning("No recording in progress")
@@ -358,10 +367,10 @@ class SeestarClient:
             if self._recording_start_time:
                 duration = (datetime.now() - self._recording_start_time).total_seconds()
 
-            # TODO: Replace with actual Seestar stop recording command
-            # response = self._send_command("iscope_stop_record")
+            # Stop video recording with stop_record_avi
+            response = self._send_command("stop_record_avi")
 
-            logger.info(f"Stopped recording (placeholder - duration: {duration:.1f}s)")
+            logger.info(f"Stopped recording (duration: {duration:.1f}s)")
 
             self._recording = False
             self._recording_start_time = None
