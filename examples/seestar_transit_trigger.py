@@ -19,6 +19,10 @@ Prerequisites:
 
 import time
 from datetime import datetime
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
 
 from src.seestar_client import SeestarClient, TransitRecorder, create_client_from_env
 from src.transit import get_transits
