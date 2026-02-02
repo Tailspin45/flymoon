@@ -188,9 +188,9 @@ class SeestarClient:
             self._connected = True
             logger.info("Connected to Seestar")
 
-            # TODO: Send initialization command if required
-            # Some devices may need an initialization handshake
-            # Example: self._send_command("iscope_start_view")
+            # NOTE: Initialization may be needed depending on use case
+            # For solar/lunar video: send iscope_start_view after connect
+            # Example: self.start_solar_mode() or self.start_lunar_mode()
 
             # Start heartbeat thread
             self._heartbeat_running = True
@@ -278,21 +278,27 @@ class SeestarClient:
 
         Notes
         -----
-        TODO: The exact JSON-RPC method name for video recording needs to be discovered.
+        TODO: Video recording command still needs to be discovered.
 
-        Possible method names to try:
-        - "iscope_start_record"
-        - "video_start_recording"
-        - "start_video_capture"
-        - "iscope_start_capture" with params
+        Known workflow (from Seestar app):
+        1. iscope_start_view with mode "sun" or "moon"
+        2. [Unknown command to start video recording]
+        3. [Unknown command to stop video recording]
+        4. get_albums to list recorded files
+        5. Download via HTTP: http://<host>/<path>/<filename>
 
-        To discover the correct command:
-        1. Use Seestar app to start video recording
-        2. Monitor network traffic with Wireshark/tcpdump
-        3. Look for JSON-RPC message with recording method
-        4. Update this method with correct command
+        Tested methods that did NOT work:
+        - start_exposure with type "video"
+        - iscope_start_video
+        - video_start
+        - start_video_record
 
-        Alternative: Examine seestar_alp source for video commands
+        The recording likely requires:
+        - Being in gazing/view mode first
+        - Possibly a state check or initialization
+        - May be part of start_exposure with specific params
+
+        To discover: Capture network traffic when Seestar app records video
         """
         if not self._connected:
             raise RuntimeError("Cannot start recording: not connected to telescope")
@@ -375,6 +381,101 @@ class SeestarClient:
             True if recording in progress
         """
         return self._recording
+
+    def start_solar_mode(self) -> bool:
+        """
+        Start solar viewing mode.
+
+        Returns
+        -------
+        bool
+            True if mode started successfully
+
+        Notes
+        -----
+        This must be called before video recording for solar transits.
+        Seestar will switch to solar viewing mode with appropriate filter.
+        """
+        try:
+            response = self._send_command("iscope_start_view", params={"mode": "sun"})
+            logger.info("Started solar viewing mode")
+            return True
+        except Exception as e:
+            logger.error(f"Failed to start solar mode: {e}")
+            raise
+
+    def start_lunar_mode(self) -> bool:
+        """
+        Start lunar viewing mode.
+
+        Returns
+        -------
+        bool
+            True if mode started successfully
+
+        Notes
+        -----
+        This must be called before video recording for lunar transits.
+        Seestar will switch to lunar viewing mode.
+        """
+        try:
+            response = self._send_command("iscope_start_view", params={"mode": "moon"})
+            logger.info("Started lunar viewing mode")
+            return True
+        except Exception as e:
+            logger.error(f"Failed to start lunar mode: {e}")
+            raise
+
+    def stop_view_mode(self) -> bool:
+        """
+        Stop current viewing mode.
+
+        Returns
+        -------
+        bool
+            True if mode stopped successfully
+        """
+        try:
+            response = self._send_command("iscope_stop_view")
+            logger.info("Stopped viewing mode")
+            return True
+        except Exception as e:
+            logger.error(f"Failed to stop view mode: {e}")
+            return False
+
+    def list_files(self) -> dict:
+        """
+        List recorded files on Seestar.
+
+        Returns
+        -------
+        dict
+            Albums/files structure with paths
+
+        Notes
+        -----
+        Returns format:
+        {
+            "path": "<parent_folder>",
+            "list": [
+                {
+                    "name": "<album_name>",
+                    "files": [{"name": "<filename>", "thn": "<thumbnail>", ...}, ...]
+                },
+                ...
+            ]
+        }
+
+        Files can be downloaded via HTTP:
+        http://<seestar_host>/<path>/<filename>
+        """
+        try:
+            response = self._send_command("get_albums")
+            logger.info(f"Retrieved file list: {len(response.get('list', []))} albums")
+            return response
+        except Exception as e:
+            logger.error(f"Failed to list files: {e}")
+            raise
 
     def get_status(self) -> Dict[str, Any]:
         """
