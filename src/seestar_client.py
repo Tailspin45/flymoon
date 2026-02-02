@@ -1,0 +1,554 @@
+"""
+Direct Seestar telescope control via JSON-RPC over TCP.
+
+This module provides lightweight, direct communication with Seestar telescopes
+without requiring external bridge applications like seestar_alp. It uses the
+native JSON-RPC 2.0 protocol over TCP sockets.
+
+Based on protocol reverse-engineering from:
+https://github.com/smart-underworld/seestar_alp/blob/main/device/seestar_device.py
+"""
+
+import json
+import socket
+import threading
+import time
+from typing import Optional, Dict, Any, Callable
+from datetime import datetime
+
+from src import logger
+
+
+class SeestarClient:
+    """Direct TCP client for Seestar telescope using JSON-RPC 2.0 protocol."""
+
+    # Default connection parameters
+    DEFAULT_PORT = 4700
+    DEFAULT_TIMEOUT = 10
+
+    def __init__(
+        self,
+        host: str,
+        port: int = DEFAULT_PORT,
+        timeout: int = DEFAULT_TIMEOUT,
+        heartbeat_interval: int = 30,
+    ):
+        """
+        Initialize Seestar client.
+
+        Parameters
+        ----------
+        host : str
+            IP address of the Seestar telescope
+        port : int
+            TCP port (default: 4700, may vary by firmware)
+        timeout : int
+            Socket timeout in seconds (default: 10)
+        heartbeat_interval : int
+            Seconds between heartbeat messages (default: 30)
+        """
+        self.host = host
+        self.port = port
+        self.timeout = timeout
+        self.heartbeat_interval = heartbeat_interval
+
+        self.socket: Optional[socket.socket] = None
+        self._connected = False
+        self._recording = False
+        self._recording_start_time: Optional[datetime] = None
+        self._message_id = 0
+        self._heartbeat_thread: Optional[threading.Thread] = None
+        self._heartbeat_running = False
+
+        logger.info(f"Initialized Seestar client for {host}:{port}")
+
+    def _get_next_id(self) -> int:
+        """Get next message ID for JSON-RPC requests."""
+        self._message_id += 1
+        return self._message_id
+
+    def _send_command(
+        self,
+        method: str,
+        params: Any = None,
+        expect_response: bool = True
+    ) -> Optional[Dict[str, Any]]:
+        """
+        Send JSON-RPC command to Seestar.
+
+        Parameters
+        ----------
+        method : str
+            JSON-RPC method name (e.g., "iscope_start_view")
+        params : any, optional
+            Method parameters (dict, list, or simple value)
+        expect_response : bool
+            Whether to wait for and return response (default: True)
+
+        Returns
+        -------
+        dict or None
+            Response data if expect_response=True, None otherwise
+
+        Raises
+        ------
+        RuntimeError
+            If not connected or communication fails
+        """
+        if not self._connected or not self.socket:
+            raise RuntimeError("Not connected to Seestar")
+
+        # Build JSON-RPC 2.0 message
+        message = {
+            "jsonrpc": "2.0",
+            "method": method,
+            "id": self._get_next_id(),
+        }
+
+        if params is not None:
+            message["params"] = params
+
+        try:
+            # Send message with \r\n delimiter
+            data = json.dumps(message) + "\r\n"
+            self.socket.sendall(data.encode())
+            logger.debug(f"Sent: {method}")
+
+            if expect_response:
+                # Receive response
+                response = self.socket.recv(4096).decode()
+
+                # Handle multiple messages (split by \r\n)
+                for line in response.split("\r\n"):
+                    if line.strip():
+                        result = json.loads(line)
+                        if result.get("id") == message["id"]:
+                            if "error" in result:
+                                error = result["error"]
+                                raise RuntimeError(
+                                    f"Seestar error: {error.get('message', 'Unknown error')}"
+                                )
+                            return result.get("result")
+
+            return None
+
+        except socket.error as e:
+            logger.error(f"Socket error: {e}")
+            self._connected = False
+            raise RuntimeError(f"Communication failed: {e}")
+        except json.JSONDecodeError as e:
+            logger.error(f"Invalid JSON response: {e}")
+            raise RuntimeError(f"Invalid response from Seestar: {e}")
+
+    def _heartbeat_loop(self):
+        """Background thread that sends periodic heartbeat messages."""
+        logger.info("Heartbeat thread started")
+        while self._heartbeat_running:
+            try:
+                # Send heartbeat command (based on seestar_alp implementation)
+                self._send_command("scope_get_equ_coord", expect_response=False)
+                logger.debug("Heartbeat sent")
+            except Exception as e:
+                logger.warning(f"Heartbeat failed: {e}")
+
+            # Sleep in small intervals to allow quick shutdown
+            for _ in range(self.heartbeat_interval):
+                if not self._heartbeat_running:
+                    break
+                time.sleep(1)
+
+        logger.info("Heartbeat thread stopped")
+
+    def connect(self) -> bool:
+        """
+        Connect to Seestar telescope.
+
+        Returns
+        -------
+        bool
+            True if connection successful
+
+        Raises
+        ------
+        RuntimeError
+            If connection fails
+        """
+        if self._connected:
+            logger.warning("Already connected")
+            return True
+
+        try:
+            # Create TCP socket
+            self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            self.socket.settimeout(self.timeout)
+
+            # Connect to Seestar
+            logger.info(f"Connecting to Seestar at {self.host}:{self.port}...")
+            self.socket.connect((self.host, self.port))
+            self._connected = True
+            logger.info("Connected to Seestar")
+
+            # TODO: Send initialization command if required
+            # Some devices may need an initialization handshake
+            # Example: self._send_command("iscope_start_view")
+
+            # Start heartbeat thread
+            self._heartbeat_running = True
+            self._heartbeat_thread = threading.Thread(target=self._heartbeat_loop, daemon=True)
+            self._heartbeat_thread.start()
+
+            return True
+
+        except socket.error as e:
+            logger.error(f"Failed to connect to Seestar: {e}")
+            if self.socket:
+                self.socket.close()
+                self.socket = None
+            raise RuntimeError(f"Connection failed: {e}")
+
+    def disconnect(self) -> bool:
+        """
+        Disconnect from Seestar telescope.
+
+        Returns
+        -------
+        bool
+            True if disconnection successful
+        """
+        if not self._connected:
+            logger.warning("Not connected")
+            return True
+
+        try:
+            # Stop recording if active
+            if self._recording:
+                self.stop_recording()
+
+            # Stop heartbeat thread
+            if self._heartbeat_running:
+                self._heartbeat_running = False
+                if self._heartbeat_thread:
+                    self._heartbeat_thread.join(timeout=5)
+
+            # TODO: Send disconnect/cleanup command if required
+            # Example: self._send_command("iscope_stop_view")
+
+            # Close socket
+            if self.socket:
+                self.socket.close()
+                self.socket = None
+
+            self._connected = False
+            logger.info("Disconnected from Seestar")
+            return True
+
+        except Exception as e:
+            logger.error(f"Error during disconnect: {e}")
+            return False
+
+    def is_connected(self) -> bool:
+        """
+        Check if connected to telescope.
+
+        Returns
+        -------
+        bool
+            True if connected
+        """
+        return self._connected
+
+    def start_recording(self, duration_seconds: Optional[int] = None) -> bool:
+        """
+        Start video recording on Seestar.
+
+        Parameters
+        ----------
+        duration_seconds : int, optional
+            Duration to record in seconds. If None, records until stop_recording() is called.
+
+        Returns
+        -------
+        bool
+            True if recording started successfully
+
+        Raises
+        ------
+        RuntimeError
+            If not connected or recording fails to start
+
+        Notes
+        -----
+        TODO: The exact JSON-RPC method name for video recording needs to be discovered.
+
+        Possible method names to try:
+        - "iscope_start_record"
+        - "video_start_recording"
+        - "start_video_capture"
+        - "iscope_start_capture" with params
+
+        To discover the correct command:
+        1. Use Seestar app to start video recording
+        2. Monitor network traffic with Wireshark/tcpdump
+        3. Look for JSON-RPC message with recording method
+        4. Update this method with correct command
+
+        Alternative: Examine seestar_alp source for video commands
+        """
+        if not self._connected:
+            raise RuntimeError("Cannot start recording: not connected to telescope")
+
+        if self._recording:
+            logger.warning("Recording already in progress")
+            return True
+
+        try:
+            # TODO: Replace with actual Seestar video recording command
+            logger.warning("Video recording command needs to be discovered through testing")
+            logger.info("See Notes in start_recording() docstring for discovery methods")
+
+            # Placeholder implementation:
+            # response = self._send_command("iscope_start_record", params={
+            #     "duration": duration_seconds
+            # })
+
+            self._recording = True
+            self._recording_start_time = datetime.now()
+            logger.info(f"Started recording (placeholder - command not yet implemented)")
+
+            # TODO: If duration specified, schedule auto-stop
+            # if duration_seconds:
+            #     threading.Timer(duration_seconds, self.stop_recording).start()
+
+            return True
+
+        except Exception as e:
+            logger.error(f"Failed to start recording: {e}")
+            raise
+
+    def stop_recording(self) -> bool:
+        """
+        Stop video recording on Seestar.
+
+        Returns
+        -------
+        bool
+            True if recording stopped successfully
+
+        Notes
+        -----
+        TODO: The exact JSON-RPC method name for stopping video recording needs to be discovered.
+
+        Possible method names to try:
+        - "iscope_stop_record"
+        - "video_stop_recording"
+        - "stop_video_capture"
+        """
+        if not self._recording:
+            logger.warning("No recording in progress")
+            return True
+
+        try:
+            duration = None
+            if self._recording_start_time:
+                duration = (datetime.now() - self._recording_start_time).total_seconds()
+
+            # TODO: Replace with actual Seestar stop recording command
+            # response = self._send_command("iscope_stop_record")
+
+            logger.info(f"Stopped recording (placeholder - duration: {duration:.1f}s)")
+
+            self._recording = False
+            self._recording_start_time = None
+            return True
+
+        except Exception as e:
+            logger.error(f"Failed to stop recording: {e}")
+            return False
+
+    def is_recording(self) -> bool:
+        """
+        Check if currently recording.
+
+        Returns
+        -------
+        bool
+            True if recording in progress
+        """
+        return self._recording
+
+    def get_status(self) -> Dict[str, Any]:
+        """
+        Get telescope status information.
+
+        Returns
+        -------
+        dict
+            Status information including connection and recording state
+        """
+        status = {
+            "connected": self._connected,
+            "recording": self._recording,
+            "host": self.host,
+            "port": self.port,
+        }
+
+        if self._recording_start_time:
+            status["recording_duration"] = (
+                datetime.now() - self._recording_start_time
+            ).total_seconds()
+
+        return status
+
+
+class TransitRecorder:
+    """Helper class for automated transit recording with timing buffers."""
+
+    def __init__(
+        self,
+        seestar_client: SeestarClient,
+        pre_buffer_seconds: int = 10,
+        post_buffer_seconds: int = 10,
+    ):
+        """
+        Initialize transit recorder.
+
+        Parameters
+        ----------
+        seestar_client : SeestarClient
+            Connected Seestar client instance
+        pre_buffer_seconds : int
+            Seconds to start recording before predicted transit (default: 10)
+        post_buffer_seconds : int
+            Seconds to continue recording after predicted transit (default: 10)
+        """
+        self.client = seestar_client
+        self.pre_buffer = pre_buffer_seconds
+        self.post_buffer = post_buffer_seconds
+        self._scheduled_recordings: Dict[str, threading.Timer] = {}
+
+        logger.info(
+            f"Transit recorder initialized (pre={pre_buffer}s, post={post_buffer}s)"
+        )
+
+    def schedule_transit_recording(
+        self,
+        flight_id: str,
+        eta_seconds: float,
+        transit_duration_estimate: float = 2.0
+    ) -> bool:
+        """
+        Schedule automated recording for a predicted transit.
+
+        Parameters
+        ----------
+        flight_id : str
+            Unique identifier for the flight/transit
+        eta_seconds : float
+            Estimated time until transit in seconds
+        transit_duration_estimate : float
+            Estimated duration of the transit event in seconds (default: 2.0)
+
+        Returns
+        -------
+        bool
+            True if recording was scheduled successfully
+
+        Notes
+        -----
+        Aircraft transits are typically 0.5-2 seconds long. The total recording
+        duration will be: pre_buffer + transit_duration + post_buffer
+        """
+        try:
+            # Calculate timing
+            start_delay = max(0, eta_seconds - self.pre_buffer)
+            total_duration = self.pre_buffer + transit_duration_estimate + self.post_buffer
+
+            logger.info(
+                f"Scheduling transit {flight_id}: start in {start_delay:.1f}s, "
+                f"record for {total_duration:.1f}s"
+            )
+
+            # Schedule start
+            start_timer = threading.Timer(start_delay, self._start_recording, args=[flight_id, total_duration])
+            start_timer.daemon = True
+            start_timer.start()
+
+            self._scheduled_recordings[flight_id] = start_timer
+            return True
+
+        except Exception as e:
+            logger.error(f"Failed to schedule transit recording: {e}")
+            return False
+
+    def _start_recording(self, flight_id: str, duration: float):
+        """Internal method to start recording and schedule stop."""
+        try:
+            logger.info(f"Starting recording for transit {flight_id}")
+            self.client.start_recording()
+
+            # Schedule stop
+            stop_timer = threading.Timer(duration, self._stop_recording, args=[flight_id])
+            stop_timer.daemon = True
+            stop_timer.start()
+
+        except Exception as e:
+            logger.error(f"Failed to start recording for {flight_id}: {e}")
+
+    def _stop_recording(self, flight_id: str):
+        """Internal method to stop recording."""
+        try:
+            logger.info(f"Stopping recording for transit {flight_id}")
+            self.client.stop_recording()
+
+            # Remove from scheduled recordings
+            if flight_id in self._scheduled_recordings:
+                del self._scheduled_recordings[flight_id]
+
+        except Exception as e:
+            logger.error(f"Failed to stop recording for {flight_id}: {e}")
+
+    def cancel_all(self):
+        """Cancel all scheduled recordings."""
+        for flight_id, timer in list(self._scheduled_recordings.items()):
+            timer.cancel()
+            logger.info(f"Cancelled recording for {flight_id}")
+        self._scheduled_recordings.clear()
+
+
+def create_client_from_env() -> Optional[SeestarClient]:
+    """
+    Create Seestar client from environment variables.
+
+    Reads configuration from .env file:
+    - SEESTAR_HOST: IP address of Seestar (required)
+    - SEESTAR_PORT: TCP port (default: 4700)
+    - SEESTAR_TIMEOUT: Socket timeout in seconds (default: 10)
+    - ENABLE_SEESTAR: Enable/disable Seestar integration (default: false)
+
+    Returns
+    -------
+    SeestarClient or None
+        Client instance if enabled, None if disabled or config missing
+    """
+    import os
+
+    if os.getenv("ENABLE_SEESTAR", "false").lower() != "true":
+        logger.info("Seestar integration disabled (ENABLE_SEESTAR=false)")
+        return None
+
+    host = os.getenv("SEESTAR_HOST")
+    if not host:
+        logger.error("SEESTAR_HOST not configured")
+        return None
+
+    try:
+        port = int(os.getenv("SEESTAR_PORT", str(SeestarClient.DEFAULT_PORT)))
+        timeout = int(os.getenv("SEESTAR_TIMEOUT", str(SeestarClient.DEFAULT_TIMEOUT)))
+
+        client = SeestarClient(host=host, port=port, timeout=timeout)
+        logger.info(f"Created Seestar client from environment: {host}:{port}")
+        return client
+
+    except Exception as e:
+        logger.error(f"Failed to create Seestar client from environment: {e}")
+        return None
