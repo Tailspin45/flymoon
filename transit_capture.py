@@ -39,7 +39,8 @@ from src import logger
 from src.constants import PossibilityLevel
 from src.transit import get_transits
 from src.seestar_client import create_client_from_env
-from pushbullet import Pushbullet
+from telegram import Bot
+from telegram.error import TelegramError
 
 
 class TransitCaptureMode:
@@ -78,7 +79,8 @@ class TransitCaptureSystem:
         # Capture mode (will be determined on startup)
         self.mode = None
         self.seestar_client = None
-        self.pb = None
+        self.telegram_bot = None
+        self.telegram_chat_id = None
 
         # Transit tracking
         self.notified_transits = set()
@@ -182,18 +184,25 @@ class TransitCaptureSystem:
         logger.info("INITIALIZING MANUAL MODE")
         logger.info("=" * 60)
 
-        api_key = os.getenv("PUSH_BULLET_API_KEY")
-        if not api_key:
-            logger.error("PUSH_BULLET_API_KEY required for manual mode")
+        bot_token = os.getenv("TELEGRAM_BOT_TOKEN")
+        chat_id = os.getenv("TELEGRAM_CHAT_ID")
+
+        if not bot_token:
+            logger.error("TELEGRAM_BOT_TOKEN required for manual mode")
+            return False
+
+        if not chat_id:
+            logger.error("TELEGRAM_CHAT_ID required for manual mode")
             return False
 
         try:
-            self.pb = Pushbullet(api_key)
-            logger.info("✓ PushBullet connected")
+            self.telegram_bot = Bot(token=bot_token)
+            self.telegram_chat_id = chat_id
+            logger.info("✓ Telegram Bot connected")
             logger.info("  You will receive notifications to manually record")
             return True
         except Exception as e:
-            logger.error(f"Failed to initialize PushBullet: {e}")
+            logger.error(f"Failed to initialize Telegram Bot: {e}")
             return False
 
     async def initialize(self) -> bool:
@@ -236,15 +245,14 @@ class TransitCaptureSystem:
             logger.info("    You will receive notifications to manually record")
 
             # Send notification about fallback mode
-            if self.pb:
-                self.pb.push_note(
-                    "⚠️ Transit Monitor - Manual Mode",
-                    f"Automatic Seestar control unavailable.\n"
-                    f"Monitoring {self.target} transits at ({self.latitude}, {self.longitude})\n"
-                    f"You will receive notifications to manually start/stop recording.\n"
-                    f"\n"
-                    f"When automatic mode is available, the system will record automatically."
-                )
+            if self.telegram_bot:
+                asyncio.create_task(self._send_telegram_message(
+                    "⚠️ *Transit Monitor - Manual Mode*\n\n"
+                    f"Automatic Seestar control unavailable\\.\n"
+                    f"Monitoring {self.target} transits at \\({self.latitude}, {self.longitude}\\)\n"
+                    f"You will receive notifications to manually start/stop recording\\.\n\n"
+                    f"When automatic mode is available, the system will record automatically\\."
+                ))
 
             return True
 
@@ -254,9 +262,11 @@ class TransitCaptureSystem:
     async def get_high_probability_transits(self) -> List[dict]:
         """Get upcoming HIGH probability transits."""
         try:
-            all_transits = await get_transits(
+            transit_data = get_transits(
                 self.latitude, self.longitude, self.elevation, self.target
             )
+
+            all_transits = transit_data.get("flights", [])
 
             high_prob = [
                 t for t in all_transits
@@ -338,6 +348,19 @@ class TransitCaptureSystem:
         except Exception as e:
             logger.error(f"Error in automatic recording: {e}")
 
+    async def _send_telegram_message(self, message: str) -> bool:
+        """Send a Telegram message."""
+        try:
+            await self.telegram_bot.send_message(
+                chat_id=self.telegram_chat_id,
+                text=message,
+                parse_mode='MarkdownV2'
+            )
+            return True
+        except TelegramError as e:
+            logger.error(f"Failed to send Telegram message: {e}")
+            return False
+
     def _handle_manual_capture(self, transit: dict) -> None:
         """Handle transit with manual notification."""
         transit_id = f"{transit['id']}_{transit['time']}"
@@ -347,17 +370,16 @@ class TransitCaptureSystem:
         if transit_id not in self.warned_transits:
             self.warned_transits.add(transit_id)
 
-            title = f"🟢 HIGH Probability Transit Detected!"
-            body = (
-                f"Flight: {transit['id']}\n"
-                f"Route: {transit['origin']} → {transit['destination']}\n"
-                f"Time: {self._format_time(time_minutes)}\n"
-                f"Alt diff: {transit['alt_diff']:.2f}° | Az diff: {transit['az_diff']:.2f}°\n"
-                f"\n"
-                f"⏰ You will receive a warning {self.warning_minutes} min before transit."
+            message = (
+                f"🟢 *HIGH Probability Transit Detected\\!*\n\n"
+                f"*Flight:* {transit['id']}\n"
+                f"*Route:* {transit['origin']} → {transit['destination']}\n"
+                f"*Time:* {self._format_time(time_minutes)}\n"
+                f"*Alt diff:* {transit['alt_diff']:.2f}° \\| *Az diff:* {transit['az_diff']:.2f}°\n\n"
+                f"⏰ You will receive a warning {self.warning_minutes} min before transit\\."
             )
 
-            self.pb.push_note(title, body)
+            asyncio.create_task(self._send_telegram_message(message))
             logger.info(f"📱 Sent detection notification for {transit['id']}")
 
         # Imminent warning
@@ -372,26 +394,23 @@ class TransitCaptureSystem:
             start_time = transit_time - timedelta(seconds=pre_buffer)
             stop_time = transit_time + timedelta(seconds=post_buffer)
 
-            title = f"🚨 TRANSIT IMMINENT - {self._format_time(time_minutes)}"
-            body = (
-                f"Flight: {transit['id']}\n"
-                f"Route: {transit['origin']} → {transit['destination']}\n"
-                f"\n"
-                f"⏰ TIMING:\n"
-                f"Transit at: {transit_time.strftime('%H:%M:%S')}\n"
-                f"Start recording: {start_time.strftime('%H:%M:%S')}\n"
-                f"Stop recording: {stop_time.strftime('%H:%M:%S')}\n"
-                f"\n"
-                f"📱 ACTION REQUIRED:\n"
-                f"1. Open Seestar app NOW\n"
-                f"2. Confirm {self.target} is centered\n"
-                f"3. Press RECORD at {start_time.strftime('%H:%M:%S')}\n"
-                f"4. Press STOP at {stop_time.strftime('%H:%M:%S')}\n"
-                f"\n"
-                f"Duration: {pre_buffer + post_buffer}s"
+            message = (
+                f"🚨 *TRANSIT IMMINENT \\- {self._format_time(time_minutes)}*\n\n"
+                f"*Flight:* {transit['id']}\n"
+                f"*Route:* {transit['origin']} → {transit['destination']}\n\n"
+                f"⏰ *TIMING:*\n"
+                f"Transit at: `{transit_time.strftime('%H:%M:%S')}`\n"
+                f"Start recording: `{start_time.strftime('%H:%M:%S')}`\n"
+                f"Stop recording: `{stop_time.strftime('%H:%M:%S')}`\n\n"
+                f"📱 *ACTION REQUIRED:*\n"
+                f"1\\. Open Seestar app NOW\n"
+                f"2\\. Confirm {self.target} is centered\n"
+                f"3\\. Press RECORD at `{start_time.strftime('%H:%M:%S')}`\n"
+                f"4\\. Press STOP at `{stop_time.strftime('%H:%M:%S')}`\n\n"
+                f"*Duration:* {pre_buffer + post_buffer}s"
             )
 
-            self.pb.push_link(title, "http://localhost:5000/", body)
+            asyncio.create_task(self._send_telegram_message(message))
             logger.info(f"🚨 Sent IMMINENT notification for {transit['id']}")
 
     def _format_time(self, minutes: float) -> str:
@@ -460,10 +479,10 @@ class TransitCaptureSystem:
             if self.seestar_client:
                 self.seestar_client.disconnect()
 
-            if self.pb:
-                self.pb.push_note(
-                    "🛑 Transit Monitor Stopped",
-                    "Monitoring has been stopped by user"
+            if self.telegram_bot:
+                await self._send_telegram_message(
+                    "🛑 *Transit Monitor Stopped*\n\n"
+                    "Monitoring has been stopped by user\\."
                 )
 
     def cleanup(self) -> None:
