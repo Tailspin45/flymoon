@@ -8,72 +8,158 @@
     <link rel="icon" type="image/x-icon" href="{{ url_for('static', filename='images/favicon.ico') }}">
     <!-- CSS -->
     <link rel="stylesheet" href="{{ url_for('static', filename='main.css') }}">
+    <!-- Leaflet CSS -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css?v=2"
+        crossorigin=""/>
 </head>
-<body> 
-    <h1>✈️ Flymoon <span id="targetIcon" onclick="toggleTarget();">-</span></h1>
-    <h3 class="light-text">Target: <span id="targetLabel">-</span></h3>
-    <p id="targetCoordinates"></p>
-
-    <h4>My current position</h4>
-    <div class="center-div">
-        <form class="form-container" action="">
-            <div class="form-group">
-                <label for="flatitude">Latitude</label>
-                <input type="number" id="latitude" name="flatitude" autocomplete="on">
-            </div>
-            <div class="form-group">
-                <label for="flongitude">Longitude</label>
-                <input type="number" id="longitude" name="flongitude" autocomplete="on">
-            </div>
-            <div class="form-group">
-                <label for="fevelation">Elevation</label>
-                <input type="number" id="elevation" name="fevelation" autocomplete="on">
-            </div>
-        </form>
+<body>
+    <div class="header-row">
+        <img src="{{ url_for('static', filename='images/logo.svg') }}" alt="Flymoon Transit Tracker" class="logo" />
+        <span id="trackingStatus" class="status-text" style="flex: 1; text-align: center;"></span>
+        <a href="/telescope" class="btn-sm" title="Control Telescope">🔭 Telescope</a>
+        <a href="/gallery" class="btn-sm" title="View Transit Image Gallery">📸 Gallery</a>
     </div>
 
-    <button class="secondary" onclick="savePosition()">Save position</button>
-    <button class="secondary" onclick="clearPosition()">Clear</button>
-    <br>
-    <button id="goBtn" class="primary" onclick="go();">Go</button>
-    <button id="autoBtn" class="primary" onclick="auto();">Auto</button>
+    <div class="controls-row">
+        <button id="goBtn" class="btn-primary" onclick="go();">Refresh</button>
+        <button id="autoBtn" class="btn-primary" onclick="auto();">Auto</button>
+        <span class="separator">|</span>
+        <div style="display: inline-block; text-align: center;">
+            <input type="number" id="latitude" placeholder="Lat" autocomplete="on" title="Latitude">
+            <div style="font-size: 0.7em; color: #aaa; margin-top: -2px;">Observer Lat</div>
+        </div>
+        <div style="display: inline-block; text-align: center;">
+            <input type="number" id="longitude" placeholder="Lon" autocomplete="on" title="Longitude">
+            <div style="font-size: 0.7em; color: #aaa; margin-top: -2px;">Observer Lon</div>
+        </div>
+        <div style="display: inline-block; text-align: center;">
+            <input type="number" id="elevation" placeholder="Elev" autocomplete="on" title="Elevation (m)">
+            <div style="font-size: 0.7em; color: #aaa; margin-top: -2px;">Elevation (m)</div>
+        </div>
+        <div style="display: inline-block; text-align: center;">
+            <input type="number" id="minAltitude" placeholder="Min°" autocomplete="on" title="Minimum horizon altitude (degrees)" style="width:50px;">
+            <div style="font-size: 0.7em; color: #aaa; margin-top: -2px;">Min angle (°)</div>
+        </div>
+        <div style="display: inline-block; text-align: center;">
+            <button class="btn-sm" onclick="savePosition()" title="Save position">💾</button>
+            <div style="font-size: 0.7em; color: #aaa; margin-top: -2px;">Save</div>
+        </div>
+        <div style="display: inline-block; text-align: center;">
+            <button class="btn-sm" onclick="clearPosition()" title="Clear" style="font-size: 1.2em;">✕</button>
+            <div style="font-size: 0.7em; color: #aaa; margin-top: -2px;">Clear</div>
+        </div>
+        <span class="separator">|</span>
+        <div style="display: inline-block; text-align: center;">
+            <button class="btn-sm" onclick="toggleMap()" title="Toggle map">🗺️</button>
+            <div style="font-size: 0.7em; color: #aaa; margin-top: -2px;">Map</div>
+        </div>
+        <div style="display: inline-block; text-align: center;">
+            <button class="btn-sm" onclick="requestNotificationPermission()" title="Enable alerts">🔔</button>
+            <div style="font-size: 0.7em; color: #aaa; margin-top: -2px;">Alerts</div>
+        </div>
+    </div>
+
+    <!-- Loading spinner -->
+    <div id="loadingSpinner" style="display: none; text-align: center; padding: 20px;">
+        <div style="display: inline-block; width: 40px; height: 40px; border: 4px solid #f3f3f3; border-top: 4px solid #3498db; border-radius: 50%; animation: spin 1s linear infinite;"></div>
+        <p style="margin-top: 10px; color: #666;">Loading flight data...</p>
+    </div>
+    <style>
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+    </style>
+
+    <p id="targetCoordinates" class="coords-text" style="margin: 5px 0;"></p>
+
+    <div id="mapContainer" style="display: none;">
+        <div style="display: flex; align-items: flex-start; gap: 0;">
+            <div id="map" style="height: 500px; flex: 1; margin: 20px 0;"></div>
+            <!-- Altitude Overlay -->
+            <div id="altitudeOverlay">
+                <div class="altitude-header">Aircraft Altitudes</div>
+                <div class="altitude-scale">
+                    <div class="altitude-tick" style="top: 0%;">45k</div>
+                    <div class="altitude-tick" style="top: 33.3%;">30k</div>
+                    <div class="altitude-tick" style="top: 66.6%;">15k</div>
+                    <div class="altitude-tick" style="top: 100%;">0</div>
+                </div>
+                <div id="altitudeBars"></div>
+            </div>
+        </div>
+        <div id="mapLegend" style="padding: 10px; background: #f0f0f0; margin-bottom: 10px;">
+            <strong>Legend:</strong>
+            <span style="margin-left: 10px;">📍 Observer</span>
+            <span style="margin-left: 10px;">✈️ Aircraft</span>
+            <span style="margin-left: 10px; color: #32CD32;">◆ High</span>
+            <span style="margin-left: 10px; color: #FF8C00;">◆ Medium</span>
+            <span style="margin-left: 10px; color: #FFD700;">◆ Low</span>
+            <span style="margin-left: 10px;"><span style="display: inline-block; width: 16px; height: 12px; border: 2px dashed red; vertical-align: middle;"></span> Bounding box</span>
+            <span style="margin-left: 10px;"><span style="display: inline-block; width: 20px; height: 4px; background: #FF4500; vertical-align: middle;"></span> Sun azimuth</span>
+            <span style="margin-left: 10px;"><span style="display: inline-block; width: 20px; height: 4px; background: #4169E1; vertical-align: middle;"></span> Moon azimuth</span>
+            <span style="margin-left: 10px;"><span style="display: inline-block; width: 20px; height: 3px; background: #32CD32; vertical-align: middle;"></span> Track</span>
+        </div>
+    </div>
 
     <div id="results">
         <table id="resultsTable">
             <thead>
                 <tr>
-                    <th>id</th>
+                    <th>target</th>
+                    <th>id (type)</th>
                     <th>origin</th>
                     <th>destination</th>
-                    <th>△alt</th>
-                    <th>△az</th>
                     <th>ETA</th>
-                    <th>target alt</th>
-                    <th>plane alt</th>
+                    <th>target angle</th>
+                    <th>plane angle</th>
+                    <th>△angle</th>
                     <th>target az</th>
                     <th>plane az</th>
-                    <th>elev change</th>
-                    <th>dir</th>
+                    <th>△az</th>
+                    <th>elev</th>
+                    <th>GPS alt (ft)</th>
+                    <th>hdg</th>
+                    <th>dist (nm)</th>
                 </tr>
             </thead>
             <tbody id="flightData">
             </tbody>
         </table>
     </div>
-    <br>
-    <h5 class="light-text-2">ETA is in minutes.</h5>
-    <h5 class="light-text-2">Possible transits are highlighted by color: green for high probability, orange for medium, and yellow for low.</h5>
-    <h5 id="autoGoNote"></h5>
+    <p id="autoGoNote" class="status-text"></p>
     <h3 class="alert" id="noResults"></h3>
     <h3 class="alert" id="targetUnderHorizon"></h3>
+
+    <footer class="attribution-footer">
+        <p><i>Created with deep appreciation for the idea and initial design by David Betancourt Montellano</i></p>
+        <p><i>Creado con profundo agradecimiento por la idea y el diseño inicial de David Betancourt Montellano</i></p>
+    </footer>
 
     <audio id="alertSound" src="{{ url_for('static', filename='sounds/tissman-alert1-maximum-distortion.mp3') }}" preload="auto">
     </audio>
 
+    <!-- Leaflet JS -->
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js?v=2"
+        crossorigin=""></script>
+    <!-- Leaflet Editable for draggable shapes -->
+    <script src="https://unpkg.com/leaflet-editable@1.2.0/src/Leaflet.Editable.js"></script>
+    <script src="{{ url_for('static', filename='map.js') }}" charset="utf-8"></script>
     <script src="{{ url_for('static', filename='app.js') }}" charset="utf-8"></script>
 
     <script>
         loadPosition();
+
+        // Auto-show results and map if position is saved
+        window.addEventListener('DOMContentLoaded', function() {
+            const savedLat = localStorage.getItem("latitude");
+            if (savedLat && savedLat !== "" && savedLat !== "null") {
+                // Position is saved, auto-fetch and show results
+                setTimeout(() => {
+                    go();  // This will toggle results on and fetch data
+                }, 100);
+            }
+        });
     </script>
 </body>
 </html>
