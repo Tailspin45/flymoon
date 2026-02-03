@@ -32,8 +32,15 @@ let selectedRowId = null;
 function flashTableRow(flightId) {
     const row = document.querySelector(`tr[data-flight-id="${flightId}"]`);
     if (row) {
+        // Toggle off if clicking the already-selected row
+        if (selectedRowId === flightId) {
+            row.classList.remove('selected-row');
+            selectedRowId = null;
+            return;
+        }
+
         // Remove highlight from previously selected row
-        if (selectedRowId && selectedRowId !== flightId) {
+        if (selectedRowId) {
             const prevRow = document.querySelector(`tr[data-flight-id="${selectedRowId}"]`);
             if (prevRow) {
                 prevRow.classList.remove('selected-row');

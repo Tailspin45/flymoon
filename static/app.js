@@ -1,5 +1,6 @@
 const COLUMN_NAMES = [
     "id",
+    "aircraft_type",
     "origin",
     "destination",
     "time",
@@ -181,8 +182,9 @@ function updateFlightRow(row, flight) {
         if (value === null || value === undefined) {
             cell.textContent = "";
         } else if (column === "id") {
-            const aircraftType = flight.aircraft_type || "";
-            cell.textContent = aircraftType && aircraftType !== "N/A" ? `${value} (${aircraftType})` : value;
+            cell.textContent = value;
+        } else if (column === "aircraft_type") {
+            cell.textContent = value === "N/A" ? "" : value;
         } else if (column === "time") {
             const totalSeconds = Math.round(value * 60);
             const mins = Math.floor(totalSeconds / 60);
@@ -630,9 +632,12 @@ function fetchFlights() {
                         startTracking(normalizedId);
                     }
                 } else {
-                    // Normal click: flash aircraft on map and show route/track
+                    // Normal click: flash aircraft on map, highlight row, and show route/track
                     if (typeof flashAircraftMarker === 'function') {
                         flashAircraftMarker(normalizedId);
+                    }
+                    if (typeof flashTableRow === 'function') {
+                        flashTableRow(normalizedId);
                     }
                     if (typeof toggleFlightRouteTrack === 'function') {
                         toggleFlightRouteTrack(item.fa_flight_id, normalizedId);
@@ -654,9 +659,11 @@ function fetchFlights() {
                 if (value === null || value === undefined) {
                     val.textContent = "";
                 } else if (column === "id") {
-                    // Show "ID (TYPE)" format
-                    const aircraftType = item.aircraft_type || "";
-                    val.textContent = aircraftType && aircraftType !== "N/A" ? `${value} (${aircraftType})` : value;
+                    // Show just the ID
+                    val.textContent = value;
+                } else if (column === "aircraft_type") {
+                    // Show aircraft type, hide "N/A"
+                    val.textContent = value === "N/A" ? "" : value;
                 } else if (column === "time") {
                     // Format ETA as mm:ss
                     const totalSeconds = Math.round(value * 60);

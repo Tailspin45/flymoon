@@ -7,7 +7,7 @@
     <!-- favicon -->
     <link rel="icon" type="image/x-icon" href="{{ url_for('static', filename='images/favicon.ico') }}">
     <!-- CSS -->
-    <link rel="stylesheet" href="{{ url_for('static', filename='main.css') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='main.css') }}?v=20260203d">
     <!-- Leaflet CSS -->
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css?v=2"
         crossorigin=""/>
@@ -107,20 +107,21 @@
             <thead>
                 <tr>
                     <th>target</th>
-                    <th>id (type)</th>
+                    <th>id</th>
+                    <th>type</th>
                     <th>origin</th>
                     <th>destination</th>
                     <th>ETA</th>
-                    <th>target angle</th>
-                    <th>plane angle</th>
+                    <th>target<br>angle</th>
+                    <th>plane<br>angle</th>
                     <th>△angle</th>
-                    <th>target az</th>
-                    <th>plane az</th>
+                    <th>target<br>az</th>
+                    <th>plane<br>az</th>
                     <th>△az</th>
                     <th>elev</th>
-                    <th>GPS alt (ft)</th>
+                    <th>GPS alt<br>(ft)</th>
                     <th>hdg</th>
-                    <th>dist (nm)</th>
+                    <th>dist<br>(nm)</th>
                 </tr>
             </thead>
             <tbody id="flightData">
@@ -144,8 +145,8 @@
         crossorigin=""></script>
     <!-- Leaflet Editable for draggable shapes -->
     <script src="https://unpkg.com/leaflet-editable@1.2.0/src/Leaflet.Editable.js"></script>
-    <script src="{{ url_for('static', filename='map.js') }}" charset="utf-8"></script>
-    <script src="{{ url_for('static', filename='app.js') }}" charset="utf-8"></script>
+    <script src="{{ url_for('static', filename='map.js') }}?v=20260203c" charset="utf-8"></script>
+    <script src="{{ url_for('static', filename='app.js') }}?v=20260203c" charset="utf-8"></script>
 
     <script>
         loadPosition();

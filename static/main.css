@@ -1,32 +1,136 @@
 body {
     text-align: center;
-    margin: auto 0;
+    margin: 0;
+    padding: 8px;
     background-color: #101418;
     color: white;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    font-size: 14px;
 }
 
+/* Compact header row */
+.header-row {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 12px;
+    flex-wrap: wrap;
+    margin-bottom: 4px;
+}
+
+.logo {
+    height: 40px;
+    width: auto;
+    vertical-align: middle;
+    margin-right: 10px;
+}
+
+.target-icon {
+    font-size: 1.4em;
+    cursor: pointer;
+}
+
+.target-label {
+    color: #aaa;
+    font-size: 0.9em;
+}
+
+.status-text {
+    color: #888;
+    font-size: 0.85em;
+}
+
+.coords-text {
+    color: #aaa;
+    font-size: 0.8em;
+    margin: 2px 0 8px 0;
+}
+
+/* Controls row */
+.controls-row {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    flex-wrap: wrap;
+    margin-bottom: 10px;
+}
+
+.controls-row input {
+    width: 70px;
+    padding: 4px 6px;
+    border: 1px solid #444;
+    border-radius: 3px;
+    background: #222;
+    color: white;
+    font-size: 0.85em;
+}
+
+.btn-sm {
+    padding: 4px 8px;
+    border: none;
+    border-radius: 3px;
+    background: #4e6060;
+    color: white;
+    cursor: pointer;
+    font-size: 0.9em;
+}
+
+.btn-sm:hover {
+    background: #5a7070;
+}
+
+.btn-primary {
+    padding: 6px 14px;
+    border: none;
+    border-radius: 3px;
+    background: #039c9c;
+    color: white;
+    cursor: pointer;
+    font-size: 0.95em;
+    font-weight: bold;
+}
+
+.btn-primary:hover {
+    background: #04b5b5;
+}
+
+.separator {
+    color: #444;
+    margin: 0 4px;
+}
+
+/* Results table */
 #results {
     overflow-x: auto;
-    margin: 8px;
+    margin: 8px 0;
+    display: none;  /* Hidden by default */
 }
 
 #resultsTable {
     border-collapse: collapse;
     border-spacing: 0;
     width: 100%;
+    font-size: 0.85em;
 }
 
 #resultsTable th:first-child {
-    border-top-left-radius: 10px;
+    border-top-left-radius: 6px;
 }
 
 #resultsTable th:last-child {
-    border-top-right-radius: 10px;
+    border-top-right-radius: 6px;
 }
 
 #resultsTable th, td {
     text-align: left;
-    padding: 6px;
+    padding: 4px 6px;
+}
+
+/* Right-align numeric columns (ETA and all angle/altitude/distance values) */
+#resultsTable th:nth-child(n+6),
+#resultsTable td:nth-child(n+6) {
+    text-align: right;
 }
 
 #resultsTable tr {
@@ -34,53 +138,23 @@ body {
     color: black;
 }
 
-.primary {
-    font-size: 1.5em;
-    border-radius: 4px;
-    background-color: #039c9c;
-    border: none;
-    color: white;
-    padding: 10px;
-    text-align: center;
-    text-decoration: none;
-    display: inline-block;
-    margin-top: 5px;
-    margin-bottom: 20px;
-    cursor: pointer;
-}
-
-.secondary {
-    font-size: 1em;
-    border-radius: 3px;
+#resultsTable thead > tr {
     background-color: #4e6060;
-    border: none;
     color: white;
-    padding: 5px;
-    text-align: center;
-    text-decoration: none;
-    display: inline-block;
-    margin-top: 5px;
-    margin-bottom: 15px;
-    cursor: pointer;
 }
 
 .alert {
     background-color: rgb(234, 67, 101);
     font-weight: bold;
     color: rgb(255, 255, 255);
-}
-
-#resultsTable thead > tr {
-    background-color: #4e6060;
-    color: white;
-}
-
-#targetIcon {
-    cursor: pointer;
+    padding: 4px 8px;
+    border-radius: 3px;
+    display: inline-block;
+    margin: 4px;
 }
 
 .possibleTransitHighlightHigh {
-    background-color: rgb(146, 254, 184) !important;
+    background-color: rgb(0, 230, 118) !important;  /* Bright green for HIGH */
 }
 
 .possibleTransitHighlightMedium {
@@ -91,42 +165,241 @@ body {
     background-color: rgb(236, 224, 113) !important;
 }
 
-.light-text {
-    color: rgb(213, 213, 213);
-    font-weight: normal;
-    font-style: oblique;
+/* Map styles */
+#map {
+    position: relative;
+    z-index: 1;
+    height: 500px;
+    width: 100%;
+    background: #ddd;
 }
 
-.light-text-2 {
-    color: rgb(213, 213, 213);
-    font-weight: normal;
+#mapContainer {
+    margin: 20px auto;
+    max-width: 1200px;
 }
 
-.center-div {
+#mapLegend {
+    border-radius: 4px;
+    color: #333;
+}
+
+/* Ensure Leaflet container renders properly */
+.leaflet-container {
+    height: 100%;
+    width: 100%;
+}
+
+/* Leaflet icon overrides for dark theme */
+.leaflet-div-icon {
+    background: transparent;
+    border: none;
+}
+
+.observer-icon,
+.aircraft-icon,
+.arrowhead-icon {
+    background: transparent;
+    border: none;
+}
+
+/* Flash animation for table rows - 3 distinct flashes with clear gaps */
+@keyframes flash-row {
+    0% { opacity: 1; }
+    10% { opacity: 0.15; }
+    15% { opacity: 1; }
+    40% { opacity: 0.15; }
+    45% { opacity: 1; }
+    70% { opacity: 0.15; }
+    75% { opacity: 1; }
+    100% { opacity: 1; }
+}
+
+.flash-row {
+    animation: flash-row 1.2s linear;
+}
+
+/* Persistent highlight for selected aircraft row */
+#resultsTable tbody tr.selected-row {
+    border-left: 5px solid #00BFFF !important;
+    background-color: #CCE5FF !important;
+    box-shadow: none !important;
+}
+
+/* Flash animation for map markers - 3 distinct flashes with clear gaps */
+@keyframes flash-marker {
+    0% {
+        transform: scale(1);
+        opacity: 1;
+    }
+    10% {
+        transform: scale(2);
+        opacity: 1;
+    }
+    15% {
+        transform: scale(1);
+        opacity: 1;
+    }
+    40% {
+        transform: scale(2);
+        opacity: 1;
+    }
+    45% {
+        transform: scale(1);
+        opacity: 1;
+    }
+    70% {
+        transform: scale(2);
+        opacity: 1;
+    }
+    75% {
+        transform: scale(1);
+        opacity: 1;
+    }
+    100% {
+        transform: scale(1);
+        opacity: 1;
+    }
+}
+
+.flash-marker {
+    animation: flash-marker 1.2s linear;
+}
+
+/* Clickable table rows */
+#resultsTable tbody tr {
+    cursor: pointer;
+}
+
+#resultsTable tbody tr:hover {
+    filter: brightness(0.9);
+}
+
+/* Tracking mode indicator */
+.tracking-row {
+    outline: 3px solid cyan;
+    outline-offset: -3px;
+    animation: tracking-pulse 1s infinite;
+}
+
+@keyframes tracking-pulse {
+    0%, 100% { outline-color: cyan; }
+    50% { outline-color: transparent; }
+}
+
+/* Attribution footer */
+.attribution-footer {
+    margin-top: 40px;
+    padding: 20px 10px;
+    text-align: center;
+    color: #888;
+    font-size: 0.75em;
+    border-top: 1px solid #333;
+}
+
+.attribution-footer p {
+    margin: 5px 0;
+}
+
+/* Responsive - stack on mobile */
+@media (max-width: 600px) {
+    .attribution-footer {
+        font-size: 0.7em;
+    }
+
+    .attribution-footer p {
+        margin: 8px 0;
+    }
+}
+
+/* Altitude Overlay */
+#altitudeOverlay {
+    position: relative;
+    width: 60px;
+    height: 500px;
+    background: rgba(26, 26, 26, 0.95);
+    border-left: 2px solid #444;
+    padding: 5px;
+    margin-top: 20px;
+    margin-bottom: 20px;
+    flex-shrink: 0;
+    align-self: flex-start;
+}
+
+.altitude-header {
+    color: #ccc;
+    font-size: 0.6em;
+    font-weight: bold;
+    margin-bottom: 5px;
+    text-align: center;
+    writing-mode: vertical-rl;
+    text-orientation: mixed;
+}
+
+.altitude-scale {
+    position: absolute;
+    left: 3px;
+    top: 30px;
+    bottom: 10px;
+    width: 20px;
+    border-left: 1px solid #666;
+}
+
+.altitude-tick {
+    position: absolute;
+    left: 2px;
+    color: #888;
+    font-size: 0.55em;
+    transform: translateY(-50%);
+}
+
+#altitudeBars {
+    margin-left: 25px;
+    position: relative;
+    height: calc(100% - 30px);
+}
+
+.altitude-bar {
+    position: relative;
+    height: 18px;
+    margin-bottom: 3px;
+    border-radius: 3px;
     display: flex;
-    justify-content: center;
     align-items: center;
+    justify-content: space-between;
+    padding: 0 4px;
+    cursor: pointer;
+    transition: transform 0.2s;
 }
 
-.form-container {
-    display: flex;
-    flex-direction: column;
-    align-items: flex-start;
-    max-width: 300px;
+.altitude-bar:hover {
+    transform: translateX(-5px);
+    filter: brightness(1.2);
 }
 
-.form-group {
-    display: flex;
-    align-items: center;
-    margin-bottom: 15px;
+.altitude-bar-id {
+    font-size: 0.65em;
+    color: white;
+    font-weight: bold;
+    text-shadow: 0 0 3px black;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 50px;
 }
 
-.form-group label {
-    flex: 1;
-    min-width: 80px;
-    text-align: left;
+.altitude-bar-value {
+    font-size: 0.6em;
+    color: white;
+    text-shadow: 0 0 3px black;
 }
 
-.form-group input {
-    flex: 2;
+/* Mobile responsive */
+@media (max-width: 768px) {
+    #altitudeOverlay {
+        width: 50px;
+    }
+    .altitude-tick {
+        font-size: 0.5em;
+    }
 }
