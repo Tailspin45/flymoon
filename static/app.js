@@ -513,6 +513,10 @@ function fetchFlights() {
     fetch(endpoint_url)
     .then(response => response.json())
     .then(data => {
+        // Record update time
+        window.lastFlightUpdateTime = Date.now();
+        updateLastUpdateDisplay();
+
         // Hide loading spinner
         document.getElementById("loadingSpinner").style.display = "none";
         document.getElementById("results").style.display = "block";
@@ -947,3 +951,32 @@ function requestNotificationPermission() {
         }
     });
 }
+// Last update display
+function updateLastUpdateDisplay() {
+    const elem = document.getElementById('lastUpdateStatus');
+    if (!elem || !window.lastFlightUpdateTime) {
+        return;
+    }
+
+    // Get refresh frequency from localStorage (default 6 minutes)
+    const freq = parseInt(localStorage.getItem("frequency")) || 6;
+    const refreshIntervalMs = freq * 60 * 1000;
+
+    const now = Date.now();
+    const elapsedMs = now - window.lastFlightUpdateTime;
+    const remainingMs = Math.max(0, refreshIntervalMs - elapsedMs);
+    const remainingSeconds = Math.floor(remainingMs / 1000);
+
+    const minutes = Math.floor(remainingSeconds / 60);
+    let seconds = remainingSeconds % 60;
+
+    // Round seconds down to nearest 15-second interval
+    seconds = Math.floor(seconds / 15) * 15;
+
+    const timeStr = String(minutes).padStart(2, '0') + ':' + String(seconds).padStart(2, '0');
+
+    elem.textContent = 'Time until next update is ' + timeStr;
+}
+
+// Update display every 15 seconds
+setInterval(updateLastUpdateDisplay, 15000);

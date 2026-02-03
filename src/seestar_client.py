@@ -25,13 +25,14 @@ class SeestarClient:
     # Default connection parameters
     DEFAULT_PORT = 4700
     DEFAULT_TIMEOUT = 10
+    DEFAULT_HEARTBEAT_INTERVAL = 3  # Ping every 3 seconds to prevent timeout (matches seestar_alp)
 
     def __init__(
         self,
         host: str,
         port: int = DEFAULT_PORT,
         timeout: int = DEFAULT_TIMEOUT,
-        heartbeat_interval: int = 30,
+        heartbeat_interval: int = DEFAULT_HEARTBEAT_INTERVAL,
     ):
         """
         Initialize Seestar client.
@@ -45,7 +46,7 @@ class SeestarClient:
         timeout : int
             Socket timeout in seconds (default: 10)
         heartbeat_interval : int
-            Seconds between heartbeat messages (default: 30)
+            Seconds between heartbeat messages (default: 3)
         """
         self.host = host
         self.port = port
@@ -59,6 +60,7 @@ class SeestarClient:
         self._message_id = 0
         self._heartbeat_thread: Optional[threading.Thread] = None
         self._heartbeat_running = False
+        self._socket_lock = threading.Lock()  # Prevent concurrent socket access
 
         logger.info(f"Initialized Seestar client for {host}:{port}")
 
@@ -98,73 +100,81 @@ class SeestarClient:
         if not self._connected or not self.socket:
             raise RuntimeError("Not connected to Seestar")
 
-        # Build Seestar JSON message
-        # Note: Seestar does NOT use standard JSON-RPC 2.0 format for requests
-        # The "jsonrpc" field only appears in responses, not requests
-        message = {
-            "method": method,
-            "id": self._get_next_id(),
-        }
+        # Use lock to prevent concurrent socket access (heartbeat vs commands)
+        with self._socket_lock:
+            # Build Seestar JSON message
+            # Note: Seestar does NOT use standard JSON-RPC 2.0 format for requests
+            # The "jsonrpc" field only appears in responses, not requests
+            message = {
+                "method": method,
+                "id": self._get_next_id(),
+            }
 
-        if params is not None:
-            message["params"] = params
+            if params is not None:
+                message["params"] = params
 
-        try:
-            # Send message with \r\n delimiter
-            data = json.dumps(message) + "\r\n"
-            self.socket.sendall(data.encode())
-            logger.debug(f"Sent: {method} (id={message['id']})")
+            try:
+                # Send message with \r\n delimiter
+                data = json.dumps(message) + "\r\n"
+                self.socket.sendall(data.encode())
+                logger.debug(f"Sent: {method} (id={message['id']})")
 
-            if expect_response:
-                # Seestar sends multiple types of messages:
-                # 1. Responses with "jsonrpc" field (what we want)
-                # 2. Event messages with "Event" field (unsolicited)
-                # We need to loop and skip Event messages until we find our response
+                if expect_response:
+                    # Seestar sends multiple types of messages:
+                    # 1. Responses with "jsonrpc" field (what we want)
+                    # 2. Event messages with "Event" field (unsolicited)
+                    # We need to loop and skip Event messages until we find our response
 
-                start_time = time.time()
-                buffer = ""
+                    start_time = time.time()
+                    buffer = ""
 
-                while time.time() - start_time < self.timeout:
-                    # Receive data in chunks
-                    chunk = self.socket.recv(4096).decode()
-                    buffer += chunk
+                    while time.time() - start_time < self.timeout:
+                        # Receive data in chunks
+                        chunk = self.socket.recv(4096).decode()
+                        buffer += chunk
 
-                    # Process complete messages (delimited by \r\n)
-                    while "\r\n" in buffer:
-                        line, buffer = buffer.split("\r\n", 1)
-                        if not line.strip():
-                            continue
-
-                        try:
-                            result = json.loads(line)
-
-                            # Skip Event messages
-                            if "Event" in result:
-                                logger.debug(f"Skipping event: {result.get('Event')}")
+                        # Process complete messages (delimited by \r\n)
+                        while "\r\n" in buffer:
+                            line, buffer = buffer.split("\r\n", 1)
+                            if not line.strip():
                                 continue
 
-                            # Check if this is our response
-                            if result.get("id") == message["id"]:
-                                if "error" in result:
-                                    error = result["error"]
-                                    raise RuntimeError(
-                                        f"Seestar error: {error.get('message', 'Unknown error')}"
-                                    )
-                                return result.get("result")
+                            try:
+                                result = json.loads(line)
 
-                        except json.JSONDecodeError as e:
-                            logger.warning(f"Failed to parse message: {line[:100]}")
-                            continue
+                                # Skip Event messages
+                                if "Event" in result:
+                                    logger.debug(f"Skipping event: {result.get('Event')}")
+                                    continue
 
-                # If we get here, we timed out waiting for response
-                raise RuntimeError(f"Timeout waiting for response to {method}")
+                                # Check if this is our response
+                                if result.get("id") == message["id"]:
+                                    if "error" in result:
+                                        error = result["error"]
+                                        raise RuntimeError(
+                                            f"Seestar error: {error.get('message', 'Unknown error')}"
+                                        )
+                                    return result.get("result")
 
-            return None
+                            except json.JSONDecodeError as e:
+                                logger.warning(f"Failed to parse message: {line[:100]}")
+                                continue
 
-        except socket.error as e:
-            logger.error(f"Socket error: {e}")
-            self._connected = False
-            raise RuntimeError(f"Communication failed: {e}")
+                    # If we get here, we timed out waiting for response
+                    raise RuntimeError(f"Timeout waiting for response to {method}")
+
+                return None
+
+            except socket.timeout:
+                # Socket timeout - command took too long, but connection may still be alive
+                logger.warning(f"Command timeout: {method}")
+                raise RuntimeError(f"timed out")
+
+            except socket.error as e:
+                # Actual socket error - connection is broken
+                logger.error(f"Socket error: {e}")
+                self._connected = False
+                raise RuntimeError(f"Communication failed: {e}")
 
     def _heartbeat_loop(self):
         """Background thread that sends periodic heartbeat messages."""
@@ -331,11 +341,14 @@ class SeestarClient:
 
             self._recording = True
             self._recording_start_time = datetime.now()
-            logger.info(f"Started video recording (MP4 format)")
+            logger.info(f"Started video recording (MP4 format, duration: {duration_seconds}s)")
 
-            # TODO: If duration specified, schedule auto-stop
-            # if duration_seconds:
-            #     threading.Timer(duration_seconds, self.stop_recording).start()
+            # If duration specified, schedule auto-stop
+            if duration_seconds:
+                timer = threading.Timer(duration_seconds, self.stop_recording)
+                timer.daemon = True
+                timer.start()
+                logger.info(f"⏱️ Auto-stop scheduled in {duration_seconds}s")
 
             return True
 
@@ -654,9 +667,10 @@ def create_client_from_env() -> Optional[SeestarClient]:
     try:
         port = int(os.getenv("SEESTAR_PORT", str(SeestarClient.DEFAULT_PORT)))
         timeout = int(os.getenv("SEESTAR_TIMEOUT", str(SeestarClient.DEFAULT_TIMEOUT)))
+        heartbeat = int(os.getenv("SEESTAR_HEARTBEAT_INTERVAL", str(SeestarClient.DEFAULT_HEARTBEAT_INTERVAL)))
 
-        client = SeestarClient(host=host, port=port, timeout=timeout)
-        logger.info(f"Created Seestar client from environment: {host}:{port}")
+        client = SeestarClient(host=host, port=port, timeout=timeout, heartbeat_interval=heartbeat)
+        logger.info(f"Created Seestar client from environment: {host}:{port} (heartbeat: {heartbeat}s)")
         return client
 
     except Exception as e:

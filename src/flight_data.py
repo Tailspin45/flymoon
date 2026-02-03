@@ -5,6 +5,10 @@ from http import HTTPStatus
 from typing import List
 
 import requests
+import urllib3
+
+# Suppress SSL warnings when bypassing verification
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 from src.position import AreaBoundingBox
 
@@ -21,7 +25,9 @@ def get_flight_data(
         f"{area_bbox.lat_upper_right}+{area_bbox.long_upper_right}%22&max_pages=1"
     )
 
-    response = requests.get(url=url, headers=headers)
+    # TEMPORARY: Bypass SSL verification due to expired certificate
+    # TODO: Remove verify=False once FlightAware certificate is renewed
+    response = requests.get(url=url, headers=headers, verify=False)
 
     if response.status_code == HTTPStatus.OK:
         return response.json()
@@ -35,6 +41,8 @@ def parse_fligh_data(flight_data: dict):
 
     return {
         "name": flight_data["ident"],
+        "aircraft_type": flight_data.get("aircraft_type", "N/A"),
+        "fa_flight_id": flight_data.get("fa_flight_id", ""),
         "origin": flight_data["origin"]["city"],
         "destination": (
             "N/D"
@@ -45,7 +53,8 @@ def parse_fligh_data(flight_data: dict):
         "longitude": flight_data["last_position"]["longitude"],
         "direction": flight_data["last_position"]["heading"],
         "speed": int(flight_data["last_position"]["groundspeed"]) * 1.852,
-        "elevation": int(flight_data["last_position"]["altitude"]) * 100 * 0.3048,
+        "elevation": int(flight_data["last_position"]["altitude"]) * 0.3048 * 100,  # hundreds of feet to meters (for calculations)
+        "elevation_feet": int(flight_data["last_position"]["altitude"]) * 100,  # API returns hundreds of feet, multiply by 100
         "elevation_change": flight_data["last_position"]["altitude_change"],
     }
 
@@ -56,11 +65,20 @@ def load_existing_flight_data(path: str) -> dict:
 
 
 def sort_results(data: List[dict]) -> List[dict]:
-    """Sort data flight results considering if it's possible transit, ETA and time."""
+    """Sort data flight results considering if it's possible transit, angular separation, ETA and time."""
 
-    def _custom_sort(a: dict) -> bool:
-        total_diff = a["alt_diff"] + a["az_diff"] if a["is_possible_transit"] else 100
-        return (a["is_possible_transit"], -1 * total_diff, a["time"], a["id"])
+    def _custom_sort(a: dict) -> tuple:
+        # Use angular_separation if available, otherwise fallback to alt+az diff, or 100 for no transit
+        if a["is_possible_transit"] and a.get("angular_separation") is not None:
+            total_diff = a["angular_separation"]
+        elif a["is_possible_transit"] and a.get("alt_diff") is not None and a.get("az_diff") is not None:
+            total_diff = a["alt_diff"] + a["az_diff"]
+        else:
+            total_diff = 100  # No transit
+
+        # Sort by: is_possible_transit (descending), total_diff (ascending - smaller is better), time, id
+        time_val = a["time"] if a["time"] is not None else 999
+        return (a["is_possible_transit"], -1 * total_diff, time_val, a["id"])
 
     return sorted(data, key=_custom_sort, reverse=True)
 

@@ -7,7 +7,7 @@
     <!-- favicon -->
     <link rel="icon" type="image/x-icon" href="{{ url_for('static', filename='images/favicon.ico') }}">
     <!-- CSS -->
-    <link rel="stylesheet" href="{{ url_for('static', filename='main.css') }}?v=20260203d">
+    <link rel="stylesheet" href="{{ url_for('static', filename='main.css') }}?v=20260203k">
     <!-- Leaflet CSS -->
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css?v=2"
         crossorigin=""/>
@@ -15,7 +15,10 @@
 <body>
     <div class="header-row">
         <img src="{{ url_for('static', filename='images/logo.svg') }}" alt="Flymoon Transit Tracker" class="logo" />
-        <span id="trackingStatus" class="status-text" style="flex: 1; text-align: center;"></span>
+        <div style="flex: 1; text-align: center;">
+            <span id="trackingStatus" class="status-text"></span>
+            <div id="lastUpdateStatus" style="font-size: 0.85em; color: #888; margin-top: 4px;"></div>
+        </div>
         <a href="/telescope" class="btn-sm" title="Control Telescope">🔭 Telescope</a>
         <a href="/gallery" class="btn-sm" title="View Transit Image Gallery">📸 Gallery</a>
     </div>
@@ -145,8 +148,8 @@
         crossorigin=""></script>
     <!-- Leaflet Editable for draggable shapes -->
     <script src="https://unpkg.com/leaflet-editable@1.2.0/src/Leaflet.Editable.js"></script>
-    <script src="{{ url_for('static', filename='map.js') }}?v=20260203c" charset="utf-8"></script>
-    <script src="{{ url_for('static', filename='app.js') }}?v=20260203c" charset="utf-8"></script>
+    <script src="{{ url_for('static', filename='map.js') }}?v=20260203k" charset="utf-8"></script>
+    <script src="{{ url_for('static', filename='app.js') }}?v=20260203k" charset="utf-8"></script>
 
     <script>
         loadPosition();

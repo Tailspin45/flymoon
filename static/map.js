@@ -7,7 +7,7 @@ let boundingBoxLayer = null;
 let azimuthArrows = {};  // Store arrows by target name
 let aircraftMarkers = {};
 let mapInitialized = false;
-let boundingBoxUserEdited = false;
+let boundingBoxUserEdited = localStorage.getItem('boundingBoxUserEdited') === 'true';
 let aircraftRouteCache = {};  // Cache fetched routes/tracks
 let currentRouteLayer = null;  // Currently displayed route/track
 
@@ -128,6 +128,17 @@ function updateBoundingBox(latLowerLeft, lonLowerLeft, latUpperRight, lonUpperRi
         return;
     }
 
+    // Use saved custom bounding box if it exists
+    const savedBox = localStorage.getItem('customBoundingBox');
+    if (boundingBoxUserEdited && savedBox) {
+        const customBox = JSON.parse(savedBox);
+        latLowerLeft = customBox.latLowerLeft;
+        lonLowerLeft = customBox.lonLowerLeft;
+        latUpperRight = customBox.latUpperRight;
+        lonUpperRight = customBox.lonUpperRight;
+        window.lastBoundingBox = customBox;
+    }
+
     // Remove existing bounding box
     if (boundingBoxLayer) {
         map.removeLayer(boundingBoxLayer);
@@ -153,6 +164,7 @@ function updateBoundingBox(latLowerLeft, lonLowerLeft, latUpperRight, lonUpperRi
         // Track when user edits the bounding box
         boundingBoxLayer.on('editable:vertex:dragend', function() {
             boundingBoxUserEdited = true;
+            localStorage.setItem('boundingBoxUserEdited', 'true');
 
             // Save the new bounding box coordinates
             const bounds = boundingBoxLayer.getBounds();
@@ -163,13 +175,17 @@ function updateBoundingBox(latLowerLeft, lonLowerLeft, latUpperRight, lonUpperRi
                 lonUpperRight: bounds.getEast()
             };
             window.lastBoundingBox = newBoundingBox;
-            console.log("Bounding box updated:", newBoundingBox);
+            localStorage.setItem('customBoundingBox', JSON.stringify(newBoundingBox));
+            console.log("Bounding box updated and saved:", newBoundingBox);
+
+            // Center map on the new bounding box with minimal margin
+            map.fitBounds(bounds, { padding: [5, 5] });
         });
     }
 
-    // Fit map to show both observer and bounding box
+    // Center map on bounding box (on launch and programmatic changes) with minimal margin
     const extendedBounds = L.latLngBounds(bounds);
-    map.fitBounds(extendedBounds, { padding: [50, 50] });
+    map.fitBounds(extendedBounds, { padding: [5, 5] });
 }
 
 function clearAzimuthArrows() {
