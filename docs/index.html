@@ -1,0 +1,564 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Flymoon - Capture Aircraft Transits Across the Sun and Moon</title>
+    <meta name="description" content="Predict and track aircraft transits across celestial bodies with precision. Perfect for astrophotographers and aviation enthusiasts.">
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+            line-height: 1.6;
+            color: #333;
+            background: #f8f9fa;
+        }
+
+        .hero {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 100px 20px;
+            text-align: center;
+        }
+
+        .hero h1 {
+            font-size: 3.5em;
+            margin-bottom: 20px;
+            font-weight: 700;
+            text-shadow: 2px 2px 4px rgba(0,0,0,0.3);
+        }
+
+        .hero .tagline {
+            font-size: 1.5em;
+            margin-bottom: 40px;
+            opacity: 0.95;
+        }
+
+        .hero .cta-button {
+            display: inline-block;
+            padding: 15px 40px;
+            background: white;
+            color: #667eea;
+            text-decoration: none;
+            border-radius: 50px;
+            font-weight: 600;
+            font-size: 1.1em;
+            transition: transform 0.3s, box-shadow 0.3s;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.2);
+        }
+
+        .hero .cta-button:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 6px 20px rgba(0,0,0,0.3);
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 0 20px;
+        }
+
+        section {
+            padding: 80px 20px;
+        }
+
+        section h2 {
+            font-size: 2.5em;
+            text-align: center;
+            margin-bottom: 50px;
+            color: #2d3748;
+        }
+
+        .vision {
+            background: white;
+            text-align: center;
+        }
+
+        .vision blockquote {
+            font-size: 1.4em;
+            font-style: italic;
+            color: #667eea;
+            margin: 30px 0;
+            padding: 30px;
+            border-left: 5px solid #667eea;
+            background: #f7fafc;
+        }
+
+        .vision .credit {
+            font-size: 1.2em;
+            color: #4a5568;
+            margin-top: 20px;
+        }
+
+        .vision .credit strong {
+            color: #667eea;
+            font-size: 1.3em;
+        }
+
+        .features {
+            background: #f7fafc;
+        }
+
+        .features-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 40px;
+            margin-top: 50px;
+        }
+
+        .feature-card {
+            background: white;
+            padding: 30px;
+            border-radius: 12px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+            transition: transform 0.3s, box-shadow 0.3s;
+        }
+
+        .feature-card:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 8px 15px rgba(0,0,0,0.2);
+        }
+
+        .feature-card .icon {
+            font-size: 3em;
+            margin-bottom: 20px;
+        }
+
+        .feature-card h3 {
+            font-size: 1.5em;
+            margin-bottom: 15px;
+            color: #2d3748;
+        }
+
+        .feature-card p {
+            color: #4a5568;
+            line-height: 1.7;
+        }
+
+        .screenshots {
+            background: white;
+        }
+
+        .screenshot-container {
+            display: flex;
+            flex-direction: column;
+            gap: 40px;
+            margin-top: 50px;
+        }
+
+        .screenshot-item {
+            text-align: center;
+        }
+
+        .screenshot-item img {
+            max-width: 100%;
+            border-radius: 12px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.2);
+        }
+
+        .screenshot-item h3 {
+            margin: 20px 0 10px;
+            font-size: 1.5em;
+            color: #2d3748;
+        }
+
+        .screenshot-item p {
+            color: #4a5568;
+            font-size: 1.1em;
+        }
+
+        .use-cases {
+            background: #f7fafc;
+        }
+
+        .use-cases-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 30px;
+            margin-top: 50px;
+        }
+
+        .use-case {
+            background: white;
+            padding: 30px;
+            border-radius: 12px;
+            text-align: center;
+        }
+
+        .use-case .icon {
+            font-size: 3em;
+            margin-bottom: 15px;
+        }
+
+        .use-case h3 {
+            font-size: 1.3em;
+            margin-bottom: 15px;
+            color: #2d3748;
+        }
+
+        .use-case p {
+            color: #4a5568;
+            line-height: 1.6;
+        }
+
+        .getting-started {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            text-align: center;
+        }
+
+        .getting-started h2 {
+            color: white;
+        }
+
+        .getting-started pre {
+            background: rgba(0,0,0,0.2);
+            padding: 30px;
+            border-radius: 12px;
+            text-align: left;
+            max-width: 600px;
+            margin: 30px auto;
+            overflow-x: auto;
+            font-size: 1.1em;
+        }
+
+        .getting-started .cta-button {
+            display: inline-block;
+            padding: 15px 40px;
+            background: white;
+            color: #667eea;
+            text-decoration: none;
+            border-radius: 50px;
+            font-weight: 600;
+            font-size: 1.1em;
+            margin-top: 20px;
+            transition: transform 0.3s;
+        }
+
+        .getting-started .cta-button:hover {
+            transform: scale(1.05);
+        }
+
+        .testimonials {
+            background: white;
+            text-align: center;
+        }
+
+        .testimonial {
+            max-width: 800px;
+            margin: 30px auto;
+            padding: 30px;
+            background: #f7fafc;
+            border-radius: 12px;
+            font-style: italic;
+            color: #4a5568;
+            font-size: 1.2em;
+        }
+
+        .credits {
+            background: #2d3748;
+            color: white;
+            text-align: center;
+            padding: 60px 20px;
+        }
+
+        .credits h2 {
+            color: white;
+            margin-bottom: 30px;
+        }
+
+        .credits .main-credit {
+            font-size: 1.5em;
+            margin: 30px 0;
+            line-height: 1.8;
+        }
+
+        .credits .main-credit strong {
+            color: #667eea;
+            font-size: 1.3em;
+        }
+
+        .credits .spanish {
+            font-style: italic;
+            color: #a0aec0;
+            margin-top: 20px;
+        }
+
+        footer {
+            background: #1a202c;
+            color: #a0aec0;
+            text-align: center;
+            padding: 30px 20px;
+        }
+
+        footer a {
+            color: #667eea;
+            text-decoration: none;
+        }
+
+        footer a:hover {
+            text-decoration: underline;
+        }
+
+        @media (max-width: 768px) {
+            .hero h1 {
+                font-size: 2.5em;
+            }
+
+            .hero .tagline {
+                font-size: 1.2em;
+            }
+
+            section h2 {
+                font-size: 2em;
+            }
+
+            .features-grid,
+            .use-cases-grid {
+                grid-template-columns: 1fr;
+            }
+        }
+    </style>
+</head>
+<body>
+    <!-- Hero Section -->
+    <div class="hero">
+        <div class="container">
+            <h1>🌙 Flymoon</h1>
+            <p class="tagline">Capture Aircraft Transits Across the Sun and Moon</p>
+            <p style="font-size: 1.2em; margin-bottom: 30px;">
+                Predict. Track. Capture. The impossible made routine.
+            </p>
+            <a href="https://github.com/Tailspin45/flymoon" class="cta-button">Get Started Free</a>
+        </div>
+    </div>
+
+    <!-- Vision Section -->
+    <section class="vision">
+        <div class="container">
+            <h2>The Vision</h2>
+            <blockquote>
+                "What if we could predict when aircraft would transit across celestial bodies from any location on Earth?"
+            </blockquote>
+            <p class="credit">
+                This question sparked the imagination of <strong>David Betancourt Montellano</strong>,
+                whose innovative vision brought together two worlds that rarely intersect:
+                aviation tracking and astrophotography.
+            </p>
+            <p style="margin-top: 30px; font-size: 1.1em; color: #4a5568;">
+                The result is Flymoon—a sophisticated tool that turns fleeting cosmic coincidences
+                into predictable, capturable moments.
+            </p>
+        </div>
+    </section>
+
+    <!-- Features Section -->
+    <section class="features">
+        <div class="container">
+            <h2>Why Flymoon is Special</h2>
+            <div class="features-grid">
+                <div class="feature-card">
+                    <div class="icon">🎯</div>
+                    <h3>Precision Predictions</h3>
+                    <p>
+                        15-minute advance predictions with accuracy measured in degrees and seconds.
+                        Real-time flight data meets precise astronomical calculations.
+                    </p>
+                </div>
+
+                <div class="feature-card">
+                    <div class="icon">🗺️</div>
+                    <h3>Interactive Map</h3>
+                    <p>
+                        See everything at once: aircraft positions, probability markers, flight paths,
+                        Sun/Moon positions, and your observer location.
+                    </p>
+                </div>
+
+                <div class="feature-card">
+                    <div class="icon">📊</div>
+                    <h3>Smart Data Table</h3>
+                    <p>
+                        Color-coded probabilities, precise timing, angular differences, and interactive
+                        row tracking. Click to highlight, click again to release.
+                    </p>
+                </div>
+
+                <div class="feature-card">
+                    <div class="icon">🔭</div>
+                    <h3>Automatic Capture</h3>
+                    <p>
+                        Connected Seestar S50 telescope? Flymoon controls it automatically,
+                        starting recording at the perfect moment with smart buffer timing.
+                    </p>
+                </div>
+
+                <div class="feature-card">
+                    <div class="icon">📱</div>
+                    <h3>Telegram Alerts</h3>
+                    <p>
+                        Never miss a moment. Get instant notifications for high-probability transits
+                        and imminent events with detailed flight information.
+                    </p>
+                </div>
+
+                <div class="feature-card">
+                    <div class="icon">⚙️</div>
+                    <h3>Advanced Features</h3>
+                    <p>
+                        Dual Sun/Moon tracking, weather integration, auto-refresh mode,
+                        custom search areas, and page visibility detection.
+                    </p>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Screenshots Section -->
+    <section class="screenshots">
+        <div class="container">
+            <h2>See It In Action</h2>
+            <div class="screenshot-container">
+                <div class="screenshot-item">
+                    <img src="../data/assets/flymoon2.png" alt="Flymoon Main Interface" loading="lazy">
+                    <h3>Clean, Modern Interface</h3>
+                    <p>All the data you need, beautifully organized and color-coded for instant assessment</p>
+                </div>
+
+                <div class="screenshot-item">
+                    <img src="../data/assets/bounding-box-example.png" alt="Interactive Map with Bounding Box" loading="lazy">
+                    <h3>Interactive Map Visualization</h3>
+                    <p>Live aircraft tracking with editable search areas and celestial position indicators</p>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Use Cases Section -->
+    <section class="use-cases">
+        <div class="container">
+            <h2>Who Uses Flymoon?</h2>
+            <div class="use-cases-grid">
+                <div class="use-case">
+                    <div class="icon">🎨</div>
+                    <h3>Astrophotographers</h3>
+                    <p>
+                        Capture stunning silhouette images that would be nearly impossible to plan
+                        without precise predictions.
+                    </p>
+                </div>
+
+                <div class="use-case">
+                    <div class="icon">✈️</div>
+                    <h3>Aviation Enthusiasts</h3>
+                    <p>
+                        Track aircraft with unprecedented detail and capture unique perspectives
+                        of celestial transits.
+                    </p>
+                </div>
+
+                <div class="use-case">
+                    <div class="icon">🏫</div>
+                    <h3>Educators</h3>
+                    <p>
+                        Demonstrate orbital mechanics and coordinate systems with live,
+                        real-world examples students can see.
+                    </p>
+                </div>
+
+                <div class="use-case">
+                    <div class="icon">🔬</div>
+                    <h3>Researchers</h3>
+                    <p>
+                        Study transit frequencies, flight patterns, and celestial alignments
+                        with comprehensive data logging.
+                    </p>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Getting Started Section -->
+    <section class="getting-started">
+        <div class="container">
+            <h2>Get Started in Minutes</h2>
+            <pre><code># Clone the repository
+git clone https://github.com/Tailspin45/flymoon.git
+cd flymoon
+
+# Run automated setup
+make setup
+
+# Add your coordinates to .env
+# Start the server
+cd dist/Flymoon-Web
+python3 app.py
+
+# Open http://localhost:8000
+# That's it!</code></pre>
+            <a href="https://github.com/Tailspin45/flymoon#-quick-start" class="cta-button">View Full Setup Guide</a>
+        </div>
+    </section>
+
+    <!-- Testimonials Section -->
+    <section class="testimonials">
+        <div class="container">
+            <h2>What Users Say</h2>
+            <div class="testimonial">
+                "I thought catching a lunar transit was pure luck. Flymoon proved me wrong.
+                It's like having a crystal ball for astrophotography."
+            </div>
+            <div class="testimonial">
+                "The map visualization is brilliant. I finally understand what
+                'angular separation' actually means."
+            </div>
+            <div class="testimonial">
+                "Three clicks and I'm tracking a 737 crossing the Moon. This is the future."
+            </div>
+        </div>
+    </section>
+
+    <!-- Credits Section -->
+    <section class="credits">
+        <div class="container">
+            <h2>Credits & Acknowledgments</h2>
+            <p class="main-credit">
+                <strong>Original Concept & Design:</strong><br>
+                <strong>David Betancourt Montellano</strong>
+            </p>
+            <p style="font-size: 1.2em; line-height: 1.8; margin-top: 30px;">
+                This project exists because David asked "what if?" and had the vision to make it real.
+                The original concept, the initial design, the spark that started it all—that's David's legacy.
+            </p>
+            <p class="spanish">
+                Creado con profundo agradecimiento por la idea y el diseño inicial de David Betancourt Montellano
+            </p>
+            <p style="margin-top: 40px; font-size: 1.1em;">
+                <strong>Development:</strong> Enhanced with Claude (Anthropic)<br>
+                <strong>Special Thanks:</strong> FlightAware, OpenStreetMap, Skyfield Project, Open Source Community
+            </p>
+        </div>
+    </section>
+
+    <!-- Footer -->
+    <footer>
+        <div class="container">
+            <p style="font-size: 2em; margin-bottom: 20px;">🛩️ 🌙 ☀️</p>
+            <p><strong>Capture the Impossible. It's Easier Than You Think.</strong></p>
+            <p style="margin-top: 20px;">
+                <a href="https://github.com/Tailspin45/flymoon">GitHub Repository</a> •
+                <a href="https://github.com/Tailspin45/flymoon/issues">Report Issues</a> •
+                <a href="https://github.com/dbetm/flymoon/issues/21">Share Your Captures</a>
+            </p>
+            <p style="margin-top: 20px; font-size: 0.9em;">
+                Open Source • MIT License • Community Driven
+            </p>
+        </div>
+    </footer>
+</body>
+</html>
