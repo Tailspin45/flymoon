@@ -5,10 +5,6 @@ from http import HTTPStatus
 from typing import List
 
 import requests
-import urllib3
-
-# Suppress SSL warnings when bypassing verification
-urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 from src.position import AreaBoundingBox
 
@@ -25,9 +21,7 @@ def get_flight_data(
         f"{area_bbox.lat_upper_right}+{area_bbox.long_upper_right}%22&max_pages=1"
     )
 
-    # TEMPORARY: Bypass SSL verification due to expired certificate
-    # TODO: Remove verify=False once FlightAware certificate is renewed
-    response = requests.get(url=url, headers=headers, verify=False)
+    response = requests.get(url=url, headers=headers)
 
     if response.status_code == HTTPStatus.OK:
         return response.json()
