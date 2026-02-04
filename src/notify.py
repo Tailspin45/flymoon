@@ -44,7 +44,7 @@ async def send_notifications(flight_data: List[dict], target: str) -> None:
 
     transit_txt = "transit" if len(possible_transits_data) == 1 else "transits"
 
-    response = pb.push_note(
+    _ = pb.push_note(
         title=f"{len(possible_transits_data)} possible {transit_txt} {emoji}",
         body=body_message,
     )

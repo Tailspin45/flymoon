@@ -10,7 +10,7 @@ from datetime import datetime
 from typing import Optional, Dict, Any
 from flask import request, jsonify
 
-from src.seestar_client import SeestarClient, create_client_from_env
+from src.seestar_client import SeestarClient
 from src import logger
 
 
@@ -33,7 +33,7 @@ class MockSeestarClient:
         import time
         time.sleep(0.5)  # Simulate connection delay
         self._connected = True
-        logger.info(f"[Mock] Connected to mock telescope")
+        logger.info("[Mock] Connected to mock telescope")
         return True
 
     def disconnect(self) -> bool:

@@ -49,7 +49,6 @@ load_dotenv()
 from src import logger
 from src.config_wizard import ConfigWizard
 from src.flight_data import save_possible_transits, sort_results
-from src.notify import send_notifications
 from src.telegram_notify import send_telegram_notification
 from src.transit import get_transits
 from src import telescope_routes

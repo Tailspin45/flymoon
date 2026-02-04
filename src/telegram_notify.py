@@ -3,8 +3,7 @@ Telegram notification module for transit alerts.
 """
 
 import os
-import asyncio
-from typing import List, Optional
+from typing import List
 from telegram import Bot
 from telegram.error import TelegramError
 

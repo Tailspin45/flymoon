@@ -41,7 +41,7 @@ POSSIBLE_TRANSITS_LOGFILENAME = "data/possible-transits/log_{date_}.csv"
 # Astro data
 ASTRO_EPHEMERIS = load("de421.bsp")
 """
-The load function is used to load astronomical data, such as planetary ephemerides, 
+The load function is used to load astronomical data, such as planetary ephemerides,
 which are needed to calculate positions of celestial bodies.
 
 This code loads the DE421 planetary ephemeris data from the Jet Propulsion Laboratory.

@@ -52,7 +52,7 @@ def get_thresholds(altitude: float) -> Tuple[float, float]:
         return (8.0, 180.0)
 
     logger.warning(f"{altitude=}")
-    raise Exception(f"Given altitude is not valid!")
+    raise Exception("Given altitude is not valid!")
 
 
 def get_possibility_level(

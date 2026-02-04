@@ -13,7 +13,7 @@ import json
 import socket
 import threading
 import time
-from typing import Optional, Dict, Any, Callable
+from typing import Optional, Dict, Any
 from datetime import datetime
 
 from src import logger
@@ -156,7 +156,7 @@ class SeestarClient:
                                         )
                                     return result.get("result")
 
-                            except json.JSONDecodeError as e:
+                            except json.JSONDecodeError:
                                 logger.warning(f"Failed to parse message: {line[:100]}")
                                 continue
 
@@ -168,7 +168,7 @@ class SeestarClient:
             except socket.timeout:
                 # Socket timeout - command took too long, but connection may still be alive
                 logger.warning(f"Command timeout: {method}")
-                raise RuntimeError(f"timed out")
+                raise RuntimeError("timed out")
 
             except socket.error as e:
                 # Actual socket error - connection is broken
@@ -337,7 +337,7 @@ class SeestarClient:
             # Start video recording with start_record_avi
             # raw=False gives us processed MP4 video
             params = {"raw": False}
-            response = self._send_command("start_record_avi", params=params)
+            _ = self._send_command("start_record_avi", params=params)
 
             self._recording = True
             self._recording_start_time = datetime.now()
@@ -381,7 +381,7 @@ class SeestarClient:
                 duration = (datetime.now() - self._recording_start_time).total_seconds()
 
             # Stop video recording with stop_record_avi
-            response = self._send_command("stop_record_avi")
+            _ = self._send_command("stop_record_avi")
 
             logger.info(f"Stopped recording (duration: {duration:.1f}s)")
 
@@ -419,7 +419,7 @@ class SeestarClient:
         Seestar will switch to solar viewing mode with appropriate filter.
         """
         try:
-            response = self._send_command("iscope_start_view", params={"mode": "sun"})
+            _ = self._send_command("iscope_start_view", params={"mode": "sun"})
             logger.info("Started solar viewing mode")
             return True
         except Exception as e:
@@ -441,7 +441,7 @@ class SeestarClient:
         Seestar will switch to lunar viewing mode.
         """
         try:
-            response = self._send_command("iscope_start_view", params={"mode": "moon"})
+            _ = self._send_command("iscope_start_view", params={"mode": "moon"})
             logger.info("Started lunar viewing mode")
             return True
         except Exception as e:
@@ -458,7 +458,7 @@ class SeestarClient:
             True if mode stopped successfully
         """
         try:
-            response = self._send_command("iscope_stop_view")
+            _ = self._send_command("iscope_stop_view")
             logger.info("Stopped viewing mode")
             return True
         except Exception as e:
@@ -550,7 +550,7 @@ class TransitRecorder:
         self._scheduled_recordings: Dict[str, threading.Timer] = {}
 
         logger.info(
-            f"Transit recorder initialized (pre={pre_buffer}s, post={post_buffer}s)"
+            f"Transit recorder initialized (pre={pre_buffer_seconds}s, post={post_buffer_seconds}s)"
         )
 
     def schedule_transit_recording(
