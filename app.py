@@ -1,3 +1,34 @@
+"""
+Flymoon - Aircraft Transit Tracker
+===================================
+
+Main Flask application for tracking aircraft transiting celestial objects (Sun/Moon).
+
+Features:
+- Real-time flight data from FlightAware AeroAPI
+- Celestial position calculations using Skyfield
+- Interactive web UI with map visualization
+- Automatic telescope control for transit photography (Seestar S50)
+- Telegram notifications for possible transits
+
+Routes:
+- / - Main web interface
+- /flights - API endpoint for flight data queries
+- /flights/<id>/route - Flight route information
+- /flights/<id>/track - Flight historical track
+- /telescope/* - Telescope control endpoints
+- /gallery - Transit image gallery
+
+Environment Variables (see SETUP.md):
+- AEROAPI_KEY - FlightAware API key (required)
+- TELEGRAM_BOT_TOKEN - Telegram bot token (optional)
+- TELEGRAM_CHAT_ID - Telegram chat ID (optional)
+- SEESTAR_IP - Telescope IP address (optional)
+
+@author Flymoon Team
+@version 1.0
+"""
+
 import argparse
 import asyncio
 import json
@@ -7,7 +38,7 @@ from datetime import date, datetime
 
 import requests
 from dotenv import load_dotenv
-from flask import Flask, jsonify, render_template, request
+from Flask import Flask, jsonify, render_template, request
 from werkzeug.utils import secure_filename
 
 from src.constants import POSSIBLE_TRANSITS_LOGFILENAME

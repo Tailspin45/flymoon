@@ -1,5 +1,16 @@
-// Map visualization for Flymoon
-// Shows observer location, bounding box, aircraft positions, and azimuth arrows
+/**
+ * Flymoon Map Visualization
+ *
+ * Interactive Leaflet map displaying:
+ * - Observer location and bounding box for flight searches
+ * - Aircraft markers with color-coded transit probability
+ * - Azimuth arrows showing celestial target directions (Sun/Moon)
+ * - Flight routes and historical tracks
+ * - Altitude overlay with clickable indicators
+ *
+ * @author Flymoon Team
+ * @version 1.0
+ */
 
 let map = null;
 let observerMarker = null;
@@ -395,6 +406,15 @@ function updateAircraftMarkers(flights, observerLat, observerLon) {
     });
 }
 
+/**
+ * Update the altitude overlay with clickable bars for each flight
+ *
+ * Creates thin horizontal bars positioned by altitude, color-coded by
+ * transit probability. Bars are clickable to show route/track on map
+ * and highlight the corresponding table row and aircraft marker.
+ *
+ * @param {Array} flights - Array of flight objects with altitude and transit data
+ */
 function updateAltitudeOverlay(flights) {
     const container = document.getElementById('altitudeBars');
     if (!container) return;
@@ -478,6 +498,18 @@ function updateAltitudeOverlay(flights) {
     console.log('updateAltitudeOverlay: created', barsCreated, 'bars');
 }
 
+/**
+ * Toggle display of flight route and historical track on the map
+ *
+ * Fetches and displays:
+ * - Planned route (blue dashed line with waypoints)
+ * - Historical track (green solid line with actual positions)
+ *
+ * Clicking again hides the route/track. Uses caching to avoid redundant API calls.
+ *
+ * @param {string} faFlightId - FlightAware flight ID for API queries
+ * @param {string} flightId - Normalized flight identifier for UI cross-reference
+ */
 async function toggleFlightRouteTrack(faFlightId, flightId) {
     if (!map || !faFlightId) return;
 

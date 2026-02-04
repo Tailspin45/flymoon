@@ -1,147 +1,134 @@
-# Flymoon
+# 🌙 Flymoon - Aircraft Transit Tracker
 
-A web app to run locally on a LAN network that checks for possible transits over the Moon or the Sun (up to 15 minutes ahead).
+Track aircraft transiting the Sun and Moon in real-time with automatic telescope photography.
 
-Get flight data from an existing API.
+![Flymoon Interface](data/assets/flymoon2.png)
 
-You need to set coordinates for an area to check flights as a bounding box, input your position, choose a target (Moon or Sun), and then the app will compute future flight positions and check intersections with the target, which is called a transit.
+## ✨ Features
 
-![](data/assets/flymoon2.png)
+- **Real-Time Transit Detection** - Monitor flights up to 15 minutes ahead for potential transits
+- **Interactive Map** - Leaflet-based visualization with flight routes, altitude indicators, and azimuth arrows
+- **Smart Probability Analysis** - Color-coded transit likelihood (🟢 High, 🟠 Medium, 🟡 Low)
+- **Automatic Telescope Control** - Integrated Seestar S50 support with automatic recording
+- **Telegram Notifications** - Get alerts when possible transits are detected
+- **Flight Tracking** - Real-time data from FlightAware AeroAPI
 
+## 🚀 Quick Start
 
-The results show the difference in alt-azimuthal coordinates. Typically, you can expect a likely transit when there's no change in elevation and the difference in altitude (alt diff) and azimuth (az diff) is less than a few grades for both. In such cases, the row of results will be highlighted. Yellow 🟡: Low possibility; Orange 🟠: Medium possibility; Green 🟢: High possibility.
+### Prerequisites
+- Python 3.9+
+- FlightAware AeroAPI account ([Free Personal Tier](https://www.flightaware.com/aeroapi/signup/personal))
 
+### Installation
 
---------
-
-
-## Setup
-
-**Pre-requisites**
-
-- Python +3.9
-- Download or clone this project from GitHub (if you download a zip file, please extract it first, please).
-
-**Linux distros and MacOS**
-
-1) Run setup, this will create a virtual environment and install required python libraries.
-
-```shell
+**macOS/Linux:**
+```bash
 make setup
-```
-
-2) Activate virtual env.
-
-```shell
 source .venv/bin/activate
 ```
 
-**Windows**
-
-1) Open the CMD and move to the project path
-2) Run this command to create the `.env` file:
-```shell
-copy .env.mock .env 
-```
-3) Create a virtual environment:
-```shell
-python -m venv .venv 
-```
-4) Activate the virtual environment:
-```shell
+**Windows:**
+```cmd
+python -m venv .venv
 .venv\Scripts\activate
-```
-5) Install all the required python dependencies:
-```shell
 pip install -r requirements.txt
 ```
 
-**Configuration**
+### Configuration
 
-Open the `.env` file. You may need to display the hidden files.
+1. **Create `.env` file:**
+   ```bash
+   cp .env.mock .env
+   ```
 
-In Windows, if you don't have a text editor to open the `.env` file, you can download and install [Notepad++](https://notepad-plus-plus.org/downloads/)
+2. **Add your FlightAware API key:**
+   ```
+   AEROAPI_KEY=your_api_key_here
+   ```
 
-1) Set `AEROAPI_API_KEY`. Sign up on [FlightAware AeroAPI](https://www.flightaware.com/commercial/aeroapi/) and use the [Personal free tier](https://www.flightaware.com/aeroapi/signup/personal) to generate an API KEY.
+3. **Optional: Set up Telegram or Telescope** - See [SETUP.md](SETUP.md) for detailed instructions
 
-2) Set the area of flights to check. I strong suggest to cover a 15 min area. This must be a bounding box, using latitudes and longitudes. Set `LAT_LOWER_LEFT`, `LONG_LOWER_LEFT`, `LAT_UPPER_RIGHT`, and `LONG_UPPER_RIGHT` appropriately.
+### Run
 
-3) (Optional) When using the auto mode If you want to receive notifications in your smartphone, you can get an API KEY from [Pushbucket platform](https://www.pushbullet.com/) and then set `PUSH_BULLET_API_KEY`. To get it, create an account, install the app in your phone and go to *Settings* > *Create Access Token*.
-
-
-![](data/assets/bounding-box-example.png)
-
-
---------
-
-
-## Usage
-
-
-**Activate venv**
-
-```shell
-source .venv/bin/activate
-```
-
-For Windows you can use:
-```shell
-.venv\Scripts\activate
-```
-
-Launch the web server from a terminal.
-
-```shell
-python3 app.py
-```
-
-Windows:
-```shell
+```bash
 python app.py
 ```
 
-The IP address in LAN network will be displayed, use it to access from any device inside the same network.
+Access the web interface at `http://localhost:8000` or the displayed LAN address (e.g., `http://192.168.1.100:8000`)
 
-Example: `http://192.168.3.199:8000`
+## 📖 Documentation
 
-**Input your position (coordinates)**
+- **[QUICKSTART.md](QUICKSTART.md)** - Fast-track setup guide
+- **[SETUP.md](SETUP.md)** - Complete setup instructions (Telegram, Telescope)
+- **[LICENSE](LICENSE)** - MIT License
 
-I suggest using [MAPS.ie](https://www.maps.ie/coordinates.html#google_vignette) or [Google Maps](https://maps.google.com/). The values will be saved in local storage, so you won't need to type them again next time if you're in the same location.
+## 🎯 How It Works
 
+1. **Set Your Location** - Enter your coordinates (lat/lon/elevation)
+2. **Define Search Area** - Draw or adjust bounding box on map
+3. **Select Target** - Choose Sun, Moon, or Auto mode
+4. **Monitor Transits** - View real-time flight data with transit predictions
+5. **Automatic Recording** - Connected telescope automatically captures transits
 
-**Compute possible transits**
+### Transit Probability
 
-Click on Go! button to display results. Each row will include differences in alt-azimuthal coordinates only if it’s a possible transit. If the difference is enough small, the row will be highlighted in yellow, orange or green color (less probable to more probable).
+Transits are ranked by the angular difference between aircraft and celestial target:
 
-**Compute possible transits every X minutes**
+- **🟢 High (Green)** - Very likely transit, minimal angular difference
+- **🟠 Medium (Orange)** - Possible transit, small angular difference
+- **🟡 Low (Yellow)** - Low probability, larger angular difference
 
-Click on Auto button, which will require a time in minutes, then the web app will check for transits every X minutes, it there's at leat one possible transit then a sound alert will be played along the sending of a push notification if it was configured (only medium to high probable flighs are notified).
+## 🗺️ Map Features
 
-**Change target**
+- **Altitude Overlay** - Thin horizontal bars show aircraft altitude (clickable)
+- **Route Display** - Click any indicator to show planned route and historical track
+- **Azimuth Arrows** - Visual direction indicators to Sun/Moon
+- **Bounding Box** - Adjustable search area (drag corners to resize)
 
-Tap into the target icon and it'll toggle between Sun and Moon.
+## ⚙️ Advanced Features
 
+### Auto-Refresh Mode
+Set automatic checks every N minutes with sound alerts for detected transits
 
---------
+### Telescope Integration
+Automatic video recording when transits are detected (Seestar S50 supported)
 
+### Telegram Notifications
+Receive instant alerts on your phone for medium/high probability transits
 
-## Limitations
+## 🔧 Technical Details
 
-1) Computing the moment when there is a minimum difference between a plane and the target in alt-azimuthal coordinates is a numerical approach. Perhaps there could be an analytical way to optimize it.
+### Transit Detection Algorithm
+Uses numerical optimization to find minimum angular separation between aircraft and target. Assumes constant velocity and heading over 15-minute prediction window.
 
-2) The app assumes that airplanes maintain a constant speed and direction. However, changes to these factors within the 15-minute observation window can alter the ETA and potentially disrupt the predicted transit.
+### Data Sources
+- **Flight Data**: FlightAware AeroAPI
+- **Celestial Calculations**: Skyfield with JPL ephemeris (de421.bsp)
+- **Map Tiles**: OpenStreetMap
 
+## 📊 Requirements
 
---------
+- **API Rate Limits**: FlightAware Personal tier allows 10 queries/minute
+- **Network**: LAN access for telescope control (if using)
+- **Storage**: ~50MB per transit video (if recording enabled)
 
+## 🤝 Contributing
 
-## Contribute
+Contributions welcome! Please open an issue or pull request for:
+- Bug fixes
+- Feature enhancements
+- Documentation improvements
 
-This web app is still under active testing. If you want to fix something, improve it, or make a suggestion, feel free to open a Pull Request or an issue.
+**Share Your Transits!** Post your transit photos in [this issue](https://github.com/dbetm/flymoon/issues/21)
 
+## 📝 Credits
 
-**Share your epic picture!**
+Created with contributions from the Flymoon community. Special thanks to all contributors and transit photographers!
 
-I'd love to watch some transit picture taken with the help of this tool. So, post it on this [issue](https://github.com/dbetm/flymoon/issues/21).
+## 📄 License
 
-Pro-tip: You can use the Fightradar24 app to complement this web app.
+MIT License - See [LICENSE](LICENSE) for details
+
+---
+
+**Pro Tip**: Use Flightradar24 alongside Flymoon for additional flight tracking context.
