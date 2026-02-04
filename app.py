@@ -38,7 +38,7 @@ from datetime import date, datetime
 
 import requests
 from dotenv import load_dotenv
-from Flask import Flask, jsonify, render_template, request
+from flask import Flask, jsonify, render_template, request
 from werkzeug.utils import secure_filename
 
 from src.constants import POSSIBLE_TRANSITS_LOGFILENAME
