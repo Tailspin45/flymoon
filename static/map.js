@@ -57,6 +57,9 @@ function flashTableRow(flightId) {
         selectedRowId = flightId;
 
         row.scrollIntoView({ behavior: 'smooth', block: 'center' });
+
+        // Also flash the altitude bar
+        flashAltitudeBar(flightId);
     }
 }
 
@@ -76,6 +79,51 @@ function flashAircraftMarker(flightId) {
         }
         // Pan to marker
         map.panTo(marker.getLatLng());
+    }
+}
+
+// Flash an altitude bar by flight ID
+function flashAltitudeBar(flightId) {
+    console.log('flashAltitudeBar called with:', flightId);
+
+    // Check if container exists
+    const container = document.getElementById('altitudeBars');
+    console.log('altitudeBars container:', container);
+    console.log('Container children:', container ? container.children.length : 'N/A');
+
+    const bars = document.querySelectorAll('.altitude-bar');
+    console.log('Found', bars.length, 'altitude bars via querySelectorAll');
+
+    // Also try querying within container
+    if (container) {
+        const barsInContainer = container.querySelectorAll('.altitude-bar');
+        console.log('Found', barsInContainer.length, 'bars within container');
+
+        // Check what children actually exist
+        console.log('Container innerHTML length:', container.innerHTML.length);
+        if (container.children.length > 0) {
+            console.log('First child class:', container.children[0].className);
+        }
+    }
+
+    let found = false;
+    bars.forEach(bar => {
+        const idLabel = bar.querySelector('.altitude-bar-id');
+        if (idLabel) {
+            const barId = idLabel.textContent.trim().toUpperCase();
+            console.log('Checking bar:', barId, 'against', flightId.toUpperCase());
+            if (barId === flightId.toUpperCase()) {
+                console.log('Match found! Flashing bar for', flightId);
+                bar.classList.remove('flash-altitude-bar');
+                void bar.offsetWidth; // Trigger reflow
+                bar.classList.add('flash-altitude-bar');
+                found = true;
+            }
+        }
+    });
+
+    if (!found) {
+        console.log('No matching altitude bar found for', flightId);
     }
 }
 
@@ -339,6 +387,7 @@ function updateAircraftMarkers(flights, observerLat, observerLon) {
             marker.on('click', function() {
                 toggleFlightRouteTrack(flight.fa_flight_id, normalizedId);
                 flashTableRow(normalizedId);
+                flashAircraftMarker(normalizedId);
             });
 
             aircraftMarkers[normalizedId] = marker;
@@ -352,19 +401,31 @@ function updateAltitudeOverlay(flights) {
 
     container.innerHTML = '';
 
+    console.log('updateAltitudeOverlay: received', flights.length, 'flights');
+
     // Sort by aircraft elevation descending
     const sortedFlights = [...flights].sort((a, b) =>
         (b.aircraft_elevation || 0) - (a.aircraft_elevation || 0)
     );
 
     const MAX_ALT = 45000; // feet
+    let barsCreated = 0;
 
     sortedFlights.forEach(flight => {
-        const altMeters = flight.aircraft_elevation || 0;
-        if (altMeters <= 0) return; // Skip if no altitude data
+        // Get GPS altitude - can be negative for below sea level
+        const altMeters = flight.aircraft_elevation;
+
+        // Skip only if altitude data is missing (null/undefined), not if it's 0 or negative
+        if (altMeters === null || altMeters === undefined) {
+            console.log('Skipping flight', flight.id, '- no altitude data');
+            return;
+        }
 
         const altFeet = Math.round(altMeters * 3.28084); // meters to feet
-        const barWidthPercent = (altFeet / MAX_ALT) * 100;
+        console.log('Creating bar for flight', flight.id, '- altitude:', altFeet, 'ft');
+
+        // For bar width, use absolute value to ensure positive bar, but cap at MAX_ALT
+        const barWidthPercent = (Math.abs(altFeet) / MAX_ALT) * 100;
 
         // Determine color
         let color = '#808080'; // Gray default
@@ -375,32 +436,46 @@ function updateAltitudeOverlay(flights) {
             else if (level === 1) color = '#FFD700'; // YELLOW
         }
 
+        // Use red color for negative altitudes (below sea level)
+        if (altFeet < 0) {
+            color = '#FF4444'; // Red for below sea level
+        }
+
         const bar = document.createElement('div');
         bar.className = 'altitude-bar';
         bar.style.background = color;
-        bar.style.width = `${Math.max(barWidthPercent, 20)}%`; // Minimum 20% visible
 
-        const idLabel = document.createElement('span');
-        idLabel.className = 'altitude-bar-id';
-        idLabel.textContent = flight.id;
+        // Position bar vertically based on altitude (0 at bottom, MAX_ALT at top)
+        const positionPercent = (altFeet / MAX_ALT) * 100;
+        bar.style.bottom = `${Math.max(0, Math.min(100, positionPercent))}%`;
 
-        const altLabel = document.createElement('span');
-        altLabel.className = 'altitude-bar-value';
-        altLabel.textContent = `${(altFeet/1000).toFixed(1)}k`;
+        // Labels removed - just show colored bars
 
-        bar.appendChild(idLabel);
-        bar.appendChild(altLabel);
-
-        // Click to flash on map
-        bar.addEventListener('click', () => {
+        // Click to flash on map and table, and show route/track
+        const clickHandler = () => {
             const normalizedId = String(flight.id).trim().toUpperCase();
+
+            // Show route/track
+            if (typeof toggleFlightRouteTrack === 'function' && flight.fa_flight_id) {
+                toggleFlightRouteTrack(flight.fa_flight_id, normalizedId);
+            }
+
+            // Flash marker and highlight row
             if (typeof flashAircraftMarker === 'function') {
                 flashAircraftMarker(normalizedId);
             }
-        });
+            if (typeof flashTableRow === 'function') {
+                flashTableRow(normalizedId);
+            }
+        };
+
+        bar.addEventListener('click', clickHandler);
 
         container.appendChild(bar);
+        barsCreated++;
     });
+
+    console.log('updateAltitudeOverlay: created', barsCreated, 'bars');
 }
 
 async function toggleFlightRouteTrack(faFlightId, flightId) {

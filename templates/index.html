@@ -7,7 +7,7 @@
     <!-- favicon -->
     <link rel="icon" type="image/x-icon" href="{{ url_for('static', filename='images/favicon.ico') }}">
     <!-- CSS -->
-    <link rel="stylesheet" href="{{ url_for('static', filename='main.css') }}?v=20260203k">
+    <link rel="stylesheet" href="{{ url_for('static', filename='main.css') }}?v=1770230886">
     <!-- Leaflet CSS -->
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css?v=2"
         crossorigin=""/>
@@ -19,13 +19,28 @@
             <span id="trackingStatus" class="status-text"></span>
             <div id="lastUpdateStatus" style="font-size: 0.85em; color: #888; margin-top: 4px;"></div>
         </div>
-        <a href="/telescope" class="btn-sm" title="Control Telescope">🔭 Telescope</a>
-        <a href="/gallery" class="btn-sm" title="View Transit Image Gallery">📸 Gallery</a>
+        <div style="display: flex; gap: 8px;">
+            <a href="/telescope" class="btn-sm" title="Control Telescope">🔭 Telescope</a>
+            <a href="/gallery" class="btn-sm" title="View Transit Image Gallery">📸 Gallery</a>
+        </div>
+        <!-- Quadrant Min Altitude Control -->
+        <div class="quadrant-circle">
+            <!-- Labels outside circle -->
+            <label class="quadrant-label quadrant-label-n">N</label>
+            <label class="quadrant-label quadrant-label-e">E</label>
+            <label class="quadrant-label quadrant-label-s">S</label>
+            <label class="quadrant-label quadrant-label-w">W</label>
+            <!-- Inputs inside quadrants -->
+            <input type="number" id="minAltN" class="quadrant-input quadrant-input-n" placeholder="30" min="0" max="90" title="North Min Altitude (°)">
+            <input type="number" id="minAltE" class="quadrant-input quadrant-input-e" placeholder="30" min="0" max="90" title="East Min Altitude (°)">
+            <input type="number" id="minAltS" class="quadrant-input quadrant-input-s" placeholder="30" min="0" max="90" title="South Min Altitude (°)">
+            <input type="number" id="minAltW" class="quadrant-input quadrant-input-w" placeholder="30" min="0" max="90" title="West Min Altitude (°)">
+            <div class="quadrant-center" onclick="resetQuadrantValues()" title="Click to reset all to 0">Min Alt (°)</div>
+        </div>
     </div>
 
     <div class="controls-row">
         <button id="goBtn" class="btn-primary" onclick="go();">Refresh</button>
-        <button id="autoBtn" class="btn-primary" onclick="auto();">Auto</button>
         <span class="separator">|</span>
         <div style="display: inline-block; text-align: center;">
             <input type="number" id="latitude" placeholder="Lat" autocomplete="on" title="Latitude">
@@ -38,10 +53,6 @@
         <div style="display: inline-block; text-align: center;">
             <input type="number" id="elevation" placeholder="Elev" autocomplete="on" title="Elevation (m)">
             <div style="font-size: 0.7em; color: #aaa; margin-top: -2px;">Elevation (m)</div>
-        </div>
-        <div style="display: inline-block; text-align: center;">
-            <input type="number" id="minAltitude" placeholder="Min°" autocomplete="on" title="Minimum horizon altitude (degrees)" style="width:50px;">
-            <div style="font-size: 0.7em; color: #aaa; margin-top: -2px;">Min angle (°)</div>
         </div>
         <div style="display: inline-block; text-align: center;">
             <button class="btn-sm" onclick="savePosition()" title="Save position">💾</button>
@@ -76,6 +87,8 @@
 
     <p id="targetCoordinates" class="coords-text" style="margin: 5px 0;"></p>
 
+    <div id="transitCountdown" style="display: none; text-align: center; font-size: 1.5em; font-weight: bold; padding: 15px; margin: 10px 0; border-radius: 5px;"></div>
+
     <div id="mapContainer" style="display: none;">
         <div style="display: flex; align-items: flex-start; gap: 0;">
             <div id="map" style="height: 500px; flex: 1; margin: 20px 0;"></div>
@@ -84,9 +97,27 @@
                 <div class="altitude-header">Aircraft Altitudes</div>
                 <div class="altitude-scale">
                     <div class="altitude-tick" style="top: 0%;">45k</div>
+                    <div class="altitude-tick" style="top: 11.1%;">40k</div>
+                    <div class="altitude-tick" style="top: 22.2%;">35k</div>
                     <div class="altitude-tick" style="top: 33.3%;">30k</div>
-                    <div class="altitude-tick" style="top: 66.6%;">15k</div>
+                    <div class="altitude-tick" style="top: 44.4%;">25k</div>
+                    <div class="altitude-tick" style="top: 55.6%;">20k</div>
+                    <div class="altitude-tick" style="top: 66.7%;">15k</div>
+                    <div class="altitude-tick" style="top: 77.8%;">10k</div>
+                    <div class="altitude-tick" style="top: 88.9%;">5k</div>
                     <div class="altitude-tick" style="top: 100%;">0</div>
+                </div>
+                <div class="altitude-grid">
+                    <div class="altitude-grid-line" style="bottom: 100%;"></div>
+                    <div class="altitude-grid-line" style="bottom: 88.9%;"></div>
+                    <div class="altitude-grid-line" style="bottom: 77.8%;"></div>
+                    <div class="altitude-grid-line" style="bottom: 66.7%;"></div>
+                    <div class="altitude-grid-line" style="bottom: 55.6%;"></div>
+                    <div class="altitude-grid-line" style="bottom: 44.4%;"></div>
+                    <div class="altitude-grid-line" style="bottom: 33.3%;"></div>
+                    <div class="altitude-grid-line" style="bottom: 22.2%;"></div>
+                    <div class="altitude-grid-line" style="bottom: 11.1%;"></div>
+                    <div class="altitude-grid-line" style="bottom: 0%;"></div>
                 </div>
                 <div id="altitudeBars"></div>
             </div>
@@ -114,7 +145,6 @@
                     <th>type</th>
                     <th>origin</th>
                     <th>destination</th>
-                    <th>ETA</th>
                     <th>target<br>angle</th>
                     <th>plane<br>angle</th>
                     <th>△angle</th>
@@ -131,7 +161,6 @@
             </tbody>
         </table>
     </div>
-    <p id="autoGoNote" class="status-text"></p>
     <h3 class="alert" id="noResults"></h3>
     <h3 class="alert" id="targetUnderHorizon"></h3>
 
@@ -148,8 +177,8 @@
         crossorigin=""></script>
     <!-- Leaflet Editable for draggable shapes -->
     <script src="https://unpkg.com/leaflet-editable@1.2.0/src/Leaflet.Editable.js"></script>
-    <script src="{{ url_for('static', filename='map.js') }}?v=20260203k" charset="utf-8"></script>
-    <script src="{{ url_for('static', filename='app.js') }}?v=20260203k" charset="utf-8"></script>
+    <script src="{{ url_for('static', filename='map.js') }}?v=1770230596" charset="utf-8"></script>
+    <script src="{{ url_for('static', filename='app.js') }}?v=1770230886" charset="utf-8"></script>
 
     <script>
         loadPosition();

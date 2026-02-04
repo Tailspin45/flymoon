@@ -3,7 +3,6 @@ const COLUMN_NAMES = [
     "aircraft_type",
     "origin",
     "destination",
-    "time",
     "target_alt",
     "plane_alt",
     "alt_diff",
@@ -18,10 +17,76 @@ const COLUMN_NAMES = [
 const MS_IN_A_MIN = 60000;
 // Possibility levels
 const LOW_LEVEL = 1, MEDIUM_LEVEL = 2, HIGH_LEVEL = 3;
+
+// Get minimum altitude based on azimuth (in degrees)
+// Azimuth: 0° = N, 90° = E, 180° = S, 270° = W
+function getMinAltitudeForAzimuth(azimuth) {
+    // Default values if not set
+    const defaultMinAlt = 15;
+
+    const minAltNEl = document.getElementById("minAltN");
+    const minAltEEl = document.getElementById("minAltE");
+    const minAltSEl = document.getElementById("minAltS");
+    const minAltWEl = document.getElementById("minAltW");
+
+    // If elements don't exist, return default
+    if (!minAltNEl || !minAltEEl || !minAltSEl || !minAltWEl) {
+        return defaultMinAlt;
+    }
+
+    const minAltN = parseFloat(minAltNEl.value) || defaultMinAlt;
+    const minAltE = parseFloat(minAltEEl.value) || defaultMinAlt;
+    const minAltS = parseFloat(minAltSEl.value) || defaultMinAlt;
+    const minAltW = parseFloat(minAltWEl.value) || defaultMinAlt;
+
+    if (azimuth === null || azimuth === undefined || isNaN(azimuth)) {
+        // If no azimuth, use the minimum of all quadrants
+        return Math.min(minAltN, minAltE, minAltS, minAltW);
+    }
+
+    // Normalize azimuth to 0-360
+    azimuth = ((azimuth % 360) + 360) % 360;
+
+    // Determine quadrant
+    if (azimuth >= 315 || azimuth < 45) {
+        return minAltN;  // North: 315° to 45°
+    } else if (azimuth >= 45 && azimuth < 135) {
+        return minAltE;  // East: 45° to 135°
+    } else if (azimuth >= 135 && azimuth < 225) {
+        return minAltS;  // South: 135° to 225°
+    } else {
+        return minAltW;  // West: 225° to 315°
+    }
+}
+
+// Get minimum of all quadrant min altitudes
+function getMinAltitudeAllQuadrants() {
+    const defaultMinAlt = 15;
+
+    const minAltNEl = document.getElementById("minAltN");
+    const minAltEEl = document.getElementById("minAltE");
+    const minAltSEl = document.getElementById("minAltS");
+    const minAltWEl = document.getElementById("minAltW");
+
+    // If elements don't exist, return default
+    if (!minAltNEl || !minAltEEl || !minAltSEl || !minAltWEl) {
+        return defaultMinAlt;
+    }
+
+    const minAltN = parseFloat(minAltNEl.value) || defaultMinAlt;
+    const minAltE = parseFloat(minAltEEl.value) || defaultMinAlt;
+    const minAltS = parseFloat(minAltSEl.value) || defaultMinAlt;
+    const minAltW = parseFloat(minAltWEl.value) || defaultMinAlt;
+    return Math.min(minAltN, minAltE, minAltS, minAltW);
+}
 var autoMode = false;
+// Transit countdown tracking
+var nextTransit = null;
+var transitCountdownInterval = null;
 var target = getLocalStorageItem("target", "auto");
 var autoGoInterval = setInterval(goFetch, 86400000);
-var refreshTimerLabelInterval = setInterval(refreshTimer, MS_IN_A_MIN);
+var refreshTimerLabelInterval = setInterval(refreshTimer, 1000); // Update every second
+var remainingSeconds = 0; // Track remaining seconds for countdown
 // By default disable auto go and refresh timer label
 clearInterval(autoGoInterval);
 clearInterval(refreshTimerLabelInterval);
@@ -53,7 +118,7 @@ document.addEventListener('visibilitychange', function() {
         console.log('Page visible - resuming auto-refresh');
         const freq = parseInt(localStorage.getItem("frequency")) || appConfig.autoRefreshIntervalMinutes;
         autoGoInterval = setInterval(goFetch, MS_IN_A_MIN * freq);
-        refreshTimerLabelInterval = setInterval(refreshTimer, MS_IN_A_MIN);
+        refreshTimerLabelInterval = setInterval(refreshTimer, 1000); // Update every second
     }
 });
 
@@ -70,6 +135,63 @@ const TRACK_TIMEOUT_MS = 180000; // 3 minutes
 
 // Audio context for track mode sounds
 let audioCtx = null;
+
+// Auto-save quadrant min altitude values to localStorage when they change
+function setupStickyQuadrantInputs() {
+    const quadrantIds = ['minAltN', 'minAltE', 'minAltS', 'minAltW'];
+
+    quadrantIds.forEach(id => {
+        const input = document.getElementById(id);
+        if (input) {
+            let lastSavedValue = input.value;
+
+            input.addEventListener('change', function() {
+                const value = parseFloat(this.value);
+                if (!isNaN(value) && value !== lastSavedValue) {
+                    localStorage.setItem(id, value);
+                    lastSavedValue = value;
+                    console.log(`Saved ${id}: ${value}`);
+
+                    // Auto-refresh if results are visible (debounced to avoid duplicate calls)
+                    if (resultsVisible) {
+                        console.log('Auto-refreshing flight data due to min altitude change');
+                        fetchFlights();
+                    }
+                }
+            });
+
+            // Save on blur without triggering refresh (change event already did that)
+            input.addEventListener('blur', function() {
+                const value = parseFloat(this.value);
+                if (!isNaN(value)) {
+                    localStorage.setItem(id, value);
+                }
+            });
+        }
+    });
+}
+
+// Initialize sticky inputs when DOM is ready
+if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', setupStickyQuadrantInputs);
+} else {
+    setupStickyQuadrantInputs();
+}
+
+// Reset all quadrant min altitude values to 0
+function resetQuadrantValues() {
+    const quadrantIds = ['minAltN', 'minAltE', 'minAltS', 'minAltW'];
+
+    quadrantIds.forEach(id => {
+        const input = document.getElementById(id);
+        if (input) {
+            input.value = '0';
+            localStorage.setItem(id, '0');
+        }
+    });
+
+    console.log('All quadrant values reset to 0');
+}
 
 function playTrackOnSound() {
     if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
@@ -120,7 +242,7 @@ function updateTrackedFlight() {
     let latitude = document.getElementById("latitude").value;
     let longitude = document.getElementById("longitude").value;
     let elevation = document.getElementById("elevation").value;
-    const minAltitude = document.getElementById("minAltitude").value || 15;
+    const minAltitude = getMinAltitudeAllQuadrants();
 
     let endpoint_url = (
         `/flights?target=${encodeURIComponent(target)}`
@@ -128,7 +250,7 @@ function updateTrackedFlight() {
         + `&longitude=${encodeURIComponent(longitude)}`
         + `&elevation=${encodeURIComponent(elevation)}`
         + `&min_altitude=${encodeURIComponent(minAltitude)}`
-        + `&send-notification=false`
+        + `&send-notification=true`
     );
 
     if (window.lastBoundingBox) {
@@ -185,11 +307,6 @@ function updateFlightRow(row, flight) {
             cell.textContent = value;
         } else if (column === "aircraft_type") {
             cell.textContent = value === "N/A" ? "" : value;
-        } else if (column === "time") {
-            const totalSeconds = Math.round(value * 60);
-            const mins = Math.floor(totalSeconds / 60);
-            const secs = totalSeconds % 60;
-            cell.textContent = `${mins}:${secs.toString().padStart(2, '0')}`;
         } else if (column === "aircraft_elevation_feet") {
             const altitude = Math.round(value);
             if (altitude > 18000) {
@@ -299,8 +416,6 @@ function savePosition() {
     let longitude = parseFloat(long.value);
     let elev = document.getElementById("elevation");
     let elevation = parseFloat(elev.value);
-    let minAlt = document.getElementById("minAltitude");
-    let minAltitude = parseFloat(minAlt.value) || 15;
 
     if(isNaN(latitude) || isNaN(longitude) || isNaN(elevation)) {
         alert("Please, type all your coordinates. Use MAPS.ie or Google Earth");
@@ -310,7 +425,16 @@ function savePosition() {
     localStorage.setItem("latitude", latitude);
     localStorage.setItem("longitude", longitude);
     localStorage.setItem("elevation", elevation);
-    localStorage.setItem("minAltitude", minAltitude);
+
+    // Save quadrant min altitudes
+    const minAltN = parseFloat(document.getElementById("minAltN").value) || 15;
+    const minAltE = parseFloat(document.getElementById("minAltE").value) || 15;
+    const minAltS = parseFloat(document.getElementById("minAltS").value) || 15;
+    const minAltW = parseFloat(document.getElementById("minAltW").value) || 15;
+    localStorage.setItem("minAltN", minAltN);
+    localStorage.setItem("minAltE", minAltE);
+    localStorage.setItem("minAltS", minAltS);
+    localStorage.setItem("minAltW", minAltW);
 
     // Save bounding box if user has edited it
     if (window.lastBoundingBox) {
@@ -324,19 +448,48 @@ function loadPosition() {
     const savedLat = localStorage.getItem("latitude");
     const savedLon = localStorage.getItem("longitude");
     const savedElev = localStorage.getItem("elevation");
-    const savedMinAlt = localStorage.getItem("minAltitude");
     const savedBoundingBox = localStorage.getItem("boundingBox");
+
+    // Load quadrant min altitudes (try new format first, fall back to old single minAltitude)
+    const savedMinAltN = localStorage.getItem("minAltN");
+    const savedMinAltE = localStorage.getItem("minAltE");
+    const savedMinAltS = localStorage.getItem("minAltS");
+    const savedMinAltW = localStorage.getItem("minAltW");
+    const oldMinAlt = localStorage.getItem("minAltitude"); // Legacy support
+
+    // Get quadrant input elements with null checks
+    const minAltNEl = document.getElementById("minAltN");
+    const minAltEEl = document.getElementById("minAltE");
+    const minAltSEl = document.getElementById("minAltS");
+    const minAltWEl = document.getElementById("minAltW");
 
     if (savedLat === null || savedLat === "" || savedLat === "null") {
         console.log("No position saved in local storage");
-        document.getElementById("minAltitude").value = 15; // Default
+        // Set default values only if elements exist
+        if (minAltNEl) minAltNEl.value = 30;
+        if (minAltEEl) minAltEEl.value = 30;
+        if (minAltSEl) minAltSEl.value = 30;
+        if (minAltWEl) minAltWEl.value = 30;
         return;
     }
 
     document.getElementById("latitude").value = savedLat;
     document.getElementById("longitude").value = savedLon;
     document.getElementById("elevation").value = savedElev;
-    document.getElementById("minAltitude").value = savedMinAlt || 15;
+
+    // Load quadrant values or use legacy single value (only if elements exist)
+    if (minAltNEl) {
+        minAltNEl.value = (savedMinAltN !== null) ? savedMinAltN : (oldMinAlt || 30);
+    }
+    if (minAltEEl) {
+        minAltEEl.value = (savedMinAltE !== null) ? savedMinAltE : (oldMinAlt || 30);
+    }
+    if (minAltSEl) {
+        minAltSEl.value = (savedMinAltS !== null) ? savedMinAltS : (oldMinAlt || 30);
+    }
+    if (minAltWEl) {
+        minAltWEl.value = (savedMinAltW !== null) ? savedMinAltW : (oldMinAlt || 30);
+    }
 
     // Load saved bounding box
     if (savedBoundingBox) {
@@ -348,12 +501,45 @@ function loadPosition() {
         }
     }
 
-    console.log("Position loaded from local storage:", savedLat, savedLon, savedElev, "minAlt:", savedMinAlt);
+    console.log("Position loaded from local storage:", savedLat, savedLon, savedElev);
 }
 
 function getLocalStorageItem(key, defaultValue) {
     const value = localStorage.getItem(key);
     return value !== null ? value : defaultValue;
+}
+
+function updateTransitCountdown() {
+    const countdownDiv = document.getElementById('transitCountdown');
+
+    if (!nextTransit || !countdownDiv) {
+        if (countdownDiv) countdownDiv.style.display = 'none';
+        return;
+    }
+
+    const now = Date.now();
+    const remainingMs = nextTransit.targetTime - now;
+
+    if (remainingMs <= 0) {
+        countdownDiv.style.display = 'none';
+        nextTransit = null;
+        return;
+    }
+
+    const remainingSeconds = Math.floor(remainingMs / 1000);
+    const minutes = Math.floor(remainingSeconds / 60);
+    const seconds = remainingSeconds % 60;
+    const timeStr = String(minutes).padStart(2, '0') + ':' + String(seconds).padStart(2, '0');
+
+    // Style based on priority level
+    const isHigh = nextTransit.level === HIGH_LEVEL;
+    const bgColor = isHigh ? '#dc3545' : '#fd7e14';  // red for HIGH, orange for MEDIUM
+    const levelText = isHigh ? 'High' : 'Medium';
+
+    countdownDiv.style.backgroundColor = bgColor;
+    countdownDiv.style.color = 'white';
+    countdownDiv.style.display = 'block';
+    countdownDiv.innerHTML = `${levelText} probability transit in ${timeStr}`;
 }
 
 function clearPosition() {
@@ -362,7 +548,16 @@ function clearPosition() {
     document.getElementById("latitude").value = "";
     document.getElementById("longitude").value = "";
     document.getElementById("elevation").value = "";
-    document.getElementById("minAltitude").value = "15";
+
+    const minAltNEl = document.getElementById("minAltN");
+    const minAltEEl = document.getElementById("minAltE");
+    const minAltSEl = document.getElementById("minAltS");
+    const minAltWEl = document.getElementById("minAltW");
+
+    if (minAltNEl) minAltNEl.value = "30";
+    if (minAltEEl) minAltEEl.value = "30";
+    if (minAltSEl) minAltSEl.value = "30";
+    if (minAltWEl) minAltWEl.value = "30";
 }
 
 function go() {
@@ -451,12 +646,14 @@ function auto() {
         }
 
         localStorage.setItem("frequency", freq);
-        document.getElementById("autoBtn").innerHTML = "Auto " + freq  + " min ⴵ";
+        const initialTimeStr = String(freq).padStart(2, '0') + ':00';
+        document.getElementById("autoBtn").innerHTML = "Auto " + initialTimeStr + " ⴵ";
         document.getElementById("autoGoNote").innerHTML = `Auto-refresh every ${freq} minute(s). Pauses when page is hidden.`;
 
         autoMode = true;
         autoGoInterval = setInterval(goFetch, MS_IN_A_MIN * freq);
-        refreshTimerLabelInterval = setInterval(refreshTimer, MS_IN_A_MIN);
+        refreshTimerLabelInterval = setInterval(refreshTimer, 1000); // Update every second
+        remainingSeconds = freq * 60; // Initialize countdown in seconds
 
         // Trigger initial fetch
         goFetch();
@@ -465,13 +662,22 @@ function auto() {
 
 function refreshTimer() {
     let autoBtn = document.getElementById("autoBtn");
-    const currentLabel = autoBtn.innerHTML;
-    let currentTime = parseInt(currentLabel.match(/\d+/)[0], 10);
-    const currentFreq = localStorage.getItem("frequency");
+    const currentFreq = parseInt(localStorage.getItem("frequency")) || appConfig.autoRefreshIntervalMinutes;
 
-    let newTime = (currentTime - 1) > 0 ? currentTime - 1: currentFreq;
+    // Decrement remaining seconds
+    remainingSeconds--;
 
-    autoBtn.innerHTML = "Auto " + newTime + " min ⴵ";
+    // Reset if countdown reaches 0
+    if (remainingSeconds <= 0) {
+        remainingSeconds = currentFreq * 60;
+    }
+
+    // Format as MM:SS
+    const minutes = Math.floor(remainingSeconds / 60);
+    const seconds = remainingSeconds % 60;
+    const timeStr = String(minutes).padStart(2, '0') + ':' + String(seconds).padStart(2, '0');
+
+    autoBtn.innerHTML = "Auto " + timeStr + " ⴵ";
 }
 
 function fetchFlights() {
@@ -488,14 +694,14 @@ function fetchFlights() {
     alertNoResults.innerHTML = '';
     alertTargetUnderHorizon = '';
 
-    const minAltitude = document.getElementById("minAltitude").value || 15;
+    const minAltitude = getMinAltitudeAllQuadrants();
     let endpoint_url = (
         `/flights?target=${encodeURIComponent(target)}`
         + `&latitude=${encodeURIComponent(latitude)}`
         + `&longitude=${encodeURIComponent(longitude)}`
         + `&elevation=${encodeURIComponent(elevation)}`
         + `&min_altitude=${encodeURIComponent(minAltitude)}`
-        + `&send-notification=${autoMode}`
+        + `&send-notification=true`
     );
 
     // Add custom bounding box if user has edited it
@@ -575,7 +781,7 @@ function fetchFlights() {
 
         // Check if any targets are trackable
         if(data.trackingTargets && data.trackingTargets.length === 0) {
-            alertNoResults.innerHTML = "No targets available for tracking (below horizon or weather)";
+            alertNoResults.innerHTML = "Sun or moon is below the min angle you selected or weather is bad";
         }
 
         // Deduplicate flights by ID for display (keep highest possibility level)
@@ -605,6 +811,36 @@ function fetchFlights() {
                 console.log(`  ${f.id} (${f.target}): level=${f.possibility_level}, is_transit=${f.is_possible_transit}`);
             }
         });
+
+        // Find next HIGH or MEDIUM probability transit for countdown
+        nextTransit = null;
+        uniqueFlights.forEach(flight => {
+            const level = flight.is_possible_transit === 1 ? parseInt(flight.possibility_level) : 0;
+            if (level === HIGH_LEVEL || level === MEDIUM_LEVEL) {
+                const etaSeconds = flight.transit_eta_seconds || (flight.time * 60);
+                const targetTime = Date.now() + (etaSeconds * 1000);
+
+                // Keep the soonest transit, or highest priority if same time
+                if (!nextTransit || targetTime < nextTransit.targetTime ||
+                    (targetTime === nextTransit.targetTime && level > nextTransit.level)) {
+                    nextTransit = { targetTime, level, flight };
+                }
+            }
+        });
+
+        // Start or clear countdown interval
+        if (transitCountdownInterval) {
+            clearInterval(transitCountdownInterval);
+        }
+        if (nextTransit) {
+            updateTransitCountdown();
+            transitCountdownInterval = setInterval(updateTransitCountdown, 1000);
+        } else {
+            const countdownEl = document.getElementById('transitCountdown');
+            if (countdownEl) {
+                countdownEl.style.display = 'none';
+            }
+        }
 
         uniqueFlights.forEach(item => {
             const row = document.createElement('tr');
@@ -668,12 +904,6 @@ function fetchFlights() {
                 } else if (column === "aircraft_type") {
                     // Show aircraft type, hide "N/A"
                     val.textContent = value === "N/A" ? "" : value;
-                } else if (column === "time") {
-                    // Format ETA as mm:ss
-                    const totalSeconds = Math.round(value * 60);
-                    const mins = Math.floor(totalSeconds / 60);
-                    const secs = totalSeconds % 60;
-                    val.textContent = `${mins}:${secs.toString().padStart(2, '0')}`;
                 } else if (column === "aircraft_elevation_feet") {
                     // Show GPS altitude in feet with comma formatting, or as flight level if > 18000
                     const altitude = Math.round(value);
@@ -741,8 +971,8 @@ function fetchFlights() {
             updateMapVisualization(mapData, parseFloat(latitude), parseFloat(longitude), parseFloat(elevation));
         }
 
-        // Update altitude display
-        updateAltitudeDisplay(data.flights);
+        // Update altitude display - DISABLED: updateAltitudeOverlay in map.js handles this now
+        // updateAltitudeDisplay(data.flights);
 
         // Save bounding box for next time
         if(data.boundingBox) {
@@ -968,15 +1198,12 @@ function updateLastUpdateDisplay() {
     const remainingSeconds = Math.floor(remainingMs / 1000);
 
     const minutes = Math.floor(remainingSeconds / 60);
-    let seconds = remainingSeconds % 60;
-
-    // Round seconds down to nearest 15-second interval
-    seconds = Math.floor(seconds / 15) * 15;
+    const seconds = remainingSeconds % 60;
 
     const timeStr = String(minutes).padStart(2, '0') + ':' + String(seconds).padStart(2, '0');
 
     elem.textContent = 'Time until next update is ' + timeStr;
 }
 
-// Update display every 15 seconds
-setInterval(updateLastUpdateDisplay, 15000);
+// Update display every second
+setInterval(updateLastUpdateDisplay, 1000);
