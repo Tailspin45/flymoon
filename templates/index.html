@@ -20,7 +20,10 @@
             <div id="lastUpdateStatus" style="font-size: 0.85em; color: #888; margin-top: 4px;"></div>
         </div>
         <div style="display: flex; gap: 8px;">
-            <a href="/telescope" class="btn-sm" title="Control Telescope">🔭 Telescope</a>
+            <a href="/telescope" class="btn-sm" title="Control Telescope" style="position: relative;">
+                🔭 Telescope
+                <span id="telescopeStatusLight" style="position: absolute; top: 2px; right: 2px; width: 8px; height: 8px; border-radius: 50%; background-color: #999;" title="Telescope disconnected"></span>
+            </a>
             <a href="/gallery" class="btn-sm" title="View Transit Image Gallery">📸 Gallery</a>
         </div>
         <!-- Quadrant Min Altitude Control -->
@@ -178,7 +181,7 @@
     <!-- Leaflet Editable for draggable shapes -->
     <script src="https://unpkg.com/leaflet-editable@1.2.0/src/Leaflet.Editable.js"></script>
     <script src="{{ url_for('static', filename='map.js') }}?v=1770230596" charset="utf-8"></script>
-    <script src="{{ url_for('static', filename='app.js') }}?v=1770230886" charset="utf-8"></script>
+    <script src="{{ url_for('static', filename='app.js') }}?v=1770237941" charset="utf-8"></script>
 
     <script>
         loadPosition();

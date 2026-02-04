@@ -1207,3 +1207,32 @@ function updateLastUpdateDisplay() {
 
 // Update display every second
 setInterval(updateLastUpdateDisplay, 1000);
+
+// Telescope status indicator
+function updateTelescopeStatus() {
+    fetch('/telescope/status')
+        .then(response => response.json())
+        .then(data => {
+            const statusLight = document.getElementById('telescopeStatusLight');
+            if (statusLight) {
+                if (data.connected) {
+                    statusLight.style.backgroundColor = '#00ff00';
+                    statusLight.title = 'Telescope connected';
+                } else {
+                    statusLight.style.backgroundColor = '#ff0000';
+                    statusLight.title = 'Telescope disconnected';
+                }
+            }
+        })
+        .catch(error => {
+            const statusLight = document.getElementById('telescopeStatusLight');
+            if (statusLight) {
+                statusLight.style.backgroundColor = '#999';
+                statusLight.title = 'Telescope status unknown';
+            }
+        });
+}
+
+// Update telescope status every 2 seconds
+updateTelescopeStatus();
+setInterval(updateTelescopeStatus, 2000);
