@@ -237,14 +237,11 @@ function updateBoundingBox(latLowerLeft, lonLowerLeft, latUpperRight, lonUpperRi
             localStorage.setItem('customBoundingBox', JSON.stringify(newBoundingBox));
             console.log("Bounding box updated and saved:", newBoundingBox);
 
-            // Center map on the new bounding box with minimal margin
-            map.fitBounds(bounds, { padding: [5, 5] });
+            // Don't auto-zoom when user edits - they're controlling the view manually
         });
     }
 
-    // Center map on bounding box (on launch and programmatic changes) with minimal margin
-    const extendedBounds = L.latLngBounds(bounds);
-    map.fitBounds(extendedBounds, { padding: [5, 5] });
+    // Don't auto-fit to bounding box - let aircraft markers control the zoom
 }
 
 function clearAzimuthArrows() {
@@ -404,6 +401,18 @@ function updateAircraftMarkers(flights, observerLat, observerLon) {
             aircraftMarkers[normalizedId] = marker;
         }
     });
+
+    // Fit map to show all aircraft at maximum zoom, not the bounding box
+    if (Object.keys(aircraftMarkers).length > 0) {
+        const aircraftBounds = L.latLngBounds(
+            Object.values(aircraftMarkers).map(marker => marker.getLatLng())
+        );
+        // Add padding to ensure markers aren't at the edge
+        map.fitBounds(aircraftBounds, { padding: [50, 50], maxZoom: 13 });
+    } else {
+        // No aircraft - center on observer at reasonable zoom
+        map.setView([observerLat, observerLon], 9);
+    }
 }
 
 /**
