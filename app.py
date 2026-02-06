@@ -473,5 +473,22 @@ if __name__ == "__main__":
         mode = "DEMO" if args.demo else "TEST"
         logger.info(f"🎭 Starting in {mode} mode - using mock data")
 
-    port = 8000
+    # Find available port in range 8000-8100
+    import socket
+    port = None
+    for p in range(8000, 8101):
+        try:
+            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            sock.bind(('0.0.0.0', p))
+            sock.close()
+            port = p
+            break
+        except OSError:
+            continue
+    
+    if port is None:
+        logger.error("❌ No available ports in range 8000-8100")
+        exit(1)
+    
+    logger.info(f"🚀 Starting server on port {port}")
     app.run(host="0.0.0.0", port=port, debug=False)
