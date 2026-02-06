@@ -10,6 +10,7 @@ Usage:
 import json
 import argparse
 import math
+import random
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -207,7 +208,6 @@ def generate_test_data(scenario_name="dual_tracking", custom_config=None):
     # Moon target: az=135°, alt=40°
     # Sun target: az=225°, alt=35°
 
-    import random
     random.seed(42)  # Consistent test data
 
     # Fixed offsets for consistent classification
