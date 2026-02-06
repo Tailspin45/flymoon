@@ -426,6 +426,12 @@ function savePosition() {
     localStorage.setItem("longitude", longitude);
     localStorage.setItem("elevation", elevation);
 
+    // Save transit criteria thresholds
+    const altThreshold = parseFloat(document.getElementById("altThreshold").value) || 5.0;
+    const azThreshold = parseFloat(document.getElementById("azThreshold").value) || 10.0;
+    localStorage.setItem("altThreshold", altThreshold);
+    localStorage.setItem("azThreshold", azThreshold);
+
     // Save quadrant min altitudes
     const minAltN = parseFloat(document.getElementById("minAltN").value) || 15;
     const minAltE = parseFloat(document.getElementById("minAltE").value) || 15;
@@ -476,6 +482,18 @@ function loadPosition() {
     document.getElementById("latitude").value = savedLat;
     document.getElementById("longitude").value = savedLon;
     document.getElementById("elevation").value = savedElev;
+
+    // Load transit criteria thresholds
+    const savedAltThreshold = localStorage.getItem("altThreshold");
+    const savedAzThreshold = localStorage.getItem("azThreshold");
+    const altThresholdEl = document.getElementById("altThreshold");
+    const azThresholdEl = document.getElementById("azThreshold");
+    if (altThresholdEl) {
+        altThresholdEl.value = savedAltThreshold !== null ? savedAltThreshold : 5.0;
+    }
+    if (azThresholdEl) {
+        azThresholdEl.value = savedAzThreshold !== null ? savedAzThreshold : 10.0;
+    }
 
     // Load quadrant values or use legacy single value (only if elements exist)
     if (minAltNEl) {
@@ -695,12 +713,17 @@ function fetchFlights() {
     alertTargetUnderHorizon = '';
 
     const minAltitude = getMinAltitudeAllQuadrants();
+    const altThreshold = parseFloat(document.getElementById("altThreshold").value) || 5.0;
+    const azThreshold = parseFloat(document.getElementById("azThreshold").value) || 10.0;
+    
     let endpoint_url = (
         `/flights?target=${encodeURIComponent(target)}`
         + `&latitude=${encodeURIComponent(latitude)}`
         + `&longitude=${encodeURIComponent(longitude)}`
         + `&elevation=${encodeURIComponent(elevation)}`
         + `&min_altitude=${encodeURIComponent(minAltitude)}`
+        + `&alt_threshold=${encodeURIComponent(altThreshold)}`
+        + `&az_threshold=${encodeURIComponent(azThreshold)}`
         + `&send-notification=true`
     );
 
@@ -717,7 +740,16 @@ function fetchFlights() {
     document.getElementById("results").style.display = "none";
 
     fetch(endpoint_url)
-    .then(response => response.json())
+    .then(response => {
+        if (!response.ok) {
+            return response.json().then(err => {
+                throw new Error(err.error || `Server error: ${response.status}`);
+            }).catch(() => {
+                throw new Error(`Server error: ${response.status}`);
+            });
+        }
+        return response.json();
+    })
     .then(data => {
         // Record update time
         window.lastFlightUpdateTime = Date.now();
@@ -757,27 +789,31 @@ function fetchFlights() {
 
         document.getElementById("trackingStatus").innerHTML = trackingParts.join("&nbsp;&nbsp;&nbsp;&nbsp;");
 
-        // LINE 3: Target coordinates - Sun and Moon alt/az
-        let coordParts = [];
-
-        // Always show Sun coordinates
+        // LINE 2: Celestial positions with emoji (always show, even below horizon)
+        let positionParts = [];
+        
+        // Always show Sun position if coordinates available
         if(data.targetCoordinates && data.targetCoordinates.sun) {
-            let coords = data.targetCoordinates.sun;
-            let altStr = coords.altitude !== null && coords.altitude !== undefined ? coords.altitude.toFixed(1) : "—";
-            let azStr = coords.azimuthal !== null && coords.azimuthal !== undefined ? coords.azimuthal.toFixed(1) : "—";
-            coordParts.push(`Sun Alt: ${altStr}° Az: ${azStr}°`);
+            const sun = data.targetCoordinates.sun;
+            const altStr = sun.altitude.toFixed(1);
+            const azStr = sun.azimuthal.toFixed(1);
+            positionParts.push(`🌞 Alt: ${altStr}° Az: ${azStr}°`);
         }
-
-        // Always show Moon coordinates
+        
+        // Always show Moon position if coordinates available
         if(data.targetCoordinates && data.targetCoordinates.moon) {
-            let coords = data.targetCoordinates.moon;
-            let altStr = coords.altitude !== null && coords.altitude !== undefined ? coords.altitude.toFixed(1) : "—";
-            let azStr = coords.azimuthal !== null && coords.azimuthal !== undefined ? coords.azimuthal.toFixed(1) : "—";
-            coordParts.push(`Moon Alt: ${altStr}° Az: ${azStr}°`);
+            const moon = data.targetCoordinates.moon;
+            const altStr = moon.altitude.toFixed(1);
+            const azStr = moon.azimuthal.toFixed(1);
+            positionParts.push(`🌙 Alt: ${altStr}° Az: ${azStr}°`);
         }
-
-        document.getElementById("targetCoordinates").innerHTML = coordParts.join("&nbsp;&nbsp;&nbsp;&nbsp;");
-
+        
+        if(positionParts.length > 0) {
+            const celestialEl = document.getElementById("celestialPositions");
+            if(celestialEl) {
+                celestialEl.innerHTML = positionParts.join("&nbsp;&nbsp;&nbsp;&nbsp;");
+            }
+        }
 
         // Check if any targets are trackable
         if(data.trackingTargets && data.trackingTargets.length === 0) {
@@ -983,7 +1019,13 @@ function fetchFlights() {
         // Hide loading spinner on error
         document.getElementById("loadingSpinner").style.display = "none";
         document.getElementById("results").style.display = "block";
-        alert("Error getting flight data. Check console for details.");
+        
+        let errorMsg = error.message || "Unknown error";
+        if (errorMsg.includes("AEROAPI") || errorMsg.includes("API key")) {
+            alert("⚠️ FlightAware API key not configured.\n\nPlease set AEROAPI_API_KEY in your .env file.\nSee SETUP.md for instructions.");
+        } else {
+            alert(`Error getting flight data:\n${errorMsg}\n\nCheck console for details.`);
+        }
         console.error("Error:", error);
     });
 }

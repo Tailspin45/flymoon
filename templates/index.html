@@ -17,7 +17,8 @@
         <img src="{{ url_for('static', filename='images/logo.svg') }}" alt="Flymoon Transit Tracker" class="logo" />
         <div style="flex: 1; text-align: center;">
             <span id="trackingStatus" class="status-text"></span>
-            <div id="lastUpdateStatus" style="font-size: 0.85em; color: #888; margin-top: 4px;"></div>
+            <div id="lastUpdateStatus" style="font-size: 0.85em; color: #ccc; margin-top: 4px;"></div>
+            <div id="celestialPositions" style="font-size: 0.85em; color: #ddd; margin-top: 2px;"></div>
         </div>
         <div style="display: flex; gap: 8px;">
             <a href="/telescope" class="btn-sm" title="Control Telescope" style="position: relative;">
@@ -57,6 +58,15 @@
             <input type="number" id="elevation" placeholder="Elev" autocomplete="on" title="Elevation (m)">
             <div style="font-size: 0.7em; color: #aaa; margin-top: -2px;">Elevation (m)</div>
         </div>
+        <span class="separator">|</span>
+        <div style="display: inline-block; text-align: center;">
+            <input type="number" id="altThreshold" placeholder="Alt Δ" autocomplete="on" title="Max altitude difference for transit (degrees)" step="0.5" min="0.5" max="20" style="width: 70px;">
+            <div style="font-size: 0.7em; color: #aaa; margin-top: -2px;">Alt Δ (°)</div>
+        </div>
+        <div style="display: inline-block; text-align: center;">
+            <input type="number" id="azThreshold" placeholder="Az Δ" autocomplete="on" title="Max azimuth difference for transit (degrees)" step="1" min="1" max="180" style="width: 70px;">
+            <div style="font-size: 0.7em; color: #aaa; margin-top: -2px;">Az Δ (°)</div>
+        </div>
         <div style="display: inline-block; text-align: center;">
             <button class="btn-sm" onclick="savePosition()" title="Save position">💾</button>
             <div style="font-size: 0.7em; color: #aaa; margin-top: -2px;">Save</div>
@@ -87,8 +97,6 @@
             100% { transform: rotate(360deg); }
         }
     </style>
-
-    <p id="targetCoordinates" class="coords-text" style="margin: 5px 0;"></p>
 
     <div id="transitCountdown" style="display: none; text-align: center; font-size: 1.5em; font-weight: bold; padding: 15px; margin: 10px 0; border-radius: 5px;"></div>
 

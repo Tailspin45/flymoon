@@ -185,7 +185,8 @@ class SeestarClient:
                 self._send_command("scope_get_equ_coord", expect_response=False)
                 logger.debug("Heartbeat sent")
             except Exception as e:
-                logger.warning(f"Heartbeat failed: {e}")
+                # Use debug level to avoid spamming logs when telescope is disconnected
+                logger.debug(f"Heartbeat failed: {e}")
 
             # Sleep in small intervals to allow quick shutdown
             for _ in range(self.heartbeat_interval):
