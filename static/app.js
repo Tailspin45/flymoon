@@ -712,9 +712,10 @@ function refreshTimer() {
     // Decrement remaining seconds
     remainingSeconds--;
 
-    // Reset if countdown reaches 0
+    // Reset and trigger fetch when countdown reaches 0
     if (remainingSeconds <= 0) {
         remainingSeconds = currentFreq * 60;
+        goFetch(); // Trigger fetch when timer hits zero
     }
 
     // Format as MM:SS
