@@ -191,6 +191,7 @@ def check_transit(
             if update_response:
                 response = {
                     "id": flight["name"],
+                    "fa_flight_id": flight.get("fa_flight_id", ""),
                     "origin": flight["origin"],
                     "destination": flight["destination"],
                     "latitude": flight["latitude"],
@@ -221,6 +222,7 @@ def check_transit(
     # Return closest approach data even if threshold not met
     result = {
         "id": flight["name"],
+        "fa_flight_id": flight.get("fa_flight_id", ""),
         "origin": flight["origin"],
         "destination": flight["destination"],
         "latitude": flight["latitude"],

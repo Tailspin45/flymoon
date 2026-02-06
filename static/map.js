@@ -21,6 +21,7 @@ let mapInitialized = false;
 let boundingBoxUserEdited = localStorage.getItem('boundingBoxUserEdited') === 'true';
 let aircraftRouteCache = {};  // Cache fetched routes/tracks
 let currentRouteLayer = null;  // Currently displayed route/track
+let userInteractingWithMap = false;  // Prevent auto-zoom during user interaction
 
 // Arrow colors for each target
 const ARROW_COLORS = {
@@ -67,7 +68,8 @@ function flashTableRow(flightId) {
         row.classList.add('selected-row');
         selectedRowId = flightId;
 
-        row.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        // Scroll within table container, not the entire page
+        row.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'nearest' });
 
         // Also flash the altitude bar
         flashAltitudeBar(flightId);
@@ -396,6 +398,7 @@ function updateAircraftMarkers(flights, observerLat, observerLon) {
 
             // Click handler to show route/track and flash table row
             marker.on('click', function() {
+                console.log('Marker clicked!', { fa_flight_id: flight.fa_flight_id, normalizedId });
                 toggleFlightRouteTrack(flight.fa_flight_id, normalizedId);
                 flashTableRow(normalizedId);
                 flashAircraftMarker(normalizedId);
@@ -406,13 +409,14 @@ function updateAircraftMarkers(flights, observerLat, observerLon) {
     });
 
     // Fit map to show all aircraft at maximum zoom, not the bounding box
-    if (Object.keys(aircraftMarkers).length > 0) {
+    // Skip auto-zoom if user is interacting with map (viewing route/track)
+    if (Object.keys(aircraftMarkers).length > 0 && !userInteractingWithMap) {
         const aircraftBounds = L.latLngBounds(
             Object.values(aircraftMarkers).map(marker => marker.getLatLng())
         );
         // Add padding to ensure markers aren't at the edge
         map.fitBounds(aircraftBounds, { padding: [50, 50], maxZoom: 13 });
-    } else {
+    } else if (Object.keys(aircraftMarkers).length === 0) {
         // No aircraft - center on observer at reasonable zoom
         map.setView([observerLat, observerLon], 9);
     }
@@ -523,14 +527,25 @@ function updateAltitudeOverlay(flights) {
  * @param {string} flightId - Normalized flight identifier for UI cross-reference
  */
 async function toggleFlightRouteTrack(faFlightId, flightId) {
-    if (!map || !faFlightId) return;
+    console.log('toggleFlightRouteTrack called:', { faFlightId, flightId });
+    
+    if (!map || !faFlightId) {
+        console.log('Aborted: map or faFlightId missing', { map: !!map, faFlightId });
+        return;
+    }
 
     // If already showing this flight's route, hide it
     if (currentRouteLayer && currentRouteLayer.flightId === flightId) {
+        console.log('Hiding current route layer for', flightId);
         map.removeLayer(currentRouteLayer);
         currentRouteLayer = null;
+        userInteractingWithMap = false;  // Allow auto-zoom again
         return;
     }
+
+    // User is now interacting with the map - prevent auto-zoom
+    userInteractingWithMap = true;
+    console.log('User interacting with map, fetching route/track...');
 
     // Remove previous route if showing different flight
     if (currentRouteLayer) {
@@ -614,9 +629,10 @@ function displayRouteTrack(data, flightId) {
             if (trackPoints.length > 0) {
                 console.log('Drawing track with', trackPoints.length, 'positions');
                 const trackLine = L.polyline(trackPoints, {
-                    color: '#32CD32',
+                    color: '#000000',  // Black
                     weight: 3,
-                    opacity: 0.8
+                    opacity: 0.8,
+                    dashArray: '10, 5'  // Dashed pattern
                 });
                 layerGroup.addLayer(trackLine);
                 trackLine.bindPopup('✈️ Historical Track (' + trackPoints.length + ' positions)');
@@ -635,6 +651,13 @@ function displayRouteTrack(data, flightId) {
     layerGroup.addTo(map);
     layerGroup.flightId = flightId;
     currentRouteLayer = layerGroup;
+    
+    console.log('Layer group added to map with', layerGroup.getLayers().length, 'layers');
+    
+    // If no layers were added, show a message
+    if (layerGroup.getLayers().length === 0) {
+        console.warn('No route or track data available to display for flight', flightId);
+    }
 }
 
 function getPossibilityText(isPossible, level) {
