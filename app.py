@@ -20,7 +20,7 @@ Routes:
 - /gallery - Transit image gallery
 
 Environment Variables (see SETUP.md):
-- AEROAPI_KEY - FlightAware API key (required)
+- AEROAPI_API_KEY - FlightAware API key (required)
 - TELEGRAM_BOT_TOKEN - Telegram bot token (optional)
 - TELEGRAM_CHAT_ID - Telegram chat ID (optional)
 - SEESTAR_IP - Telescope IP address (optional)
@@ -41,7 +41,7 @@ from dotenv import load_dotenv
 from flask import Flask, jsonify, render_template, request
 from werkzeug.utils import secure_filename
 
-from src.constants import POSSIBLE_TRANSITS_LOGFILENAME
+from src.constants import POSSIBLE_TRANSITS_LOGFILENAME, get_aeroapi_key
 
 # SETUP
 load_dotenv()
@@ -245,7 +245,7 @@ def get_all_flights():
 @app.route("/flights/<fa_flight_id>/route")
 def get_flight_route(fa_flight_id):
     """Get the filed route for a specific flight."""
-    API_KEY = os.getenv("AEROAPI_API_KEY")
+    API_KEY = get_aeroapi_key()
     url = f"https://aeroapi.flightaware.com/aeroapi/flights/{fa_flight_id}/route"
     headers = {"Accept": "application/json; charset=UTF-8", "x-apikey": API_KEY}
 
@@ -263,7 +263,7 @@ def get_flight_route(fa_flight_id):
 @app.route("/flights/<fa_flight_id>/track")
 def get_flight_track(fa_flight_id):
     """Get the historical track positions for a specific flight."""
-    API_KEY = os.getenv("AEROAPI_API_KEY")
+    API_KEY = get_aeroapi_key()
     url = f"https://aeroapi.flightaware.com/aeroapi/flights/{fa_flight_id}/track"
     headers = {"Accept": "application/json; charset=UTF-8", "x-apikey": API_KEY}
 

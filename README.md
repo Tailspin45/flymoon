@@ -43,10 +43,17 @@ pip install -r requirements.txt
 
 2. **Add your FlightAware API key:**
    ```
-   AEROAPI_KEY=your_api_key_here
+   AEROAPI_API_KEY=your_api_key_here
    ```
 
-3. **Optional: Set up Telegram or Telescope** - See [SETUP.md](SETUP.md) for detailed instructions
+3. **Set your observer location:**
+   ```
+   OBSERVER_LATITUDE=33.111369
+   OBSERVER_LONGITUDE=-117.310169
+   OBSERVER_ELEVATION=0
+   ```
+
+4. **Optional: Set up Telegram or Telescope** - See [SETUP.md](SETUP.md) for detailed instructions
 
 ### Run
 

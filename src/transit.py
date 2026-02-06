@@ -19,6 +19,7 @@ from src.constants import (
     TOP_MINUTE,
     Altitude,
     PossibilityLevel,
+    get_aeroapi_key,
 )
 from src.flight_data import get_flight_data, load_existing_flight_data, parse_fligh_data
 from src.position import (
@@ -258,7 +259,7 @@ def get_transits(
     alt_threshold: float = 5.0,
     az_threshold: float = 10.0,
 ) -> List[dict]:
-    API_KEY = os.getenv("AEROAPI_API_KEY")
+    API_KEY = get_aeroapi_key()
 
     logger.info(f"{latitude=}, {longitude=}, {elevation=}")
 

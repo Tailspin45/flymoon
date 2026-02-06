@@ -1,3 +1,4 @@
+import os
 from enum import Enum
 
 from skyfield.api import load
@@ -33,6 +34,15 @@ CHANGE_ELEVATION = {
     "D": "descending",
     "-": "level",
 }
+
+
+def get_aeroapi_key() -> str:
+    return (
+        os.getenv("AEROAPI_API_KEY")
+        or os.getenv("AEROAPI_KEY")
+        or os.getenv("FLIGHTAWARE_API_KEY")
+        or ""
+    )
 
 # Test data
 TEST_DATA_PATH = "data/raw_flight_data_example.json"

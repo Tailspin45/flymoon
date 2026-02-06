@@ -40,11 +40,18 @@ class ConfigWizard:
     def _check_aeroapi_key(self):
         """Check FlightAware AeroAPI key."""
         key = os.getenv("AEROAPI_API_KEY")
-        if not key:
+        legacy_key = os.getenv("AEROAPI_KEY") or os.getenv("FLIGHTAWARE_API_KEY")
+        if not key and not legacy_key:
             self.errors.append({
                 "field": "AEROAPI_API_KEY",
                 "message": "FlightAware AeroAPI key is required for live flight data",
                 "severity": "ERROR",
+            })
+        if legacy_key and not key:
+            self.warnings.append({
+                "field": "AEROAPI_API_KEY",
+                "message": "Legacy API key detected (AEROAPI_KEY or FLIGHTAWARE_API_KEY). Rename to AEROAPI_API_KEY.",
+                "severity": "WARNING",
             })
 
     def _check_weather_key(self):

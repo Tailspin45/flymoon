@@ -173,7 +173,7 @@ Then edit `.env` with your favorite text editor.
 
 ```bash
 # FlightAware API credentials (required)
-FLIGHTAWARE_API_KEY=your_api_key_here
+AEROAPI_API_KEY=your_api_key_here
 
 # Your observer location (required)
 OBSERVER_LATITUDE=33.111369
@@ -221,7 +221,7 @@ Replace `192.168.1.100` with your actual Seestar IP address.
 
 ```bash
 # FlightAware API
-FLIGHTAWARE_API_KEY=your_api_key_here
+AEROAPI_API_KEY=your_api_key_here
 
 # Observer Location
 OBSERVER_LATITUDE=33.111369
