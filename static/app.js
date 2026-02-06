@@ -13,6 +13,7 @@ const COLUMN_NAMES = [
     "aircraft_elevation_feet",
     "direction",
     "distance_nm",
+    "speed",
 ];
 const MS_IN_A_MIN = 60000;
 // Possibility levels
@@ -80,6 +81,7 @@ function getMinAltitudeAllQuadrants() {
     return Math.min(minAltN, minAltE, minAltS, minAltW);
 }
 var autoMode = false;
+var alertsEnabled = localStorage.getItem('alertsEnabled') === 'true' || false;
 // Transit countdown tracking
 var nextTransit = null;
 var transitCountdownInterval = null;
@@ -583,6 +585,11 @@ function go() {
     const resultsDiv = document.getElementById("results");
     const mapContainer = document.getElementById("mapContainer");
 
+    // Reset map interaction flag on manual refresh
+    if (typeof userInteractingWithMap !== 'undefined') {
+        userInteractingWithMap = false;
+    }
+
     // Validate coordinates first
     let lat = document.getElementById("latitude");
     let latitude = parseFloat(lat.value);
@@ -940,6 +947,17 @@ function fetchFlights() {
                 } else if (column === "aircraft_type") {
                     // Show aircraft type, hide "N/A"
                     val.textContent = value === "N/A" ? "" : value;
+                } else if (column === "origin" || column === "destination") {
+                    // Scrunch origin/destination with max-width and ellipsis
+                    val.textContent = value;
+                    val.style.maxWidth = "60px";
+                    val.style.overflow = "hidden";
+                    val.style.textOverflow = "ellipsis";
+                    val.style.whiteSpace = "nowrap";
+                    val.title = value;  // Show full name on hover
+                } else if (column === "speed") {
+                    // Show speed in knots (already converted from km/h in backend)
+                    val.textContent = Math.round(value / 1.852);  // Convert km/h back to knots
                 } else if (column === "aircraft_elevation_feet") {
                     // Show GPS altitude in feet with comma formatting, or as flight level if > 18000
                     const altitude = Math.round(value);
@@ -1158,6 +1176,12 @@ function soundAlert() {
 }
 
 function showDesktopNotification() {
+    // Check if alerts are enabled
+    if (!alertsEnabled) {
+        console.log('Alerts disabled - skipping notification');
+        return;
+    }
+    
     // Check if browser supports notifications
     if (!('Notification' in window)) {
         console.log('Browser does not support desktop notifications');
@@ -1199,30 +1223,59 @@ function createNotification() {
     setTimeout(() => notification.close(), 10000);
 }
 
-function requestNotificationPermission() {
+function toggleAlerts() {
+    // Find the alerts button - try multiple selectors
+    let button = document.querySelector('[onclick*="Alerts"]');
+    if (!button) {
+        button = document.querySelector('button[title*="alerts" i]');
+    }
+    
     if (!('Notification' in window)) {
         alert('Your browser does not support desktop notifications');
         return;
     }
 
-    if (Notification.permission === 'granted') {
-        alert('Alerts are already enabled!');
-        return;
-    }
-
-    if (Notification.permission === 'denied') {
-        alert('Alerts were previously denied. Please enable them in your browser settings.');
-        return;
-    }
-
-    Notification.requestPermission().then(permission => {
-        if (permission === 'granted') {
-            alert('Alerts enabled successfully!');
+    // Toggle state
+    alertsEnabled = !alertsEnabled;
+    localStorage.setItem('alertsEnabled', alertsEnabled);
+    
+    // Update button appearance if found
+    if (button) {
+        if (alertsEnabled) {
+            button.style.backgroundColor = '#32CD32';  // Green when on
+            button.style.color = 'white';
+            button.title = 'Alerts enabled (click to disable)';
+            
+            // Request permission if not already granted
+            if (Notification.permission !== 'granted' && Notification.permission !== 'denied') {
+                Notification.requestPermission();
+            }
         } else {
-            alert('Alerts were not enabled.');
+            button.style.backgroundColor = '';  // Default when off
+            button.style.color = '';
+            button.title = 'Alerts disabled (click to enable)';
         }
-    });
+    }
 }
+
+// Initialize alerts button state on page load
+window.addEventListener('DOMContentLoaded', () => {
+    let button = document.querySelector('[onclick*="Alerts"]');
+    if (!button) {
+        button = document.querySelector('button[title*="alerts" i]');
+    }
+    if (button && alertsEnabled) {
+        button.style.backgroundColor = '#32CD32';
+        button.style.color = 'white';
+        button.title = 'Alerts enabled (click to disable)';
+    }
+});
+
+function requestNotificationPermission() {
+    // Deprecated - replaced by toggleAlerts()
+    toggleAlerts();
+}
+
 // Last update display
 function updateLastUpdateDisplay() {
     const elem = document.getElementById('lastUpdateStatus');

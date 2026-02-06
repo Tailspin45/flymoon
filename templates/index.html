@@ -81,7 +81,7 @@
             <div style="font-size: 0.7em; color: #aaa; margin-top: -2px;">Map</div>
         </div>
         <div style="display: inline-block; text-align: center;">
-            <button class="btn-sm" onclick="requestNotificationPermission()" title="Enable alerts">🔔</button>
+            <button class="btn-sm" onclick="toggleAlerts()" title="Enable/disable alerts">🔔</button>
             <div style="font-size: 0.7em; color: #aaa; margin-top: -2px;">Alerts</div>
         </div>
     </div>
@@ -154,8 +154,8 @@
                     <th>target</th>
                     <th>id</th>
                     <th>type</th>
-                    <th>origin</th>
-                    <th>destination</th>
+                    <th style="max-width: 60px; overflow: hidden; text-overflow: ellipsis;">origin</th>
+                    <th style="max-width: 60px; overflow: hidden; text-overflow: ellipsis;">dest</th>
                     <th>target<br>angle</th>
                     <th>plane<br>angle</th>
                     <th>△angle</th>
@@ -166,6 +166,7 @@
                     <th>GPS alt<br>(ft)</th>
                     <th>hdg</th>
                     <th>dist<br>(nm)</th>
+                    <th>speed<br>(kts)</th>
                 </tr>
             </thead>
             <tbody id="flightData">
