@@ -58,7 +58,7 @@ def get_thresholds(altitude: float) -> Tuple[float, float]:
 def get_possibility_level(
     altitude: float, alt_diff: float, az_diff: float, eta: float = None
 ) -> str:
-    possibility_level = PossibilityLevel.IMPOSSIBLE
+    possibility_level = PossibilityLevel.UNLIKELY
 
     if alt_diff <= 10 and az_diff <= 10 or (Altitude.HIGH(altitude) and alt_diff <= 5):
         possibility_level = PossibilityLevel.LOW
@@ -85,6 +85,8 @@ def check_transit(
     my_position: Topos,
     target: CelestialObject,
     earth_ref,
+    alt_threshold: float = 5.0,
+    az_threshold: float = 10.0,
 ) -> dict:
     """Given the data of a flight, compute a possible transit with the target.
 
@@ -115,6 +117,7 @@ def check_transit(
     """
     min_diff_combined = float("inf")
     response = None
+    closest_approach = None  # Track closest approach even if threshold not met
     no_decreasing_count = 0
     update_response = False
 
@@ -148,6 +151,18 @@ def check_transit(
         az_diff = abs(future_az - target.azimuthal.degrees)
         diff_combined = alt_diff + az_diff
 
+        # Initialize closest_approach with first data point if not set
+        if closest_approach is None:
+            closest_approach = {
+                "alt_diff": round(float(alt_diff), 3),
+                "az_diff": round(float(az_diff), 3),
+                "time": round(float(minute), 3),
+                "target_alt": round(float(target.altitude.degrees), 2),
+                "plane_alt": round(float(future_alt), 2),
+                "target_az": round(float(target.azimuthal.degrees), 2),
+                "plane_az": round(float(future_az), 2),
+            }
+
         if no_decreasing_count >= 180:
             logger.info(f"diff is increasing, stop checking, min={round(minute, 2)}")
             break
@@ -156,11 +171,20 @@ def check_transit(
             no_decreasing_count = 0
             min_diff_combined = diff_combined
             update_response = True
+            # Always track closest approach
+            closest_approach = {
+                "alt_diff": round(float(alt_diff), 3),
+                "az_diff": round(float(az_diff), 3),
+                "time": round(float(minute), 3),
+                "target_alt": round(float(target.altitude.degrees), 2),
+                "plane_alt": round(float(future_alt), 2),
+                "target_az": round(float(target.azimuthal.degrees), 2),
+                "plane_az": round(float(future_az), 2),
+            }
         else:
             no_decreasing_count += 1
 
-        alt_threshold, az_threshold = get_thresholds(target.altitude.degrees)
-
+        # Use user-provided thresholds (already passed as parameters)
         if future_alt > 0 and alt_diff < alt_threshold and az_diff < az_threshold:
 
             if update_response:
@@ -168,6 +192,10 @@ def check_transit(
                     "id": flight["name"],
                     "origin": flight["origin"],
                     "destination": flight["destination"],
+                    "latitude": flight["latitude"],
+                    "longitude": flight["longitude"],
+                    "aircraft_elevation": flight["elevation"],
+                    "aircraft_type": flight.get("aircraft_type", "N/A"),
                     "alt_diff": round(float(alt_diff), 3),
                     "az_diff": round(float(az_diff), 3),
                     "time": round(float(minute), 3),
@@ -189,22 +217,36 @@ def check_transit(
     if response:
         return response
 
-    return {
+    # Return closest approach data even if threshold not met
+    result = {
         "id": flight["name"],
         "origin": flight["origin"],
         "destination": flight["destination"],
-        "alt_diff": None,
-        "az_diff": None,
-        "time": None,
-        "target_alt": None,
-        "plane_alt": None,
-        "target_az": None,
-        "plane_az": None,
+        "latitude": flight["latitude"],
+        "longitude": flight["longitude"],
+        "aircraft_elevation": flight["elevation"],
+        "aircraft_type": flight.get("aircraft_type", "N/A"),
         "is_possible_transit": 0,
-        "possibility_level": PossibilityLevel.IMPOSSIBLE.value,
+        "possibility_level": PossibilityLevel.UNLIKELY.value,
         "elevation_change": CHANGE_ELEVATION.get(flight["elevation_change"], None),
         "direction": flight["direction"],
     }
+    
+    # Include closest approach data if we found any
+    if closest_approach:
+        result.update(closest_approach)
+    else:
+        result.update({
+            "alt_diff": None,
+            "az_diff": None,
+            "time": None,
+            "target_alt": None,
+            "plane_alt": None,
+            "target_az": None,
+            "plane_az": None,
+        })
+    
+    return result
 
 
 def get_transits(
@@ -213,6 +255,8 @@ def get_transits(
     elevation: float,
     target_name: str = "moon",
     test_mode: bool = False,
+    alt_threshold: float = 5.0,
+    az_threshold: float = 10.0,
 ) -> List[dict]:
     API_KEY = os.getenv("AEROAPI_API_KEY")
 
@@ -268,6 +312,8 @@ def get_transits(
                     MY_POSITION,
                     celestial_obj,
                     EARTH,
+                    alt_threshold,
+                    az_threshold,
                 )
             )
 

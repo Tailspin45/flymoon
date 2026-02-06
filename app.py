@@ -55,6 +55,9 @@ from src import telescope_routes
 from src.seestar_client import TransitRecorder
 from src.constants import PossibilityLevel
 
+# Global test/demo mode flag
+test_mode = False
+
 # Validate configuration on startup
 wizard = ConfigWizard()
 if not wizard.validate(interactive=False):
@@ -106,73 +109,137 @@ def index():
 
 @app.route("/flights")
 def get_all_flights():
-    start_time = time.time()
+    try:
+        start_time = time.time()
 
-    target = request.args["target"]
-    latitude = float(request.args["latitude"])
-    longitude = float(request.args["longitude"])
-    elevation = float(request.args["elevation"])
-    min_altitude = float(request.args.get("min_altitude", 15))
-    has_send_notification = request.args["send-notification"] == "true"
+        latitude = float(request.args["latitude"])
+        longitude = float(request.args["longitude"])
+        elevation = float(request.args["elevation"])
+        min_altitude = float(request.args.get("min_altitude", 15))
+        alt_threshold = float(request.args.get("alt_threshold", 5.0))
+        az_threshold = float(request.args.get("az_threshold", 10.0))
+        has_send_notification = request.args["send-notification"] == "true"
 
-    # Check for custom bounding box from user
-    custom_bbox = None
-    if all(key in request.args for key in ["bbox_lat_ll", "bbox_lon_ll", "bbox_lat_ur", "bbox_lon_ur"]):
-        custom_bbox = {
-            "lat_lower_left": float(request.args["bbox_lat_ll"]),
-            "lon_lower_left": float(request.args["bbox_lon_ll"]),
-            "lat_upper_right": float(request.args["bbox_lat_ur"]),
-            "lon_upper_right": float(request.args["bbox_lon_ur"]),
+        # Check for custom bounding box from user
+        custom_bbox = None
+        if all(key in request.args for key in ["bbox_lat_ll", "bbox_lon_ll", "bbox_lat_ur", "bbox_lon_ur"]):
+            custom_bbox = {
+                "lat_lower_left": float(request.args["bbox_lat_ll"]),
+                "lon_lower_left": float(request.args["bbox_lon_ll"]),
+                "lat_upper_right": float(request.args["bbox_lat_ur"]),
+                "lon_upper_right": float(request.args["bbox_lon_ur"]),
+            }
+            logger.info(f"Using custom bounding box: {custom_bbox}")
+
+        # Always check both sun and moon for transits
+        all_flights = []
+        target_coordinates = {}
+        tracking_targets = []  # List of targets actually being tracked (above min altitude)
+        
+        # Helper to check if target is above minimum altitude
+        from src.astro import CelestialObject
+        from src.position import get_my_pos
+        from src.constants import ASTRO_EPHEMERIS
+        from datetime import datetime
+        from zoneinfo import ZoneInfo
+        from tzlocal import get_localzone_name
+        
+        EARTH = ASTRO_EPHEMERIS["earth"]
+        MY_POSITION = get_my_pos(lat=latitude, lon=longitude, elevation=elevation, base_ref=EARTH)
+        local_timezone = get_localzone_name()
+        ref_datetime = datetime.now().replace(tzinfo=ZoneInfo(local_timezone))
+        
+        for target in ["sun", "moon"]:
+            # Check altitude and calculate coordinates for both tracking and display
+            celestial_obj = CelestialObject(name=target, observer_position=MY_POSITION)
+            celestial_obj.update_position(ref_datetime=ref_datetime)
+            coords = celestial_obj.get_coordinates()
+            
+            # Always save coordinates for display in header (even if below horizon)
+            target_coordinates[target] = coords
+            
+            # Only check transits if above minimum altitude
+            if coords["altitude"] >= min_altitude:
+                tracking_targets.append(target)  # Add to tracking list
+                logger.info(f"Checking transits for {target} (altitude: {coords['altitude']:.1f}°, thresholds: alt={alt_threshold}°, az={az_threshold}°)")
+                data = get_transits(latitude, longitude, elevation, target, test_mode, alt_threshold, az_threshold)
+                
+                # Tag each flight with which target it's for
+                for flight in data["flights"]:
+                    flight["target"] = target
+                all_flights.extend(data["flights"])
+            else:
+                logger.info(f"{target.capitalize()} below minimum altitude ({coords['altitude']:.1f}° < {min_altitude}°), skipping transit check")
+        
+        # Combine results
+        data = {
+            "flights": sort_results(all_flights),
+            "targetCoordinates": target_coordinates,
+            "trackingTargets": tracking_targets,
+            "weather": None,  # Weather functionality not implemented yet
+            "boundingBox": {
+                "latLowerLeft": custom_bbox["lat_lower_left"] if custom_bbox else float(os.getenv("LAT_LOWER_LEFT", 0)),
+                "lonLowerLeft": custom_bbox["lon_lower_left"] if custom_bbox else float(os.getenv("LONG_LOWER_LEFT", 0)),
+                "latUpperRight": custom_bbox["lat_upper_right"] if custom_bbox else float(os.getenv("LAT_UPPER_RIGHT", 0)),
+                "lonUpperRight": custom_bbox["lon_upper_right"] if custom_bbox else float(os.getenv("LONG_UPPER_RIGHT", 0)),
+            }
         }
-        logger.info(f"Using custom bounding box: {custom_bbox}")
 
-    data: dict = get_transits(latitude, longitude, elevation, target, test_mode, min_altitude, custom_bbox)
-    data["flights"] = sort_results(data["flights"])
+        end_time = time.time()
+        elapsed_time = end_time - start_time
+        logger.info(f"Elapsed time: {elapsed_time} seconds")
 
-    end_time = time.time()
-    elapsed_time = end_time - start_time
-    logger.info(f"Elapsed time: {elapsed_time} seconds")
-
-    if not test_mode:
-        try:
-            date_ = date.today().strftime("%Y%m%d")
-            asyncio.run(
-                save_possible_transits(
-                    data["flights"], POSSIBLE_TRANSITS_LOGFILENAME.format(date_=date_)
-                )
-            )
-        except Exception as e:
-            logger.error(
-                f"Error while trying to save possible transits. Details:\n{str(e)}"
-            )
-
-    if has_send_notification:
-        try:
-            # Send Telegram notification for medium/high probability transits
-            asyncio.run(send_telegram_notification(data["flights"], target))
-        except Exception as e:
-            logger.error(f"Error while trying to send Telegram notification. Details:\n{str(e)}")
-
-    # Schedule automatic recordings for high-probability transits
-    transit_recorder = get_transit_recorder()
-    if transit_recorder:
-        for flight in data["flights"]:
-            # Only record HIGH probability transits (green rows)
-            if flight.get("possibility_level") == PossibilityLevel.HIGH.value:
-                eta_seconds = flight.get("transit_eta_seconds", flight.get("time", 0) * 60)
-                flight_id = flight.get("ident", flight.get("id", "unknown"))
-
-                try:
-                    transit_recorder.schedule_transit_recording(
-                        flight_id=flight_id,
-                        eta_seconds=eta_seconds,
-                        transit_duration_estimate=2.0  # Aircraft transits ~0.5-2 seconds
+        if not test_mode:
+            try:
+                date_ = date.today().strftime("%Y%m%d")
+                asyncio.run(
+                    save_possible_transits(
+                        data["flights"], POSSIBLE_TRANSITS_LOGFILENAME.format(date_=date_)
                     )
-                    logger.info(f"📹 Scheduled recording for {flight_id} (ETA: {eta_seconds:.0f}s)")
-                except Exception as e:
-                    logger.error(f"Failed to schedule recording for {flight_id}: {e}")
+                )
+            except Exception as e:
+                logger.error(
+                    f"Error while trying to save possible transits. Details:\n{str(e)}"
+                )
 
-    return jsonify(data)
+        if has_send_notification:
+            try:
+                # Send Telegram notification for medium/high probability transits
+                # Notification will include which target (sun/moon) each transit is for
+                asyncio.run(send_telegram_notification(data["flights"], "sun/moon"))
+            except Exception as e:
+                logger.error(f"Error while trying to send Telegram notification. Details:\n{str(e)}")
+
+        # Schedule automatic recordings for high-probability transits
+        transit_recorder = get_transit_recorder()
+        if transit_recorder:
+            for flight in data["flights"]:
+                # Only record HIGH probability transits (green rows)
+                if flight.get("possibility_level") == PossibilityLevel.HIGH.value:
+                    eta_seconds = flight.get("transit_eta_seconds", flight.get("time", 0) * 60)
+                    flight_id = flight.get("ident", flight.get("id", "unknown"))
+
+                    try:
+                        transit_recorder.schedule_transit_recording(
+                            flight_id=flight_id,
+                            eta_seconds=eta_seconds,
+                            transit_duration_estimate=2.0  # Aircraft transits ~0.5-2 seconds
+                        )
+                        logger.info(f"📹 Scheduled recording for {flight_id} (ETA: {eta_seconds:.0f}s)")
+                    except Exception as e:
+                        logger.error(f"Failed to schedule recording for {flight_id}: {e}")
+
+        return jsonify(data)
+    
+    except KeyError as e:
+        logger.error(f"Missing required parameter: {e}")
+        return jsonify({"error": f"Missing required parameter: {e}"}), 400
+    except ValueError as e:
+        logger.error(f"Invalid parameter value: {e}")
+        return jsonify({"error": f"Invalid parameter value: {e}"}), 400
+    except Exception as e:
+        logger.error(f"Error in /flights endpoint: {str(e)}", exc_info=True)
+        return jsonify({"error": f"Server error: {str(e)}"}), 500
 
 
 @app.route("/flights/<fa_flight_id>/route")
@@ -400,7 +467,6 @@ if __name__ == "__main__":
     parser.add_argument("--demo", action="store_true", help="Use mock demonstration data with guaranteed classifications")
     args = parser.parse_args()
 
-    global test_mode
     test_mode = args.test or args.demo
 
     if test_mode:
