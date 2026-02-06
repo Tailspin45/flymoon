@@ -167,6 +167,19 @@ def get_all_flights():
                 # Tag each flight with which target it's for
                 for flight in data["flights"]:
                     flight["target"] = target
+                    # Add computed fields for display
+                    if "aircraft_elevation" in flight:
+                        flight["aircraft_elevation_feet"] = int(flight["aircraft_elevation"] * 3.28084)
+                    # Calculate distance from observer to aircraft in nautical miles
+                    if "latitude" in flight and "longitude" in flight:
+                        from math import radians, sin, cos, sqrt, atan2
+                        lat1, lon1 = radians(latitude), radians(longitude)
+                        lat2, lon2 = radians(flight["latitude"]), radians(flight["longitude"])
+                        dlat, dlon = lat2 - lat1, lon2 - lon1
+                        a = sin(dlat/2)**2 + cos(lat1) * cos(lat2) * sin(dlon/2)**2
+                        c = 2 * atan2(sqrt(a), sqrt(1-a))
+                        distance_km = 6371 * c  # Earth radius in km
+                        flight["distance_nm"] = distance_km * 0.539957  # Convert km to nautical miles
                 all_flights.extend(data["flights"])
             else:
                 logger.info(f"{target.capitalize()} below minimum altitude ({coords['altitude']:.1f}° < {min_altitude}°), skipping transit check")

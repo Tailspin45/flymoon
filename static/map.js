@@ -164,10 +164,11 @@ function updateObserverMarker(lat, lon, elevation) {
         map.removeLayer(observerMarker);
     }
 
-    // Create custom icon for observer
+    // Create custom icon for observer - simple red dot
     const observerIcon = L.divIcon({
-        html: '📍',
-        iconSize: [30, 30],
+        html: '<div style="width: 8px; height: 8px; background-color: #FF0000; border: 1px solid white; border-radius: 50%; box-shadow: 0 0 3px rgba(0,0,0,0.6);"></div>',
+        iconSize: [10, 10],
+        iconAnchor: [5, 5],  // Center of the dot
         className: 'observer-icon'
     });
 
@@ -276,7 +277,9 @@ function updateAzimuthArrow(observerLat, observerLon, azimuth, altitude, targetN
     azimuthArrows[targetName] = L.polyline(arrowPoints, {
         color: color,
         weight: 6,
-        opacity: 0.9
+        opacity: 0.9,
+        lineCap: 'round',  // Round caps center the line better on the observer
+        lineJoin: 'round'
     }).addTo(map).bindPopup(`<b>${targetCapitalized}</b><br>Altitude: ${altitude.toFixed(1)}°<br>Azimuth: ${azimuth.toFixed(1)}°`);
 }
 
@@ -724,10 +727,13 @@ function updateMapVisualization(data, observerLat, observerLon, observerElev) {
     // Update azimuth arrows - one for each trackable target
     clearAzimuthArrows();
     if (data.targetCoordinates && data.trackingTargets) {
+        console.log('Observer position for arrows:', observerLat, observerLon);
+        console.log('Observer marker position:', observerMarker ? observerMarker.getLatLng() : 'no marker');
         // Show arrow for each target that is currently being tracked (above horizon)
         data.trackingTargets.forEach(targetName => {
             const coords = data.targetCoordinates[targetName];
             if (coords && coords.azimuthal !== undefined && coords.altitude !== undefined) {
+                console.log(`Creating arrow for ${targetName} with azimuth ${coords.azimuthal}`);
                 updateAzimuthArrow(observerLat, observerLon, coords.azimuthal, coords.altitude, targetName);
             }
         });
