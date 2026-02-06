@@ -16,8 +16,8 @@
   <circle cx="28" cy="27" r="2" fill="#d0d0d0" opacity="0.4"/>
   <circle cx="23" cy="30" r="1.5" fill="#d0d0d0" opacity="0.4"/>
 
-  <!-- Jet aircraft top-down view in black with swept wings -->
-  <g fill="#000000" opacity="0.9">
+  <!-- Jet aircraft top-down view in black with swept wings, rotated 45° to point NE -->
+  <g fill="#000000" opacity="0.9" transform="rotate(45 25 25)">
     <!-- Fuselage (elongated vertical rectangle) -->
     <rect x="23.5" y="14" width="3" height="22" rx="1.5"/>
     <!-- Pointed nose -->
