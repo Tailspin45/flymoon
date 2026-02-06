@@ -1,3 +1,23 @@
+// Helper function to convert true heading to magnetic heading
+function trueToMagnetic(trueHeading, latitude, longitude) {
+    if (typeof geomag === 'undefined') {
+        console.warn('geomag library not loaded, returning true heading');
+        return trueHeading;
+    }
+    try {
+        const geomagInfo = geomag.field(latitude, longitude);
+        const declination = geomagInfo.declination; // Negative for west, positive for east
+        let magneticHeading = trueHeading - declination;
+        // Normalize to 0-360
+        if (magneticHeading < 0) magneticHeading += 360;
+        if (magneticHeading >= 360) magneticHeading -= 360;
+        return magneticHeading;
+    } catch (error) {
+        console.error('Error calculating magnetic heading:', error);
+        return trueHeading;
+    }
+}
+
 const COLUMN_NAMES = [
     "id",
     "aircraft_type",
@@ -971,7 +991,11 @@ function fetchFlights() {
                     // Show distance in nautical miles with one decimal place
                     val.textContent = value.toFixed(1);
                 } else if (column === "direction") {
-                    val.textContent = Math.round(value) + "°";
+                    // Convert true heading to magnetic heading
+                    const trueHeading = value;
+                    const magHeading = trueToMagnetic(trueHeading, item.latitude, item.longitude);
+                    val.textContent = Math.round(magHeading) + "°";
+                    val.title = `True: ${Math.round(trueHeading)}°, Magnetic: ${Math.round(magHeading)}°`;
                 } else if (column === "alt_diff" || column === "az_diff") {
                     const roundedValue = Math.round(value);
                     val.textContent = roundedValue + "º";

@@ -361,13 +361,26 @@ function updateAircraftMarkers(flights, observerLat, observerLon) {
         }
 
         // Use diamond for transit aircraft (NTDS style), airplane emoji for others
-        // Airplane emoji points right (90°), so subtract 90 to align with compass heading
+        // Convert true heading to magnetic heading for proper visual alignment
         const isTransit = flight.is_possible_transit === 1;
-        const rotation = (flight.direction - 90);
+        let headingForDisplay = flight.direction;
+        if (typeof geomag !== 'undefined') {
+            try {
+                const geomagInfo = geomag.field(flight.latitude, flight.longitude);
+                const declination = geomagInfo.declination;
+                headingForDisplay = flight.direction - declination;
+                if (headingForDisplay < 0) headingForDisplay += 360;
+                if (headingForDisplay >= 360) headingForDisplay -= 360;
+            } catch (error) {
+                console.warn('Could not calculate magnetic declination:', error);
+            }
+        }
+        // Airplane emoji points right (90°), so subtract 90 to align with compass heading
+        const rotation = (headingForDisplay - 90);
 
         // Debug: Log heading and rotation for verification
         if (!isTransit && flight.direction) {
-            console.log(`Aircraft ${flightId}: heading=${flight.direction}°, rotation=${rotation}°, isTransit=${isTransit}`);
+            console.log(`Aircraft ${flightId}: true=${flight.direction}°, magnetic=${Math.round(headingForDisplay)}°`);
         }
 
         const aircraftIcon = L.divIcon({
