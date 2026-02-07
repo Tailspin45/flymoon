@@ -30,7 +30,7 @@ function clearGalleryAuthToken() {
 document.addEventListener('DOMContentLoaded', function() {
     loadGallery();
     setupUploadForm();
-    setupFilters();
+    setupTabs();
     setupLightbox();
     setupEditModal();
 });
@@ -41,6 +41,7 @@ async function loadGallery() {
         const response = await fetch('/gallery/list');
         allImages = await response.json();
         console.log('Gallery loaded:', allImages.length, 'images', allImages);
+        updateTabCounts();
         displayGallery();
     } catch (error) {
         console.error('Error loading gallery:', error);
@@ -48,26 +49,70 @@ async function loadGallery() {
     }
 }
 
+// Update tab counts
+function updateTabCounts() {
+    const counts = {
+        all: allImages.length,
+        'sun-transit': 0,
+        'moon-transit': 0,
+        'sun-manual': 0,
+        'moon-manual': 0,
+        videos: 0,
+        photos: 0
+    };
+
+    allImages.forEach(img => {
+        const meta = img.metadata;
+        const isVideo = img.path.match(/\.(mp4|avi|mov)$/i);
+        
+        // Transit vs Manual (has flight_id = transit)
+        if (meta.target === 'sun' && meta.flight_id) {
+            counts['sun-transit']++;
+        } else if (meta.target === 'sun' && !meta.flight_id) {
+            counts['sun-manual']++;
+        } else if (meta.target === 'moon' && meta.flight_id) {
+            counts['moon-transit']++;
+        } else if (meta.target === 'moon' && !meta.flight_id) {
+            counts['moon-manual']++;
+        }
+        
+        // Videos vs Photos
+        if (isVideo) {
+            counts.videos++;
+        } else {
+            counts.photos++;
+        }
+    });
+
+    // Update count badges
+    Object.keys(counts).forEach(filter => {
+        const countEl = document.getElementById(`count-${filter}`);
+        if (countEl) {
+            countEl.textContent = counts[filter];
+        }
+    });
+}
+
 // Display gallery with current filter
 function displayGallery() {
     const grid = document.getElementById('galleryGrid');
 
     // Filter images
-    let filteredImages = allImages;
-    if (currentFilter !== 'all') {
-        filteredImages = allImages.filter(img => img.metadata.target === currentFilter);
-    }
+    let filteredImages = filterImages(allImages, currentFilter);
 
     // Display images
     if (filteredImages.length === 0) {
-        grid.innerHTML = '<div class="no-images">No images yet. Upload your first transit image!</div>';
+        grid.innerHTML = `<div class="no-images">No ${getFilterLabel(currentFilter)} yet. ${currentFilter === 'all' ? 'Upload your first transit image!' : 'Try a different tab.'}</div>`;
         return;
     }
 
     grid.innerHTML = filteredImages.map(img => {
         const meta = img.metadata;
-        const target = meta.target === 'moon' ? 'Moon' : meta.target === 'sun' ? 'Sun' : 'Other';
-        const flightInfo = meta.flight_id ? `${meta.flight_id}${meta.aircraft_type ? ' (' + meta.aircraft_type + ')' : ''}` : 'Unknown Flight';
+        const target = meta.target === 'moon' ? '🌙 Moon' : meta.target === 'sun' ? '☀️ Sun' : 'Other';
+        const isVideo = img.path.match(/\.(mp4|avi|mov)$/i);
+        const mediaType = isVideo ? '📹' : '📷';
+        const isTransit = meta.flight_id ? '✈️' : '';
+        const flightInfo = meta.flight_id ? `${meta.flight_id}${meta.aircraft_type ? ' (' + meta.aircraft_type + ')' : ''}` : 'Manual Capture';
         const date = meta.timestamp ? new Date(meta.timestamp).toLocaleDateString() : 'Unknown Date';
         const caption = meta.caption ? `<div class="gallery-item-caption">${escapeHtml(meta.caption)}</div>` : '';
 
@@ -75,7 +120,7 @@ function displayGallery() {
             <div class="gallery-item" onclick="openLightbox('${img.path}', ${JSON.stringify(meta).replace(/"/g, '&quot;')})">
                 <img src="/${img.path}" alt="${flightInfo}" loading="lazy">
                 <div class="gallery-item-info">
-                    <div class="gallery-item-title">${target} ${escapeHtml(flightInfo)}</div>
+                    <div class="gallery-item-title">${mediaType} ${target} ${isTransit} ${escapeHtml(flightInfo)}</div>
                     <div class="gallery-item-meta">
                         ${date}
                         ${meta.equipment ? '<br>' + escapeHtml(meta.equipment) : ''}
@@ -85,6 +130,58 @@ function displayGallery() {
             </div>
         `;
     }).join('');
+}
+
+// Filter images by tab selection
+function filterImages(images, filter) {
+    switch(filter) {
+        case 'all':
+            return images;
+        case 'sun-transit':
+            return images.filter(img => img.metadata.target === 'sun' && img.metadata.flight_id);
+        case 'moon-transit':
+            return images.filter(img => img.metadata.target === 'moon' && img.metadata.flight_id);
+        case 'sun-manual':
+            return images.filter(img => img.metadata.target === 'sun' && !img.metadata.flight_id);
+        case 'moon-manual':
+            return images.filter(img => img.metadata.target === 'moon' && !img.metadata.flight_id);
+        case 'videos':
+            return images.filter(img => img.path.match(/\.(mp4|avi|mov)$/i));
+        case 'photos':
+            return images.filter(img => !img.path.match(/\.(mp4|avi|mov)$/i));
+        default:
+            return images;
+    }
+}
+
+// Get human-readable label for filter
+function getFilterLabel(filter) {
+    const labels = {
+        'all': 'images',
+        'sun-transit': 'Sun transit captures',
+        'moon-transit': 'Moon transit captures',
+        'sun-manual': 'manual Sun captures',
+        'moon-manual': 'manual Moon captures',
+        'videos': 'videos',
+        'photos': 'photos'
+    };
+    return labels[filter] || 'items';
+}
+
+// Setup gallery tabs
+function setupTabs() {
+    const tabs = document.querySelectorAll('.tab-btn');
+    tabs.forEach(tab => {
+        tab.addEventListener('click', function() {
+            // Remove active class from all tabs
+            tabs.forEach(t => t.classList.remove('active'));
+            // Add active class to clicked tab
+            this.classList.add('active');
+            // Update filter and redisplay
+            currentFilter = this.dataset.filter;
+            displayGallery();
+        });
+    });
 }
 
 // Setup upload form

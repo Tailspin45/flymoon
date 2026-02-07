@@ -462,9 +462,101 @@ class SeestarClient:
             logger.error(f"Failed to stop view mode: {e}")
             return False
 
+    def capture_photo(self, exposure_time: float = 1.0) -> dict:
+        """
+        Capture a single photo (light frame).
+
+        Parameters
+        ----------
+        exposure_time : float
+            Exposure time in seconds (default: 1.0)
+
+        Returns
+        -------
+        dict
+            Response from telescope with result info
+
+        Raises
+        ------
+        RuntimeError
+            If not connected or not in viewing mode
+
+        Notes
+        -----
+        Uses the 'take_light' JSON-RPC method to capture a single frame.
+        This works in Solar, Lunar, and Scenery viewing modes (NOT deep-sky stacking).
+
+        Workflow:
+        1. Call start_solar_mode() or start_lunar_mode() first
+        2. Call this method to capture a single photo
+        3. Use get_albums() to retrieve the saved image
+        4. Download via HTTP: http://<host>/<path>/<filename>
+
+        The photo is saved to "My Album" on the Seestar device.
+        """
+        if not self._connected:
+            raise RuntimeError("Cannot capture photo: not connected to telescope")
+
+        try:
+            # Capture single light frame
+            params = {
+                "exposure_time": exposure_time,
+                "count": 1,  # Single frame
+                "filter": "none"
+            }
+            result = self._send_command("take_light", params=params)
+            logger.info(f"📸 Captured photo (exposure: {exposure_time}s)")
+            return result
+
+        except Exception as e:
+            logger.error(f"Failed to capture photo: {e}")
+            raise
+
+    def get_albums(self) -> dict:
+        """
+        Get albums and images from Seestar storage.
+
+        Returns
+        -------
+        dict
+            Albums structure with images
+
+        Notes
+        -----
+        Returns format:
+        {
+            "path": "<parent_folder>",
+            "list": [
+                {
+                    "name": "<album_name>",
+                    "files": [
+                        {
+                            "name": "<filename>",
+                            "thn": "<thumbnail_path>",
+                            "size": <file_size>,
+                            ...
+                        },
+                        ...
+                    ]
+                },
+                ...
+            ]
+        }
+
+        Use this after capture_photo() to retrieve the saved image path.
+        Files can be downloaded via HTTP: http://<host>/<path>/<filename>
+        """
+        try:
+            response = self._send_command("get_albums")
+            logger.info(f"Retrieved albums: {len(response.get('list', []))} albums")
+            return response
+        except Exception as e:
+            logger.error(f"Failed to get albums: {e}")
+            raise
+
     def list_files(self) -> dict:
         """
-        List recorded files on Seestar.
+        List recorded files on Seestar (alias for get_albums).
 
         Returns
         -------
@@ -488,13 +580,7 @@ class SeestarClient:
         Files can be downloaded via HTTP:
         http://<seestar_host>/<path>/<filename>
         """
-        try:
-            response = self._send_command("get_albums")
-            logger.info(f"Retrieved file list: {len(response.get('list', []))} albums")
-            return response
-        except Exception as e:
-            logger.error(f"Failed to list files: {e}")
-            raise
+        return self.get_albums()
 
     def get_status(self) -> Dict[str, Any]:
         """

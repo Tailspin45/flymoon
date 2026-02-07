@@ -74,18 +74,29 @@
             </form>
         </div>
 
-        <!-- Filter Section -->
-        <div class="filter-section">
-            <h3>Filter Images</h3>
-            <label>
-                <input type="radio" name="targetFilter" value="all" checked> All
-            </label>
-            <label>
-                <input type="radio" name="targetFilter" value="moon"> 🌙 Moon
-            </label>
-            <label>
-                <input type="radio" name="targetFilter" value="sun"> ☀️ Sun
-            </label>
+        <!-- Gallery Tabs -->
+        <div class="gallery-tabs">
+            <button class="tab-btn active" data-filter="all">
+                📋 All <span class="tab-count" id="count-all">0</span>
+            </button>
+            <button class="tab-btn" data-filter="sun-transit">
+                ☀️ Sun Transits <span class="tab-count" id="count-sun-transit">0</span>
+            </button>
+            <button class="tab-btn" data-filter="moon-transit">
+                🌙 Moon Transits <span class="tab-count" id="count-moon-transit">0</span>
+            </button>
+            <button class="tab-btn" data-filter="sun-manual">
+                ☀️ Sun Manual <span class="tab-count" id="count-sun-manual">0</span>
+            </button>
+            <button class="tab-btn" data-filter="moon-manual">
+                🌙 Moon Manual <span class="tab-count" id="count-moon-manual">0</span>
+            </button>
+            <button class="tab-btn" data-filter="videos">
+                📹 Videos <span class="tab-count" id="count-videos">0</span>
+            </button>
+            <button class="tab-btn" data-filter="photos">
+                📷 Photos <span class="tab-count" id="count-photos">0</span>
+            </button>
         </div>
 
         <!-- Gallery Grid -->

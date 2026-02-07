@@ -14,7 +14,7 @@
             <img src="{{ url_for('static', filename='images/logo.svg') }}" alt="Flymoon Transit Tracker" class="logo" />
         </a>
         <div style="flex: 1; text-align: center;">
-            <div style="font-size: 1.2em;">🔭 Telescope Control</div>
+            <div style="font-size: 1.2em;">🔭 Seestar S50 Control</div>
             <div id="lastUpdateStatus" style="font-size: 0.9em; color: #666; margin-top: 4px;"></div>
         </div>
         <a href="/" class="btn-sm">← Back</a>
@@ -24,32 +24,135 @@
         <!-- Status Message Area -->
         <div id="statusMessage" class="status-message"></div>
 
-        <!-- Connection Panel -->
-        <div class="control-panel">
-            <h2>Connection</h2>
-            <div class="connection-status">
-                <div class="status-indicator" id="connectionIndicator">
-                    <span class="status-dot" id="statusDot"></span>
-                    <span id="connectionStatus">Disconnected</span>
+        <!-- Main Layout: Preview + Controls -->
+        <div class="telescope-layout">
+            
+            <!-- Left Column: Live Preview -->
+            <div class="preview-column">
+                <div class="preview-panel">
+                    <h2>🔴 Live Preview</h2>
+                    <div class="preview-container" id="previewContainer">
+                        <img id="previewImage" src="" alt="Live Preview" style="display: none;">
+                        <div class="preview-placeholder" id="previewPlaceholder">
+                            <div class="placeholder-icon">📹</div>
+                            <div class="placeholder-text">Connect telescope to view live stream</div>
+                        </div>
+                    </div>
+                    <div class="preview-status" id="previewStatus">
+                        <span class="status-dot" id="previewStatusDot"></span>
+                        <span id="previewStatusText">Preview Inactive</span>
+                    </div>
                 </div>
-                <div class="connection-info" id="connectionInfo"></div>
-            </div>
-            <div class="button-group">
-                <button id="connectBtn" class="btn btn-primary">Connect</button>
-                <button id="disconnectBtn" class="btn btn-secondary" disabled>Disconnect</button>
-            </div>
-        </div>
 
-
-        <!-- Files Panel -->
-        <div class="control-panel">
-            <h2>Recorded Files</h2>
-            <div class="files-controls">
-                <button id="refreshFilesBtn" class="btn btn-secondary" disabled>🔄 Refresh</button>
-                <span id="fileCount" class="file-count"></span>
+                <!-- File Management Panel -->
+                <div class="files-panel">
+                    <h2>📁 Captured Files</h2>
+                    <div class="files-controls">
+                        <button id="refreshFilesBtn" class="btn-sm" disabled>🔄 Refresh</button>
+                        <span id="fileCount" class="file-count">0 files</span>
+                    </div>
+                    <div id="filesList" class="files-grid">
+                        <p class="files-empty">Connect to telescope to view files</p>
+                    </div>
+                </div>
             </div>
-            <div id="filesList" class="files-list">
-                <p class="files-empty">Connect to telescope to view files</p>
+
+            <!-- Right Column: Controls -->
+            <div class="controls-column">
+                
+                <!-- Connection Panel -->
+                <div class="control-panel">
+                    <h3>Connection</h3>
+                    <div class="connection-status">
+                        <div class="status-indicator">
+                            <span class="status-dot" id="statusDot"></span>
+                            <span id="connectionStatus">Disconnected</span>
+                        </div>
+                        <div class="connection-info" id="connectionInfo"></div>
+                    </div>
+                    <div class="button-row">
+                        <button id="connectBtn" class="btn btn-primary">🔌 Connect</button>
+                        <button id="disconnectBtn" class="btn btn-secondary" disabled>🔌 Disconnect</button>
+                    </div>
+                </div>
+
+                <!-- Target Selection Panel -->
+                <div class="control-panel">
+                    <h3>🎯 Target Selection</h3>
+                    <div id="targetVisibility" class="target-visibility">
+                        <div class="target-status" id="sunStatus">
+                            <span class="target-icon">☀️</span>
+                            <div class="target-info">
+                                <div class="target-name">Sun</div>
+                                <div class="target-coords" id="sunCoords">--</div>
+                            </div>
+                            <span class="visibility-badge" id="sunBadge">--</span>
+                        </div>
+                        <div class="target-status" id="moonStatus">
+                            <span class="target-icon">🌙</span>
+                            <div class="target-info">
+                                <div class="target-name">Moon</div>
+                                <div class="target-coords" id="moonCoords">--</div>
+                            </div>
+                            <span class="visibility-badge" id="moonBadge">--</span>
+                        </div>
+                    </div>
+                    <div class="button-row">
+                        <button id="targetSunBtn" class="btn btn-secondary" disabled>☀️ View Sun</button>
+                        <button id="targetMoonBtn" class="btn btn-secondary" disabled>🌙 View Moon</button>
+                    </div>
+                    <div id="targetWarning" class="warning-box" style="display: none;"></div>
+                </div>
+
+                <!-- Capture Controls Panel -->
+                <div class="control-panel">
+                    <h3>📸 Capture Controls</h3>
+                    
+                    <!-- Photo Capture -->
+                    <div class="capture-section">
+                        <div class="capture-header">
+                            <span class="capture-icon">📷</span>
+                            <span class="capture-label">Photo</span>
+                        </div>
+                        <div class="capture-controls">
+                            <div class="input-group">
+                                <label for="exposureTime">Exposure (s):</label>
+                                <input type="number" id="exposureTime" value="1.0" min="0.1" max="30" step="0.1" class="input-sm">
+                            </div>
+                            <button id="capturePhotoBtn" class="btn btn-primary" disabled>📸 Capture Photo</button>
+                        </div>
+                    </div>
+
+                    <!-- Video Recording -->
+                    <div class="capture-section">
+                        <div class="capture-header">
+                            <span class="capture-icon">📹</span>
+                            <span class="capture-label">Video</span>
+                        </div>
+                        <div class="capture-controls">
+                            <div class="recording-status" id="recordingStatus">
+                                <span class="status-dot" id="recordingDot"></span>
+                                <span id="recordingText">Not Recording</span>
+                            </div>
+                            <div class="button-row">
+                                <button id="startRecordingBtn" class="btn btn-primary" disabled>⏺️ Start Recording</button>
+                                <button id="stopRecordingBtn" class="btn btn-danger" disabled style="display: none;">⏹️ Stop Recording</button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Quick Info Panel -->
+                <div class="info-panel">
+                    <h3>ℹ️ Tips</h3>
+                    <ul class="tips-list">
+                        <li><strong>Live Preview:</strong> Streams at 10 FPS for real-time viewing</li>
+                        <li><strong>Solar Warning:</strong> Always use solar filter when viewing Sun</li>
+                        <li><strong>Photo Mode:</strong> Works in Solar/Lunar/Scenery modes only</li>
+                        <li><strong>Recording:</strong> Saves MP4 video to telescope storage</li>
+                    </ul>
+                </div>
+
             </div>
         </div>
     </div>
