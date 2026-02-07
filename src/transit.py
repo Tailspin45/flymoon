@@ -33,10 +33,10 @@ from src.position import (
 EARTH = ASTRO_EPHEMERIS["earth"]
 
 area_bbox = AreaBoundingBox(
-    lat_lower_left=os.getenv("LAT_LOWER_LEFT"),
-    long_lower_left=os.getenv("LONG_LOWER_LEFT"),
-    lat_upper_right=os.getenv("LAT_UPPER_RIGHT"),
-    long_upper_right=os.getenv("LONG_UPPER_RIGHT"),
+    lat_lower_left=float(os.getenv("LAT_LOWER_LEFT", "0")),
+    long_lower_left=float(os.getenv("LONG_LOWER_LEFT", "0")),
+    lat_upper_right=float(os.getenv("LAT_UPPER_RIGHT", "0")),
+    long_upper_right=float(os.getenv("LONG_UPPER_RIGHT", "0")),
 )
 
 
@@ -60,24 +60,32 @@ def get_thresholds(altitude: float) -> Tuple[float, float]:
 def get_possibility_level(
     altitude: float, alt_diff: float, az_diff: float, eta: float = None
 ) -> str:
+    """
+    Determine transit possibility level based on angular separation.
+    
+    Assumes 1° target size for sun/moon (0.5° actual + 0.5° margin for near misses).
+    Thresholds:
+    - HIGH: ≤1° in both alt and az (direct transit very likely)
+    - MEDIUM: ≤2° in both alt and az (near miss, worth recording)
+    - LOW: ≤3° in both alt and az (possible distant transit)
+    - UNLIKELY: >3° separation
+    """
     possibility_level = PossibilityLevel.UNLIKELY
-
-    if alt_diff <= 10 and az_diff <= 10 or (Altitude.HIGH(altitude) and alt_diff <= 5):
-        possibility_level = PossibilityLevel.LOW
-
-    if Altitude.LOW(altitude) and (alt_diff <= 1 and az_diff <= 2):
-        possibility_level = PossibilityLevel.MEDIUM
-    elif Altitude.MEDIUM(altitude) and (alt_diff <= 2 and az_diff <= 2):
-        possibility_level = PossibilityLevel.MEDIUM
-    elif Altitude.MEDIUM_HIGH(altitude) and (alt_diff <= 3 and az_diff <= 3):
-        possibility_level = PossibilityLevel.MEDIUM
-    elif Altitude.HIGH(altitude) and (alt_diff <= 5 and az_diff <= 10):
-        possibility_level = PossibilityLevel.MEDIUM
-
-    if eta is not None and (alt_diff <= 1 and az_diff <= 1):
+    
+    # HIGH: Within 1° - direct transit very likely
+    if alt_diff <= 1.0 and az_diff <= 1.0:
         possibility_level = PossibilityLevel.HIGH
-
+    
+    # MEDIUM: Within 2° - near miss worth recording
+    elif alt_diff <= 2.0 and az_diff <= 2.0:
+        possibility_level = PossibilityLevel.MEDIUM
+    
+    # LOW: Within 3° - possible distant transit
+    elif alt_diff <= 3.0 and az_diff <= 3.0:
+        possibility_level = PossibilityLevel.LOW
+    
     return possibility_level.value
+
 
 
 def check_transit(
@@ -263,8 +271,13 @@ def get_transits(
     test_mode: bool = False,
     alt_threshold: float = 5.0,
     az_threshold: float = 10.0,
+    custom_bbox: dict = None,
 ) -> List[dict]:
     API_KEY = get_aeroapi_key()
+    
+    # Ensure thresholds are floats (in case they're passed as strings from Flask)
+    alt_threshold = float(alt_threshold)
+    az_threshold = float(az_threshold)
 
     logger.info(f"{latitude=}, {longitude=}, {elevation=}")
 
@@ -293,6 +306,17 @@ def get_transits(
 
     data = list()
 
+    # Use custom bounding box if provided, otherwise use global default
+    if custom_bbox:
+        bbox = AreaBoundingBox(
+            lat_lower_left=custom_bbox["lat_lower_left"],
+            long_lower_left=custom_bbox["lon_lower_left"],
+            lat_upper_right=custom_bbox["lat_upper_right"],
+            long_upper_right=custom_bbox["lon_upper_right"],
+        )
+    else:
+        bbox = area_bbox
+
     if current_target_coordinates["altitude"] > 0:
         if test_mode:
             raw_flight_data = load_existing_flight_data(TEST_DATA_PATH)
@@ -301,10 +325,10 @@ def get_transits(
             # Check cache first
             cache = get_cache()
             cached_data = cache.get(
-                area_bbox.lat_lower_left,
-                area_bbox.long_lower_left,
-                area_bbox.lat_upper_right,
-                area_bbox.long_upper_right,
+                bbox.lat_lower_left,
+                bbox.long_lower_left,
+                bbox.lat_upper_right,
+                bbox.long_upper_right,
                 target_name
             )
             
@@ -312,13 +336,13 @@ def get_transits(
                 raw_flight_data = cached_data
                 logger.info(f"Using cached flight data ({cache.get_stats()['hit_rate_percent']}% hit rate)")
             else:
-                raw_flight_data = get_flight_data(area_bbox, API_URL, API_KEY)
+                raw_flight_data = get_flight_data(bbox, API_URL, API_KEY)
                 # Cache the raw response
                 cache.set(
-                    area_bbox.lat_lower_left,
-                    area_bbox.long_lower_left,
-                    area_bbox.lat_upper_right,
-                    area_bbox.long_upper_right,
+                    bbox.lat_lower_left,
+                    bbox.long_lower_left,
+                    bbox.lat_upper_right,
+                    bbox.long_upper_right,
                     raw_flight_data,
                     target_name
                 )
@@ -330,19 +354,9 @@ def get_transits(
 
         logger.info(f"there are {len(flight_data)} flights near")
 
-        # Quick pre-filter: Get target altitude for comparison
-        target_altitude_meters = current_target_coordinates.get("altitude", 0) * 111320  # degrees to meters (rough)
-        filtered_count = 0
-
+        # Process all flights - pre-filtering disabled as it was too aggressive
+        # and incorrectly compared angular altitude with linear elevation
         for flight in flight_data:
-            # Quick elevation check before expensive calculations
-            # Skip flights that are obviously at wrong altitude (>30km difference from target line-of-sight)
-            altitude_diff = abs(flight["elevation"] - target_altitude_meters * 0.5)  # Rough heuristic
-            if altitude_diff > 30000:  # 30km difference
-                filtered_count += 1
-                logger.debug(f"Skipping {flight['name']}: altitude too different ({altitude_diff/1000:.1f}km)")
-                continue
-            
             celestial_obj.update_position(ref_datetime=ref_datetime)
 
             data.append(
@@ -359,9 +373,6 @@ def get_transits(
             )
 
             logger.info(data[-1])
-        
-        if filtered_count > 0:
-            logger.info(f"Pre-filtered {filtered_count} flights with incompatible altitudes")
     else:
         logger.warning(
             f"{target_name} target is under horizon, skipping checking for transits..."

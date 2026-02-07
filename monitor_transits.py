@@ -15,7 +15,7 @@ Features:
 - Includes precise timing for manual recording
 
 Usage:
-    python3 monitor_transits.py --latitude 33.111369 --longitude -117.310169 --target sun
+    python3 monitor_transits.py --latitude YOUR_LAT --longitude YOUR_LON --target sun
 
 Environment Variables:
     MONITOR_INTERVAL - Check interval in minutes (default: from .env or 15)
@@ -219,9 +219,7 @@ class TransitMonitor:
                     f"Recording duration: {pre_buffer + post_buffer} seconds"
                 )
 
-                self.send_notification(
-                    title, body, url=f"http://localhost:5000/"  # Link to live view
-                )
+                self.send_notification(title, body)
 
                 logger.info(
                     f"URGENT: Transit {transit['id']} in {time_minutes:.1f} minutes!"

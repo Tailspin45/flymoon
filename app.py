@@ -68,6 +68,17 @@ if not wizard.validate(interactive=False):
 
 app = Flask(__name__)
 
+# Configure logging to suppress telescope status polling
+import logging
+werkzeug_logger = logging.getLogger('werkzeug')
+
+class TelescopeStatusFilter(logging.Filter):
+    def filter(self, record):
+        # Filter out telescope status endpoint logs (polled every 2 seconds)
+        return '/telescope/status' not in record.getMessage()
+
+werkzeug_logger.addFilter(TelescopeStatusFilter())
+
 # Gallery configuration
 UPLOAD_FOLDER = 'static/gallery'
 ALLOWED_EXTENSIONS = {'png', 'jpg', 'jpeg', 'gif'}
@@ -172,6 +183,9 @@ def get_all_flights():
         min_altitude = float(request.args.get("min_altitude", 15))
         alt_threshold = float(request.args.get("alt_threshold", 5.0))
         az_threshold = float(request.args.get("az_threshold", 10.0))
+        
+        logger.debug(f"Parameter types: min_altitude={type(min_altitude)}, alt_threshold={type(alt_threshold)}, az_threshold={type(az_threshold)}")
+        
         has_send_notification = request.args["send-notification"] == "true"
 
         # Check for custom bounding box from user
@@ -216,7 +230,7 @@ def get_all_flights():
             if coords["altitude"] >= min_altitude:
                 tracking_targets.append(target)  # Add to tracking list
                 logger.info(f"Checking transits for {target} (altitude: {coords['altitude']:.1f}°, thresholds: alt={alt_threshold}°, az={az_threshold}°)")
-                data = get_transits(latitude, longitude, elevation, target, test_mode, alt_threshold, az_threshold)
+                data = get_transits(latitude, longitude, elevation, target, test_mode, alt_threshold, az_threshold, custom_bbox)
                 
                 # Tag each flight with which target it's for
                 for flight in data["flights"]:
@@ -236,7 +250,7 @@ def get_all_flights():
                         flight["distance_nm"] = distance_km * 0.539957  # Convert km to nautical miles
                 all_flights.extend(data["flights"])
             else:
-                logger.info(f"{target.capitalize()} below minimum altitude ({coords['altitude']:.1f}° < {min_altitude}°), skipping transit check")
+                logger.info(f"{target.capitalize()} below minimum altitude ({coords['altitude']:.1f}° < {float(min_altitude)}°), skipping transit check")
         
         # Calculate adaptive refresh interval based on closest transit
         next_check_interval = calculate_adaptive_interval(all_flights)
@@ -249,10 +263,10 @@ def get_all_flights():
             "nextCheckInterval": next_check_interval,  # Seconds until next check
             "weather": None,  # Weather functionality not implemented yet
             "boundingBox": {
-                "latLowerLeft": custom_bbox["lat_lower_left"] if custom_bbox else float(os.getenv("LAT_LOWER_LEFT", 0)),
-                "lonLowerLeft": custom_bbox["lon_lower_left"] if custom_bbox else float(os.getenv("LONG_LOWER_LEFT", 0)),
-                "latUpperRight": custom_bbox["lat_upper_right"] if custom_bbox else float(os.getenv("LAT_UPPER_RIGHT", 0)),
-                "lonUpperRight": custom_bbox["lon_upper_right"] if custom_bbox else float(os.getenv("LONG_UPPER_RIGHT", 0)),
+                "latLowerLeft": custom_bbox["lat_lower_left"] if custom_bbox else float(os.getenv("LAT_LOWER_LEFT", "0")),
+                "lonLowerLeft": custom_bbox["lon_lower_left"] if custom_bbox else float(os.getenv("LONG_LOWER_LEFT", "0")),
+                "latUpperRight": custom_bbox["lat_upper_right"] if custom_bbox else float(os.getenv("LAT_UPPER_RIGHT", "0")),
+                "lonUpperRight": custom_bbox["lon_upper_right"] if custom_bbox else float(os.getenv("LONG_UPPER_RIGHT", "0")),
             }
         }
 
@@ -306,7 +320,7 @@ def get_all_flights():
         logger.error(f"Missing required parameter: {e}")
         return jsonify({"error": f"Missing required parameter: {e}"}), 400
     except ValueError as e:
-        logger.error(f"Invalid parameter value: {e}")
+        logger.error(f"Invalid parameter value: {e}", exc_info=True)
         return jsonify({"error": f"Invalid parameter value: {e}"}), 400
     except Exception as e:
         logger.error(f"Error in /flights endpoint: {str(e)}", exc_info=True)

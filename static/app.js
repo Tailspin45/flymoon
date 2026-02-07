@@ -100,6 +100,82 @@ function getMinAltitudeAllQuadrants() {
     const minAltW = parseFloat(minAltWEl.value) || defaultMinAlt;
     return Math.min(minAltN, minAltE, minAltS, minAltW);
 }
+
+// Track last alerted transit to avoid spamming alerts
+let lastAlertedTransits = {
+    sun: null,
+    moon: null
+};
+
+// Check for transits and alert user about filter changes
+function checkAndAlertFilterChange(flights, targetCoordinates) {
+    // Find medium/high probability transits grouped by target
+    const sunTransits = flights.filter(f => 
+        f.target === 'sun' && 
+        f.is_possible_transit === 1 && 
+        (parseInt(f.possibility_level) === MEDIUM_LEVEL || parseInt(f.possibility_level) === HIGH_LEVEL)
+    );
+    
+    const moonTransits = flights.filter(f => 
+        f.target === 'moon' && 
+        f.is_possible_transit === 1 && 
+        (parseInt(f.possibility_level) === MEDIUM_LEVEL || parseInt(f.possibility_level) === HIGH_LEVEL)
+    );
+    
+    const sunIsUp = targetCoordinates && targetCoordinates.sun && targetCoordinates.sun.altitude > 0;
+    
+    // Moon transit detected
+    if (moonTransits.length > 0) {
+        const moonTransit = moonTransits[0]; // First one
+        const transitId = moonTransit.id;
+        
+        // Only alert if this is a new transit (not already alerted)
+        if (lastAlertedTransits.moon !== transitId) {
+            lastAlertedTransits.moon = transitId;
+            
+            if (sunIsUp) {
+                // Sun is up - need to remove solar filter for moon
+                alert('🌙 MOON TRANSIT DETECTED!\n\n' +
+                      '⚠️ IMPORTANT:\n' +
+                      '1. REMOVE SOLAR FILTER from telescope\n' +
+                      '2. Reset telescope to track the MOON\n' +
+                      '3. Point telescope at moon position\n\n' +
+                      `Transit ETA: ${moonTransit.time ? moonTransit.time.toFixed(1) : 'N/A'} minutes`);
+            } else {
+                // Sun is down - just track moon
+                alert('🌙 MOON TRANSIT DETECTED!\n\n' +
+                      'Reset telescope to track the MOON\n\n' +
+                      `Transit ETA: ${moonTransit.time ? moonTransit.time.toFixed(1) : 'N/A'} minutes`);
+            }
+        }
+    } else {
+        // No moon transits - clear the alert memory
+        lastAlertedTransits.moon = null;
+    }
+    
+    // Solar transit detected
+    if (sunTransits.length > 0) {
+        const sunTransit = sunTransits[0]; // First one
+        const transitId = sunTransit.id;
+        
+        // Only alert if this is a new transit (not already alerted)
+        if (lastAlertedTransits.sun !== transitId) {
+            lastAlertedTransits.sun = transitId;
+            
+            alert('☀️ SOLAR TRANSIT DETECTED!\n\n' +
+                  '⚠️ IMPORTANT:\n' +
+                  '1. INSTALL SOLAR FILTER on telescope\n' +
+                  '2. Reset telescope to track the SUN\n' +
+                  '3. Point telescope at sun position\n\n' +
+                  '⚠️ NEVER look at the sun without proper solar filter!\n\n' +
+                  `Transit ETA: ${sunTransit.time ? sunTransit.time.toFixed(1) : 'N/A'} minutes`);
+        }
+    } else {
+        // No sun transits - clear the alert memory
+        lastAlertedTransits.sun = null;
+    }
+}
+
 var autoMode = false;
 var alertsEnabled = localStorage.getItem('alertsEnabled') === 'true' || false;
 // Transit countdown tracking
@@ -522,12 +598,6 @@ function savePosition() {
     localStorage.setItem("longitude", longitude);
     localStorage.setItem("elevation", elevation);
 
-    // Save transit criteria thresholds
-    const altThreshold = parseFloat(document.getElementById("altThreshold").value) || 5.0;
-    const azThreshold = parseFloat(document.getElementById("azThreshold").value) || 10.0;
-    localStorage.setItem("altThreshold", altThreshold);
-    localStorage.setItem("azThreshold", azThreshold);
-
     // Save quadrant min altitudes
     const minAltN = parseFloat(document.getElementById("minAltN").value) || 15;
     const minAltE = parseFloat(document.getElementById("minAltE").value) || 15;
@@ -578,18 +648,6 @@ function loadPosition() {
     document.getElementById("latitude").value = savedLat;
     document.getElementById("longitude").value = savedLon;
     document.getElementById("elevation").value = savedElev;
-
-    // Load transit criteria thresholds
-    const savedAltThreshold = localStorage.getItem("altThreshold");
-    const savedAzThreshold = localStorage.getItem("azThreshold");
-    const altThresholdEl = document.getElementById("altThreshold");
-    const azThresholdEl = document.getElementById("azThreshold");
-    if (altThresholdEl) {
-        altThresholdEl.value = savedAltThreshold !== null ? savedAltThreshold : 5.0;
-    }
-    if (azThresholdEl) {
-        azThresholdEl.value = savedAzThreshold !== null ? savedAzThreshold : 10.0;
-    }
 
     // Load quadrant values or use legacy single value (only if elements exist)
     if (minAltNEl) {
@@ -819,8 +877,10 @@ function fetchFlights() {
     alertTargetUnderHorizon = '';
 
     const minAltitude = getMinAltitudeAllQuadrants();
-    const altThreshold = parseFloat(document.getElementById("altThreshold").value) || 5.0;
-    const azThreshold = parseFloat(document.getElementById("azThreshold").value) || 10.0;
+    // Thresholds now configured via server .env (ALT_THRESHOLD, AZ_THRESHOLD)
+    // Default values used here are overridden by server config
+    const altThreshold = 1.0;
+    const azThreshold = 1.0;
     
     let endpoint_url = (
         `/flights?target=${encodeURIComponent(target)}`
@@ -1006,6 +1066,9 @@ function fetchFlights() {
                 countdownEl.style.display = 'none';
             }
         }
+
+        // Check for medium/high transits and alert user about filter changes
+        checkAndAlertFilterChange(uniqueFlights, data.targetCoordinates);
 
         uniqueFlights.forEach(item => {
             const row = document.createElement('tr');
@@ -1405,25 +1468,45 @@ function requestNotificationPermission() {
 // Last update display
 function updateLastUpdateDisplay() {
     const elem = document.getElementById('lastUpdateStatus');
-    if (!elem || !window.lastFlightUpdateTime) {
+    if (!elem) {
         return;
     }
 
-    // Get refresh frequency from localStorage (default 6 minutes)
-    const freq = parseInt(localStorage.getItem("frequency")) || 6;
-    const refreshIntervalMs = freq * 60 * 1000;
+    // If no update has happened yet, show waiting message
+    if (!window.lastFlightUpdateTime) {
+        elem.textContent = 'Waiting for first update...';
+        return;
+    }
+
+    // Get refresh frequency from localStorage (default 6 minutes) or use adaptive interval
+    const refreshIntervalSeconds = currentCheckInterval || (parseInt(localStorage.getItem("frequency")) || 6) * 60;
+    const refreshIntervalMs = refreshIntervalSeconds * 1000;
 
     const now = Date.now();
     const elapsedMs = now - window.lastFlightUpdateTime;
-    const remainingMs = Math.max(0, refreshIntervalMs - elapsedMs);
+    let remainingMs = refreshIntervalMs - elapsedMs;
+    
+    // If countdown expired, wrap around to show next cycle time
+    if (remainingMs < 0) {
+        // Calculate how far into the next cycle we are
+        remainingMs = refreshIntervalMs - (Math.abs(remainingMs) % refreshIntervalMs);
+    }
+    
     const remainingSeconds = Math.floor(remainingMs / 1000);
 
+    // Format last update time as HH:MM:SS
+    const lastUpdateDate = new Date(window.lastFlightUpdateTime);
+    const hours = String(lastUpdateDate.getHours()).padStart(2, '0');
+    const mins = String(lastUpdateDate.getMinutes()).padStart(2, '0');
+    const secs = String(lastUpdateDate.getSeconds()).padStart(2, '0');
+    const lastUpdateStr = `${hours}:${mins}:${secs}`;
+
+    // Format remaining time as MM:SS
     const minutes = Math.floor(remainingSeconds / 60);
     const seconds = remainingSeconds % 60;
+    const nextUpdateStr = String(minutes).padStart(2, '0') + ':' + String(seconds).padStart(2, '0');
 
-    const timeStr = String(minutes).padStart(2, '0') + ':' + String(seconds).padStart(2, '0');
-
-    elem.textContent = 'Time until next update is ' + timeStr;
+    elem.textContent = `Last update at ${lastUpdateStr}. Next update in ${nextUpdateStr}`;
 }
 
 // Update display every second

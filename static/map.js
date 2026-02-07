@@ -310,36 +310,25 @@ function addHeadingArrow(flight, flightId, color) {
         }
     }
     
-    // Calculate arrow endpoint (arrow extends 0.05 degrees ~ 5.5km ahead of aircraft)
-    const arrowLength = 0.05;  // degrees
-    const headingRad = heading * Math.PI / 180;
+    // Calculate arrow endpoint (12km in heading direction - slightly shorter than sun/moon arrows at 15km)
+    const distance = 12; // km
+    const endPoint = calculateDestination(lat, lon, heading, distance);
     
-    const endLat = lat + arrowLength * Math.cos(headingRad);
-    const endLon = lon + arrowLength * Math.sin(headingRad) / Math.cos(lat * Math.PI / 180);
-    
-    // Create arrow with thicker line for visibility
+    // Create arrow line matching sun/moon azimuth arrow style (no arrowhead)
     const arrowLine = L.polyline(
-        [[lat, lon], [endLat, endLon]],
+        [[lat, lon], [endPoint.lat, endPoint.lon]],
         {
             color: color,
-            weight: 4,
-            opacity: 0.8,
+            weight: 6,
+            opacity: 0.9,
+            lineCap: 'round',
+            lineJoin: 'round',
             className: 'heading-arrow'
         }
     ).addTo(map);
     
-    // Add arrowhead using a marker
-    const arrowhead = L.marker([endLat, endLon], {
-        icon: L.divIcon({
-            html: `<div style="font-size: 24px; color: ${color}; text-shadow: 0 0 3px black, 1px 1px 0 black, -1px -1px 0 black; transform: rotate(${heading}deg); display: flex; align-items: center; justify-content: center; width: 24px; height: 24px;">▲</div>`,
-            iconSize: [24, 24],
-            iconAnchor: [12, 12],
-            className: 'heading-arrowhead'
-        })
-    }).addTo(map);
-    
-    // Store both line and arrowhead for cleanup
-    headingArrows[flightId] = L.layerGroup([arrowLine, arrowhead]).addTo(map);
+    // Store for cleanup
+    headingArrows[flightId] = arrowLine;
 }
 
 function updateSingleAircraftMarker(flight) {
@@ -461,10 +450,6 @@ function updateAircraftMarkers(flights, observerLat, observerLon) {
             className: 'aircraft-icon'
         });
 
-        // Since we don't have current lat/lon in flight results, we'll need to add them
-        // For now, create a note that position data is needed
-        // This will be updated after backend changes
-        
         // Add marker if we have coordinates (check for undefined/null, not falsy)
         if (flight.latitude !== undefined && flight.latitude !== null &&
             flight.longitude !== undefined && flight.longitude !== null) {
@@ -498,14 +483,30 @@ function updateAircraftMarkers(flights, observerLat, observerLon) {
         }
     });
 
-    // Fit map to show all aircraft at maximum zoom, not the bounding box
+    // Fit map to show aircraft and observer
     // Skip auto-zoom if user is interacting with map (viewing route/track)
     if (Object.keys(aircraftMarkers).length > 0 && !userInteractingWithMap) {
         const aircraftBounds = L.latLngBounds(
             Object.values(aircraftMarkers).map(marker => marker.getLatLng())
         );
-        // Add padding to ensure markers aren't at the edge
-        map.fitBounds(aircraftBounds, { padding: [50, 50], maxZoom: 13 });
+        
+        // Check if there are any transits (medium or high probability)
+        const hasTransits = flights.some(f => 
+            f.is_possible_transit === 1 && 
+            (parseInt(f.possibility_level) === 2 || parseInt(f.possibility_level) === 3)
+        );
+        
+        if (hasTransits) {
+            // Include observer position in bounds to show the full transit context
+            aircraftBounds.extend([observerLat, observerLon]);
+            
+            // Zoom in more for transits to fill about half the window
+            // Reduce padding and allow higher max zoom
+            map.fitBounds(aircraftBounds, { padding: [30, 30], maxZoom: 15 });
+        } else {
+            // Normal view for non-transit aircraft
+            map.fitBounds(aircraftBounds, { padding: [50, 50], maxZoom: 13 });
+        }
     } else if (Object.keys(aircraftMarkers).length === 0) {
         // No aircraft - center on observer at reasonable zoom
         map.setView([observerLat, observerLon], 9);
@@ -702,7 +703,7 @@ function displayRouteTrack(data, flightId) {
 
         if (waypoints.length > 0) {
             const routePoints = waypoints
-                .filter(pt => pt.latitude && pt.longitude)
+                .filter(pt => pt.latitude != null && pt.longitude != null)
                 .map(pt => [pt.latitude, pt.longitude]);
 
             if (routePoints.length > 0) {
@@ -735,7 +736,7 @@ function displayRouteTrack(data, flightId) {
 
         if (positions.length > 0) {
             const trackPoints = positions
-                .filter(pt => pt.latitude && pt.longitude)
+                .filter(pt => pt.latitude != null && pt.longitude != null)
                 .map(pt => [pt.latitude, pt.longitude]);
 
             if (trackPoints.length > 0) {

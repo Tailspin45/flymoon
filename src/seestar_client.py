@@ -178,12 +178,10 @@ class SeestarClient:
 
     def _heartbeat_loop(self):
         """Background thread that sends periodic heartbeat messages."""
-        logger.info("Heartbeat thread started")
         while self._heartbeat_running:
             try:
                 # Send heartbeat command (based on seestar_alp implementation)
                 self._send_command("scope_get_equ_coord", expect_response=False)
-                logger.debug("Heartbeat sent")
             except Exception as e:
                 # Use debug level to avoid spamming logs when telescope is disconnected
                 logger.debug(f"Heartbeat failed: {e}")
@@ -193,8 +191,6 @@ class SeestarClient:
                 if not self._heartbeat_running:
                     break
                 time.sleep(1)
-
-        logger.info("Heartbeat thread stopped")
 
     def connect(self) -> bool:
         """

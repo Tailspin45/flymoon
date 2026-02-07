@@ -42,3 +42,7 @@ create-env:
 
 
 setup: create-env install
+
+
+build-mac-app:
+	@bash build_mac_app.sh

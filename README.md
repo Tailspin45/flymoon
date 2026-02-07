@@ -79,11 +79,11 @@ Access the web interface at `http://localhost:8000` or the displayed LAN address
 
 ### Transit Probability
 
-Transits are ranked by the angular difference between aircraft and celestial target:
+Transits are ranked by the angular separation between aircraft and celestial target:
 
-- **🟢 High (Green)** - Very likely transit, minimal angular difference
-- **🟠 Medium (Orange)** - Possible transit, small angular difference
-- **🟡 Low (Yellow)** - Low probability, larger angular difference
+- **🟢 High** - ≤1° separation (direct transit very likely)
+- **🟠 Medium** - ≤2° separation (near miss, worth recording)
+- **⚪ Low** - ≤3° separation (possible distant transit)
 
 ## 🗺️ Map Features
 
@@ -103,10 +103,95 @@ Automatic video recording when transits are detected (Seestar S50 supported)
 ### Telegram Notifications
 Receive instant alerts on your phone for medium/high probability transits
 
+## 🤖 Headless/Background Mode
+
+For automated monitoring without the web interface, use the standalone scripts:
+
+### `monitor_transits.py` - Pushbullet Notifications
+Monitors for high-probability transits and sends Pushbullet push notifications:
+
+```bash
+python3 monitor_transits.py \
+  --latitude YOUR_LATITUDE \
+  --longitude YOUR_LONGITUDE \
+  --elevation YOUR_ELEVATION \
+  --target sun \
+  --interval 15 \
+  --warning 5
+```
+
+**Requirements:**
+- `PUSH_BULLET_API_KEY` in `.env` ([Get free API key](https://www.pushbullet.com/#settings/account))
+- `AEROAPI_API_KEY` in `.env`
+
+**Options:**
+- `--target`: `sun`, `moon`, or `auto` (default: `sun`)
+- `--interval`: Check interval in minutes (default: 15 or from `.env` `MONITOR_INTERVAL`)
+- `--warning`: Minutes before transit to send urgent notification (default: 5)
+
+### `transit_capture.py` - Automated Telescope Recording
+Automatically controls Seestar telescope or sends Telegram notifications:
+
+```bash
+# Automatic mode (tries Seestar control first, falls back to Telegram)
+python3 transit_capture.py \
+  --latitude YOUR_LATITUDE \
+  --longitude YOUR_LONGITUDE \
+  --target sun
+
+# Force manual mode (Telegram notifications only)
+python3 transit_capture.py \
+  --latitude YOUR_LATITUDE \
+  --longitude YOUR_LONGITUDE \
+  --target sun \
+  --manual
+
+# Test Seestar connection
+python3 transit_capture.py --test-seestar
+```
+
+**Requirements:**
+- **Automatic mode**: `ENABLE_SEESTAR=true`, `SEESTAR_HOST` in `.env`
+- **Manual mode**: `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID` in `.env` (see [SETUP.md](SETUP.md))
+
+Both scripts can run in the background (append `&` on Unix/Mac or use Task Scheduler on Windows) and will continuously monitor for transits.
+
+### macOS Application Bundle
+
+For macOS users, a double-clickable `.app` is available:
+
+1. **Build the app** (first time only):
+   ```bash
+   ./build_mac_app.sh
+   ```
+
+2. **Configure** `.env` with `TELEGRAM_BOT_TOKEN` and observer location
+
+3. **Double-click** `Transit Monitor.app` and select your target
+
+The app provides a GUI for configuration and runs `transit_capture.py` in the background. Logs are written to `/tmp/transit_monitor.log`.
+
 ## 🔧 Technical Details
 
 ### Transit Detection Algorithm
-Uses numerical optimization to find minimum angular separation between aircraft and target. Assumes constant velocity and heading over 15-minute prediction window.
+
+Flymoon predicts aircraft transits using a multi-step process:
+
+1. **Flight Data Acquisition** - Queries FlightAware AeroAPI for all aircraft within the configured bounding box
+2. **Position Prediction** - Projects each aircraft's position up to 15 minutes ahead assuming constant velocity and heading
+3. **Celestial Tracking** - Calculates Sun/Moon altitude and azimuth using Skyfield and JPL ephemeris data (de421.bsp)
+4. **Angular Separation** - Uses numerical optimization to find the minimum angular distance between aircraft path and celestial target
+5. **Probability Classification** - Ranks transits using angular separation thresholds:
+   - **🟢 High**: ≤1° separation (direct transit very likely)
+   - **🟠 Medium**: ≤2° separation (near miss, worth recording)
+   - **⚪ Low**: ≤3° separation (possible distant transit)
+
+The algorithm assumes a 1° target size (0.5° for Sun/Moon diameter + 0.5° margin for near misses). Thresholds are configurable via `ALT_THRESHOLD` and `AZ_THRESHOLD` environment variables.
+
+**Key Assumptions:**
+- Aircraft maintain constant velocity and heading over the prediction window
+- Prediction accuracy decreases beyond 5-10 minutes due to flight path changes
+- Actual transit duration is typically 0.5-2 seconds
 
 ### Data Sources
 - **Flight Data**: FlightAware AeroAPI

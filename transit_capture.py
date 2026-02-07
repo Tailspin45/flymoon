@@ -15,10 +15,10 @@ to manual notifications if the Seestar isn't responding.
 
 Usage:
     # Try automatic first, fallback to manual
-    python3 transit_capture.py --latitude 33.111369 --longitude -117.310169 --target sun
+    python3 transit_capture.py --latitude YOUR_LAT --longitude YOUR_LON --target sun
 
     # Force manual mode
-    python3 transit_capture.py --latitude 33.111369 --longitude -117.310169 --target sun --manual
+    python3 transit_capture.py --latitude YOUR_LAT --longitude YOUR_LON --target sun --manual
 
     # Test Seestar connection
     python3 transit_capture.py --test-seestar

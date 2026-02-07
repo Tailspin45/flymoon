@@ -11,8 +11,11 @@ EARTH_RADIOUS = 6371
 # Notifications
 TARGET_TO_EMOJI = {"moon": "🌙", "sun": "☀️", "both": "🌙☀️"}
 MAX_NUM_ITEMS_TO_NOTIFY = 5
-ALT_DIFF_THRESHOLD_TO_NOTIFY = 5.0
-AZ_DIFF_THRESHOLD_TO_NOTIFY = 10.0
+
+# Transit detection thresholds (configurable via .env)
+# Assumes 1° target size for sun/moon (0.5° actual + 0.5° margin for near misses)
+ALT_DIFF_THRESHOLD_TO_NOTIFY = float(os.getenv("ALT_THRESHOLD", "1.0"))
+AZ_DIFF_THRESHOLD_TO_NOTIFY = float(os.getenv("AZ_THRESHOLD", "1.0"))
 
 # Weather
 WEATHER_CACHE_DURATION_MINUTES = 60

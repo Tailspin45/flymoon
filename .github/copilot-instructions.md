@@ -4,6 +4,13 @@
 
 Flymoon tracks aircraft transiting the Sun and Moon using real-time flight data and celestial calculations. It provides a Flask-based web interface with automatic telescope control for capturing transits.
 
+**Deployment Modes:**
+- **Web Application**: Flask server with interactive map (default, `app.py`)
+- **Headless Scripts**: Background monitoring with push notifications
+  - `monitor_transits.py` - Pushbullet notifications only
+  - `transit_capture.py` - Automated telescope control or Telegram notifications
+- **macOS App**: Double-clickable application bundle for `transit_capture.py`
+
 ## Build & Development Commands
 
 ```bash
@@ -37,10 +44,10 @@ python app.py  # Access at http://localhost:8000
 2. **Position Prediction** (`src/position.py`) - Predicts aircraft position up to 15 minutes ahead (constant velocity/heading assumption)
 3. **Celestial Tracking** (`src/astro.py`) - Calculates Sun/Moon altitude/azimuth using Skyfield + JPL ephemeris (de421.bsp)
 4. **Transit Detection** (`src/transit.py`) - Uses numerical optimization to find minimum angular separation between aircraft and target
-5. **Probability Classification** - Ranks transits by altitude-dependent thresholds:
-   - **High** (🟢): alt_diff ≤ 1° AND az_diff ≤ 1°
-   - **Medium** (🟠): Varies by altitude (e.g., low altitude: ≤1° alt, ≤2° az)
-   - **Low** (🟡): alt_diff ≤ 10° AND az_diff ≤ 10°
+5. **Probability Classification** - Simple thresholds assuming 1° target size (0.5° sun/moon + 0.5° margin):
+   - **High** (🟢): alt_diff ≤ 1° AND az_diff ≤ 1° (direct transit very likely)
+   - **Medium** (🟠): alt_diff ≤ 2° AND az_diff ≤ 2° (near miss, worth recording)
+   - **Low** (⚪): alt_diff ≤ 3° AND az_diff ≤ 3° (possible distant transit)
 
 ### Key Components
 
@@ -96,6 +103,9 @@ Optional:
 - Telegram: `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`
 - Telescope: `ENABLE_SEESTAR`, `SEESTAR_HOST`, `SEESTAR_PORT`, `SEESTAR_TIMEOUT`
 - Recording buffers: `SEESTAR_PRE_BUFFER`, `SEESTAR_POST_BUFFER`
+- Headless monitoring: `MONITOR_INTERVAL`, `PUSH_BULLET_API_KEY`
+- Transit detection: `ALT_THRESHOLD`, `AZ_THRESHOLD` (default: 1.0°)
+- Transit detection: `ALT_THRESHOLD` (default: 1.0°), `AZ_THRESHOLD` (default: 1.0°)
 
 ### Constants (`src/constants.py`)
 
@@ -144,13 +154,15 @@ Parsed flights (`parse_fligh_data()`) return:
 4. Schedule recording stop (default 10s after)
 5. Actual transit lasts 0.5-2 seconds
 
-### Altitude-Dependent Thresholds
+### Transit Detection Thresholds
 
-Transit detection uses altitude-dependent thresholds (`get_thresholds()` in `src/transit.py`):
-- **Low altitude** (<10km): (5°, 10°) - Tighter due to larger angular size
-- **Medium** (10-20km): (10°, 20°)
-- **Medium-High** (20-30km): (10°, 15°)
-- **High** (>30km): (8°, 180°) - Wider azimuth tolerance
+Simple angular separation thresholds assuming 1° target size (0.5° sun/moon + 0.5° margin for near misses):
+- **HIGH (🟢)**: ≤1° in both altitude and azimuth - Direct transit very likely
+- **MEDIUM (🟠)**: ≤2° in both altitude and azimuth - Near miss, worth recording  
+- **LOW (⚪)**: ≤3° in both altitude and azimuth - Possible distant transit
+- **UNLIKELY**: >3° separation
+
+Thresholds are configurable via `.env` variables `ALT_THRESHOLD` and `AZ_THRESHOLD` (default: 1.0°).
 
 ## Important Notes
 
@@ -167,8 +179,10 @@ Transit detection uses altitude-dependent thresholds (`get_thresholds()` in `src
 ```
 /
 ├── app.py                 # Flask application entry point
-├── monitor_transits.py    # Standalone monitoring script
-├── transit_capture.py     # Transit capture with notifications
+├── monitor_transits.py    # Standalone monitoring script (Pushbullet)
+├── transit_capture.py     # Transit capture with notifications (Telegram/Seestar)
+├── build_mac_app.sh       # macOS .app builder script
+├── Transit Monitor.app    # macOS application bundle (generated)
 ├── src/                   # Core modules
 │   ├── astro.py          # Celestial calculations (CelestialObject)
 │   ├── transit.py        # Transit detection & optimization
