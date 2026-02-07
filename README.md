@@ -197,6 +197,7 @@ The algorithm assumes a 1° target size (0.5° for Sun/Moon diameter + 0.5° mar
 - **Flight Data**: FlightAware AeroAPI
 - **Celestial Calculations**: Skyfield with JPL ephemeris (de421.bsp)
 - **Map Tiles**: OpenStreetMap
+- **Map Library**: Leaflet 1.9.4 (self-hosted for security)
 
 ## 📊 Requirements
 
