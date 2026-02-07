@@ -275,6 +275,7 @@ class ConfigWizard:
                     print("  Saved!")
                     return
             except (ValueError, TypeError):
+                # If observer coordinates are invalid, fall back to manual entry
                 pass
 
         # Manual entry

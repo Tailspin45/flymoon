@@ -30,12 +30,11 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 import numpy as np
-from skyfield.api import Topos, wgs84
+from skyfield.api import wgs84
 
 from src.astro import CelestialObject
 from src.constants import ASTRO_EPHEMERIS, EARTH_TIMESCALE
-from src.position import geographic_to_altaz, predict_position
-from src.transit import calculate_angular_separation, check_transit, get_possibility_level
+from src.transit import check_transit
 
 
 # Test configuration
