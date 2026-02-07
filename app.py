@@ -577,6 +577,11 @@ def update_gallery_metadata(filepath):
 # Register telescope control routes
 telescope_routes.register_routes(app)
 
+# Start transit monitor
+from src.transit_monitor import get_monitor
+transit_monitor = get_monitor()
+transit_monitor.start()
+
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Flymoon Transit Monitor")

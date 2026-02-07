@@ -10,6 +10,11 @@ let isRecording = false;
 let statusPollInterval = null;
 let visibilityPollInterval = null;
 let lastUpdateInterval = null;
+let transitPollInterval = null;
+let transitCaptureActive = false;
+let upcomingTransits = [];
+let currentZoom = 1.0;
+let zoomStep = 0.25;
 
 // Initialize on page load
 document.addEventListener('DOMContentLoaded', () => {
@@ -27,6 +32,16 @@ document.addEventListener('DOMContentLoaded', () => {
     
     // Load initial file list
     refreshFiles();
+    
+    // Start transit polling
+    checkTransits();
+    transitPollInterval = setInterval(checkTransits, 15000); // Every 15s
+    
+    // Load auto-capture preference
+    const autoCapture = localStorage.getItem('autoCaptureTransits');
+    if (autoCapture !== null) {
+        document.getElementById('autoCaptureToggle').checked = autoCapture === 'true';
+    }
 });
 
 // ============================================================================
@@ -251,14 +266,9 @@ async function switchToMoon() {
 async function capturePhoto() {
     console.log('[Telescope] Capturing photo');
     
-    const exposureInput = document.getElementById('exposureTime');
-    const exposureTime = parseFloat(exposureInput.value) || 1.0;
+    showStatus('Capturing photo...', 'info');
     
-    showStatus(`Capturing photo (${exposureTime}s exposure)...`, 'info');
-    
-    const result = await apiCall('/telescope/capture/photo', 'POST', {
-        exposure_time: exposureTime
-    });
+    const result = await apiCall('/telescope/capture/photo', 'POST', {});
     
     if (result && result.success) {
         showStatus('Photo captured successfully!', 'success', 5000);
@@ -421,6 +431,9 @@ function startPreview() {
         if (previewStatusDot) previewStatusDot.className = 'status-dot connected';
         if (previewStatusText) previewStatusText.textContent = 'Live Stream Active';
         if (previewTitleIcon) previewTitleIcon.textContent = '🟢';
+        
+        // Reset zoom to fit
+        zoomReset();
     }, 2000);
     
     // Error handler
@@ -430,6 +443,88 @@ function startPreview() {
         if (previewStatusText) previewStatusText.textContent = 'Stream Error';
         if (previewTitleIcon) previewTitleIcon.textContent = '🔴';
     };
+}
+
+function zoomIn() {
+    currentZoom += zoomStep;
+    if (currentZoom > 3.0) currentZoom = 3.0;
+    applyZoom();
+    updateSlider();
+}
+
+function zoomOut() {
+    currentZoom -= zoomStep;
+    if (currentZoom < 0.5) currentZoom = 0.5;
+    applyZoom();
+    updateSlider();
+}
+
+function zoomReset() {
+    currentZoom = 1.0;
+    applyZoom();
+    updateSlider();
+}
+
+function setZoom(value) {
+    currentZoom = value / 100;
+    applyZoom();
+}
+
+function updateSlider() {
+    const slider = document.getElementById('zoomSlider');
+    const percent = document.getElementById('zoomPercent');
+    if (slider) slider.value = currentZoom * 100;
+    if (percent) percent.textContent = Math.round(currentZoom * 100) + '%';
+}
+
+function applyZoom() {
+    const image = document.getElementById('previewImage');
+    const container = document.getElementById('previewContainer');
+    
+    if (!image || !container) return;
+    
+    if (currentZoom === 1.0) {
+        image.classList.remove('zoomed');
+        image.style.transform = '';
+        container.scrollTop = 0;
+        container.scrollLeft = 0;
+        updateSlider();
+        return;
+    }
+    
+    // Store current scroll position as percentage
+    const scrollXPercent = container.scrollLeft / (container.scrollWidth - container.clientWidth || 1);
+    const scrollYPercent = container.scrollTop / (container.scrollHeight - container.clientHeight || 1);
+    
+    // Apply zoom using CSS transform
+    image.classList.add('zoomed');
+    image.style.transform = `scale(${currentZoom})`;
+    image.style.transformOrigin = 'center center';
+    
+    updateSlider();
+    
+    // Restore scroll position after zoom
+    setTimeout(() => {
+        container.scrollLeft = scrollXPercent * (container.scrollWidth - container.clientWidth);
+        container.scrollTop = scrollYPercent * (container.scrollHeight - container.clientHeight);
+    }, 10);
+}
+
+function centerPreview() {
+    const container = document.getElementById('previewContainer');
+    const image = document.getElementById('previewImage');
+    
+    if (!container || !image) return;
+    
+    // Wait a bit for image to render, then center
+    setTimeout(() => {
+        const scrollHeight = container.scrollHeight;
+        const clientHeight = container.clientHeight;
+        const centerPosition = (scrollHeight - clientHeight) / 2;
+        
+        container.scrollTop = centerPosition;
+        console.log('[Telescope] Preview centered at', centerPosition);
+    }, 500);
 }
 
 function stopPreview() {
@@ -464,66 +559,25 @@ async function refreshFiles() {
     const result = await apiCall('/telescope/files', 'GET');
     if (!result) return;
     
-    const filesGrid = document.getElementById('filesList');
     const fileCount = document.getElementById('fileCount');
-    
-    if (!filesGrid) return;
-    
-    // Clear existing files
-    filesGrid.innerHTML = '';
-    
     const files = result.files || [];
+    
+    // Store globally for modal
+    window.currentFiles = files.map(f => ({ path: f.url, name: f.name }));
     
     // Update count badge
     if (fileCount) {
-        fileCount.textContent = `${files.length} file${files.length !== 1 ? 's' : ''}`;
+        fileCount.textContent = files.length;
     }
     
-    if (files.length === 0) {
-        filesGrid.innerHTML = '<p class="files-empty">No files captured yet</p>';
-        return;
-    }
+    // Update filmstrip
+    updateFilmstrip(window.currentFiles);
     
-    // Display files
-    files.forEach(file => {
-        const fileItem = document.createElement('div');
-        fileItem.className = 'file-item';
-        
-        // Check if it's an image
-        const isImage = file.name.match(/\.(jpg|jpeg|png|gif|bmp|tiff)$/i);
-        const isVideo = file.name.match(/\.(mp4|avi|mov)$/i);
-        
-        let thumbnailHtml = '';
-        if (isImage) {
-            // Show actual image thumbnail
-            thumbnailHtml = `<img src="${file.url}" alt="${file.name}" class="file-thumbnail">`;
-        } else if (isVideo) {
-            // Show video icon for videos
-            thumbnailHtml = `<div class="file-icon">📹</div>`;
-        } else {
-            // Generic file icon
-            thumbnailHtml = `<div class="file-icon">📄</div>`;
-        }
-        
-        fileItem.innerHTML = `
-            <div class="file-preview" onclick="window.open('${file.url}', '_blank')">
-                ${thumbnailHtml}
-            </div>
-            <div class="file-info">
-                <div class="file-name" title="${file.name}">${file.name}</div>
-                <div class="file-actions">
-                    <button class="btn-icon" onclick="event.stopPropagation(); downloadFile('${file.url}', '${file.name}')" title="Download">
-                        ⬇️
-                    </button>
-                    <button class="btn-icon btn-danger" onclick="event.stopPropagation(); deleteFile('${file.url}', '${file.name}')" title="Delete">
-                        🗑️
-                    </button>
-                </div>
-            </div>
-        `;
-        
-        filesGrid.appendChild(fileItem);
-    });
+    // Enable/disable controls
+    const refreshBtn = document.getElementById('refreshFilesBtn');
+    const expandBtn = document.getElementById('expandFilesBtn');
+    if (refreshBtn) refreshBtn.disabled = false;
+    if (expandBtn) expandBtn.disabled = files.length === 0;
 }
 
 function downloadFile(url, filename) {
@@ -640,6 +694,196 @@ async function apiCall(endpoint, method = 'GET', body = null) {
         showStatus(`Error: ${error.message}`, 'error');
         return null;
     }
+}
+
+// ============================================================================
+// TRANSIT AUTO-CAPTURE
+// ============================================================================
+
+async function checkTransits() {
+    try {
+        const response = await fetch('/telescope/transit/status');
+        if (!response.ok) return;
+        
+        const data = await response.json();
+        upcomingTransits = data.transits || [];
+        
+        updateTransitList();
+        checkAutoCapture();
+    } catch (error) {
+        console.warn('[Telescope] Transit check failed:', error);
+    }
+}
+
+function updateTransitList() {
+    const list = document.getElementById('transitList');
+    if (!list) return;
+    
+    if (upcomingTransits.length === 0) {
+        list.innerHTML = '<p class="empty-state">No transits detected</p>';
+        return;
+    }
+    
+    list.innerHTML = upcomingTransits.map(transit => {
+        const countdown = formatCountdown(transit.seconds_until);
+        const probabilityClass = transit.probability.toLowerCase();
+        
+        return `
+            <div class="transit-item ${probabilityClass}">
+                <div class="transit-header">
+                    <span class="transit-flight">✈️ ${transit.flight}</span>
+                    <span class="transit-countdown">${countdown}</span>
+                </div>
+                <div class="transit-info">
+                    ${transit.target} • ${transit.probability} probability<br>
+                    Alt: ${transit.altitude}° • Az: ${transit.azimuth}°
+                </div>
+                <div class="transit-actions">
+                    <button class="btn-transit primary" onclick="recordTransit('${transit.flight}', ${transit.seconds_until})">
+                        📹 Record Now
+                    </button>
+                    <button class="btn-transit dismiss" onclick="dismissTransit('${transit.flight}')">✕</button>
+                </div>
+            </div>
+        `;
+    }).join('');
+}
+
+function formatCountdown(seconds) {
+    if (seconds < 0) return 'PASSED';
+    const mins = Math.floor(seconds / 60);
+    const secs = seconds % 60;
+    return `${mins}:${secs.toString().padStart(2, '0')}`;
+}
+
+function checkAutoCapture() {
+    const autoCapture = document.getElementById('autoCaptureToggle').checked;
+    if (!autoCapture || !isConnected || transitCaptureActive) return;
+    
+    // Check for imminent transits (within 15 seconds)
+    const imminent = upcomingTransits.find(t => t.seconds_until <= 15 && t.seconds_until > 0);
+    if (imminent) {
+        console.log('[Telescope] Auto-capturing imminent transit:', imminent.flight);
+        recordTransit(imminent.flight, imminent.seconds_until);
+    }
+}
+
+async function recordTransit(flight, secondsUntil) {
+    // Stop any current recording
+    if (isRecording) {
+        console.log('[Telescope] Interrupting current recording for transit');
+        await stopRecording();
+        await new Promise(resolve => setTimeout(resolve, 1000)); // Wait for stop
+    }
+    
+    // Show overlay
+    transitCaptureActive = true;
+    const overlay = document.getElementById('transitOverlay');
+    const overlayInfo = document.getElementById('transitOverlayInfo');
+    if (overlay) {
+        overlayInfo.textContent = `${flight} in ${secondsUntil}s`;
+        overlay.style.display = 'flex';
+    }
+    
+    // Calculate recording duration (pre + post buffers)
+    const preBuffer = 10; // seconds before transit
+    const postBuffer = 10; // seconds after transit
+    const totalDuration = Math.max(secondsUntil - preBuffer, 0) + postBuffer;
+    
+    // Start recording
+    document.getElementById('videoDuration').value = totalDuration;
+    document.getElementById('frameInterval').value = 0; // Normal video
+    await startRecording();
+    
+    // Hide overlay after transit passes
+    setTimeout(() => {
+        if (overlay) overlay.style.display = 'none';
+        transitCaptureActive = false;
+    }, (secondsUntil + postBuffer) * 1000);
+}
+
+function dismissTransit(flight) {
+    upcomingTransits = upcomingTransits.filter(t => t.flight !== flight);
+    updateTransitList();
+}
+
+// Save auto-capture preference
+document.addEventListener('DOMContentLoaded', () => {
+    const toggle = document.getElementById('autoCaptureToggle');
+    if (toggle) {
+        toggle.addEventListener('change', (e) => {
+            localStorage.setItem('autoCaptureTransits', e.target.checked);
+        });
+    }
+});
+
+// ============================================================================
+// FILMSTRIP & MODAL
+// ============================================================================
+
+function toggleFilesModal() {
+    const modal = document.getElementById('filesModal');
+    if (!modal) return;
+    
+    if (modal.style.display === 'none' || !modal.style.display) {
+        modal.style.display = 'flex';
+        updateFilesGrid();
+    } else {
+        modal.style.display = 'none';
+    }
+}
+
+function updateFilmstrip(files) {
+    const filmstrip = document.getElementById('filmstripList');
+    if (!filmstrip) return;
+    
+    if (files.length === 0) {
+        filmstrip.innerHTML = '<p class="empty-state">No files captured yet</p>';
+        return;
+    }
+    
+    filmstrip.innerHTML = files.slice(-10).reverse().map(file => `
+        <div class="filmstrip-item" onclick="viewFile('${file.path}')">
+            <img src="${file.path}" alt="${file.name}" class="filmstrip-thumbnail">
+            <div class="filmstrip-info">
+                <span>${file.name.split('_')[0]}</span>
+                <div class="filmstrip-actions">
+                    <button class="btn-icon" onclick="event.stopPropagation(); downloadFile('${file.path}', '${file.name}')" title="Download">⬇️</button>
+                    <button class="btn-icon btn-danger" onclick="event.stopPropagation(); deleteFile('${file.path}', '${file.name}')" title="Delete">🗑️</button>
+                </div>
+            </div>
+        </div>
+    `).join('');
+}
+
+function updateFilesGrid() {
+    const grid = document.getElementById('filesGrid');
+    if (!grid) return;
+    
+    // Get files from the global state (refreshed by refreshFiles)
+    const files = window.currentFiles || [];
+    
+    if (files.length === 0) {
+        grid.innerHTML = '<p class="empty-state">No files</p>';
+        return;
+    }
+    
+    grid.innerHTML = files.map(file => `
+        <div class="file-item">
+            <img src="${file.path}" alt="${file.name}" class="file-thumbnail" onclick="viewFile('${file.path}')">
+            <div class="file-info">
+                <span class="file-name" title="${file.name}">${file.name}</span>
+                <div class="file-actions">
+                    <button class="btn-icon" onclick="downloadFile('${file.path}', '${file.name}')" title="Download">⬇️</button>
+                    <button class="btn-icon btn-danger" onclick="deleteFile('${file.path}', '${file.name}')" title="Delete">🗑️</button>
+                </div>
+            </div>
+        </div>
+    `).join('');
+}
+
+function viewFile(path) {
+    window.open(path, '_blank');
 }
 
 // ============================================================================

@@ -1022,6 +1022,11 @@ def telescope_preview_stream():
         return jsonify({"error": str(e)}), 500
 
 
+# ============================================================================
+# TRANSIT MONITORING
+# ============================================================================
+
+
 # File Management Endpoints
 
 def register_routes(app):
@@ -1070,5 +1075,31 @@ def register_routes(app):
                      list_telescope_files, methods=["GET"])
     app.add_url_rule("/telescope/files/delete", "telescope_files_delete",
                      delete_telescope_file, methods=["POST"])
+    
+    # Transit monitoring
+    app.add_url_rule("/telescope/transit/status", "telescope_transit_status",
+                     get_transit_status, methods=["GET"])
 
     logger.info("[Telescope] Routes registered")
+
+def get_transit_status():
+    """
+    Get upcoming transit information from the cached monitor.
+    
+    Returns cached transit data without making new API calls.
+    """
+    logger.info("[Telescope] GET /telescope/transit/status")
+    
+    try:
+        from src.transit_monitor import get_monitor
+        
+        monitor = get_monitor()
+        return jsonify(monitor.get_transits())
+        
+    except Exception as e:
+        logger.error(f"[Telescope] Error getting transit status: {e}")
+        return jsonify({
+            'success': False,
+            'error': str(e),
+            'transits': []
+        }), 500
