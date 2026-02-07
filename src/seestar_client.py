@@ -414,10 +414,14 @@ class SeestarClient:
         -----
         This must be called before video recording for solar transits.
         Seestar will switch to solar viewing mode with appropriate filter.
+        iscope_start_view may not send immediate response, so we don't wait.
         """
         try:
-            _ = self._send_command("iscope_start_view", params={"mode": "sun"})
-            logger.info("Started solar viewing mode")
+            # Don't expect immediate response - Seestar may take time to switch modes
+            self._send_command("iscope_start_view", params={"mode": "sun"}, expect_response=False)
+            logger.info("Started solar viewing mode (async)")
+            # Give telescope time to process the command
+            time.sleep(1)
             return True
         except Exception as e:
             logger.error(f"Failed to start solar mode: {e}")
@@ -436,10 +440,14 @@ class SeestarClient:
         -----
         This must be called before video recording for lunar transits.
         Seestar will switch to lunar viewing mode.
+        iscope_start_view may not send immediate response, so we don't wait.
         """
         try:
-            _ = self._send_command("iscope_start_view", params={"mode": "moon"})
-            logger.info("Started lunar viewing mode")
+            # Don't expect immediate response - Seestar may take time to switch modes
+            self._send_command("iscope_start_view", params={"mode": "moon"}, expect_response=False)
+            logger.info("Started lunar viewing mode (async)")
+            # Give telescope time to process the command
+            time.sleep(1)
             return True
         except Exception as e:
             logger.error(f"Failed to start lunar mode: {e}")
