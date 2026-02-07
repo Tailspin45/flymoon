@@ -15,8 +15,12 @@ from zoneinfo import ZoneInfo
 
 from src.seestar_client import SeestarClient
 from src.astro import CelestialObject
-from src.constants import MY_POSITION
+from src.position import get_my_pos
+from src.constants import ASTRO_EPHEMERIS
 from src import logger
+
+# Get EARTH reference for position calculations
+EARTH = ASTRO_EPHEMERIS['earth']
 
 
 # Mock Telescope Client for Testing
@@ -601,17 +605,30 @@ def get_target_visibility():
     try:
         from tzlocal import get_localzone
         
+        # Get observer position from environment
+        latitude = float(os.getenv("OBSERVER_LATITUDE", "0"))
+        longitude = float(os.getenv("OBSERVER_LONGITUDE", "0"))
+        elevation = float(os.getenv("OBSERVER_ELEVATION", "0"))
+        
+        # Create observer position
+        observer_position = get_my_pos(
+            lat=latitude,
+            lon=longitude,
+            elevation=elevation,
+            base_ref=EARTH
+        )
+        
         # Get current time in local timezone
         local_tz = get_localzone()
         ref_datetime = datetime.now(local_tz)
         
         # Calculate Sun position
-        sun = CelestialObject(name="sun", observer_position=MY_POSITION)
+        sun = CelestialObject(name="sun", observer_position=observer_position)
         sun.update_position(ref_datetime=ref_datetime)
         sun_coords = sun.get_coordinates()
         
         # Calculate Moon position
-        moon = CelestialObject(name="moon", observer_position=MY_POSITION)
+        moon = CelestialObject(name="moon", observer_position=observer_position)
         moon.update_position(ref_datetime=ref_datetime)
         moon_coords = moon.get_coordinates()
         
@@ -649,12 +666,24 @@ def switch_to_sun():
         if not client or not client.is_connected():
             return jsonify({"error": "Not connected to telescope"}), 400
 
+        # Get observer position
+        latitude = float(os.getenv("OBSERVER_LATITUDE", "0"))
+        longitude = float(os.getenv("OBSERVER_LONGITUDE", "0"))
+        elevation = float(os.getenv("OBSERVER_ELEVATION", "0"))
+        
+        observer_position = get_my_pos(
+            lat=latitude,
+            lon=longitude,
+            elevation=elevation,
+            base_ref=EARTH
+        )
+
         # Check if Sun is visible
         from tzlocal import get_localzone
         local_tz = get_localzone()
         ref_datetime = datetime.now(local_tz)
         
-        sun = CelestialObject(name="sun", observer_position=MY_POSITION)
+        sun = CelestialObject(name="sun", observer_position=observer_position)
         sun.update_position(ref_datetime=ref_datetime)
         sun_coords = sun.get_coordinates()
         
@@ -691,12 +720,24 @@ def switch_to_moon():
         if not client or not client.is_connected():
             return jsonify({"error": "Not connected to telescope"}), 400
 
+        # Get observer position
+        latitude = float(os.getenv("OBSERVER_LATITUDE", "0"))
+        longitude = float(os.getenv("OBSERVER_LONGITUDE", "0"))
+        elevation = float(os.getenv("OBSERVER_ELEVATION", "0"))
+        
+        observer_position = get_my_pos(
+            lat=latitude,
+            lon=longitude,
+            elevation=elevation,
+            base_ref=EARTH
+        )
+
         # Check if Moon is visible
         from tzlocal import get_localzone
         local_tz = get_localzone()
         ref_datetime = datetime.now(local_tz)
         
-        moon = CelestialObject(name="moon", observer_position=MY_POSITION)
+        moon = CelestialObject(name="moon", observer_position=observer_position)
         moon.update_position(ref_datetime=ref_datetime)
         moon_coords = moon.get_coordinates()
         
