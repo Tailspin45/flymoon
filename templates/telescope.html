@@ -127,12 +127,21 @@
                     <div class="capture-section">
                         <div class="capture-header">
                             <span class="capture-icon">📹</span>
-                            <span class="capture-label">Video</span>
+                            <span class="capture-label">Video Recording</span>
                         </div>
                         <div class="capture-controls">
+                            <div class="input-group">
+                                <label for="videoDuration">Duration (s):</label>
+                                <input type="number" id="videoDuration" value="30" min="1" max="3600" step="1" class="input-sm">
+                            </div>
+                            <div class="input-group">
+                                <label for="frameInterval">Timelapse Interval (s):</label>
+                                <input type="number" id="frameInterval" value="0" min="0" max="60" step="0.1" class="input-sm" title="0 = normal video, >0 = timelapse">
+                            </div>
                             <div class="recording-status" id="recordingStatus">
                                 <span class="status-dot" id="recordingDot"></span>
                                 <span id="recordingText">Not Recording</span>
+                                <span id="recordingTimer" style="margin-left: 8px; color: #039c9c;"></span>
                             </div>
                             <div class="button-row">
                                 <button id="startRecordingBtn" class="btn btn-primary" onclick="startRecording()" disabled>⏺️ Start Recording</button>
@@ -157,6 +166,6 @@
         </div>
     </div>
 
-    <script src="{{ url_for('static', filename='telescope.js') }}?v=6"></script>
+    <script src="{{ url_for('static', filename='telescope.js') }}?v=9"></script>
 </body>
 </html>

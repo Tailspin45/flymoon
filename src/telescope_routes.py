@@ -394,7 +394,7 @@ def get_current_target():
 # Recording Endpoints
 
 def start_recording():
-    """POST /telescope/recording/start - Start video recording."""
+    """POST /telescope/recording/start - Start video recording from RTSP stream."""
     logger.info("[Telescope] POST /telescope/recording/start")
 
     try:
@@ -410,26 +410,90 @@ def start_recording():
                 "recording": True
             }), 409
 
-        # Get optional duration from request body
-        duration = None
-        if request.is_json and "duration" in request.json:
-            duration = request.json.get("duration")
+        # Get parameters from request
+        duration = 30  # default
+        interval = 0   # default (normal video)
+        
+        if request.is_json:
+            duration = int(request.json.get("duration", 30))
+            interval = float(request.json.get("interval", 0))
 
-        client.start_recording(duration)
+        # Get RTSP stream URL
+        rtsp_port = int(os.getenv("SEESTAR_RTSP_PORT", "4554"))
+        rtsp_url = f"rtsp://{client.host}:{rtsp_port}/stream"
+        
+        # Generate filename with timestamp
+        from datetime import datetime
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        mode_suffix = f"_timelapse_{interval}s" if interval > 0 else ""
+        filename = f"recording_{timestamp}{mode_suffix}.mp4"
+        
+        # Create year/month directories
+        now = datetime.now()
+        year_month_path = os.path.join('static/gallery', str(now.year), f"{now.month:02d}")
+        os.makedirs(year_month_path, exist_ok=True)
+        
+        filepath = os.path.join(year_month_path, filename)
+        
+        logger.info(f"[Telescope] Starting recording: {filepath} (duration={duration}s, interval={interval}s)")
+        
+        # Build FFmpeg command
+        if interval > 0:
+            # Timelapse mode: capture frames at specified interval
+            cmd = [
+                'ffmpeg',
+                '-rtsp_transport', 'tcp',
+                '-i', rtsp_url,
+                '-t', str(duration),
+                '-vf', f'fps=1/{interval}',  # 1 frame every N seconds
+                '-c:v', 'libx264',
+                '-preset', 'fast',
+                '-crf', '23',
+                '-y',
+                filepath
+            ]
+        else:
+            # Normal video mode: record at full framerate
+            cmd = [
+                'ffmpeg',
+                '-rtsp_transport', 'tcp',
+                '-i', rtsp_url,
+                '-t', str(duration),
+                '-c:v', 'libx264',
+                '-preset', 'fast',
+                '-crf', '23',
+                '-y',
+                filepath
+            ]
+        
+        # Start FFmpeg in background
+        process = subprocess.Popen(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE
+        )
+        
         _recording_state = {
             "active": True,
-            "start_time": datetime.now()
+            "start_time": datetime.now(),
+            "process": process,
+            "filepath": filepath,
+            "filename": filename,
+            "duration": duration
         }
 
-        logger.info(f"[Telescope] Recording started (duration: {duration}s)")
+        logger.info(f"[Telescope] Recording started (PID: {process.pid})")
         return jsonify({
             "success": True,
             "recording": True,
             "start_time": _recording_state["start_time"].isoformat(),
+            "duration": duration,
+            "interval": interval,
             "message": "Recording started"
         }), 200
 
     except Exception as e:
+        logger.error(f"[Telescope] Failed to start recording: {e}", exc_info=True)
         return handle_error(e)
 
 
@@ -439,10 +503,6 @@ def stop_recording():
 
     try:
         global _recording_state
-
-        client = get_telescope_client()
-        if not client or not client.is_connected():
-            return jsonify({"error": "Not connected to telescope"}), 400
 
         if not _recording_state["active"]:
             return jsonify({
@@ -455,21 +515,50 @@ def stop_recording():
         if _recording_state["start_time"]:
             duration = (datetime.now() - _recording_state["start_time"]).total_seconds()
 
-        client.stop_recording()
+        # Terminate FFmpeg process
+        if "process" in _recording_state and _recording_state["process"]:
+            process = _recording_state["process"]
+            process.terminate()
+            try:
+                process.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                process.wait()
+            logger.info(f"[Telescope] FFmpeg process terminated")
+        
+        filename = _recording_state.get("filename", "unknown")
+        filepath = _recording_state.get("filepath", "")
+        
+        # Create metadata
+        if filepath and os.path.exists(filepath):
+            metadata = {
+                "timestamp": _recording_state["start_time"].isoformat() if _recording_state["start_time"] else None,
+                "duration": duration,
+                "source": "rtsp_stream",
+                "type": "video"
+            }
+            
+            metadata_path = filepath.rsplit('.', 1)[0] + '.json'
+            with open(metadata_path, 'w') as f:
+                import json
+                json.dump(metadata, f, indent=2)
+
         _recording_state = {
             "active": False,
             "start_time": None
         }
 
-        logger.info(f"[Telescope] Recording stopped (duration: {duration:.1f}s)")
+        logger.info(f"[Telescope] Recording stopped: {filename} (duration: {duration:.1f}s)")
         return jsonify({
             "success": True,
             "recording": False,
             "duration": duration,
+            "filename": filename,
             "message": "Recording stopped"
         }), 200
 
     except Exception as e:
+        logger.error(f"[Telescope] Failed to stop recording: {e}", exc_info=True)
         return handle_error(e)
 
 

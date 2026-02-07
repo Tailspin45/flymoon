@@ -124,7 +124,11 @@ async function updateStatus() {
     const result = await apiCall('/telescope/status', 'GET');
     if (result) {
         isConnected = result.connected || false;
-        isRecording = result.is_recording || false;
+        // Don't overwrite isRecording if we're actively recording locally
+        // The status endpoint doesn't know about our RTSP recordings
+        if (!isRecording) {
+            isRecording = result.is_recording || false;
+        }
         
         updateConnectionUI();
         updateRecordingUI();
@@ -264,15 +268,33 @@ async function capturePhoto() {
     }
 }
 
+// Recording state
+let recordingStartTime = null;
+let recordingTimerInterval = null;
+
 async function startRecording() {
     console.log('[Telescope] Starting recording');
     showStatus('Starting recording...', 'info');
     
-    const result = await apiCall('/telescope/recording/start', 'POST');
+    const durationInput = document.getElementById('videoDuration');
+    const intervalInput = document.getElementById('frameInterval');
+    
+    const duration = durationInput ? parseInt(durationInput.value) : 30;
+    const interval = intervalInput ? parseFloat(intervalInput.value) : 0;
+    
+    const result = await apiCall('/telescope/recording/start', 'POST', {
+        duration: duration,
+        interval: interval
+    });
+    
     if (result && result.success) {
         isRecording = true;
+        recordingStartTime = Date.now();
         updateRecordingUI();
-        showStatus('Recording started', 'success', 5000);
+        startRecordingTimer(duration);
+        
+        const mode = interval > 0 ? `timelapse (${interval}s interval)` : 'normal';
+        showStatus(`Recording started (${duration}s ${mode})`, 'success', 5000);
     }
 }
 
@@ -283,6 +305,7 @@ async function stopRecording() {
     const result = await apiCall('/telescope/recording/stop', 'POST');
     if (result && result.success) {
         isRecording = false;
+        stopRecordingTimer();
         updateRecordingUI();
         showStatus('Recording stopped', 'success', 5000);
         
@@ -291,20 +314,67 @@ async function stopRecording() {
     }
 }
 
+function startRecordingTimer(totalDuration) {
+    const timerSpan = document.getElementById('recordingTimer');
+    if (!timerSpan) return;
+    
+    // Update timer every 100ms
+    recordingTimerInterval = setInterval(() => {
+        if (!recordingStartTime) return;
+        
+        const elapsed = (Date.now() - recordingStartTime) / 1000;
+        const remaining = Math.max(0, totalDuration - elapsed);
+        
+        timerSpan.textContent = `${elapsed.toFixed(1)}s / ${totalDuration}s`;
+        
+        // Auto-stop when duration reached
+        if (remaining <= 0 && isRecording) {
+            stopRecording();
+        }
+    }, 100);
+}
+
+function stopRecordingTimer() {
+    if (recordingTimerInterval) {
+        clearInterval(recordingTimerInterval);
+        recordingTimerInterval = null;
+    }
+    recordingStartTime = null;
+    
+    const timerSpan = document.getElementById('recordingTimer');
+    if (timerSpan) timerSpan.textContent = '';
+}
+
 function updateRecordingUI() {
     const startBtn = document.getElementById('startRecordingBtn');
     const stopBtn = document.getElementById('stopRecordingBtn');
     const recordingDot = document.getElementById('recordingDot');
     const recordingText = document.getElementById('recordingText');
     
+    console.log('[Telescope] updateRecordingUI called, isRecording:', isRecording);
+    console.log('[Telescope] Start button:', startBtn, 'Stop button:', stopBtn);
+    
     if (isRecording) {
-        if (startBtn) startBtn.disabled = true;
-        if (stopBtn) stopBtn.disabled = false;
+        if (startBtn) {
+            startBtn.disabled = true;
+            startBtn.style.display = 'none';
+        }
+        if (stopBtn) {
+            stopBtn.disabled = false;
+            stopBtn.style.display = 'inline-block';  // Use inline-block instead of block
+            console.log('[Telescope] Stop button should now be visible');
+        }
         if (recordingDot) recordingDot.className = 'status-dot recording';
         if (recordingText) recordingText.textContent = 'Recording...';
     } else {
-        if (startBtn) startBtn.disabled = !isConnected;
-        if (stopBtn) stopBtn.disabled = true;
+        if (startBtn) {
+            startBtn.disabled = !isConnected;
+            startBtn.style.display = 'inline-block';  // Use inline-block instead of block
+        }
+        if (stopBtn) {
+            stopBtn.disabled = true;
+            stopBtn.style.display = 'none';
+        }
         if (recordingDot) recordingDot.className = 'status-dot';
         if (recordingText) recordingText.textContent = 'Not Recording';
     }
