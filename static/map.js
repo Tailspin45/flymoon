@@ -809,7 +809,6 @@ function calculateDestination(lat, lon, bearing, distance) {
 function toggleMap() {
     const mapContainer = document.getElementById('mapContainer');
     const altOverlay = document.getElementById('altitudeOverlay');
-    const mapButton = document.querySelector('[onclick="toggleMap()"]');
     const isHidden = mapContainer.style.display === 'none';
 
     if (isHidden) {
