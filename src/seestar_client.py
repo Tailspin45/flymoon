@@ -553,11 +553,26 @@ class SeestarClient:
 
         Use this after capture_photo() to retrieve the saved image path.
         Files can be downloaded via HTTP: http://<host>/<path>/<filename>
+        
+        If telescope times out or has no albums, returns empty structure.
         """
         try:
             response = self._send_command("get_albums")
+            if response is None:
+                # Command succeeded but no response data
+                logger.warning("get_albums returned None, returning empty structure")
+                return {"path": "", "list": []}
+            
             logger.info(f"Retrieved albums: {len(response.get('list', []))} albums")
             return response
+        except RuntimeError as e:
+            if "timed out" in str(e).lower() or "timeout" in str(e).lower():
+                # Timeout is not fatal - just means no albums or telescope busy
+                logger.warning(f"get_albums timed out, returning empty structure")
+                return {"path": "", "list": []}
+            else:
+                logger.error(f"Failed to get albums: {e}")
+                raise
         except Exception as e:
             logger.error(f"Failed to get albums: {e}")
             raise
