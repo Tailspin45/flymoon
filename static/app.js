@@ -873,6 +873,7 @@ function fetchFlights() {
     let elevation = document.getElementById("elevation").value;
 
     let hasVeryPossibleTransits = false;
+    let transitDetails = []; // Collect high-priority transits for notification
 
     const bodyTable = document.getElementById('flightData');
     let alertNoResults = document.getElementById("noResults");
@@ -1204,6 +1205,14 @@ function fetchFlights() {
 
                 if(possibilityLevel == MEDIUM_LEVEL || possibilityLevel == HIGH_LEVEL) {
                     hasVeryPossibleTransits = true;
+                    // Collect details for notification
+                    transitDetails.push({
+                        flight: item["id"],
+                        level: possibilityLevel === HIGH_LEVEL ? "HIGH" : "MEDIUM",
+                        time: item["time"],
+                        altDiff: item["alt_diff"],
+                        azDiff: item["az_diff"]
+                    });
                 }
             }
 
@@ -1211,7 +1220,7 @@ function fetchFlights() {
         });
 
         // renderTargetCoordinates(data.targetCoordinates); // Disabled - now using inline display above
-        if(autoMode == true && hasVeryPossibleTransits == true) soundAlert();
+        if(autoMode == true && hasVeryPossibleTransits == true) soundAlert(transitDetails);
 
         // Always update map visualization when data is fetched (use deduplicated flights)
         if(mapVisible) {
@@ -1361,15 +1370,18 @@ function resetResultsTable() {
     document.getElementById("flightData").innerHTML = "";
 }
 
-function soundAlert() {
+function soundAlert(transitDetails = []) {
+    // Try to play audio (may be blocked if tab is hidden)
     const audio = document.getElementById('alertSound');
-    audio.play();
+    if (audio && !document.hidden) {
+        audio.play().catch(err => console.log('Audio play blocked:', err));
+    }
     
-    // Also show desktop notification if permitted
-    showDesktopNotification();
+    // Always show desktop notification (works even when tab is hidden)
+    showDesktopNotification(transitDetails);
 }
 
-function showDesktopNotification() {
+function showDesktopNotification(transitDetails = []) {
     // Check if alerts are enabled
     if (!alertsEnabled) {
         console.log('Alerts disabled - skipping notification');
@@ -1384,28 +1396,46 @@ function showDesktopNotification() {
     
     // Check permission
     if (Notification.permission === 'granted') {
-        createNotification();
+        createNotification(transitDetails);
     } else if (Notification.permission !== 'denied') {
         // Request permission
         Notification.requestPermission().then(permission => {
             if (permission === 'granted') {
-                createNotification();
+                createNotification(transitDetails);
             }
         });
     }
 }
 
-function createNotification() {
+function createNotification(transitDetails = []) {
     const targetName = target === 'auto' ? 'Sun/Moon' : (target === 'moon' ? 'Moon' : 'Sun');
-    const title = `Transit Alert! ${targetName}`;
-    const body = 'Possible aircraft transit detected. Check the results table for details.';
     
-    const notification = new Notification(title, {
+    // Build notification body with transit details
+    let body = '';
+    if (transitDetails.length > 0) {
+        const count = transitDetails.length;
+        const plural = count > 1 ? 's' : '';
+        body = `${count} possible transit${plural} detected:\n`;
+        
+        // Show up to 3 transits
+        transitDetails.slice(0, 3).forEach(t => {
+            body += `\n✈️ ${t.flight} in ${t.time} min (${t.level})`;
+        });
+        
+        if (transitDetails.length > 3) {
+            body += `\n... and ${transitDetails.length - 3} more`;
+        }
+    } else {
+        body = 'Possible aircraft transit detected. Check the results table for details.';
+    }
+    
+    const notification = new Notification(`🚨 Transit Alert! ${targetName}`, {
         body: body,
         icon: '/static/images/favicon.ico',
         badge: '/static/images/favicon.ico',
         tag: 'flymoon-transit',
-        requireInteraction: false
+        requireInteraction: true,  // Keep notification until user interacts
+        silent: false  // Enable system sound (respects OS notification settings)
     });
     
     notification.onclick = function() {
@@ -1413,8 +1443,8 @@ function createNotification() {
         this.close();
     };
     
-    // Auto-close after 10 seconds
-    setTimeout(() => notification.close(), 10000);
+    // Auto-close after 30 seconds (increased from 10)
+    setTimeout(() => notification.close(), 30000);
 }
 
 function toggleAlerts() {
