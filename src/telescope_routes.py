@@ -505,7 +505,17 @@ def list_telescope_files():
         if not client or not client.is_connected():
             return jsonify({"error": "Not connected to telescope"}), 400
 
-        files_data = client.list_files()
+        # Get files with timeout handling
+        try:
+            files_data = client.list_files()
+        except Exception as e:
+            # If list_files fails (timeout, etc), return empty list
+            logger.warning(f"[Telescope] Failed to get files: {e}, returning empty list")
+            return jsonify({
+                "files": [],
+                "total": 0,
+                "message": "Unable to retrieve files from telescope"
+            }), 200
 
         # Build download URLs for files
         base_url = f"http://{client.host}"
@@ -529,20 +539,26 @@ def list_telescope_files():
                     })
                     total_files += 1
 
-            albums.append({
-                "name": album_name,
-                "files": album_files
-            })
+            if album_files:
+                albums.append({
+                    "name": album_name,
+                    "files": album_files
+                })
+
+        # Return flat list of all files for simpler frontend
+        all_files = []
+        for album in albums:
+            all_files.extend(album["files"])
 
         logger.info(f"[Telescope] Retrieved {total_files} files from {len(albums)} albums")
         return jsonify({
-            "success": True,
-            "path": parent_path,
+            "files": all_files,
             "albums": albums,
-            "total_files": total_files
+            "total": total_files
         }), 200
 
     except Exception as e:
+        logger.error(f"[Telescope] Error listing files: {e}")
         return handle_error(e)
 
 
