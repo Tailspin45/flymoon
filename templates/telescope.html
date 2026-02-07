@@ -48,7 +48,7 @@
                 <div class="files-panel">
                     <h2>📁 Captured Files</h2>
                     <div class="files-controls">
-                        <button id="refreshFilesBtn" class="btn-sm" disabled>🔄 Refresh</button>
+                        <button id="refreshFilesBtn" class="btn-sm" onclick="refreshFiles()" disabled>🔄 Refresh</button>
                         <span id="fileCount" class="file-count">0 files</span>
                     </div>
                     <div id="filesList" class="files-grid">
@@ -71,8 +71,8 @@
                         <div class="connection-info" id="connectionInfo"></div>
                     </div>
                     <div class="button-row">
-                        <button id="connectBtn" class="btn btn-primary">🔌 Connect</button>
-                        <button id="disconnectBtn" class="btn btn-secondary" disabled>🔌 Disconnect</button>
+                        <button id="connectBtn" class="btn btn-primary" onclick="connect()">🔌 Connect</button>
+                        <button id="disconnectBtn" class="btn btn-secondary" onclick="disconnect()" disabled>🔌 Disconnect</button>
                     </div>
                 </div>
 
@@ -98,8 +98,8 @@
                         </div>
                     </div>
                     <div class="button-row">
-                        <button id="targetSunBtn" class="btn btn-secondary" disabled>☀️ View Sun</button>
-                        <button id="targetMoonBtn" class="btn btn-secondary" disabled>🌙 View Moon</button>
+                        <button id="targetSunBtn" class="btn btn-secondary" onclick="switchToSun()" disabled>☀️ View Sun</button>
+                        <button id="targetMoonBtn" class="btn btn-secondary" onclick="switchToMoon()" disabled>🌙 View Moon</button>
                     </div>
                     <div id="targetWarning" class="warning-box" style="display: none;"></div>
                 </div>
@@ -119,7 +119,7 @@
                                 <label for="exposureTime">Exposure (s):</label>
                                 <input type="number" id="exposureTime" value="1.0" min="0.1" max="30" step="0.1" class="input-sm">
                             </div>
-                            <button id="capturePhotoBtn" class="btn btn-primary" disabled>📸 Capture Photo</button>
+                            <button id="capturePhotoBtn" class="btn btn-primary" onclick="capturePhoto()" disabled>📸 Capture Photo</button>
                         </div>
                     </div>
 
@@ -135,8 +135,8 @@
                                 <span id="recordingText">Not Recording</span>
                             </div>
                             <div class="button-row">
-                                <button id="startRecordingBtn" class="btn btn-primary" disabled>⏺️ Start Recording</button>
-                                <button id="stopRecordingBtn" class="btn btn-danger" disabled style="display: none;">⏹️ Stop Recording</button>
+                                <button id="startRecordingBtn" class="btn btn-primary" onclick="startRecording()" disabled>⏺️ Start Recording</button>
+                                <button id="stopRecordingBtn" class="btn btn-danger" onclick="stopRecording()" disabled style="display: none;">⏹️ Stop Recording</button>
                             </div>
                         </div>
                     </div>

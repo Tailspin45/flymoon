@@ -75,26 +75,48 @@ async function disconnect() {
 
 function updateConnectionUI() {
     // Update connection status display
-    const statusDot = document.getElementById('connectionStatus');
-    const statusText = document.getElementById('statusText');
+    const statusDot = document.getElementById('statusDot');
+    const statusText = document.getElementById('connectionStatus');
     const connectBtn = document.getElementById('connectBtn');
     const disconnectBtn = document.getElementById('disconnectBtn');
+    
+    if (!statusDot || !statusText) {
+        console.warn('[Telescope] Connection UI elements not found');
+        return;
+    }
     
     if (isConnected) {
         statusDot.className = 'status-dot connected';
         statusText.textContent = 'Connected';
-        connectBtn.disabled = true;
-        disconnectBtn.disabled = false;
+        if (connectBtn) connectBtn.disabled = true;
+        if (disconnectBtn) disconnectBtn.disabled = false;
     } else {
         statusDot.className = 'status-dot disconnected';
         statusText.textContent = 'Disconnected';
-        connectBtn.disabled = false;
-        disconnectBtn.disabled = true;
+        if (connectBtn) connectBtn.disabled = false;
+        if (disconnectBtn) disconnectBtn.disabled = true;
     }
     
     // Enable/disable all controls based on connection
-    document.querySelectorAll('.requires-connection').forEach(btn => {
-        btn.disabled = !isConnected;
+    updateButtonStates();
+}
+
+function updateButtonStates() {
+    // Update all buttons that require connection
+    const buttons = [
+        'targetSunBtn',
+        'targetMoonBtn', 
+        'capturePhotoBtn',
+        'startRecordingBtn',
+        'stopRecordingBtn',
+        'refreshFilesBtn'
+    ];
+    
+    buttons.forEach(id => {
+        const btn = document.getElementById(id);
+        if (btn && !btn.classList.contains('force-enabled')) {
+            btn.disabled = !isConnected;
+        }
     });
 }
 
@@ -146,44 +168,40 @@ async function updateTargetVisibility() {
     if (!result) return;
     
     // Update Sun
-    const sunBadge = document.getElementById('sunVisibility');
-    const sunAlt = document.getElementById('sunAlt');
-    const sunAz = document.getElementById('sunAz');
-    const sunBtn = document.getElementById('switchToSunBtn');
+    const sunBadge = document.getElementById('sunBadge');
+    const sunCoords = document.getElementById('sunCoords');
+    const sunBtn = document.getElementById('targetSunBtn');
     
-    if (result.sun) {
-        sunAlt.textContent = `${result.sun.altitude.toFixed(1)}°`;
-        sunAz.textContent = `${result.sun.azimuth.toFixed(1)}°`;
+    if (result.sun && sunCoords && sunBadge) {
+        sunCoords.textContent = `Alt: ${result.sun.altitude.toFixed(1)}° / Az: ${result.sun.azimuth.toFixed(1)}°`;
         
         if (result.sun.visible) {
             sunBadge.textContent = 'Visible';
             sunBadge.className = 'visibility-badge visible';
-            if (isConnected) sunBtn.disabled = false;
+            if (isConnected && sunBtn) sunBtn.disabled = false;
         } else {
             sunBadge.textContent = 'Below Horizon';
             sunBadge.className = 'visibility-badge not-visible';
-            sunBtn.disabled = true;
+            if (sunBtn) sunBtn.disabled = true;
         }
     }
     
     // Update Moon
-    const moonBadge = document.getElementById('moonVisibility');
-    const moonAlt = document.getElementById('moonAlt');
-    const moonAz = document.getElementById('moonAz');
-    const moonBtn = document.getElementById('switchToMoonBtn');
+    const moonBadge = document.getElementById('moonBadge');
+    const moonCoords = document.getElementById('moonCoords');
+    const moonBtn = document.getElementById('targetMoonBtn');
     
-    if (result.moon) {
-        moonAlt.textContent = `${result.moon.altitude.toFixed(1)}°`;
-        moonAz.textContent = `${result.moon.azimuth.toFixed(1)}°`;
+    if (result.moon && moonCoords && moonBadge) {
+        moonCoords.textContent = `Alt: ${result.moon.altitude.toFixed(1)}° / Az: ${result.moon.azimuth.toFixed(1)}°`;
         
         if (result.moon.visible) {
             moonBadge.textContent = 'Visible';
             moonBadge.className = 'visibility-badge visible';
-            if (isConnected) moonBtn.disabled = false;
+            if (isConnected && moonBtn) moonBtn.disabled = false;
         } else {
             moonBadge.textContent = 'Below Horizon';
             moonBadge.className = 'visibility-badge not-visible';
-            moonBtn.disabled = true;
+            if (moonBtn) moonBtn.disabled = true;
         }
     }
 }
@@ -276,20 +294,19 @@ async function stopRecording() {
 function updateRecordingUI() {
     const startBtn = document.getElementById('startRecordingBtn');
     const stopBtn = document.getElementById('stopRecordingBtn');
-    const recordingIndicator = document.getElementById('recordingIndicator');
+    const recordingDot = document.getElementById('recordingDot');
+    const recordingText = document.getElementById('recordingText');
     
     if (isRecording) {
-        startBtn.disabled = true;
-        stopBtn.disabled = false;
-        if (recordingIndicator) {
-            recordingIndicator.style.display = 'flex';
-        }
+        if (startBtn) startBtn.disabled = true;
+        if (stopBtn) stopBtn.disabled = false;
+        if (recordingDot) recordingDot.className = 'status-dot recording';
+        if (recordingText) recordingText.textContent = 'Recording...';
     } else {
-        startBtn.disabled = !isConnected;
-        stopBtn.disabled = true;
-        if (recordingIndicator) {
-            recordingIndicator.style.display = 'none';
-        }
+        if (startBtn) startBtn.disabled = !isConnected;
+        if (stopBtn) stopBtn.disabled = true;
+        if (recordingDot) recordingDot.className = 'status-dot';
+        if (recordingText) recordingText.textContent = 'Not Recording';
     }
 }
 
@@ -351,7 +368,7 @@ async function refreshFiles() {
     const result = await apiCall('/telescope/files', 'GET');
     if (!result) return;
     
-    const filesGrid = document.getElementById('filesGrid');
+    const filesGrid = document.getElementById('filesList');
     const fileCount = document.getElementById('fileCount');
     
     if (!filesGrid) return;
@@ -363,11 +380,11 @@ async function refreshFiles() {
     
     // Update count badge
     if (fileCount) {
-        fileCount.textContent = files.length;
+        fileCount.textContent = `${files.length} file${files.length !== 1 ? 's' : ''}`;
     }
     
     if (files.length === 0) {
-        filesGrid.innerHTML = '<div class="no-files">No files captured yet</div>';
+        filesGrid.innerHTML = '<p class="files-empty">No files captured yet</p>';
         return;
     }
     

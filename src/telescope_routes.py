@@ -633,20 +633,20 @@ def get_target_visibility():
         moon_coords = moon.get_coordinates()
         
         # Determine visibility (above horizon = altitude > 0)
-        sun_visible = sun_coords["altitude"] > 0
-        moon_visible = moon_coords["altitude"] > 0
+        sun_visible = bool(sun_coords["altitude"] > 0)
+        moon_visible = bool(moon_coords["altitude"] > 0)
         
         logger.debug(f"[Telescope] Sun: {sun_coords['altitude']:.1f}°, Moon: {moon_coords['altitude']:.1f}°")
         
         return jsonify({
             "sun": {
-                "altitude": sun_coords["altitude"],
-                "azimuth": sun_coords["azimuthal"],
+                "altitude": float(sun_coords["altitude"]),
+                "azimuth": float(sun_coords["azimuthal"]),
                 "visible": sun_visible
             },
             "moon": {
-                "altitude": moon_coords["altitude"],
-                "azimuth": moon_coords["azimuthal"],
+                "altitude": float(moon_coords["altitude"]),
+                "azimuth": float(moon_coords["azimuthal"]),
                 "visible": moon_visible
             },
             "timestamp": ref_datetime.isoformat()
