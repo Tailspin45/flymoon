@@ -49,6 +49,7 @@ load_dotenv()
 from src import logger
 from src.config_wizard import ConfigWizard
 from src.flight_data import save_possible_transits, sort_results
+from src.flight_cache import get_cache
 from src.telegram_notify import send_telegram_notification
 from src.transit import get_transits
 from src import telescope_routes
@@ -98,6 +99,42 @@ def get_transit_recorder():
     return _transit_recorder
 
 
+def calculate_adaptive_interval(flights: list) -> int:
+    """
+    Calculate adaptive polling interval based on transit proximity.
+    
+    Returns interval in seconds:
+    - 30s if transit <2 min away
+    - 60s if transit <5 min away
+    - 120s if transit <10 min away
+    - 480s (8 min) otherwise
+    """
+    if not flights:
+        return 600  # 10 minutes if no flights
+    
+    # Find closest high/medium probability transit
+    priority_transits = [
+        f.get("time", 999) for f in flights 
+        if f.get("is_possible_transit") == 1 and 
+        f.get("possibility_level") in [PossibilityLevel.HIGH.value, PossibilityLevel.MEDIUM.value]
+    ]
+    
+    if not priority_transits:
+        # Only low probability or no transits
+        return 480  # 8 minutes
+    
+    closest_transit_time = min(priority_transits)
+    
+    if closest_transit_time < 2:  # <2 min away
+        return 30  # 30 seconds
+    elif closest_transit_time < 5:  # <5 min away
+        return 60  # 1 minute
+    elif closest_transit_time < 10:  # <10 min away
+        return 120  # 2 minutes
+    else:
+        return 480  # 8 minutes (default)
+
+
 def allowed_file(filename):
     return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
 
@@ -105,6 +142,23 @@ def allowed_file(filename):
 @app.route("/")
 def index():
     return render_template("index.html")
+
+
+@app.route("/config")
+def get_config():
+    """Return app configuration for client."""
+    return jsonify({
+        "autoRefreshIntervalMinutes": int(os.getenv("AUTO_REFRESH_INTERVAL_MINUTES", 8)),
+        "cacheEnabled": True,
+        "cacheTTLSeconds": 120
+    })
+
+
+@app.route("/cache/stats")
+def cache_stats():
+    """Return cache statistics for monitoring."""
+    cache = get_cache()
+    return jsonify(cache.get_stats())
 
 
 @app.route("/flights")
@@ -184,11 +238,15 @@ def get_all_flights():
             else:
                 logger.info(f"{target.capitalize()} below minimum altitude ({coords['altitude']:.1f}° < {min_altitude}°), skipping transit check")
         
+        # Calculate adaptive refresh interval based on closest transit
+        next_check_interval = calculate_adaptive_interval(all_flights)
+        
         # Combine results
         data = {
             "flights": sort_results(all_flights),
             "targetCoordinates": target_coordinates,
             "trackingTargets": tracking_targets,
+            "nextCheckInterval": next_check_interval,  # Seconds until next check
             "weather": None,  # Weather functionality not implemented yet
             "boundingBox": {
                 "latLowerLeft": custom_bbox["lat_lower_left"] if custom_bbox else float(os.getenv("LAT_LOWER_LEFT", 0)),
@@ -459,15 +517,6 @@ def update_gallery_metadata(filepath):
     except Exception as e:
         logger.error(f"Error updating metadata for {filepath}: {str(e)}")
         return jsonify({"error": str(e)}), 500
-
-
-@app.route("/config")
-def get_config():
-    """Get client configuration settings."""
-    auto_refresh_interval = int(os.getenv("AUTO_REFRESH_INTERVAL_MINUTES", "6"))
-    return jsonify({
-        "autoRefreshIntervalMinutes": auto_refresh_interval
-    })
 
 
 # Register telescope control routes

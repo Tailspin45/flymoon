@@ -108,7 +108,11 @@ var transitCountdownInterval = null;
 var target = getLocalStorageItem("target", "auto");
 var autoGoInterval = setInterval(goFetch, 86400000);
 var refreshTimerLabelInterval = setInterval(refreshTimer, 1000); // Update every second
+var softRefreshInterval = null; // For client-side position updates
 var remainingSeconds = 0; // Track remaining seconds for countdown
+var lastFlightData = null; // Cache last flight response for soft refresh
+var lastFlightUpdateTime = 0; // Timestamp of last API call
+var currentCheckInterval = 480; // Current adaptive interval in seconds (default 8 min)
 // By default disable auto go and refresh timer label
 clearInterval(autoGoInterval);
 clearInterval(refreshTimerLabelInterval);
@@ -116,7 +120,7 @@ displayTarget();
 
 // App configuration from server
 var appConfig = {
-    autoRefreshIntervalMinutes: 6  // Default, will be loaded from server
+    autoRefreshIntervalMinutes: 8  // Default, will be loaded from server
 };
 
 // Load configuration from server
@@ -136,13 +140,83 @@ document.addEventListener('visibilitychange', function() {
         console.log('Page hidden - pausing auto-refresh');
         clearInterval(autoGoInterval);
         clearInterval(refreshTimerLabelInterval);
+        clearInterval(softRefreshInterval);
     } else if (!document.hidden && autoMode) {
         console.log('Page visible - resuming auto-refresh');
-        const freq = parseInt(localStorage.getItem("frequency")) || appConfig.autoRefreshIntervalMinutes;
-        autoGoInterval = setInterval(goFetch, MS_IN_A_MIN * freq);
-        refreshTimerLabelInterval = setInterval(refreshTimer, 1000); // Update every second
+        const intervalSecs = currentCheckInterval || (parseInt(localStorage.getItem("frequency")) || appConfig.autoRefreshIntervalMinutes) * 60;
+        autoGoInterval = setInterval(goFetch, intervalSecs * 1000);
+        refreshTimerLabelInterval = setInterval(refreshTimer, 1000);
+        softRefreshInterval = setInterval(softRefresh, 15000); // Soft refresh every 15 seconds
     }
 });
+
+/**
+ * Client-side position prediction and UI update without API call
+ * Uses constant velocity model to extrapolate aircraft positions
+ */
+function softRefresh() {
+    if (!lastFlightData || !lastFlightUpdateTime) {
+        return; // No data to update
+    }
+
+    const secondsElapsed = (Date.now() - lastFlightUpdateTime) / 1000;
+    
+    // Don't soft refresh if too much time has passed (data too stale)
+    if (secondsElapsed > 300) {  // 5 minutes
+        console.log('Data too stale for soft refresh, waiting for full refresh');
+        return;
+    }
+
+    // Clone and update flight positions
+    const updatedFlights = lastFlightData.flights.map(flight => {
+        const updated = {...flight};
+        
+        if (updated.is_possible_transit === 1 && updated.time !== null) {
+            // Update ETA (time remaining in minutes)
+            updated.time = Math.max(0, updated.time - (secondsElapsed / 60));
+            
+            // If we have position data, extrapolate it
+            if (updated.latitude && updated.longitude && updated.speed && updated.direction) {
+                const speedKmPerSec = updated.speed / 3600;  // km/h to km/s
+                const distanceKm = speedKmPerSec * secondsElapsed;
+                
+                // Convert heading to radians
+                const headingRad = updated.direction * Math.PI / 180;
+                
+                // Update position (simplified flat-earth model, good enough for short distances)
+                const latChange = (distanceKm / 111.32) * Math.cos(headingRad);
+                const lonChange = (distanceKm / (111.32 * Math.cos(updated.latitude * Math.PI / 180))) * Math.sin(headingRad);
+                
+                updated.latitude += latChange;
+                updated.longitude += lonChange;
+            }
+        }
+        
+        return updated;
+    });
+
+    // Update the table without full re-render
+    updateFlightTable(updatedFlights);
+    
+    // Update "Last updated" display
+    updateLastUpdateDisplay();
+}
+
+/**
+ * Update flight table with new data
+ */
+function updateFlightTable(flights) {
+    flights.forEach(flight => {
+        const row = document.querySelector(`tr[data-flight-id="${flight.id}"]`);
+        if (row && flight.is_possible_transit === 1) {
+            // Update time cell
+            const timeCell = row.querySelector('td:nth-child(17)'); // Adjust column index if needed
+            if (timeCell && flight.time !== null) {
+                timeCell.textContent = flight.time.toFixed(1);
+            }
+        }
+    });
+}
 
 // State tracking for toggles
 var resultsVisible = false;
@@ -659,17 +733,19 @@ function auto() {
         autoMode = false;
         clearInterval(autoGoInterval);
         clearInterval(refreshTimerLabelInterval);
+        clearInterval(softRefreshInterval);
     }
     else {
         // Get configured default from server or use saved frequency
         const savedFreq = localStorage.getItem("frequency");
-        const defaultFreq = appConfig.autoRefreshIntervalMinutes || 6;
+        const defaultFreq = appConfig.autoRefreshIntervalMinutes || 8;
         const suggestedFreq = savedFreq || defaultFreq;
 
         let freq = prompt(
             `Enter refresh interval in minutes\n` +
             `Default: ${defaultFreq} min (configured)\n` +
-            `Recommended: 5-10 min for continuous monitoring`,
+            `Recommended: 8-10 min for continuous monitoring\n` +
+            `Note: Adaptive polling will adjust automatically based on transits`,
             suggestedFreq
         );
 
@@ -691,14 +767,17 @@ function auto() {
         }
 
         localStorage.setItem("frequency", freq);
+        currentCheckInterval = freq * 60; // Convert to seconds
+        remainingSeconds = currentCheckInterval;
+        
         const initialTimeStr = String(freq).padStart(2, '0') + ':00';
         document.getElementById("autoBtn").innerHTML = "Auto " + initialTimeStr + " ⴵ";
-        document.getElementById("autoGoNote").innerHTML = `Auto-refresh every ${freq} minute(s). Pauses when page is hidden.`;
+        document.getElementById("autoGoNote").innerHTML = `Auto-refresh with adaptive polling (base: ${freq} min). Pauses when page hidden.`;
 
         autoMode = true;
-        autoGoInterval = setInterval(goFetch, MS_IN_A_MIN * freq);
+        autoGoInterval = setInterval(goFetch, currentCheckInterval * 1000);
         refreshTimerLabelInterval = setInterval(refreshTimer, 1000); // Update every second
-        remainingSeconds = freq * 60; // Initialize countdown in seconds
+        softRefreshInterval = setInterval(softRefresh, 15000); // Soft refresh every 15 seconds
 
         // Trigger initial fetch
         goFetch();
@@ -707,14 +786,13 @@ function auto() {
 
 function refreshTimer() {
     let autoBtn = document.getElementById("autoBtn");
-    const currentFreq = parseInt(localStorage.getItem("frequency")) || appConfig.autoRefreshIntervalMinutes;
 
     // Decrement remaining seconds
     remainingSeconds--;
 
     // Reset and trigger fetch when countdown reaches 0
     if (remainingSeconds <= 0) {
-        remainingSeconds = currentFreq * 60;
+        remainingSeconds = currentCheckInterval; // Use adaptive interval
         goFetch(); // Trigger fetch when timer hits zero
     }
 
@@ -779,8 +857,9 @@ function fetchFlights() {
         return response.json();
     })
     .then(data => {
-        // Record update time
+        // Record update time and cache data
         window.lastFlightUpdateTime = Date.now();
+        lastFlightData = data;
         updateLastUpdateDisplay();
 
         // Hide loading spinner
@@ -789,6 +868,28 @@ function fetchFlights() {
 
         if(data.flights.length == 0) {
             alertNoResults.innerHTML = "No flights!"
+        }
+
+        // Update adaptive interval if provided by server
+        if (data.nextCheckInterval) {
+            currentCheckInterval = data.nextCheckInterval;
+            console.log(`Adaptive interval: ${currentCheckInterval}s (${(currentCheckInterval/60).toFixed(1)} min)`);
+            
+            // Restart auto-refresh with new interval
+            if (autoMode) {
+                clearInterval(autoGoInterval);
+                autoGoInterval = setInterval(goFetch, currentCheckInterval * 1000);
+                remainingSeconds = currentCheckInterval;
+            }
+        }
+        
+        // Auto-pause if no targets being tracked
+        if (autoMode && data.trackingTargets && data.trackingTargets.length === 0) {
+            console.log("⏸️  No targets above horizon, pausing auto-refresh");
+            document.getElementById("autoGoNote").innerHTML += " <span style='color: orange;'>(Paused: targets below horizon)</span>";
+            clearInterval(autoGoInterval);
+            clearInterval(softRefreshInterval);
+            // Will resume automatically on next manual refresh when targets rise
         }
 
         // LINE 1: Tracking status - Sun and Moon with weather

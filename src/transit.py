@@ -22,6 +22,7 @@ from src.constants import (
     get_aeroapi_key,
 )
 from src.flight_data import get_flight_data, load_existing_flight_data, parse_fligh_data
+from src.flight_cache import get_cache
 from src.position import (
     AreaBoundingBox,
     geographic_to_altaz,
@@ -297,7 +298,30 @@ def get_transits(
             raw_flight_data = load_existing_flight_data(TEST_DATA_PATH)
             logger.info("Loading existing flight data since is using TEST mode")
         else:
-            raw_flight_data = get_flight_data(area_bbox, API_URL, API_KEY)
+            # Check cache first
+            cache = get_cache()
+            cached_data = cache.get(
+                area_bbox.lat_lower_left,
+                area_bbox.long_lower_left,
+                area_bbox.lat_upper_right,
+                area_bbox.long_upper_right,
+                target_name
+            )
+            
+            if cached_data is not None:
+                raw_flight_data = cached_data
+                logger.info(f"Using cached flight data ({cache.get_stats()['hit_rate_percent']}% hit rate)")
+            else:
+                raw_flight_data = get_flight_data(area_bbox, API_URL, API_KEY)
+                # Cache the raw response
+                cache.set(
+                    area_bbox.lat_lower_left,
+                    area_bbox.long_lower_left,
+                    area_bbox.lat_upper_right,
+                    area_bbox.long_upper_right,
+                    raw_flight_data,
+                    target_name
+                )
 
         flight_data = list()
 
@@ -306,7 +330,19 @@ def get_transits(
 
         logger.info(f"there are {len(flight_data)} flights near")
 
+        # Quick pre-filter: Get target altitude for comparison
+        target_altitude_meters = current_target_coordinates.get("altitude", 0) * 111320  # degrees to meters (rough)
+        filtered_count = 0
+
         for flight in flight_data:
+            # Quick elevation check before expensive calculations
+            # Skip flights that are obviously at wrong altitude (>30km difference from target line-of-sight)
+            altitude_diff = abs(flight["elevation"] - target_altitude_meters * 0.5)  # Rough heuristic
+            if altitude_diff > 30000:  # 30km difference
+                filtered_count += 1
+                logger.debug(f"Skipping {flight['name']}: altitude too different ({altitude_diff/1000:.1f}km)")
+                continue
+            
             celestial_obj.update_position(ref_datetime=ref_datetime)
 
             data.append(
@@ -323,6 +359,9 @@ def get_transits(
             )
 
             logger.info(data[-1])
+        
+        if filtered_count > 0:
+            logger.info(f"Pre-filtered {filtered_count} flights with incompatible altitudes")
     else:
         logger.warning(
             f"{target_name} target is under horizon, skipping checking for transits..."

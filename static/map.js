@@ -571,12 +571,34 @@ async function toggleFlightRouteTrack(faFlightId, flightId) {
         return;
     }
 
-    // Fetch route and track
+    // Determine which data to fetch based on transit timing
+    const row = document.querySelector(`tr[data-flight-id="${flightId}"]`);
+    let transitTime = null;
+    if (row) {
+        const timeCell = row.querySelector('td:nth-child(17)'); // Time column
+        if (timeCell && timeCell.textContent) {
+            transitTime = parseFloat(timeCell.textContent);
+        }
+    }
+
+    // Conditional fetching: only get what's useful
     try {
-        const [routeResponse, trackResponse] = await Promise.all([
-            fetch(`/flights/${faFlightId}/route`).then(r => r.json()).catch(e => ({ error: e.message })),
-            fetch(`/flights/${faFlightId}/track`).then(r => r.json()).catch(e => ({ error: e.message }))
-        ]);
+        let routeResponse = { error: 'Not requested' };
+        let trackResponse = { error: 'Not requested' };
+        
+        if (transitTime !== null && !isNaN(transitTime) && transitTime > 0) {
+            // Future transit - show planned route only
+            console.log(`Future transit (${transitTime.toFixed(1)} min), fetching route only`);
+            routeResponse = await fetch(`/flights/${faFlightId}/route`)
+                .then(r => r.json())
+                .catch(e => ({ error: e.message }));
+        } else {
+            // Past/current transit or unknown time - show actual track only
+            console.log('Past/current transit, fetching track only');
+            trackResponse = await fetch(`/flights/${faFlightId}/track`)
+                .then(r => r.json())
+                .catch(e => ({ error: e.message }));
+        }
 
         // Cache the data
         aircraftRouteCache[flightId] = { route: routeResponse, track: trackResponse };

@@ -2,7 +2,7 @@
 
 Track aircraft transiting the Sun and Moon in real-time with automatic telescope photography.
 
-![Flymoon Interface](data/assets/flymoon2.png)
+![Flymoon Interface](data/assets/flymoon.png)
 
 ## ✨ Features
 
