@@ -210,14 +210,16 @@ fetch('/config')
         console.error('Error loading config:', error);
     });
 
-// Page visibility detection - pause polling when page is hidden
+// Page visibility detection - optionally pause polling when page is hidden
 document.addEventListener('visibilitychange', function() {
-    if (document.hidden && autoMode) {
+    const pauseWhenHidden = localStorage.getItem("pauseWhenHidden") !== "false"; // Default true
+    
+    if (document.hidden && autoMode && pauseWhenHidden) {
         console.log('Page hidden - pausing auto-refresh');
         clearInterval(autoGoInterval);
         clearInterval(refreshTimerLabelInterval);
         clearInterval(softRefreshInterval);
-    } else if (!document.hidden && autoMode) {
+    } else if (!document.hidden && autoMode && pauseWhenHidden) {
         console.log('Page visible - resuming auto-refresh');
         const intervalSecs = currentCheckInterval || (parseInt(localStorage.getItem("frequency")) || appConfig.autoRefreshIntervalMinutes) * 60;
         autoGoInterval = setInterval(goFetch, intervalSecs * 1000);
@@ -830,7 +832,10 @@ function auto() {
         
         const initialTimeStr = String(freq).padStart(2, '0') + ':00';
         document.getElementById("autoBtn").innerHTML = "Auto " + initialTimeStr + " ⴵ";
-        document.getElementById("autoGoNote").innerHTML = `Auto-refresh with adaptive polling (base: ${freq} min). Pauses when page hidden.`;
+        
+        const pauseWhenHidden = localStorage.getItem('pauseWhenHidden') !== 'false';
+        const pauseNote = pauseWhenHidden ? ' Pauses when page hidden.' : '';
+        document.getElementById("autoGoNote").innerHTML = `Auto-refresh with adaptive polling (base: ${freq} min).${pauseNote}`;
 
         autoMode = true;
         autoGoInterval = setInterval(goFetch, currentCheckInterval * 1000);
@@ -1458,6 +1463,9 @@ window.addEventListener('DOMContentLoaded', () => {
         button.style.color = 'white';
         button.title = 'Alerts enabled (click to disable)';
     }
+    
+    // Initialize pause when hidden checkbox
+    initPauseWhenHidden();
 });
 
 function requestNotificationPermission() {
@@ -1535,6 +1543,23 @@ function updateTelescopeStatus() {
                 statusLight.title = 'Telescope status unknown';
             }
         });
+}
+
+// Pause when hidden preference
+function togglePauseWhenHidden() {
+    const checkbox = document.getElementById('pauseWhenHidden');
+    localStorage.setItem('pauseWhenHidden', checkbox.checked);
+    console.log('Pause when hidden:', checkbox.checked);
+}
+
+// Initialize pause when hidden checkbox
+function initPauseWhenHidden() {
+    const checkbox = document.getElementById('pauseWhenHidden');
+    if (checkbox) {
+        // Default to true if not set
+        const pauseWhenHidden = localStorage.getItem('pauseWhenHidden') !== 'false';
+        checkbox.checked = pauseWhenHidden;
+    }
 }
 
 // Update telescope status every 2 seconds
