@@ -5,6 +5,27 @@ let currentFilter = 'all';
 let currentImagePath = '';
 let currentImageMetadata = {};
 
+// Gallery authentication helpers
+function getGalleryAuthToken() {
+    // Try to get from localStorage
+    let token = localStorage.getItem('galleryAuthToken');
+    
+    // If not found, prompt user
+    if (!token) {
+        token = prompt('Enter gallery authentication token (from .env GALLERY_AUTH_TOKEN):');
+        if (token) {
+            // Store for this session
+            localStorage.setItem('galleryAuthToken', token);
+        }
+    }
+    
+    return token;
+}
+
+function clearGalleryAuthToken() {
+    localStorage.removeItem('galleryAuthToken');
+}
+
 // Initialize on page load
 document.addEventListener('DOMContentLoaded', function() {
     loadGallery();
@@ -82,8 +103,18 @@ function setupUploadForm() {
         status.style.display = 'block';
 
         try {
+            // Get auth token from localStorage or prompt
+            const authToken = getGalleryAuthToken();
+            if (!authToken) {
+                alert('Gallery authentication required. Please set GALLERY_AUTH_TOKEN.');
+                return;
+            }
+
             const response = await fetch('/gallery/upload', {
                 method: 'POST',
+                headers: {
+                    'Authorization': `Bearer ${authToken}`
+                },
                 body: formData
             });
 
@@ -150,8 +181,18 @@ function setupLightbox() {
 
         if (confirm('Are you sure you want to delete this image? This cannot be undone.')) {
             try {
+                // Get auth token
+                const authToken = getGalleryAuthToken();
+                if (!authToken) {
+                    alert('Gallery authentication required.');
+                    return;
+                }
+
                 const response = await fetch(`/gallery/delete/${currentImagePath}`, {
-                    method: 'DELETE'
+                    method: 'DELETE',
+                    headers: {
+                        'Authorization': `Bearer ${authToken}`
+                    }
                 });
 
                 if (response.ok) {
@@ -238,8 +279,18 @@ function setupEditModal() {
         const filepath = formData.get('filepath');
 
         try {
+            // Get auth token
+            const authToken = getGalleryAuthToken();
+            if (!authToken) {
+                alert('Gallery authentication required.');
+                return;
+            }
+
             const response = await fetch(`/gallery/update/${filepath}`, {
                 method: 'POST',
+                headers: {
+                    'Authorization': `Bearer ${authToken}`
+                },
                 body: formData
             });
 

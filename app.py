@@ -33,8 +33,11 @@ import argparse
 import asyncio
 import json
 import os
+import secrets
 import time
 from datetime import date, datetime
+from functools import wraps
+from http import HTTPStatus
 
 import requests
 from dotenv import load_dotenv
@@ -55,6 +58,41 @@ from src.transit import get_transits
 from src import telescope_routes
 from src.seestar_client import TransitRecorder
 from src.constants import PossibilityLevel
+
+# Gallery authentication token from environment
+GALLERY_AUTH_TOKEN = os.getenv("GALLERY_AUTH_TOKEN", "")
+
+# Security decorator for gallery write operations
+def require_gallery_auth(f):
+    """Decorator to require authentication for gallery write operations."""
+    @wraps(f)
+    def decorated_function(*args, **kwargs):
+        # If no token is configured, deny all write operations
+        if not GALLERY_AUTH_TOKEN:
+            logger.warning(f"Gallery write operation attempted but GALLERY_AUTH_TOKEN not configured")
+            return jsonify({
+                "error": "Gallery write operations disabled. Set GALLERY_AUTH_TOKEN in .env to enable."
+            }), HTTPStatus.FORBIDDEN
+        
+        # Check for Authorization header
+        auth_header = request.headers.get('Authorization')
+        if not auth_header:
+            logger.warning(f"Gallery write operation attempted without Authorization header from {request.remote_addr}")
+            return jsonify({"error": "Authorization required"}), HTTPStatus.UNAUTHORIZED
+        
+        # Expected format: "Bearer <token>"
+        if not auth_header.startswith('Bearer '):
+            return jsonify({"error": "Invalid authorization format. Use: Bearer <token>"}), HTTPStatus.UNAUTHORIZED
+        
+        token = auth_header[7:]  # Remove "Bearer " prefix
+        
+        # Constant-time comparison to prevent timing attacks
+        if not secrets.compare_digest(token, GALLERY_AUTH_TOKEN):
+            logger.warning(f"Gallery write operation attempted with invalid token from {request.remote_addr}")
+            return jsonify({"error": "Invalid authorization token"}), HTTPStatus.UNAUTHORIZED
+        
+        return f(*args, **kwargs)
+    return decorated_function
 
 # Global test/demo mode flag
 test_mode = False
@@ -376,8 +414,9 @@ def telescope():
 
 
 @app.route("/gallery/upload", methods=['POST'])
+@require_gallery_auth
 def upload_transit_image():
-    """Upload a transit image with metadata."""
+    """Upload a transit image with metadata. Requires authentication."""
     if 'file' not in request.files:
         return jsonify({"error": "No file provided"}), 400
 
@@ -462,8 +501,9 @@ def list_gallery():
 
 
 @app.route("/gallery/delete/<path:filepath>", methods=['DELETE'])
+@require_gallery_auth
 def delete_gallery_image(filepath):
-    """Delete a gallery image and its metadata."""
+    """Delete a gallery image and its metadata. Requires authentication."""
     try:
         # Security check - ensure filepath is within gallery directory
         full_path = os.path.join('static', filepath)
@@ -491,8 +531,9 @@ def delete_gallery_image(filepath):
 
 
 @app.route("/gallery/update/<path:filepath>", methods=['POST'])
+@require_gallery_auth
 def update_gallery_metadata(filepath):
-    """Update metadata for a gallery image."""
+    """Update metadata for a gallery image. Requires authentication."""
     try:
         # Security check - ensure filepath is within gallery directory
         full_path = os.path.join('static', filepath)

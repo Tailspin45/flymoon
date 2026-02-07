@@ -67,6 +67,7 @@ Access the web interface at `http://localhost:8000` or the displayed LAN address
 
 - **[QUICKSTART.md](QUICKSTART.md)** - Fast-track setup guide
 - **[SETUP.md](SETUP.md)** - Complete setup instructions (Telegram, Telescope)
+- **[SECURITY.md](SECURITY.md)** - Security guidelines and best practices
 - **[LICENSE](LICENSE)** - MIT License
 
 ## 🎯 How It Works
@@ -204,6 +205,20 @@ The algorithm assumes a 1° target size (0.5° for Sun/Moon diameter + 0.5° mar
 - **API Rate Limits**: FlightAware Personal tier allows 10 queries/minute
 - **Network**: LAN access for telescope control (if using)
 - **Storage**: ~50MB per transit video (if recording enabled)
+
+## 🔒 Security
+
+Flymoon binds to `0.0.0.0:8000` by default (accessible on your local network). Gallery write operations require authentication:
+
+```bash
+# Generate secure token
+python3 -c "import secrets; print(secrets.token_urlsafe(32))"
+
+# Add to .env
+GALLERY_AUTH_TOKEN=your_token_here
+```
+
+**Important**: Do not expose Flymoon to the internet without additional security measures. See [SECURITY.md](SECURITY.md) for details.
 
 ## 🤝 Contributing
 
