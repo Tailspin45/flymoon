@@ -22,6 +22,7 @@ let boundingBoxUserEdited = localStorage.getItem('boundingBoxUserEdited') === 't
 let aircraftRouteCache = {};  // Cache fetched routes/tracks
 let currentRouteLayer = null;  // Currently displayed route/track
 let userInteractingWithMap = false;  // Prevent auto-zoom during user interaction
+let headingArrows = {};  // Store heading arrows for medium/high probability transits
 
 // Arrow colors for each target
 const ARROW_COLORS = {
@@ -285,15 +286,75 @@ function updateAzimuthArrow(observerLat, observerLon, azimuth, altitude, targetN
     }).addTo(map).bindPopup(`<b>${targetCapitalized}</b><br>Altitude: ${altitude.toFixed(1)}°<br>Azimuth: ${azimuth.toFixed(1)}°`);
 }
 
+/**
+ * Add a heading arrow to show aircraft's magnetic heading direction
+ * Only for medium/high probability transits
+ */
+function addHeadingArrow(flight, flightId, color) {
+    if (!map || !flight.latitude || !flight.longitude || !flight.direction) return;
+    
+    const lat = flight.latitude;
+    const lon = flight.longitude;
+    let heading = flight.direction;
+    
+    // Convert true heading to magnetic heading
+    if (typeof geomag !== 'undefined') {
+        try {
+            const geomagInfo = geomag.field(lat, lon);
+            const declination = geomagInfo.declination;
+            heading = heading - declination;
+            if (heading < 0) heading += 360;
+            if (heading >= 360) heading -= 360;
+        } catch (error) {
+            console.warn('Could not calculate magnetic declination for arrow:', error);
+        }
+    }
+    
+    // Calculate arrow endpoint (arrow extends 0.05 degrees ~ 5.5km ahead of aircraft)
+    const arrowLength = 0.05;  // degrees
+    const headingRad = heading * Math.PI / 180;
+    
+    const endLat = lat + arrowLength * Math.cos(headingRad);
+    const endLon = lon + arrowLength * Math.sin(headingRad) / Math.cos(lat * Math.PI / 180);
+    
+    // Create arrow with thicker line for visibility
+    const arrowLine = L.polyline(
+        [[lat, lon], [endLat, endLon]],
+        {
+            color: color,
+            weight: 4,
+            opacity: 0.8,
+            className: 'heading-arrow'
+        }
+    ).addTo(map);
+    
+    // Add arrowhead using a marker
+    const arrowhead = L.marker([endLat, endLon], {
+        icon: L.divIcon({
+            html: `<div style="font-size: 24px; color: ${color}; text-shadow: 0 0 3px black, 1px 1px 0 black, -1px -1px 0 black; transform: rotate(${heading}deg); display: flex; align-items: center; justify-content: center; width: 24px; height: 24px;">▲</div>`,
+            iconSize: [24, 24],
+            iconAnchor: [12, 12],
+            className: 'heading-arrowhead'
+        })
+    }).addTo(map);
+    
+    // Store both line and arrowhead for cleanup
+    headingArrows[flightId] = L.layerGroup([arrowLine, arrowhead]).addTo(map);
+}
+
 function updateSingleAircraftMarker(flight) {
     if (!map) return;
 
     const normalizedId = String(flight.id).trim().toUpperCase();
 
-    // Remove existing marker for this flight
+    // Remove existing marker and heading arrow for this flight
     if (aircraftMarkers[normalizedId]) {
         map.removeLayer(aircraftMarkers[normalizedId]);
         delete aircraftMarkers[normalizedId];
+    }
+    if (headingArrows[normalizedId]) {
+        map.removeLayer(headingArrows[normalizedId]);
+        delete headingArrows[normalizedId];
     }
 
     // Determine color based on possibility level
@@ -333,6 +394,14 @@ function updateSingleAircraftMarker(flight) {
         });
 
         aircraftMarkers[normalizedId] = marker;
+        
+        // Add heading arrow for medium/high probability transits
+        if (flight.is_possible_transit === 1) {
+            const level = parseInt(flight.possibility_level);
+            if (level === 2 || level === 3) {  // MEDIUM or HIGH
+                addHeadingArrow(flight, normalizedId, color);
+            }
+        }
     }
 }
 
@@ -418,6 +487,14 @@ function updateAircraftMarkers(flights, observerLat, observerLon) {
             });
 
             aircraftMarkers[normalizedId] = marker;
+            
+            // Add heading arrow for medium/high probability transits
+            if (flight.is_possible_transit === 1) {
+                const level = parseInt(flight.possibility_level);
+                if (level === 2 || level === 3) {  // MEDIUM or HIGH
+                    addHeadingArrow(flight, normalizedId, color);
+                }
+            }
         }
     });
 
