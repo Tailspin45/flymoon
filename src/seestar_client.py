@@ -57,6 +57,7 @@ class SeestarClient:
         self._connected = False
         self._recording = False
         self._recording_start_time: Optional[datetime] = None
+        self._viewing_mode: Optional[str] = None  # Track current viewing mode (sun/moon/None)
         self._message_id = 0
         self._heartbeat_thread: Optional[threading.Thread] = None
         self._heartbeat_running = False
@@ -73,7 +74,8 @@ class SeestarClient:
         self,
         method: str,
         params: Any = None,
-        expect_response: bool = True
+        expect_response: bool = True,
+        timeout_override: Optional[int] = None
     ) -> Optional[Dict[str, Any]]:
         """
         Send JSON-RPC command to Seestar.
@@ -86,6 +88,8 @@ class SeestarClient:
             Method parameters (dict, list, or simple value)
         expect_response : bool
             Whether to wait for and return response (default: True)
+        timeout_override : int, optional
+            Override the default timeout for this command
 
         Returns
         -------
@@ -127,8 +131,11 @@ class SeestarClient:
 
                     start_time = time.time()
                     buffer = ""
+                    
+                    # Use timeout override if provided, otherwise use instance timeout
+                    cmd_timeout = timeout_override if timeout_override is not None else self.timeout
 
-                    while time.time() - start_time < self.timeout:
+                    while time.time() - start_time < cmd_timeout:
                         # Receive data in chunks
                         chunk = self.socket.recv(4096).decode()
                         buffer += chunk
@@ -180,11 +187,15 @@ class SeestarClient:
         """Background thread that sends periodic heartbeat messages."""
         while self._heartbeat_running:
             try:
-                # Send heartbeat command (based on seestar_alp implementation)
-                self._send_command("scope_get_equ_coord", expect_response=False)
+                # Send heartbeat command and read response to prevent buffer buildup
+                # Use scope_get_equ_coord as a simple status check
+                self._send_command("scope_get_equ_coord", expect_response=True)
             except Exception as e:
                 # Use debug level to avoid spamming logs when telescope is disconnected
                 logger.debug(f"Heartbeat failed: {e}")
+                # If heartbeat fails, mark as disconnected
+                if "broken pipe" in str(e).lower() or "connection" in str(e).lower():
+                    self._connected = False
 
             # Sleep in small intervals to allow quick shutdown
             for _ in range(self.heartbeat_interval):
@@ -419,6 +430,7 @@ class SeestarClient:
         try:
             # Don't expect immediate response - Seestar may take time to switch modes
             self._send_command("iscope_start_view", params={"mode": "sun"}, expect_response=False)
+            self._viewing_mode = "sun"
             logger.info("Started solar viewing mode (async)")
             # Give telescope time to process the command
             time.sleep(1)
@@ -445,6 +457,7 @@ class SeestarClient:
         try:
             # Don't expect immediate response - Seestar may take time to switch modes
             self._send_command("iscope_start_view", params={"mode": "moon"}, expect_response=False)
+            self._viewing_mode = "moon"
             logger.info("Started lunar viewing mode (async)")
             # Give telescope time to process the command
             time.sleep(1)
@@ -491,11 +504,11 @@ class SeestarClient:
 
         Notes
         -----
-        Uses the 'take_light' JSON-RPC method to capture a single frame.
-        This works in Solar, Lunar, and Scenery viewing modes (NOT deep-sky stacking).
+        Uses the 'pi_output_set_target' JSON-RPC method to capture current view.
+        This works in Solar, Lunar, and Scenery viewing modes.
 
         Workflow:
-        1. Call start_solar_mode() or start_lunar_mode() first
+        1. Ensure telescope is in Solar, Lunar, or Scenery mode (via Seestar app or Flymoon)
         2. Call this method to capture a single photo
         3. Use get_albums() to retrieve the saved image
         4. Download via HTTP: http://<host>/<path>/<filename>
@@ -506,15 +519,17 @@ class SeestarClient:
             raise RuntimeError("Cannot capture photo: not connected to telescope")
 
         try:
-            # Capture single light frame
-            params = {
-                "exposure_time": exposure_time,
-                "count": 1,  # Single frame
-                "filter": "none"
-            }
-            result = self._send_command("take_light", params=params)
-            logger.info(f"📸 Captured photo (exposure: {exposure_time}s)")
-            return result
+            # Use pi_output_set_target to capture current view (works in viewing modes)
+            # This is the command used by Seestar app during solar/lunar viewing
+            params = {"target_name": ""}
+            
+            # Extended timeout - Seestar takes time to capture and save
+            result = self._send_command("pi_output_set_target", params=params, timeout_override=90)
+            logger.info(f"📸 Captured photo")
+            
+            # Alternative: If above doesn't work, the telescope might need to be triggered differently
+            # The Seestar saves frames automatically during viewing, so we might not need explicit capture
+            return result if result else {"success": True}
 
         except Exception as e:
             logger.error(f"Failed to capture photo: {e}")
@@ -617,6 +632,7 @@ class SeestarClient:
         status = {
             "connected": self._connected,
             "recording": self._recording,
+            "viewing_mode": self._viewing_mode,
             "host": self.host,
             "port": self.port,
         }

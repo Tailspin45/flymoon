@@ -30,7 +30,7 @@
             <!-- Left Column: Live Preview -->
             <div class="preview-column">
                 <div class="preview-panel">
-                    <h2>🔴 Live Preview</h2>
+                    <h2><span id="previewTitleIcon">⚫</span> Live Preview</h2>
                     <div class="preview-container" id="previewContainer">
                         <img id="previewImage" src="" alt="Live Preview" style="display: none;">
                         <div class="preview-placeholder" id="previewPlaceholder">
@@ -157,6 +157,6 @@
         </div>
     </div>
 
-    <script src="{{ url_for('static', filename='telescope.js') }}"></script>
+    <script src="{{ url_for('static', filename='telescope.js') }}?v=6"></script>
 </body>
 </html>

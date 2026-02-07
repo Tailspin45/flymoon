@@ -318,27 +318,47 @@ function startPreview() {
     console.log('[Telescope] Starting preview stream');
     
     const previewImage = document.getElementById('previewImage');
-    const previewStatus = document.getElementById('previewStatus');
+    const previewPlaceholder = document.getElementById('previewPlaceholder');
+    const previewStatusDot = document.getElementById('previewStatusDot');
+    const previewStatusText = document.getElementById('previewStatusText');
+    const previewTitleIcon = document.getElementById('previewTitleIcon');
     
-    if (!previewImage) return;
+    if (!previewImage) {
+        console.error('[Telescope] Preview image element not found');
+        return;
+    }
     
     // Set stream URL (adds timestamp to avoid caching)
-    previewImage.src = `/telescope/preview/stream.mjpg?t=${Date.now()}`;
+    const streamUrl = `/telescope/preview/stream.mjpg?t=${Date.now()}`;
+    console.log('[Telescope] Loading stream from:', streamUrl);
     
-    previewImage.onload = () => {
-        console.log('[Telescope] Preview stream loaded');
-        if (previewStatus) {
-            previewStatus.textContent = 'Live Stream Active';
-            previewStatus.className = 'preview-status active';
-        }
-    };
+    previewImage.src = streamUrl;
     
+    // Show image, hide placeholder
+    previewImage.style.display = 'block';
+    if (previewPlaceholder) {
+        previewPlaceholder.style.display = 'none';
+    }
+    
+    // Set status to connecting
+    if (previewStatusDot) previewStatusDot.className = 'status-dot';
+    if (previewStatusText) previewStatusText.textContent = 'Connecting...';
+    if (previewTitleIcon) previewTitleIcon.textContent = '🟡';
+    
+    // After 2 seconds, assume stream is active (MJPEG streams don't trigger onload)
+    setTimeout(() => {
+        console.log('[Telescope] Stream assumed active');
+        if (previewStatusDot) previewStatusDot.className = 'status-dot connected';
+        if (previewStatusText) previewStatusText.textContent = 'Live Stream Active';
+        if (previewTitleIcon) previewTitleIcon.textContent = '🟢';
+    }, 2000);
+    
+    // Error handler
     previewImage.onerror = () => {
         console.error('[Telescope] Preview stream failed');
-        if (previewStatus) {
-            previewStatus.textContent = 'Preview Unavailable (Check RTSP/FFmpeg)';
-            previewStatus.className = 'preview-status error';
-        }
+        if (previewStatusDot) previewStatusDot.className = 'status-dot disconnected';
+        if (previewStatusText) previewStatusText.textContent = 'Stream Error';
+        if (previewTitleIcon) previewTitleIcon.textContent = '🔴';
     };
 }
 
@@ -346,16 +366,22 @@ function stopPreview() {
     console.log('[Telescope] Stopping preview stream');
     
     const previewImage = document.getElementById('previewImage');
-    const previewStatus = document.getElementById('previewStatus');
+    const previewPlaceholder = document.getElementById('previewPlaceholder');
+    const previewStatusDot = document.getElementById('previewStatusDot');
+    const previewStatusText = document.getElementById('previewStatusText');
+    const previewTitleIcon = document.getElementById('previewTitleIcon');
     
     if (previewImage) {
         previewImage.src = '';
+        previewImage.style.display = 'none';
     }
     
-    if (previewStatus) {
-        previewStatus.textContent = 'Not Connected';
-        previewStatus.className = 'preview-status';
-    }
+    // Show placeholder again
+    if (previewPlaceholder) previewPlaceholder.style.display = 'flex';
+    
+    if (previewStatusDot) previewStatusDot.className = 'status-dot';
+    if (previewStatusText) previewStatusText.textContent = 'Preview Inactive';
+    if (previewTitleIcon) previewTitleIcon.textContent = '⚫';
 }
 
 // ============================================================================
@@ -392,23 +418,78 @@ async function refreshFiles() {
     files.forEach(file => {
         const fileItem = document.createElement('div');
         fileItem.className = 'file-item';
-        fileItem.onclick = () => window.open(file.url, '_blank');
         
-        // Determine icon based on file type
-        let icon = '📄';
-        if (file.name.match(/\.(mp4|avi|mov)$/i)) {
-            icon = '📹';
-        } else if (file.name.match(/\.(jpg|jpeg|png|gif|bmp|tiff)$/i)) {
-            icon = '📷';
+        // Check if it's an image
+        const isImage = file.name.match(/\.(jpg|jpeg|png|gif|bmp|tiff)$/i);
+        const isVideo = file.name.match(/\.(mp4|avi|mov)$/i);
+        
+        let thumbnailHtml = '';
+        if (isImage) {
+            // Show actual image thumbnail
+            thumbnailHtml = `<img src="${file.url}" alt="${file.name}" class="file-thumbnail">`;
+        } else if (isVideo) {
+            // Show video icon for videos
+            thumbnailHtml = `<div class="file-icon">📹</div>`;
+        } else {
+            // Generic file icon
+            thumbnailHtml = `<div class="file-icon">📄</div>`;
         }
         
         fileItem.innerHTML = `
-            <div class="file-icon">${icon}</div>
-            <div class="file-name">${file.name}</div>
+            <div class="file-preview" onclick="window.open('${file.url}', '_blank')">
+                ${thumbnailHtml}
+            </div>
+            <div class="file-info">
+                <div class="file-name" title="${file.name}">${file.name}</div>
+                <div class="file-actions">
+                    <button class="btn-icon" onclick="event.stopPropagation(); downloadFile('${file.url}', '${file.name}')" title="Download">
+                        ⬇️
+                    </button>
+                    <button class="btn-icon btn-danger" onclick="event.stopPropagation(); deleteFile('${file.url}', '${file.name}')" title="Delete">
+                        🗑️
+                    </button>
+                </div>
+            </div>
         `;
         
         filesGrid.appendChild(fileItem);
     });
+}
+
+function downloadFile(url, filename) {
+    console.log('[Telescope] Downloading file:', filename);
+    
+    // Create temporary link and trigger download
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = filename;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    
+    showStatus(`Downloading ${filename}...`, 'info', 3000);
+}
+
+async function deleteFile(url, filename) {
+    if (!confirm(`Delete ${filename}?`)) {
+        return;
+    }
+    
+    console.log('[Telescope] Deleting file:', filename);
+    
+    try {
+        const result = await apiCall('/telescope/files/delete', 'POST', {
+            path: url.replace('/static/', '')
+        });
+        
+        if (result && result.success) {
+            showStatus(`Deleted ${filename}`, 'success', 3000);
+            refreshFiles();
+        }
+    } catch (error) {
+        console.error('[Telescope] Delete failed:', error);
+        showStatus(`Failed to delete ${filename}`, 'error', 5000);
+    }
 }
 
 // ============================================================================

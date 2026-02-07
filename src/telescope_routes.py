@@ -497,64 +497,39 @@ def get_recording_status():
 # File Management Endpoint
 
 def list_telescope_files():
-    """GET /telescope/files - List recorded files on telescope."""
+    """GET /telescope/files - List locally captured files from gallery."""
     logger.info("[Telescope] GET /telescope/files")
 
     try:
-        client = get_telescope_client()
-        if not client or not client.is_connected():
-            return jsonify({"error": "Not connected to telescope"}), 400
-
-        # Get files with timeout handling
-        try:
-            files_data = client.list_files()
-        except Exception as e:
-            # If list_files fails (timeout, etc), return empty list
-            logger.warning(f"[Telescope] Failed to get files: {e}, returning empty list")
-            return jsonify({
-                "files": [],
-                "total": 0,
-                "message": "Unable to retrieve files from telescope"
-            }), 200
-
-        # Build download URLs for files
-        base_url = f"http://{client.host}"
-        parent_path = files_data.get("path", "")
-        albums = []
-        total_files = 0
-
-        for album in files_data.get("list", []):
-            album_name = album.get("name", "")
-            album_files = []
-
-            for file_info in album.get("files", []):
-                filename = file_info.get("name", "")
-                if filename:
-                    # Construct download URL
-                    url = f"{base_url}/{parent_path}/{album_name}/{filename}"
-                    album_files.append({
-                        "name": filename,
-                        "thumbnail": file_info.get("thn", ""),
-                        "url": url
-                    })
-                    total_files += 1
-
-            if album_files:
-                albums.append({
-                    "name": album_name,
-                    "files": album_files
-                })
-
-        # Return flat list of all files for simpler frontend
-        all_files = []
-        for album in albums:
-            all_files.extend(album["files"])
-
-        logger.info(f"[Telescope] Retrieved {total_files} files from {len(albums)} albums")
+        # List files from local gallery instead of telescope
+        gallery_path = 'static/gallery'
+        files = []
+        
+        if os.path.exists(gallery_path):
+            # Walk through gallery directory
+            for root, dirs, filenames in os.walk(gallery_path):
+                for filename in filenames:
+                    if filename.lower().endswith(('.jpg', '.jpeg', '.png', '.mp4', '.avi')):
+                        full_path = os.path.join(root, filename)
+                        rel_path = os.path.relpath(full_path, 'static')
+                        
+                        # Get file modification time
+                        mtime = os.path.getmtime(full_path)
+                        
+                        files.append({
+                            "name": filename,
+                            "url": f"/static/{rel_path.replace(os.sep, '/')}",
+                            "mtime": mtime
+                        })
+        
+        # Sort by modification time (newest first)
+        files.sort(key=lambda x: x['mtime'], reverse=True)
+        
+        logger.info(f"[Telescope] Retrieved {len(files)} local files")
         return jsonify({
-            "files": all_files,
-            "albums": albums,
-            "total": total_files
+            "files": files,
+            "total": len(files),
+            "source": "local_gallery"
         }), 200
 
     except Exception as e:
@@ -562,10 +537,54 @@ def list_telescope_files():
         return handle_error(e)
 
 
+def delete_telescope_file():
+    """POST /telescope/files/delete - Delete a captured file from gallery."""
+    logger.info("[Telescope] POST /telescope/files/delete")
+
+    try:
+        if not request.is_json:
+            return jsonify({"error": "Request must be JSON"}), 400
+        
+        file_path = request.json.get('path')
+        if not file_path:
+            return jsonify({"error": "Missing 'path' parameter"}), 400
+        
+        # Security: ensure path is within gallery directory
+        full_path = os.path.join('static', file_path)
+        abs_path = os.path.abspath(full_path)
+        gallery_abs = os.path.abspath('static/gallery')
+        
+        if not abs_path.startswith(gallery_abs):
+            logger.warning(f"[Telescope] Attempted to delete file outside gallery: {file_path}")
+            return jsonify({"error": "Invalid file path"}), 403
+        
+        # Delete image file
+        if os.path.exists(abs_path):
+            os.remove(abs_path)
+            logger.info(f"[Telescope] Deleted file: {file_path}")
+        else:
+            return jsonify({"error": "File not found"}), 404
+        
+        # Delete metadata file if exists
+        metadata_path = abs_path.rsplit('.', 1)[0] + '.json'
+        if os.path.exists(metadata_path):
+            os.remove(metadata_path)
+            logger.info(f"[Telescope] Deleted metadata: {metadata_path}")
+        
+        return jsonify({
+            "success": True,
+            "message": f"Deleted {os.path.basename(file_path)}"
+        }), 200
+
+    except Exception as e:
+        logger.error(f"[Telescope] Error deleting file: {e}")
+        return handle_error(e)
+
+
 # Photo Capture Endpoint
 
 def capture_photo():
-    """POST /telescope/capture/photo - Capture a single photo."""
+    """POST /telescope/capture/photo - Capture a single photo from live stream."""
     logger.info("[Telescope] POST /telescope/capture/photo")
 
     try:
@@ -573,42 +592,78 @@ def capture_photo():
         if not client or not client.is_connected():
             return jsonify({"error": "Not connected to telescope"}), 400
 
-        # Get optional exposure time from request body
-        exposure_time = 1.0
-        if request.is_json and "exposure_time" in request.json:
-            exposure_time = float(request.json.get("exposure_time", 1.0))
-
-        # Capture photo
-        result = client.capture_photo(exposure_time)
+        # Get RTSP stream URL
+        rtsp_port = int(os.getenv("SEESTAR_RTSP_PORT", "4554"))
+        rtsp_url = f"rtsp://{client.host}:{rtsp_port}/stream"
         
-        # Get the latest image from albums
-        albums = client.get_albums()
-        latest_image = None
+        # Generate filename with timestamp
+        from datetime import datetime
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        filename = f"capture_{timestamp}.jpg"
         
-        if albums.get("list") and len(albums["list"]) > 0:
-            album = albums["list"][0]
-            if album.get("files") and len(album["files"]) > 0:
-                latest_file = album["files"][0]
-                parent_path = albums.get("path", "")
-                album_name = album.get("name", "")
-                filename = latest_file.get("name", "")
-                
-                # Construct download URL
-                latest_image = {
-                    "url": f"http://{client.host}/{parent_path}/{album_name}/{filename}",
-                    "filename": filename,
-                    "thumbnail": latest_file.get("thn", "")
-                }
-
-        logger.info(f"[Telescope] Photo captured (exposure: {exposure_time}s)")
+        # Create year/month directories
+        now = datetime.now()
+        year_month_path = os.path.join('static/gallery', str(now.year), f"{now.month:02d}")
+        os.makedirs(year_month_path, exist_ok=True)
+        
+        filepath = os.path.join(year_month_path, filename)
+        
+        logger.info(f"[Telescope] Capturing frame from RTSP stream to {filepath}")
+        
+        # Use FFmpeg to grab a single frame from RTSP stream
+        cmd = [
+            'ffmpeg',
+            '-rtsp_transport', 'tcp',
+            '-i', rtsp_url,
+            '-frames:v', '1',  # Capture only 1 frame
+            '-update', '1',  # Required for single image output
+            '-q:v', '2',  # High quality JPEG
+            '-y',  # Overwrite if exists
+            filepath
+        ]
+        
+        # Run FFmpeg with timeout
+        result = subprocess.run(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=10
+        )
+        
+        if result.returncode != 0:
+            logger.error(f"[Telescope] FFmpeg capture failed: {result.stderr.decode()}")
+            return jsonify({"error": "Failed to capture frame from stream"}), 500
+        
+        # Create metadata
+        metadata = {
+            "timestamp": now.isoformat(),
+            "source": "live_stream",
+            "telescope": client.host,
+            "viewing_mode": client._viewing_mode if hasattr(client, '_viewing_mode') else None
+        }
+        
+        metadata_path = filepath.rsplit('.', 1)[0] + '.json'
+        with open(metadata_path, 'w') as f:
+            import json
+            json.dump(metadata, f, indent=2)
+        
+        # Build web path for response
+        rel_path = os.path.relpath(filepath, 'static').replace('\\', '/')
+        
+        logger.info(f"[Telescope] Photo captured successfully: {filename}")
         return jsonify({
             "success": True,
-            "exposure_time": exposure_time,
-            "image": latest_image,
-            "message": "Photo captured successfully"
+            "filename": filename,
+            "path": rel_path,
+            "url": f"/static/{rel_path}",
+            "message": "Photo captured from live stream"
         }), 200
 
+    except subprocess.TimeoutExpired:
+        logger.error("[Telescope] Photo capture timeout")
+        return jsonify({"error": "Capture timeout"}), 500
     except Exception as e:
+        logger.error(f"[Telescope] Photo capture error: {e}", exc_info=True)
         return handle_error(e)
 
 
@@ -800,40 +855,73 @@ def telescope_preview_stream():
 
         def generate_mjpeg():
             """Generate MJPEG frames from RTSP stream using FFmpeg."""
-            # FFmpeg command to transcode RTSP → MJPEG
+            # FFmpeg command to transcode RTSP → individual JPEG frames
             cmd = [
                 'ffmpeg',
+                '-rtsp_transport', 'tcp',
                 '-i', rtsp_url,
-                '-f', 'mjpeg',
-                '-q:v', '5',  # JPEG quality (2-31, lower is better)
-                '-r', '10',   # 10 fps
-                '-'  # Output to stdout
+                '-f', 'image2pipe',
+                '-vcodec', 'mjpeg',
+                '-q:v', '5',
+                '-r', '10',
+                '-update', '1',
+                'pipe:1'
             ]
             
+            process = None
             try:
                 process = subprocess.Popen(
                     cmd,
                     stdout=subprocess.PIPE,
-                    stderr=subprocess.DEVNULL,
-                    bufsize=10**8
+                    stderr=subprocess.PIPE,
+                    bufsize=0
                 )
                 
-                # Read MJPEG frames
+                logger.info(f"[Telescope] FFmpeg process started (PID: {process.pid})")
+                
+                # Buffer for accumulating data
+                buffer = b''
+                
                 while True:
-                    # Read frame size (JPEG markers)
-                    frame = process.stdout.read(1024 * 100)  # Read up to 100KB chunks
-                    if not frame:
+                    # Read data in small chunks
+                    chunk = process.stdout.read(4096)
+                    if not chunk:
                         break
                     
-                    yield (b'--frame\r\n'
-                           b'Content-Type: image/jpeg\r\n\r\n' + frame + b'\r\n')
+                    buffer += chunk
+                    
+                    # Look for complete JPEG frames (start: FF D8, end: FF D9)
+                    while True:
+                        # Find JPEG start
+                        start_idx = buffer.find(b'\xff\xd8')
+                        if start_idx == -1:
+                            break
+                        
+                        # Find JPEG end after start
+                        end_idx = buffer.find(b'\xff\xd9', start_idx + 2)
+                        if end_idx == -1:
+                            # Incomplete frame, keep buffering
+                            break
+                        
+                        # Extract complete JPEG frame
+                        jpeg_frame = buffer[start_idx:end_idx + 2]
+                        buffer = buffer[end_idx + 2:]
+                        
+                        # Yield MJPEG frame
+                        yield (b'--frame\r\n'
+                               b'Content-Type: image/jpeg\r\n'
+                               b'Content-Length: ' + str(len(jpeg_frame)).encode() + b'\r\n'
+                               b'\r\n' + jpeg_frame + b'\r\n')
                 
+            except GeneratorExit:
+                logger.info("[Telescope] Client disconnected from stream")
             except Exception as e:
                 logger.error(f"[Telescope] FFmpeg stream error: {e}")
             finally:
                 if process:
                     process.kill()
                     process.wait()
+                    logger.info("[Telescope] FFmpeg process terminated")
 
         return Response(
             generate_mjpeg(),
@@ -891,5 +979,7 @@ def register_routes(app):
     # File management
     app.add_url_rule("/telescope/files", "telescope_files",
                      list_telescope_files, methods=["GET"])
+    app.add_url_rule("/telescope/files/delete", "telescope_files_delete",
+                     delete_telescope_file, methods=["POST"])
 
     logger.info("[Telescope] Routes registered")
