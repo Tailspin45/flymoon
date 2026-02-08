@@ -276,6 +276,17 @@ async function softRefresh() {
         const longitude = parseFloat(document.getElementById("longitude").value);
         const elevation = parseFloat(document.getElementById("elevation").value);
         
+        // Skip recalculation if coordinates are invalid
+        if (isNaN(latitude) || isNaN(longitude) || isNaN(elevation)) {
+            console.log('Soft refresh: Skipping recalculation - invalid coordinates');
+            // Fallback to position-only update
+            updateFlightTable(updatedFlights);
+            if (mapVisible && typeof updateAircraftMarkers === 'function') {
+                updateAircraftMarkers(updatedFlights, latitude, longitude);
+            }
+            return;
+        }
+        
         const response = await fetch('/transits/recalculate', {
             method: 'POST',
             headers: {'Content-Type': 'application/json'},
