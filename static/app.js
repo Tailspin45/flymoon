@@ -812,6 +812,12 @@ function go(forceRefresh = false) {
         mapContainer.style.display = 'block';
     }
 
+    // Start soft refresh if not already running
+    if (!softRefreshInterval) {
+        softRefreshInterval = setInterval(softRefresh, 15000);
+        console.log('Started soft refresh (15s interval)');
+    }
+
     // Fetch fresh data
     fetchFlights();
 }
@@ -1066,6 +1072,12 @@ function fetchFlights() {
             alertNoResults.innerHTML = "Sun or moon is below the min angle you selected or weather is bad";
         }
 
+        // Save bounding box BEFORE filtering (so filter can use it)
+        if(data.boundingBox) {
+            window.lastBoundingBox = data.boundingBox;
+            console.log('Bounding box:', window.lastBoundingBox);
+        }
+
         // Deduplicate flights by ID for display (keep highest possibility level)
         const seenFlights = {};
         data.flights.forEach(flight => {
@@ -1099,13 +1111,15 @@ function fetchFlights() {
                 flight.longitude <= bbox.lonUpperRight
             );
             if (!inBounds) {
-                console.log(`Filtering out ${flight.id} - outside bounding box`);
+                console.log(`❌ Filtering out ${flight.id} at (${flight.latitude.toFixed(2)}, ${flight.longitude.toFixed(2)}) - outside bbox [${bbox.latLowerLeft.toFixed(2)},${bbox.lonLowerLeft.toFixed(2)} to ${bbox.latUpperRight.toFixed(2)},${bbox.lonUpperRight.toFixed(2)}]`);
             }
             return inBounds;
         }) : uniqueFlights;
         
-        if (filteredFlights.length < uniqueFlights.length) {
-            console.log(`Bbox filter: ${uniqueFlights.length} flights -> ${filteredFlights.length} in bounds`);
+        if (window.lastBoundingBox && filteredFlights.length < uniqueFlights.length) {
+            console.log(`🔍 Bbox filter: ${uniqueFlights.length} flights -> ${filteredFlights.length} in bounds`);
+        } else if (!window.lastBoundingBox) {
+            console.warn('⚠️ No bounding box set - showing all flights');
         }
         
         // Debug: show final dedupe results
@@ -1302,11 +1316,6 @@ function fetchFlights() {
 
         // Update altitude display - DISABLED: updateAltitudeOverlay in map.js handles this now
         // updateAltitudeDisplay(data.flights);
-
-        // Save bounding box for next time
-        if(data.boundingBox) {
-            window.lastBoundingBox = data.boundingBox;
-        }
     })
     .catch(error => {
         // Hide loading spinner on error
