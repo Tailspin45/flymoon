@@ -188,7 +188,7 @@ var softRefreshInterval = null; // For client-side position updates
 var remainingSeconds = 0; // Track remaining seconds for countdown
 var lastFlightData = null; // Cache last flight response for soft refresh
 var lastFlightUpdateTime = 0; // Timestamp of last API call
-var currentCheckInterval = 480; // Current adaptive interval in seconds (default 8 min)
+var currentCheckInterval = 600; // Current adaptive interval in seconds (default 10 min to match cache TTL)
 // By default disable auto go and refresh timer label
 clearInterval(autoGoInterval);
 clearInterval(refreshTimerLabelInterval);
@@ -196,7 +196,7 @@ displayTarget();
 
 // App configuration from server
 var appConfig = {
-    autoRefreshIntervalMinutes: 8  // Default, will be loaded from server
+    autoRefreshIntervalMinutes: 10  // Default 10 minutes to match cache TTL
 };
 
 // Load configuration from server
@@ -249,35 +249,54 @@ function softRefresh() {
     const updatedFlights = lastFlightData.flights.map(flight => {
         const updated = {...flight};
         
-        if (updated.is_possible_transit === 1 && updated.time !== null) {
-            // Update ETA (time remaining in minutes)
-            updated.time = Math.max(0, updated.time - (secondsElapsed / 60));
+        // Update position for all flights, not just transits
+        if (updated.latitude && updated.longitude && updated.speed && updated.direction) {
+            const speedKmPerSec = updated.speed / 3600;  // km/h to km/s
+            const distanceKm = speedKmPerSec * secondsElapsed;
             
-            // If we have position data, extrapolate it
-            if (updated.latitude && updated.longitude && updated.speed && updated.direction) {
-                const speedKmPerSec = updated.speed / 3600;  // km/h to km/s
-                const distanceKm = speedKmPerSec * secondsElapsed;
-                
-                // Convert heading to radians
-                const headingRad = updated.direction * Math.PI / 180;
-                
-                // Update position (simplified flat-earth model, good enough for short distances)
-                const latChange = (distanceKm / 111.32) * Math.cos(headingRad);
-                const lonChange = (distanceKm / (111.32 * Math.cos(updated.latitude * Math.PI / 180))) * Math.sin(headingRad);
-                
-                updated.latitude += latChange;
-                updated.longitude += lonChange;
-            }
+            // Convert heading to radians
+            const headingRad = updated.direction * Math.PI / 180;
+            
+            // Update position (simplified flat-earth model, good enough for short distances)
+            const latChange = (distanceKm / 111.32) * Math.cos(headingRad);
+            const lonChange = (distanceKm / (111.32 * Math.cos(updated.latitude * Math.PI / 180))) * Math.sin(headingRad);
+            
+            updated.latitude += latChange;
+            updated.longitude += lonChange;
+        }
+        
+        // Update transit ETA
+        if (updated.is_possible_transit === 1 && updated.time !== null) {
+            updated.time = Math.max(0, updated.time - (secondsElapsed / 60));
         }
         
         return updated;
     });
 
-    // Update the table without full re-render
+    // Update display
     updateFlightTable(updatedFlights);
+    
+    // Update map markers if map is visible
+    if (mapVisible && typeof updateAircraftMarkers === 'function') {
+        const latitude = parseFloat(document.getElementById("latitude").value);
+        const longitude = parseFloat(document.getElementById("longitude").value);
+        updateAircraftMarkers(updatedFlights, latitude, longitude);
+    }
     
     // Update "Last updated" display
     updateLastUpdateDisplay();
+    
+    // Show soft refresh indicator briefly
+    const statusDiv = document.getElementById('lastUpdateStatus');
+    if (statusDiv) {
+        const originalText = statusDiv.textContent;
+        statusDiv.textContent = originalText + ' 🔄';
+        setTimeout(() => {
+            statusDiv.textContent = originalText;
+        }, 500);
+    }
+    
+    console.log(`Soft refresh: Updated ${updatedFlights.length} flight positions (+${Math.floor(secondsElapsed)}s)`);
 }
 
 /**
@@ -734,7 +753,7 @@ function clearPosition() {
     if (minAltWEl) minAltWEl.value = "30";
 }
 
-function go() {
+function go(forceRefresh = false) {
     // Refresh flight data
     const resultsDiv = document.getElementById("results");
     const mapContainer = document.getElementById("mapContainer");
@@ -753,6 +772,38 @@ function go() {
         return;
     }
 
+    // Check if data is fresh (within cache TTL)
+    const cacheValidSeconds = 600; // 10 minutes - matches backend cache
+    const secondsSinceUpdate = (Date.now() - lastFlightUpdateTime) / 1000;
+    
+    if (!forceRefresh && lastFlightUpdateTime > 0 && secondsSinceUpdate < cacheValidSeconds) {
+        const minutesRemaining = Math.ceil((cacheValidSeconds - secondsSinceUpdate) / 60);
+        const secondsRemaining = Math.floor(cacheValidSeconds - secondsSinceUpdate);
+        
+        const confirmed = confirm(
+            `⚠️ API Rate Limit Protection\n\n` +
+            `Last update: ${secondsRemaining}s ago\n` +
+            `Cache expires in: ${minutesRemaining} minute(s)\n\n` +
+            `Making a new API call now wastes your FlightAware quota.\n` +
+            `Aircraft positions are being updated automatically every 15 seconds.\n\n` +
+            `Force a new API call anyway?`
+        );
+        
+        if (!confirmed) {
+            console.log('User cancelled refresh - data is still fresh');
+            // Still show results if hidden
+            if (!resultsVisible) {
+                resultsVisible = true;
+                mapVisible = true;
+                resultsDiv.style.display = 'block';
+                mapContainer.style.display = 'block';
+            }
+            return;
+        }
+        
+        console.log('User forced refresh despite fresh cache');
+    }
+
     // Show results and map if not already visible
     if (!resultsVisible) {
         resultsVisible = true;
@@ -761,7 +812,7 @@ function go() {
         mapContainer.style.display = 'block';
     }
 
-    // Always fetch fresh data
+    // Fetch fresh data
     fetchFlights();
 }
 
@@ -1036,8 +1087,29 @@ function fetchFlights() {
         });
         const uniqueFlights = Object.values(seenFlights);
         console.log(`Dedupe: ${data.flights.length} flights -> ${uniqueFlights.length} unique`);
+        
+        // Filter flights to only show those within bounding box
+        const filteredFlights = window.lastBoundingBox ? uniqueFlights.filter(flight => {
+            if (!flight.latitude || !flight.longitude) return false;
+            const bbox = window.lastBoundingBox;
+            const inBounds = (
+                flight.latitude >= bbox.latLowerLeft &&
+                flight.latitude <= bbox.latUpperRight &&
+                flight.longitude >= bbox.lonLowerLeft &&
+                flight.longitude <= bbox.lonUpperRight
+            );
+            if (!inBounds) {
+                console.log(`Filtering out ${flight.id} - outside bounding box`);
+            }
+            return inBounds;
+        }) : uniqueFlights;
+        
+        if (filteredFlights.length < uniqueFlights.length) {
+            console.log(`Bbox filter: ${uniqueFlights.length} flights -> ${filteredFlights.length} in bounds`);
+        }
+        
         // Debug: show final dedupe results
-        uniqueFlights.forEach(f => {
+        filteredFlights.forEach(f => {
             if (f.is_possible_transit) {
                 console.log(`  ${f.id} (${f.target}): level=${f.possibility_level}, is_transit=${f.is_possible_transit}`);
             }
@@ -1045,7 +1117,7 @@ function fetchFlights() {
 
         // Find next HIGH or MEDIUM probability transit for countdown
         nextTransit = null;
-        uniqueFlights.forEach(flight => {
+        filteredFlights.forEach(flight => {
             const level = flight.is_possible_transit === 1 ? parseInt(flight.possibility_level) : 0;
             if (level === HIGH_LEVEL || level === MEDIUM_LEVEL) {
                 const etaSeconds = flight.transit_eta_seconds || (flight.time * 60);
@@ -1074,9 +1146,9 @@ function fetchFlights() {
         }
 
         // Check for medium/high transits and alert user about filter changes
-        checkAndAlertFilterChange(uniqueFlights, data.targetCoordinates);
+        checkAndAlertFilterChange(filteredFlights, data.targetCoordinates);
 
-        uniqueFlights.forEach(item => {
+        filteredFlights.forEach(item => {
             const row = document.createElement('tr');
 
             // Store normalized flight ID and possibility level for cross-referencing
@@ -1222,9 +1294,9 @@ function fetchFlights() {
         // renderTargetCoordinates(data.targetCoordinates); // Disabled - now using inline display above
         if(autoMode == true && hasVeryPossibleTransits == true) soundAlert(transitDetails);
 
-        // Always update map visualization when data is fetched (use deduplicated flights)
+        // Always update map visualization when data is fetched (use filtered flights)
         if(mapVisible) {
-            const mapData = {...data, flights: uniqueFlights};
+            const mapData = {...data, flights: filteredFlights};
             updateMapVisualization(mapData, parseFloat(latitude), parseFloat(longitude), parseFloat(elevation));
         }
 
@@ -1516,8 +1588,8 @@ function updateLastUpdateDisplay() {
         return;
     }
 
-    // Get refresh frequency from localStorage (default 6 minutes) or use adaptive interval
-    const refreshIntervalSeconds = currentCheckInterval || (parseInt(localStorage.getItem("frequency")) || 6) * 60;
+    // Get refresh frequency from localStorage (default 10 minutes to match cache) or use adaptive interval
+    const refreshIntervalSeconds = currentCheckInterval || (parseInt(localStorage.getItem("frequency")) || 10) * 60;
     const refreshIntervalMs = refreshIntervalSeconds * 1000;
 
     const now = Date.now();

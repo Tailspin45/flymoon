@@ -115,7 +115,7 @@ class FlightDataCache:
 
 
 # Global cache instance - shared across all requests
-_flight_cache = FlightDataCache(ttl_seconds=120)
+_flight_cache = FlightDataCache(ttl_seconds=600)  # 10 minutes cache
 
 
 def get_cache() -> FlightDataCache:

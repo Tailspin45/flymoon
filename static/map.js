@@ -490,6 +490,9 @@ function updateAircraftMarkers(flights, observerLat, observerLon) {
             Object.values(aircraftMarkers).map(marker => marker.getLatLng())
         );
         
+        // Always include observer position to show context
+        aircraftBounds.extend([observerLat, observerLon]);
+        
         // Check if there are any transits (medium or high probability)
         const hasTransits = flights.some(f => 
             f.is_possible_transit === 1 && 
@@ -497,14 +500,10 @@ function updateAircraftMarkers(flights, observerLat, observerLon) {
         );
         
         if (hasTransits) {
-            // Include observer position in bounds to show the full transit context
-            aircraftBounds.extend([observerLat, observerLon]);
-            
             // Zoom in more for transits to fill about half the window
-            // Reduce padding and allow higher max zoom
             map.fitBounds(aircraftBounds, { padding: [30, 30], maxZoom: 15 });
         } else {
-            // Normal view for non-transit aircraft
+            // Normal view - always fit all aircraft in window
             map.fitBounds(aircraftBounds, { padding: [50, 50], maxZoom: 13 });
         }
     } else if (Object.keys(aircraftMarkers).length === 0) {
