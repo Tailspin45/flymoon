@@ -1513,6 +1513,9 @@ window.addEventListener('DOMContentLoaded', () => {
 function initializeAutoRefresh() {
     console.log('[Init] Starting automatic refresh system');
     
+    // Clean up old localStorage values from previous manual/auto mode
+    localStorage.removeItem('frequency');
+    
     // Check if we have saved observer coordinates
     const lat = document.getElementById("latitude");
     const latitude = parseFloat(lat.value);
@@ -1579,8 +1582,8 @@ function updateLastUpdateDisplay() {
         return;
     }
 
-    // Get refresh frequency from localStorage (default 10 minutes to match cache) or use adaptive interval
-    const refreshIntervalSeconds = currentCheckInterval || (parseInt(localStorage.getItem("frequency")) || 10) * 60;
+    // Get refresh frequency from currentCheckInterval (always 10 minutes)
+    const refreshIntervalSeconds = currentCheckInterval;
     const refreshIntervalMs = refreshIntervalSeconds * 1000;
 
     const now = Date.now();
