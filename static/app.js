@@ -176,22 +176,18 @@ function checkAndAlertFilterChange(flights, targetCoordinates) {
     }
 }
 
-var autoMode = false;
 var alertsEnabled = localStorage.getItem('alertsEnabled') === 'true' || false;
 // Transit countdown tracking
 var nextTransit = null;
 var transitCountdownInterval = null;
 var target = getLocalStorageItem("target", "auto");
-var autoGoInterval = setInterval(goFetch, 86400000);
-var refreshTimerLabelInterval = setInterval(refreshTimer, 1000); // Update every second
+var autoGoInterval = null; // Auto-refresh interval
+var refreshTimerLabelInterval = null; // Countdown timer interval
 var softRefreshInterval = null; // For client-side position updates
-var remainingSeconds = 0; // Track remaining seconds for countdown
+var remainingSeconds = 600; // Track remaining seconds for countdown (default 10 min)
 var lastFlightData = null; // Cache last flight response for soft refresh
 var lastFlightUpdateTime = 0; // Timestamp of last API call
 var currentCheckInterval = 600; // Current adaptive interval in seconds (default 10 min to match cache TTL)
-// By default disable auto go and refresh timer label
-clearInterval(autoGoInterval);
-clearInterval(refreshTimerLabelInterval);
 displayTarget();
 
 // App configuration from server
@@ -214,14 +210,14 @@ fetch('/config')
 document.addEventListener('visibilitychange', function() {
     const pauseWhenHidden = localStorage.getItem("pauseWhenHidden") !== "false"; // Default true
     
-    if (document.hidden && autoMode && pauseWhenHidden) {
+    if (document.hidden && pauseWhenHidden) {
         console.log('Page hidden - pausing auto-refresh');
-        clearInterval(autoGoInterval);
-        clearInterval(refreshTimerLabelInterval);
-        clearInterval(softRefreshInterval);
-    } else if (!document.hidden && autoMode && pauseWhenHidden) {
+        if (autoGoInterval) clearInterval(autoGoInterval);
+        if (refreshTimerLabelInterval) clearInterval(refreshTimerLabelInterval);
+        if (softRefreshInterval) clearInterval(softRefreshInterval);
+    } else if (!document.hidden && pauseWhenHidden) {
         console.log('Page visible - resuming auto-refresh');
-        const intervalSecs = currentCheckInterval || (parseInt(localStorage.getItem("frequency")) || appConfig.autoRefreshIntervalMinutes) * 60;
+        const intervalSecs = currentCheckInterval || appConfig.autoRefreshIntervalMinutes * 60;
         autoGoInterval = setInterval(goFetch, intervalSecs * 1000);
         refreshTimerLabelInterval = setInterval(refreshTimer, 1000);
         softRefreshInterval = setInterval(softRefresh, 15000); // Soft refresh every 15 seconds
@@ -753,8 +749,8 @@ function clearPosition() {
     if (minAltWEl) minAltWEl.value = "30";
 }
 
-function go(forceRefresh = false) {
-    // Refresh flight data
+function go() {
+    // Manual refresh button - always show warning unless cache is expired
     const resultsDiv = document.getElementById("results");
     const mapContainer = document.getElementById("mapContainer");
 
@@ -776,7 +772,8 @@ function go(forceRefresh = false) {
     const cacheValidSeconds = 600; // 10 minutes - matches backend cache
     const secondsSinceUpdate = (Date.now() - lastFlightUpdateTime) / 1000;
     
-    if (!forceRefresh && lastFlightUpdateTime > 0 && secondsSinceUpdate < cacheValidSeconds) {
+    // Always show warning if we have recent data
+    if (lastFlightUpdateTime > 0 && secondsSinceUpdate < cacheValidSeconds) {
         const minutesRemaining = Math.ceil((cacheValidSeconds - secondsSinceUpdate) / 60);
         const secondsRemaining = Math.floor(cacheValidSeconds - secondsSinceUpdate);
         
@@ -812,18 +809,12 @@ function go(forceRefresh = false) {
         mapContainer.style.display = 'block';
     }
 
-    // Start soft refresh if not already running
-    if (!softRefreshInterval) {
-        softRefreshInterval = setInterval(softRefresh, 15000);
-        console.log('Started soft refresh (15s interval)');
-    }
-
     // Fetch fresh data
     fetchFlights();
 }
 
 function goFetch() {
-    // Internal function for auto mode - just fetches without toggling
+    // Internal function for periodic auto-fetch
     let lat = document.getElementById("latitude");
     let latitude = parseFloat(lat.value);
 
@@ -831,8 +822,8 @@ function goFetch() {
         return;
     }
 
-    // Auto-show results if in auto mode
-    if (autoMode && !resultsVisible) {
+    // Auto-show results on first auto-fetch
+    if (!resultsVisible) {
         resultsVisible = true;
         mapVisible = true;
         document.getElementById("results").style.display = 'block';
@@ -842,86 +833,18 @@ function goFetch() {
     fetchFlights();
 }
 
-function auto() {
-    if(autoMode == true) {
-        document.getElementById("autoBtn").innerHTML = 'Auto';
-        document.getElementById("autoGoNote").innerHTML = "";
-
-        autoMode = false;
-        clearInterval(autoGoInterval);
-        clearInterval(refreshTimerLabelInterval);
-        clearInterval(softRefreshInterval);
-    }
-    else {
-        // Get configured default from server or use saved frequency
-        const savedFreq = localStorage.getItem("frequency");
-        const defaultFreq = appConfig.autoRefreshIntervalMinutes || 8;
-        const suggestedFreq = savedFreq || defaultFreq;
-
-        let freq = prompt(
-            `Enter refresh interval in minutes\n` +
-            `Default: ${defaultFreq} min (configured)\n` +
-            `Recommended: 8-10 min for continuous monitoring\n` +
-            `Note: Adaptive polling will adjust automatically based on transits`,
-            suggestedFreq
-        );
-
-        // User cancelled
-        if (freq === null) {
-            return;
-        }
-
-        try {
-            freq = parseInt(freq);
-
-            if(isNaN(freq) || freq <= 0) {
-                throw new Error("");
-            }
-        }
-        catch (error) {
-            alert("Invalid frequency. Please try again!");
-            return auto();
-        }
-
-        localStorage.setItem("frequency", freq);
-        currentCheckInterval = freq * 60; // Convert to seconds
-        remainingSeconds = currentCheckInterval;
-        
-        const initialTimeStr = String(freq).padStart(2, '0') + ':00';
-        document.getElementById("autoBtn").innerHTML = "Auto " + initialTimeStr + " ⴵ";
-        
-        const pauseWhenHidden = localStorage.getItem('pauseWhenHidden') !== 'false';
-        const pauseNote = pauseWhenHidden ? ' Pauses when page hidden.' : '';
-        document.getElementById("autoGoNote").innerHTML = `Auto-refresh with adaptive polling (base: ${freq} min).${pauseNote}`;
-
-        autoMode = true;
-        autoGoInterval = setInterval(goFetch, currentCheckInterval * 1000);
-        refreshTimerLabelInterval = setInterval(refreshTimer, 1000); // Update every second
-        softRefreshInterval = setInterval(softRefresh, 15000); // Soft refresh every 15 seconds
-
-        // Trigger initial fetch
-        goFetch();
-    }
-}
-
 function refreshTimer() {
-    let autoBtn = document.getElementById("autoBtn");
-
     // Decrement remaining seconds
     remainingSeconds--;
 
     // Reset and trigger fetch when countdown reaches 0
     if (remainingSeconds <= 0) {
-        remainingSeconds = currentCheckInterval; // Use adaptive interval
+        remainingSeconds = currentCheckInterval;
         goFetch(); // Trigger fetch when timer hits zero
     }
 
-    // Format as MM:SS
-    const minutes = Math.floor(remainingSeconds / 60);
-    const seconds = remainingSeconds % 60;
-    const timeStr = String(minutes).padStart(2, '0') + ':' + String(seconds).padStart(2, '0');
-
-    autoBtn.innerHTML = "Auto " + timeStr + " ⴵ";
+    // Update last update display
+    updateLastUpdateDisplay();
 }
 
 function fetchFlights() {
@@ -999,7 +922,7 @@ function fetchFlights() {
             console.log(`Adaptive interval: ${currentCheckInterval}s (${(currentCheckInterval/60).toFixed(1)} min)`);
             
             // Restart auto-refresh with new interval
-            if (autoMode) {
+            if (autoGoInterval) {
                 clearInterval(autoGoInterval);
                 autoGoInterval = setInterval(goFetch, currentCheckInterval * 1000);
                 remainingSeconds = currentCheckInterval;
@@ -1007,12 +930,11 @@ function fetchFlights() {
         }
         
         // Auto-pause if no targets being tracked
-        if (autoMode && data.trackingTargets && data.trackingTargets.length === 0) {
+        if (data.trackingTargets && data.trackingTargets.length === 0) {
             console.log("⏸️  No targets above horizon, pausing auto-refresh");
-            document.getElementById("autoGoNote").innerHTML += " <span style='color: orange;'>(Paused: targets below horizon)</span>";
-            clearInterval(autoGoInterval);
-            clearInterval(softRefreshInterval);
-            // Will resume automatically on next manual refresh when targets rise
+            if (autoGoInterval) clearInterval(autoGoInterval);
+            if (softRefreshInterval) clearInterval(softRefreshInterval);
+            // Will resume automatically on next fetch when targets rise
         }
 
         // LINE 1: Tracking status - Sun and Moon with weather
@@ -1306,7 +1228,7 @@ function fetchFlights() {
         });
 
         // renderTargetCoordinates(data.targetCoordinates); // Disabled - now using inline display above
-        if(autoMode == true && hasVeryPossibleTransits == true) soundAlert(transitDetails);
+        if (hasVeryPossibleTransits == true) soundAlert(transitDetails);
 
         // Always update map visualization when data is fetched (use filtered flights)
         if(mapVisible) {
@@ -1577,7 +1499,67 @@ window.addEventListener('DOMContentLoaded', () => {
     
     // Initialize pause when hidden checkbox
     initPauseWhenHidden();
+    
+    // Auto-start refresh cycle on page load
+    initializeAutoRefresh();
 });
+
+/**
+ * Initialize automatic refresh cycle on page load
+ * - Checks if cache is still valid (< 10 minutes old)
+ * - Only fetches if cache expired or missing
+ * - Always starts auto-refresh and soft-refresh intervals
+ */
+function initializeAutoRefresh() {
+    console.log('[Init] Starting automatic refresh system');
+    
+    // Check if we have saved observer coordinates
+    const lat = document.getElementById("latitude");
+    const latitude = parseFloat(lat.value);
+    
+    if (isNaN(latitude)) {
+        console.log('[Init] No observer coordinates - waiting for user input');
+        return;
+    }
+    
+    // Check cache age
+    const cacheValidSeconds = 600; // 10 minutes
+    const secondsSinceUpdate = (Date.now() - lastFlightUpdateTime) / 1000;
+    
+    // Start intervals regardless of cache state
+    currentCheckInterval = appConfig.autoRefreshIntervalMinutes * 60;
+    remainingSeconds = currentCheckInterval;
+    
+    // Start auto-refresh interval (10 minutes)
+    autoGoInterval = setInterval(goFetch, currentCheckInterval * 1000);
+    console.log(`[Init] Auto-refresh interval started (${appConfig.autoRefreshIntervalMinutes} min)`);
+    
+    // Start countdown timer
+    refreshTimerLabelInterval = setInterval(refreshTimer, 1000);
+    console.log('[Init] Countdown timer started');
+    
+    // Start soft refresh interval (15 seconds)
+    softRefreshInterval = setInterval(softRefresh, 15000);
+    console.log('[Init] Soft refresh started (15s interval)');
+    
+    // Decide whether to fetch immediately
+    if (lastFlightUpdateTime === 0) {
+        // No cache - fetch immediately
+        console.log('[Init] No cache found - fetching initial data');
+        goFetch();
+    } else if (secondsSinceUpdate >= cacheValidSeconds) {
+        // Cache expired - fetch immediately
+        console.log(`[Init] Cache expired (${Math.floor(secondsSinceUpdate)}s old) - fetching fresh data`);
+        goFetch();
+    } else {
+        // Cache still valid - use it
+        const remainingCacheTime = Math.floor(cacheValidSeconds - secondsSinceUpdate);
+        console.log(`[Init] Using cached data (${remainingCacheTime}s until refresh)`);
+        
+        // Adjust countdown timer to match cache expiry
+        remainingSeconds = remainingCacheTime;
+    }
+}
 
 function requestNotificationPermission() {
     // Deprecated - replaced by toggleAlerts()
