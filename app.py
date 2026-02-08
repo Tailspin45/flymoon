@@ -147,9 +147,9 @@ def index():
 def get_config():
     """Return app configuration for client."""
     return jsonify({
-        "autoRefreshIntervalMinutes": int(os.getenv("AUTO_REFRESH_INTERVAL_MINUTES", 8)),
+        "autoRefreshIntervalMinutes": int(os.getenv("AUTO_REFRESH_INTERVAL_MINUTES", 10)),
         "cacheEnabled": True,
-        "cacheTTLSeconds": 120
+        "cacheTTLSeconds": 600
     })
 
 
