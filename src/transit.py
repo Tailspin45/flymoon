@@ -374,7 +374,7 @@ def get_transits(
 
             logger.info(data[-1])
     else:
-        logger.warning(
+        logger.debug(
             f"{target_name} target is under horizon, skipping checking for transits..."
         )
 
