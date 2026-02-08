@@ -333,6 +333,127 @@ def get_flight_route(fa_flight_id):
         return jsonify({"error": str(e)}), 500
 
 
+@app.route("/transits/recalculate", methods=["POST"])
+def recalculate_transits_endpoint():
+    """
+    Recalculate transit predictions for flights with updated positions.
+    Does NOT call FlightAware API - uses provided flight data from soft refresh.
+    
+    Request JSON:
+    {
+        "flights": [...],  // Array of flight objects with updated positions
+        "latitude": 34.0,
+        "longitude": -118.0,
+        "elevation": 100,
+        "target": "moon",  // or "sun"
+        "min_altitude": 15.0,  // Optional minimum altitude for target
+        "alt_threshold": 1.0,  // Optional
+        "az_threshold": 1.0    // Optional
+    }
+    
+    Returns:
+    {
+        "flights": [...],  // Updated flight objects with new transit predictions
+        "targetCoordinates": {...}
+    }
+    """
+    try:
+        data = request.get_json()
+        
+        flights = data.get("flights", [])
+        latitude = float(data["latitude"])
+        longitude = float(data["longitude"])
+        elevation = float(data["elevation"])
+        target = data.get("target", "auto")
+        min_altitude = float(data.get("min_altitude", 15.0))
+        alt_threshold = float(data.get("alt_threshold", 
+                                      float(os.getenv("ALT_THRESHOLD", "1.0"))))
+        az_threshold = float(data.get("az_threshold", 
+                                     float(os.getenv("AZ_THRESHOLD", "1.0"))))
+        
+        if not flights:
+            return jsonify({"flights": [], "targetCoordinates": {}}), 200
+        
+        # Import here to avoid circular dependency
+        from src.transit import recalculate_transits
+        from src.astro import CelestialObject
+        from src.position import get_my_pos
+        from src.constants import ASTRO_EPHEMERIS
+        from zoneinfo import ZoneInfo
+        from tzlocal import get_localzone_name
+        from math import radians, sin, cos, sqrt, atan2
+        
+        EARTH = ASTRO_EPHEMERIS["earth"]
+        MY_POSITION = get_my_pos(lat=latitude, lon=longitude, elevation=elevation, base_ref=EARTH)
+        local_timezone = get_localzone_name()
+        ref_datetime = datetime.now().replace(tzinfo=ZoneInfo(local_timezone))
+        
+        all_flights = []
+        target_coordinates = {}
+        tracking_targets = []
+        
+        # Determine which targets to check
+        targets_to_check = []
+        if target == "auto":
+            targets_to_check = ["sun", "moon"]
+        else:
+            targets_to_check = [target]
+        
+        for target_name in targets_to_check:
+            # Check altitude
+            celestial_obj = CelestialObject(name=target_name, observer_position=MY_POSITION)
+            celestial_obj.update_position(ref_datetime=ref_datetime)
+            coords = celestial_obj.get_coordinates()
+            target_coordinates[target_name] = coords
+            
+            if coords["altitude"] >= min_altitude:
+                tracking_targets.append(target_name)
+                logger.info(f"Recalculating transits for {target_name} (altitude: {coords['altitude']:.1f}°)")
+                
+                result = recalculate_transits(
+                    flights,
+                    latitude,
+                    longitude,
+                    elevation,
+                    target_name,
+                    alt_threshold,
+                    az_threshold
+                )
+                
+                # Tag each flight with target and add computed fields
+                for flight in result["flights"]:
+                    flight["target"] = target_name
+                    if "aircraft_elevation" in flight:
+                        flight["aircraft_elevation_feet"] = int(flight["aircraft_elevation"] * 3.28084)
+                    # Calculate distance
+                    if "latitude" in flight and "longitude" in flight:
+                        lat1, lon1 = radians(latitude), radians(longitude)
+                        lat2, lon2 = radians(flight["latitude"]), radians(flight["longitude"])
+                        dlat, dlon = lat2 - lat1, lon2 - lon1
+                        a = sin(dlat/2)**2 + cos(lat1) * cos(lat2) * sin(dlon/2)**2
+                        c = 2 * atan2(sqrt(a), sqrt(1-a))
+                        distance_km = 6371 * c
+                        flight["distance_nm"] = distance_km * 0.539957
+                
+                all_flights.extend(result["flights"])
+        
+        return jsonify({
+            "flights": all_flights,
+            "targetCoordinates": target_coordinates,
+            "trackingTargets": tracking_targets
+        })
+    
+    except KeyError as e:
+        logger.error(f"Missing required parameter: {e}")
+        return jsonify({"error": f"Missing required parameter: {e}"}), 400
+    except ValueError as e:
+        logger.error(f"Invalid parameter value: {e}")
+        return jsonify({"error": f"Invalid parameter value: {e}"}), 400
+    except Exception as e:
+        logger.error(f"Error in /transits/recalculate: {str(e)}", exc_info=True)
+        return jsonify({"error": f"Server error: {str(e)}"}), 500
+
+
 @app.route("/flights/<fa_flight_id>/track")
 def get_flight_track(fa_flight_id):
     """Get the historical track positions for a specific flight."""

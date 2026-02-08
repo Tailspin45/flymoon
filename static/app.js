@@ -227,8 +227,9 @@ document.addEventListener('visibilitychange', function() {
 /**
  * Client-side position prediction and UI update without API call
  * Uses constant velocity model to extrapolate aircraft positions
+ * Now also recalculates transit predictions with updated positions
  */
-function softRefresh() {
+async function softRefresh() {
     if (!lastFlightData || !lastFlightUpdateTime) {
         return; // No data to update
     }
@@ -269,14 +270,52 @@ function softRefresh() {
         return updated;
     });
 
-    // Update display
-    updateFlightTable(updatedFlights);
-    
-    // Update map markers if map is visible
-    if (mapVisible && typeof updateAircraftMarkers === 'function') {
+    // Recalculate transit predictions with updated positions
+    try {
         const latitude = parseFloat(document.getElementById("latitude").value);
         const longitude = parseFloat(document.getElementById("longitude").value);
-        updateAircraftMarkers(updatedFlights, latitude, longitude);
+        const elevation = parseFloat(document.getElementById("elevation").value);
+        
+        const response = await fetch('/transits/recalculate', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({
+                flights: updatedFlights,
+                latitude: latitude,
+                longitude: longitude,
+                elevation: elevation,
+                target: target,
+                min_altitude: getMinAltitudeAllQuadrants()
+            })
+        });
+        
+        if (response.ok) {
+            const recalcData = await response.json();
+            
+            // Update table with recalculated transit data
+            updateFlightTableFull(recalcData.flights);
+            
+            // Update map markers
+            if (mapVisible && typeof updateAircraftMarkers === 'function') {
+                updateAircraftMarkers(recalcData.flights, latitude, longitude);
+            }
+            
+            console.log(`Soft refresh: Updated ${updatedFlights.length} flights with transit recalculation (+${Math.floor(secondsElapsed)}s)`);
+        } else {
+            // Fallback to position-only update if recalculation fails
+            updateFlightTable(updatedFlights);
+            if (mapVisible && typeof updateAircraftMarkers === 'function') {
+                updateAircraftMarkers(updatedFlights, latitude, longitude);
+            }
+            console.log(`Soft refresh: Updated positions only (+${Math.floor(secondsElapsed)}s)`);
+        }
+    } catch (error) {
+        console.error('Soft refresh recalculation failed:', error);
+        // Fallback to position-only update
+        updateFlightTable(updatedFlights);
+        if (mapVisible && typeof updateAircraftMarkers === 'function') {
+            updateAircraftMarkers(updatedFlights, latitude, longitude);
+        }
     }
     
     // Update "Last updated" display
@@ -291,8 +330,6 @@ function softRefresh() {
             statusDiv.textContent = originalText;
         }, 500);
     }
-    
-    console.log(`Soft refresh: Updated ${updatedFlights.length} flight positions (+${Math.floor(secondsElapsed)}s)`);
 }
 
 /**
@@ -307,6 +344,61 @@ function updateFlightTable(flights) {
             if (timeCell && flight.time !== null) {
                 timeCell.textContent = flight.time.toFixed(1);
             }
+        }
+    });
+}
+
+/**
+ * Update flight table with full recalculated data (all columns)
+ * Used during soft refresh after transit recalculation
+ */
+function updateFlightTableFull(flights) {
+    const bodyTable = document.getElementById('flightData');
+    if (!bodyTable) return;
+    
+    flights.forEach(flight => {
+        const row = document.querySelector(`tr[data-flight-id="${flight.id}"]`);
+        if (!row) return; // Flight not in table
+        
+        // Update all relevant cells by column index
+        const cells = row.querySelectorAll('td');
+        
+        // Column indexes (adjust if table structure changes)
+        // 0: Target, 1: ID, 2: Type, 3: Origin, 4: Dest, 5: Target Alt, 6: Plane Alt, 7: Alt Diff
+        // 8: Target Az, 9: Plane Az, 10: Az Diff, 11: Elev Change, 12: Aircraft Alt (ft), 13: Direction, 14: Distance, 15: Speed, 16: Time
+        
+        if (flight.target_alt !== null && cells[5]) {
+            cells[5].textContent = flight.target_alt.toFixed(1) + "º";
+        }
+        if (flight.plane_alt !== null && cells[6]) {
+            cells[6].textContent = flight.plane_alt.toFixed(1) + "º";
+        }
+        if (flight.alt_diff !== null && cells[7]) {
+            cells[7].textContent = Math.round(flight.alt_diff) + "º";
+        }
+        if (flight.target_az !== null && cells[8]) {
+            cells[8].textContent = flight.target_az.toFixed(1) + "º";
+        }
+        if (flight.plane_az !== null && cells[9]) {
+            cells[9].textContent = flight.plane_az.toFixed(1) + "º";
+        }
+        if (flight.az_diff !== null && cells[10]) {
+            cells[10].textContent = Math.round(flight.az_diff) + "º";
+        }
+        if (flight.distance_nm !== null && cells[14]) {
+            cells[14].textContent = flight.distance_nm.toFixed(1);
+        }
+        if (flight.time !== null && cells[16]) {
+            cells[16].textContent = flight.time.toFixed(1);
+        }
+        
+        // Update row highlight based on new transit status
+        if (flight.is_possible_transit === 1) {
+            const possibilityLevel = parseInt(flight.possibility_level);
+            highlightPossibleTransit(possibilityLevel, row);
+        } else {
+            // Remove highlighting if no longer a transit
+            row.style.backgroundColor = "";
         }
     });
 }
