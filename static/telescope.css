@@ -550,6 +550,24 @@
     border-color: #444;
 }
 
+.btn-info {
+    background: #0066cc;
+    color: white;
+}
+
+.btn-info:hover:not(:disabled) {
+    background: #0052a3;
+}
+
+.btn-warning {
+    background: #ff9900;
+    color: white;
+}
+
+.btn-warning:hover:not(:disabled) {
+    background: #cc7a00;
+}
+
 .btn-danger {
     background: #cc0000;
     color: white;
@@ -775,9 +793,37 @@
     transition: all 0.2s;
 }
 
+.filmstrip-item.temp-file {
+    border-color: #ff9900;
+    opacity: 0.8;
+}
+
+.filmstrip-item.temp-file:hover {
+    border-color: #ffaa33;
+    opacity: 1;
+}
+
+.temp-badge {
+    position: absolute;
+    top: 4px;
+    right: 4px;
+    background: #ff9900;
+    color: white;
+    padding: 2px 6px;
+    border-radius: 3px;
+    font-size: 0.6em;
+    font-weight: bold;
+    z-index: 10;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.5);
+}
+
 .filmstrip-item:hover {
     border-color: #039c9c;
     transform: scale(1.05);
+}
+
+.filmstrip-item.temp-file:hover {
+    border-color: #ffaa33;
 }
 
 .filmstrip-thumbnail {

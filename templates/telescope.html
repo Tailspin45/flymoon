@@ -66,10 +66,10 @@
                     <!-- Zoom Slider -->
                     <div class="zoom-slider">
                         <button class="zoom-btn" onclick="zoomIn()" title="Zoom In">+</button>
-                        <input type="range" id="zoomSlider" min="50" max="300" value="100" step="25" orient="vertical" oninput="setZoom(this.value)">
+                        <input type="range" id="zoomSlider" min="50" max="300" value="100" step="1" orient="vertical" oninput="setZoom(this.value)">
                         <span id="zoomPercent" class="zoom-percent">100%</span>
                         <button class="zoom-btn" onclick="zoomOut()" title="Zoom Out">−</button>
-                        <button class="zoom-btn" onclick="zoomReset()" title="Fit">⊡</button>
+                        <button class="zoom-btn" onclick="zoomFit()" title="Fit to Window">⊡</button>
                     </div>
                     <div class="preview-container" id="previewContainer">
                         <img id="previewImage" src="" alt="Live Preview" style="display: none;">
@@ -102,6 +102,7 @@
                     <div class="button-group">
                         <button id="connectBtn" class="btn btn-primary" onclick="connect()">Connect</button>
                         <button id="disconnectBtn" class="btn btn-secondary" onclick="disconnect()" disabled>Disconnect</button>
+                        <button id="simulateBtn" class="btn btn-info" onclick="toggleSimulation()">Simulate</button>
                     </div>
                 </div>
 

@@ -1512,7 +1512,7 @@ function updateLastUpdateDisplay() {
 
     // If no update has happened yet, show waiting message
     if (!window.lastFlightUpdateTime) {
-        elem.textContent = 'Waiting for first update...';
+        elem.textContent = 'Waiting for flight data...';
         return;
     }
 

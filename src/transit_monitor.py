@@ -54,6 +54,7 @@ class TransitMonitor:
         self.thread = threading.Thread(target=self._monitor_loop, daemon=True)
         self.thread.start()
         logger.info(f"[TransitMonitor] Started monitoring (API: {self.api_poll_interval}s, calc: {self.calc_interval}s)")
+        print(f"✅ [TransitMonitor] Started monitoring (API: {self.api_poll_interval}s, calc: {self.calc_interval}s)")
     
     def stop(self):
         """Stop the background monitoring thread."""
@@ -113,7 +114,7 @@ class TransitMonitor:
                     test_mode=False
                 )
                 
-                for transit in transit_data:
+                for transit in transit_data.get('flights', []):
                     # Parse the transit time
                     transit_time_str = transit.get('time', '')
                     if not transit_time_str:

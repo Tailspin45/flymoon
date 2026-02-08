@@ -430,7 +430,7 @@ def start_recording():
         
         # Create year/month directories
         now = datetime.now()
-        year_month_path = os.path.join('static/gallery', str(now.year), f"{now.month:02d}")
+        year_month_path = os.path.join('static/captures', str(now.year), f"{now.month:02d}")
         os.makedirs(year_month_path, exist_ok=True)
         
         filepath = os.path.join(year_month_path, filename)
@@ -586,17 +586,17 @@ def get_recording_status():
 # File Management Endpoint
 
 def list_telescope_files():
-    """GET /telescope/files - List locally captured files from gallery."""
+    """GET /telescope/files - List locally captured files."""
     logger.info("[Telescope] GET /telescope/files")
 
     try:
-        # List files from local gallery instead of telescope
-        gallery_path = 'static/gallery'
+        # List files from local captures directory
+        captures_path = 'static/captures'
         files = []
         
-        if os.path.exists(gallery_path):
-            # Walk through gallery directory
-            for root, dirs, filenames in os.walk(gallery_path):
+        if os.path.exists(captures_path):
+            # Walk through captures directory
+            for root, dirs, filenames in os.walk(captures_path):
                 for filename in filenames:
                     if filename.lower().endswith(('.jpg', '.jpeg', '.png', '.mp4', '.avi')):
                         full_path = os.path.join(root, filename)
@@ -618,7 +618,7 @@ def list_telescope_files():
         return jsonify({
             "files": files,
             "total": len(files),
-            "source": "local_gallery"
+            "source": "local_captures"
         }), 200
 
     except Exception as e:
@@ -627,7 +627,7 @@ def list_telescope_files():
 
 
 def delete_telescope_file():
-    """POST /telescope/files/delete - Delete a captured file from gallery."""
+    """POST /telescope/files/delete - Delete a captured file."""
     logger.info("[Telescope] POST /telescope/files/delete")
 
     try:
@@ -638,13 +638,13 @@ def delete_telescope_file():
         if not file_path:
             return jsonify({"error": "Missing 'path' parameter"}), 400
         
-        # Security: ensure path is within gallery directory
+        # Security: ensure path is within captures directory
         full_path = os.path.join('static', file_path)
         abs_path = os.path.abspath(full_path)
-        gallery_abs = os.path.abspath('static/gallery')
+        captures_abs = os.path.abspath('static/captures')
         
-        if not abs_path.startswith(gallery_abs):
-            logger.warning(f"[Telescope] Attempted to delete file outside gallery: {file_path}")
+        if not abs_path.startswith(captures_abs):
+            logger.warning(f"[Telescope] Attempted to delete file outside captures: {file_path}")
             return jsonify({"error": "Invalid file path"}), 403
         
         # Delete image file
@@ -692,7 +692,7 @@ def capture_photo():
         
         # Create year/month directories
         now = datetime.now()
-        year_month_path = os.path.join('static/gallery', str(now.year), f"{now.month:02d}")
+        year_month_path = os.path.join('static/captures', str(now.year), f"{now.month:02d}")
         os.makedirs(year_month_path, exist_ok=True)
         
         filepath = os.path.join(year_month_path, filename)
@@ -1080,7 +1080,7 @@ def register_routes(app):
     app.add_url_rule("/telescope/transit/status", "telescope_transit_status",
                      get_transit_status, methods=["GET"])
 
-    logger.info("[Telescope] Routes registered")
+    print("✅ [Telescope] Routes registered")
 
 def get_transit_status():
     """

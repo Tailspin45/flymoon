@@ -63,6 +63,8 @@ python app.py
 
 Access the web interface at `http://localhost:8000` or the displayed LAN address (e.g., `http://192.168.1.100:8000`)
 
+**Note:** The application runs with minimal console output by default. To enable detailed debug logging, see [SETUP.md](SETUP.md#troubleshooting).
+
 ## 📖 Documentation
 
 - **[QUICKSTART.md](QUICKSTART.md)** - Fast-track setup guide

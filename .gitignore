@@ -173,3 +173,4 @@ data/possible-transits/log-backup.txt
 # misc
 exp.ipynb
 *.DS_Store
+static/simulations/

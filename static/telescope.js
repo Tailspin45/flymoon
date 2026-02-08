@@ -15,6 +15,9 @@ let transitCaptureActive = false;
 let upcomingTransits = [];
 let currentZoom = 1.0;
 let zoomStep = 0.25;
+let isSimulating = false;
+let simulationVideo = null;
+let simulationFiles = []; // Track temporary simulation files
 
 // Initialize on page load
 document.addEventListener('DOMContentLoaded', () => {
@@ -268,6 +271,12 @@ async function capturePhoto() {
     
     showStatus('Capturing photo...', 'info');
     
+    // Handle simulation mode
+    if (isSimulating) {
+        simulateCapturePhoto();
+        return;
+    }
+    
     const result = await apiCall('/telescope/capture/photo', 'POST', {});
     
     if (result && result.success) {
@@ -292,6 +301,12 @@ async function startRecording() {
     const duration = durationInput ? parseInt(durationInput.value) : 30;
     const interval = intervalInput ? parseFloat(intervalInput.value) : 0;
     
+    // Handle simulation mode
+    if (isSimulating) {
+        simulateStartRecording(duration, interval);
+        return;
+    }
+    
     const result = await apiCall('/telescope/recording/start', 'POST', {
         duration: duration,
         interval: interval
@@ -311,6 +326,12 @@ async function startRecording() {
 async function stopRecording() {
     console.log('[Telescope] Stopping recording');
     showStatus('Stopping recording...', 'info');
+    
+    // Handle simulation mode
+    if (isSimulating) {
+        simulateStopRecording();
+        return;
+    }
     
     const result = await apiCall('/telescope/recording/stop', 'POST');
     if (result && result.success) {
@@ -432,8 +453,8 @@ function startPreview() {
         if (previewStatusText) previewStatusText.textContent = 'Live Stream Active';
         if (previewTitleIcon) previewTitleIcon.textContent = '🟢';
         
-        // Reset zoom to fit
-        zoomReset();
+        // Fit to window
+        zoomFit();
     }, 2000);
     
     // Error handler
@@ -449,19 +470,41 @@ function zoomIn() {
     currentZoom += zoomStep;
     if (currentZoom > 3.0) currentZoom = 3.0;
     applyZoom();
-    updateSlider();
 }
 
 function zoomOut() {
     currentZoom -= zoomStep;
     if (currentZoom < 0.5) currentZoom = 0.5;
     applyZoom();
-    updateSlider();
 }
 
 function zoomReset() {
     currentZoom = 1.0;
     applyZoom();
+}
+
+function zoomFit() {
+    // Fit the image/video to container
+    currentZoom = 1.0;
+    const image = document.getElementById('previewImage');
+    const video = document.getElementById('simulationVideo');
+    const container = document.getElementById('previewContainer');
+    
+    if (!container) return;
+    
+    const element = (video && video.style.display !== 'none') ? video : image;
+    if (!element) return;
+    
+    // Remove transform to reset
+    element.classList.remove('zoomed');
+    element.style.transform = '';
+    element.style.width = '100%';
+    element.style.height = 'auto';
+    
+    // Reset scroll
+    container.scrollTop = 0;
+    container.scrollLeft = 0;
+    
     updateSlider();
 }
 
@@ -479,13 +522,20 @@ function updateSlider() {
 
 function applyZoom() {
     const image = document.getElementById('previewImage');
+    const video = document.getElementById('simulationVideo');
     const container = document.getElementById('previewContainer');
     
-    if (!image || !container) return;
+    if (!container) return;
+    
+    // Determine which element is active (image or video)
+    const element = (video && video.style.display !== 'none') ? video : image;
+    if (!element) return;
     
     if (currentZoom === 1.0) {
-        image.classList.remove('zoomed');
-        image.style.transform = '';
+        element.classList.remove('zoomed');
+        element.style.transform = '';
+        element.style.width = '100%';
+        element.style.height = 'auto';
         container.scrollTop = 0;
         container.scrollLeft = 0;
         updateSlider();
@@ -497,9 +547,11 @@ function applyZoom() {
     const scrollYPercent = container.scrollTop / (container.scrollHeight - container.clientHeight || 1);
     
     // Apply zoom using CSS transform
-    image.classList.add('zoomed');
-    image.style.transform = `scale(${currentZoom})`;
-    image.style.transformOrigin = 'center center';
+    element.classList.add('zoomed');
+    element.style.transform = `scale(${currentZoom})`;
+    element.style.transformOrigin = 'center center';
+    element.style.width = '100%';
+    element.style.height = 'auto';
     
     updateSlider();
     
@@ -842,18 +894,25 @@ function updateFilmstrip(files) {
         return;
     }
     
-    filmstrip.innerHTML = files.slice(-10).reverse().map(file => `
-        <div class="filmstrip-item" onclick="viewFile('${file.path}')">
+    filmstrip.innerHTML = files.slice(-10).reverse().map(file => {
+        const isTemp = file.isSimulation;
+        const badge = isTemp ? '<span class="temp-badge">TEMP</span>' : '';
+        const itemClass = isTemp ? 'filmstrip-item temp-file' : 'filmstrip-item';
+        
+        return `
+        <div class="${itemClass}" onclick="viewFile('${file.path}')">
+            ${badge}
             <img src="${file.path}" alt="${file.name}" class="filmstrip-thumbnail">
             <div class="filmstrip-info">
                 <span>${file.name.split('_')[0]}</span>
                 <div class="filmstrip-actions">
-                    <button class="btn-icon" onclick="event.stopPropagation(); downloadFile('${file.path}', '${file.name}')" title="Download">⬇️</button>
-                    <button class="btn-icon btn-danger" onclick="event.stopPropagation(); deleteFile('${file.path}', '${file.name}')" title="Delete">🗑️</button>
+                    <button class="btn-icon" onclick="event.stopPropagation(); downloadFile('${file.path}', '${file.name}')" title="Download" ${isTemp ? 'disabled' : ''}>⬇️</button>
+                    <button class="btn-icon btn-danger" onclick="event.stopPropagation(); deleteFile('${file.path}', '${file.name}')" title="Delete" ${isTemp ? 'disabled' : ''}>🗑️</button>
                 </div>
             </div>
         </div>
-    `).join('');
+    `;
+    }).join('');
 }
 
 function updateFilesGrid() {
@@ -884,6 +943,240 @@ function updateFilesGrid() {
 
 function viewFile(path) {
     window.open(path, '_blank');
+}
+
+// ============================================================================
+// SIMULATION MODE
+// ============================================================================
+
+async function toggleSimulation() {
+    if (!isSimulating) {
+        startSimulation();
+    } else {
+        stopSimulation();
+    }
+}
+
+function startSimulation() {
+    console.log('[Telescope] Starting simulation mode');
+    isSimulating = true;
+    
+    // Update UI
+    const simulateBtn = document.getElementById('simulateBtn');
+    const connectBtn = document.getElementById('connectBtn');
+    const disconnectBtn = document.getElementById('disconnectBtn');
+    const statusDot = document.getElementById('statusDot');
+    const statusText = document.getElementById('connectionStatus');
+    
+    if (simulateBtn) {
+        simulateBtn.textContent = 'Stop Sim';
+        simulateBtn.className = 'btn btn-warning';
+    }
+    if (connectBtn) connectBtn.disabled = true;
+    if (disconnectBtn) disconnectBtn.disabled = true;
+    
+    // Update status
+    if (statusDot) statusDot.className = 'status-dot connected';
+    if (statusText) statusText.textContent = 'Simulating';
+    
+    // Simulate connected state
+    isConnected = true;
+    updateButtonStates();
+    
+    // Start simulated preview
+    startSimulatedPreview();
+    
+    showStatus('Simulation mode active - Using recorded footage', 'info');
+}
+
+function stopSimulation() {
+    console.log('[Telescope] Stopping simulation mode');
+    isSimulating = false;
+    isConnected = false;
+    
+    // Clean up temporary simulation files
+    cleanupSimulationFiles();
+    
+    // Update UI
+    const simulateBtn = document.getElementById('simulateBtn');
+    const connectBtn = document.getElementById('connectBtn');
+    const disconnectBtn = document.getElementById('disconnectBtn');
+    const statusDot = document.getElementById('statusDot');
+    const statusText = document.getElementById('connectionStatus');
+    
+    if (simulateBtn) {
+        simulateBtn.textContent = 'Simulate';
+        simulateBtn.className = 'btn btn-info';
+    }
+    if (connectBtn) connectBtn.disabled = false;
+    if (disconnectBtn) disconnectBtn.disabled = true;
+    
+    // Update status
+    if (statusDot) statusDot.className = 'status-dot disconnected';
+    if (statusText) statusText.textContent = 'Disconnected';
+    
+    updateButtonStates();
+    stopSimulatedPreview();
+    
+    showStatus('Simulation stopped', 'info');
+}
+
+function startSimulatedPreview() {
+    console.log('[Telescope] Starting simulated preview');
+    
+    const previewImage = document.getElementById('previewImage');
+    const previewPlaceholder = document.getElementById('previewPlaceholder');
+    const previewStatusDot = document.getElementById('previewStatusDot');
+    const previewStatusText = document.getElementById('previewStatusText');
+    const previewTitleIcon = document.getElementById('previewTitleIcon');
+    const previewContainer = document.getElementById('previewContainer');
+    
+    // Hide placeholder and image
+    if (previewPlaceholder) previewPlaceholder.style.display = 'none';
+    if (previewImage) previewImage.style.display = 'none';
+    
+    // Create or get video element
+    simulationVideo = document.getElementById('simulationVideo');
+    if (!simulationVideo) {
+        simulationVideo = document.createElement('video');
+        simulationVideo.id = 'simulationVideo';
+        simulationVideo.autoplay = true;
+        simulationVideo.loop = true;
+        simulationVideo.muted = true;
+        simulationVideo.style.width = '100%';
+        simulationVideo.style.height = 'auto';
+        simulationVideo.style.display = 'block';
+        simulationVideo.style.objectFit = 'contain';
+        
+        // Use one of the recorded videos from safe location
+        simulationVideo.src = '/static/simulations/demo.mp4';
+        
+        if (previewContainer) {
+            previewContainer.appendChild(simulationVideo);
+        }
+    } else {
+        simulationVideo.style.display = 'block';
+        simulationVideo.play();
+    }
+    
+    // Update status
+    if (previewStatusDot) previewStatusDot.className = 'status-dot connected';
+    if (previewStatusText) previewStatusText.textContent = 'Simulation Active';
+    if (previewTitleIcon) previewTitleIcon.textContent = '🎬';
+}
+
+function stopSimulatedPreview() {
+    console.log('[Telescope] Stopping simulated preview');
+    
+    const previewImage = document.getElementById('previewImage');
+    const previewPlaceholder = document.getElementById('previewPlaceholder');
+    const previewStatusDot = document.getElementById('previewStatusDot');
+    const previewStatusText = document.getElementById('previewStatusText');
+    const previewTitleIcon = document.getElementById('previewTitleIcon');
+    
+    // Hide video
+    if (simulationVideo) {
+        simulationVideo.pause();
+        simulationVideo.style.display = 'none';
+    }
+    
+    // Show placeholder
+    if (previewPlaceholder) previewPlaceholder.style.display = 'flex';
+    if (previewImage) previewImage.style.display = 'none';
+    
+    // Update status
+    if (previewStatusDot) previewStatusDot.className = 'status-dot';
+    if (previewStatusText) previewStatusText.textContent = 'Preview Inactive';
+    if (previewTitleIcon) previewTitleIcon.textContent = '⚫';
+}
+
+function simulateCapturePhoto() {
+    console.log('[Telescope] Simulating photo capture');
+    
+    // Create a temporary file entry
+    const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, -5);
+    const filename = `sim_capture_${timestamp}.jpg`;
+    const tempFile = {
+        name: filename,
+        path: '/static/simulations/demo.mp4', // Use demo video as placeholder
+        url: '/static/simulations/demo.mp4',
+        isSimulation: true,
+        timestamp: Date.now()
+    };
+    
+    // Add to simulation files
+    simulationFiles.push(tempFile);
+    
+    // Add to window.currentFiles with simulation marker
+    if (!window.currentFiles) window.currentFiles = [];
+    window.currentFiles.unshift(tempFile);
+    
+    // Update filmstrip
+    updateFilmstrip(window.currentFiles);
+    
+    showStatus('📸 Photo captured (simulation - temporary)', 'success', 5000);
+}
+
+function simulateStartRecording(duration, interval) {
+    console.log('[Telescope] Simulating recording start');
+    
+    isRecording = true;
+    recordingStartTime = Date.now();
+    updateRecordingUI();
+    startRecordingTimer(duration);
+    
+    const mode = interval > 0 ? `timelapse (${interval}s interval)` : 'normal';
+    showStatus(`🎬 Recording started (simulation - ${duration}s ${mode})`, 'success', 5000);
+}
+
+function simulateStopRecording() {
+    console.log('[Telescope] Simulating recording stop');
+    
+    isRecording = false;
+    stopRecordingTimer();
+    updateRecordingUI();
+    
+    // Create a temporary file entry
+    const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, -5);
+    const filename = `sim_recording_${timestamp}.mp4`;
+    const tempFile = {
+        name: filename,
+        path: '/static/simulations/demo.mp4',
+        url: '/static/simulations/demo.mp4',
+        isSimulation: true,
+        timestamp: Date.now()
+    };
+    
+    // Add to simulation files
+    simulationFiles.push(tempFile);
+    
+    // Add to window.currentFiles
+    if (!window.currentFiles) window.currentFiles = [];
+    window.currentFiles.unshift(tempFile);
+    
+    // Update filmstrip
+    updateFilmstrip(window.currentFiles);
+    
+    showStatus('🎬 Recording stopped (simulation - temporary)', 'success', 5000);
+}
+
+function cleanupSimulationFiles() {
+    console.log('[Telescope] Cleaning up simulation files');
+    
+    if (simulationFiles.length === 0) return;
+    
+    // Remove simulation files from window.currentFiles
+    if (window.currentFiles) {
+        window.currentFiles = window.currentFiles.filter(f => !f.isSimulation);
+    }
+    
+    // Clear simulation files array
+    simulationFiles = [];
+    
+    // Refresh filmstrip
+    updateFilmstrip(window.currentFiles || []);
+    
+    console.log('[Telescope] Cleaned up', simulationFiles.length, 'temporary files');
 }
 
 // ============================================================================

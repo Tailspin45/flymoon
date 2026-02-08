@@ -440,6 +440,18 @@ Possible causes:
 - Review error messages carefully
 - Check file permissions on the Flymoon directory
 
+**Too much console output/logging?**
+- The application runs with minimal logging by default (WARNING level)
+- If you see excessive output, check `src/logger_.py` - it should be set to `logging.WARNING`
+- To enable detailed debug logging for troubleshooting, edit `src/logger_.py`:
+  ```python
+  # Change this line:
+  logging.basicConfig(stream=sys.stdout, level=logging.WARNING)
+  # To this:
+  logging.basicConfig(stream=sys.stdout, level=logging.INFO)
+  ```
+- Important startup messages are always shown regardless of log level
+
 ---
 
 ## Advanced Configuration
