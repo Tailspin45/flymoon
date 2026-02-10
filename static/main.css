@@ -83,6 +83,10 @@ body {
     background: #5a7070;
 }
 
+.btn-lg-icon {
+    font-size: 1.2em;
+}
+
 .btn-primary {
     padding: 6px 14px;
     border: none;
@@ -223,6 +227,19 @@ body {
 @keyframes spin {
     0% { transform: rotate(0deg); }
     100% { transform: rotate(360deg); }
+}
+
+/* Control group wrapper */
+.control-group {
+    display: inline-block;
+    text-align: center;
+}
+
+/* Control label under buttons/inputs */
+.control-label {
+    font-size: 0.7em;
+    color: #aaa;
+    margin-top: -2px;
 }
 
 .observer-icon,
