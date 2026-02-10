@@ -102,6 +102,29 @@ body {
     background: #04b5b5;
 }
 
+.btn-secondary {
+    padding: 6px 14px;
+    border: none;
+    border-radius: 3px;
+    background: #555;
+    color: white;
+    cursor: pointer;
+    font-size: 0.95em;
+}
+
+.btn-secondary:hover {
+    background: #666;
+}
+
+.btn-active {
+    background: #e67e22 !important;
+    color: white;
+}
+
+.btn-active:hover {
+    background: #d35400 !important;
+}
+
 .separator {
     color: #444;
     margin: 0 4px;

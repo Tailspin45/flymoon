@@ -81,6 +81,24 @@ async function disconnectTelescope() {
     }
 }
 
+async function toggleSimulateMode() {
+    try {
+        const result = await apiCall('/telescope/simulate', 'POST');
+        const btn = document.getElementById('simulateBtn');
+        if (result.simulate_mode) {
+            btn.classList.add('btn-active');
+            btn.textContent = '🎭 Simulating';
+        } else {
+            btn.classList.remove('btn-active');
+            btn.textContent = '🎭 Simulate';
+        }
+        showMessage(result.message, 'success');
+        await updateStatus();
+    } catch (error) {
+        showMessage(`Toggle simulate failed: ${error.message}`, 'error');
+    }
+}
+
 
 
 async function refreshFiles() {
@@ -255,6 +273,7 @@ function showMessage(message, type = 'info') {
 elements.connectBtn.addEventListener('click', connectTelescope);
 elements.disconnectBtn.addEventListener('click', disconnectTelescope);
 elements.refreshFilesBtn.addEventListener('click', refreshFiles);
+document.getElementById('simulateBtn').addEventListener('click', toggleSimulateMode);
 
 // Page Lifecycle
 

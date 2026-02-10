@@ -38,21 +38,25 @@ import time
 from datetime import date, datetime
 from functools import wraps
 from http import HTTPStatus
+from zoneinfo import ZoneInfo
 
 import requests
 from dotenv import load_dotenv
 from flask import Flask, jsonify, render_template, request
+from tzlocal import get_localzone_name
 from werkzeug.utils import secure_filename
 
-from src.constants import POSSIBLE_TRANSITS_LOGFILENAME, get_aeroapi_key
+from src.constants import POSSIBLE_TRANSITS_LOGFILENAME, ASTRO_EPHEMERIS, get_aeroapi_key
 
 # SETUP
 load_dotenv()
 
 from src import logger
+from src.astro import CelestialObject
 from src.config_wizard import ConfigWizard
 from src.flight_data import save_possible_transits, sort_results
 from src.flight_cache import get_cache
+from src.position import get_my_pos
 from src.telegram_notify import send_telegram_notification
 from src.transit import get_transits
 from src import telescope_routes
@@ -156,7 +160,7 @@ def calculate_adaptive_interval(flights: list) -> int:
     - 30s if transit <2 min away
     - 60s if transit <5 min away
     - 120s if transit <10 min away
-    - 480s (8 min) otherwise
+    - 600s (10 min) otherwise
     """
     if not flights:
         return 600  # 10 minutes if no flights
@@ -170,7 +174,7 @@ def calculate_adaptive_interval(flights: list) -> int:
     
     if not priority_transits:
         # Only low probability or no transits
-        return 480  # 8 minutes
+        return 600  # 10 minutes
     
     closest_transit_time = min(priority_transits)
     
@@ -181,7 +185,7 @@ def calculate_adaptive_interval(flights: list) -> int:
     elif closest_transit_time < 10:  # <10 min away
         return 120  # 2 minutes
     else:
-        return 480  # 8 minutes (default)
+        return 600  # 10 minutes (default)
 
 
 def allowed_file(filename):
@@ -197,7 +201,7 @@ def index():
 def get_config():
     """Return app configuration for client."""
     return jsonify({
-        "autoRefreshIntervalMinutes": int(os.getenv("AUTO_REFRESH_INTERVAL_MINUTES", 8)),
+        "autoRefreshIntervalMinutes": int(os.getenv("AUTO_REFRESH_INTERVAL_MINUTES", 10)),
         "cacheEnabled": True,
         "cacheTTLSeconds": 120
     })
@@ -242,14 +246,7 @@ def get_all_flights():
         target_coordinates = {}
         tracking_targets = []  # List of targets actually being tracked (above min altitude)
         
-        # Helper to check if target is above minimum altitude
-        from src.astro import CelestialObject
-        from src.position import get_my_pos
-        from src.constants import ASTRO_EPHEMERIS
-        from datetime import datetime
-        from zoneinfo import ZoneInfo
-        from tzlocal import get_localzone_name
-        
+        # Check if target is above minimum altitude
         EARTH = ASTRO_EPHEMERIS["earth"]
         MY_POSITION = get_my_pos(lat=latitude, lon=longitude, elevation=elevation, base_ref=EARTH)
         local_timezone = get_localzone_name()

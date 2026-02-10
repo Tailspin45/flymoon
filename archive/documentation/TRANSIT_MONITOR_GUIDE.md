@@ -129,24 +129,20 @@ Recording duration: 20 seconds
 ### macOS/Linux
 
 ```bash
-# Run in background
-nohup python3 monitor_transits.py \
+# Run with logging (recommended - stays attached to terminal)
+python3 monitor_transits.py \
   --latitude 33.111369 \
   --longitude -117.310169 \
   --target sun \
-  > monitor.log 2>&1 &
+  > monitor.log 2>&1
 
-# Check if running
-ps aux | grep monitor_transits
-
-# View log
-tail -f monitor.log
-
-# Stop
-pkill -f monitor_transits
+# Or use screen/tmux (see below) for detachable sessions
 ```
 
-### Keep Running in Terminal
+⚠️ **Warning**: Avoid using `nohup` with `&` as it's easy to forget about
+background processes that continue consuming API credits.
+
+### Keep Running in Terminal (Recommended)
 
 ```bash
 # Use screen or tmux

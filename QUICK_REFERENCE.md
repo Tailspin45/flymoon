@@ -17,7 +17,7 @@
   - **30 seconds** when transit is <2 min away
   - **1 minute** when transit is <5 min away
   - **2 minutes** when transit is <10 min away
-  - **8 minutes** when no close transits
+  - **10 minutes** when no close transits
   
 ### 🆕 New Feature: Auto-Pause
 - Automatically stops polling when sun/moon below horizon
@@ -28,9 +28,9 @@
 - Only fetches track for past transits
 - Cuts API calls in half
 
-### ⚙️ New Default: 8-Minute Base Interval
-- Changed from 6 minutes to 8 minutes
-- Recommended range: 8-10 minutes for free tier
+### ⚙️ New Default: 10-Minute Base Interval
+- Changed from 6 minutes to 10 minutes
+- Recommended: 10 minutes for free tier
 - Adaptive polling will adjust automatically
 
 ## API Call Reduction
@@ -47,7 +47,7 @@
 ## User Experience
 
 ### What You'll Notice:
-✅ UI updates more frequently (every 15s instead of 6-8min)
+✅ UI updates more frequently (every 15s instead of 6-10min)
 ✅ Countdown timers stay accurate between API calls
 ✅ Faster polling when transits are close
 ✅ Auto-pause when targets not visible
@@ -63,7 +63,7 @@
 ### Environment Variable (Optional)
 ```bash
 # In .env file
-AUTO_REFRESH_INTERVAL_MINUTES=8  # Base interval (default: 8)
+AUTO_REFRESH_INTERVAL_MINUTES=10  # Base interval (default: 10)
 ```
 
 ### Monitoring Endpoints
@@ -91,7 +91,7 @@ curl http://localhost:8001/config
 Response:
 ```json
 {
-  "autoRefreshIntervalMinutes": 8,
+  "autoRefreshIntervalMinutes": 10,
   "cacheEnabled": true,
   "cacheTTLSeconds": 120
 }
@@ -131,7 +131,7 @@ Response:
 
 ## Performance Tips
 
-1. **Use 8-10 minute base intervals** for continuous monitoring
+1. **Use 10 minute base intervals** for continuous monitoring
 2. **Check cache stats periodically** to ensure good hit rates (target: >50%)
 3. **Monitor FlightAware usage** to stay under 500/month limit
 4. **Let adaptive polling work** - don't set intervals too low
@@ -140,7 +140,7 @@ Response:
 
 With all optimizations active, you should see:
 - **75-85% reduction** in API calls
-- **Better UI responsiveness** (15s updates vs 6-8min)
+- **Better UI responsiveness** (15s updates vs 6-10min)
 - **Automatic pause** when targets not visible
 - **Smart polling** that speeds up when needed
 

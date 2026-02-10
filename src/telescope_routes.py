@@ -150,6 +150,7 @@ _recording_state: Dict[str, Any] = {
     "active": False,
     "start_time": None,
 }
+_simulate_mode: bool = False  # Runtime toggle for simulation
 
 
 # Helper Functions
@@ -160,8 +161,8 @@ def is_enabled() -> bool:
 
 
 def is_mock_mode() -> bool:
-    """Check if mock telescope mode is enabled."""
-    return os.getenv("MOCK_TELESCOPE", "false").lower() == "true"
+    """Check if mock telescope mode is enabled (env or runtime toggle)."""
+    return _simulate_mode or os.getenv("MOCK_TELESCOPE", "false").lower() == "true"
 
 
 def get_telescope_client() -> Optional[SeestarClient]:
@@ -495,6 +496,38 @@ def list_telescope_files():
         return handle_error(e)
 
 
+# Simulation Mode Toggle
+
+def toggle_simulate_mode():
+    """POST /telescope/simulate - Toggle simulation mode."""
+    global _simulate_mode, _telescope_client
+    
+    _simulate_mode = not _simulate_mode
+    
+    # Reset client so it gets recreated with correct type
+    if _telescope_client:
+        try:
+            _telescope_client.disconnect()
+        except:
+            pass
+        _telescope_client = None
+    
+    logger.info(f"[Telescope] Simulation mode {'enabled' if _simulate_mode else 'disabled'}")
+    
+    return jsonify({
+        "success": True,
+        "simulate_mode": _simulate_mode,
+        "message": f"Simulation mode {'enabled' if _simulate_mode else 'disabled'}"
+    }), 200
+
+
+def get_simulate_status():
+    """GET /telescope/simulate - Get simulation mode status."""
+    return jsonify({
+        "simulate_mode": _simulate_mode
+    }), 200
+
+
 # Route Registration Helper
 
 def register_routes(app):
@@ -527,5 +560,11 @@ def register_routes(app):
     # File management
     app.add_url_rule("/telescope/files", "telescope_files",
                      list_telescope_files, methods=["GET"])
+
+    # Simulation mode
+    app.add_url_rule("/telescope/simulate", "telescope_simulate_toggle",
+                     toggle_simulate_mode, methods=["POST"])
+    app.add_url_rule("/telescope/simulate", "telescope_simulate_status",
+                     get_simulate_status, methods=["GET"])
 
     logger.info("[Telescope] Routes registered")

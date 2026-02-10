@@ -188,7 +188,7 @@ var softRefreshInterval = null; // For client-side position updates
 var remainingSeconds = 0; // Track remaining seconds for countdown
 var lastFlightData = null; // Cache last flight response for soft refresh
 var lastFlightUpdateTime = 0; // Timestamp of last API call
-var currentCheckInterval = 480; // Current adaptive interval in seconds (default 8 min)
+var currentCheckInterval = 600; // Current adaptive interval in seconds (default 10 min)
 // By default disable auto go and refresh timer label
 clearInterval(autoGoInterval);
 clearInterval(refreshTimerLabelInterval);
@@ -196,7 +196,7 @@ displayTarget();
 
 // App configuration from server
 var appConfig = {
-    autoRefreshIntervalMinutes: 8  // Default, will be loaded from server
+    autoRefreshIntervalMinutes: 10  // Default, will be loaded from server
 };
 
 // Load configuration from server

@@ -14,7 +14,7 @@ Successfully implemented **ALL 7 optimization strategies** to reduce FlightAware
 - `app.py` - Added adaptive intervals, /cache/stats endpoint, enhanced /config
 - `static/app.js` - Added soft refresh, client-side prediction, adaptive polling
 - `static/map.js` - Conditional route/track fetching
-- `.env.mock` - Updated default interval to 8 minutes
+- `.env.mock` - Updated default interval to 10 minutes
 
 ## Key Features Implemented
 
@@ -32,7 +32,7 @@ Successfully implemented **ALL 7 optimization strategies** to reduce FlightAware
 - 30s intervals when transit <2 min away
 - 60s intervals when transit <5 min away
 - 120s intervals when transit <10 min away
-- 480s (8 min) default when no close transits
+- 600s (10 min) default when no close transits
 
 ### 4. Auto-Pause (5-15% reduction)
 - Automatically pauses when sun/moon below horizon
@@ -48,7 +48,7 @@ Successfully implemented **ALL 7 optimization strategies** to reduce FlightAware
 - Reduces unnecessary transit calculations
 
 ### 7. Increased Default Interval (20-30% reduction)
-- Changed from 6 minutes to 8 minutes
+- Changed from 6 minutes to 10 minutes
 - Reduces baseline polling frequency
 
 ## Expected Results
@@ -95,7 +95,7 @@ curl http://localhost:8001/config
 Expected:
 ```json
 {
-  "autoRefreshIntervalMinutes": 8,
+  "autoRefreshIntervalMinutes": 10,
   "cacheEnabled": true,
   "cacheTTLSeconds": 120
 }
