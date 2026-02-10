@@ -1258,8 +1258,8 @@ function fetchFlights() {
                     val.style.whiteSpace = "nowrap";
                     val.title = value;  // Show full name on hover
                 } else if (column === "speed") {
-                    // Show speed in knots (already converted from km/h in backend)
-                    val.textContent = Math.round(value / 1.852);  // Convert km/h back to knots
+                    // Show speed in MPH (value is in km/h from backend)
+                    val.textContent = Math.round(value / 1.60934);  // Convert km/h to MPH
                 } else if (column === "aircraft_elevation_feet") {
                     // Show GPS altitude in feet with comma formatting, or as flight level if > 18000
                     const altitude = Math.round(value);
