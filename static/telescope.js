@@ -1,37 +1,723 @@
 /**
- * Telescope Control Frontend
- * Handles UI interactions and API calls for Seestar telescope control
+ * Telescope Control Interface - Frontend Logic
+ * Manages connection, status polling, target selection, capture controls,
+ * live preview, and file management for Seestar S50 telescope.
  */
 
-// State
-let statusPollingInterval = null;
-let lastUpdateDisplayInterval = null;
+// State Management
 let isConnected = false;
-let lastUpdateTime = null;
+let isRecording = false;
+let statusPollInterval = null;
+let visibilityPollInterval = null;
+let lastUpdateInterval = null;
+let transitPollInterval = null;
+let transitCaptureActive = false;
+let upcomingTransits = [];
+let currentZoom = 1.0;
+let zoomStep = 0.25;
+let isSimulating = false;
+let simulationVideo = null;
+let simulationFiles = []; // Track temporary simulation files
 
-// DOM Elements
-const elements = {
-    // Connection
-    connectBtn: document.getElementById('connectBtn'),
-    disconnectBtn: document.getElementById('disconnectBtn'),
-    statusDot: document.getElementById('statusDot'),
-    connectionStatus: document.getElementById('connectionStatus'),
-    connectionInfo: document.getElementById('connectionInfo'),
+// Initialize on page load
+document.addEventListener('DOMContentLoaded', () => {
+    console.log('[Telescope] Initializing interface');
+    
+    // Check initial status
+    updateStatus();
+    
+    // Start polling for target visibility
+    updateTargetVisibility();
+    visibilityPollInterval = setInterval(updateTargetVisibility, 30000); // Every 30s
+    
+    // Update "last updated" timer
+    lastUpdateInterval = setInterval(updateLastUpdateTime, 1000); // Every 1s
+    
+    // Load initial file list
+    refreshFiles();
+    
+    // Start transit polling
+    checkTransits();
+    transitPollInterval = setInterval(checkTransits, 15000); // Every 15s
+    
+    // Load auto-capture preference
+    const autoCapture = localStorage.getItem('autoCaptureTransits');
+    if (autoCapture !== null) {
+        document.getElementById('autoCaptureToggle').checked = autoCapture === 'true';
+    }
+});
 
+// ============================================================================
+// CONNECTION MANAGEMENT
+// ============================================================================
 
-    // Files
-    refreshFilesBtn: document.getElementById('refreshFilesBtn'),
-    fileCount: document.getElementById('fileCount'),
-    filesList: document.getElementById('filesList'),
+async function connect() {
+    console.log('[Telescope] Connecting...');
+    showStatus('Connecting to telescope...', 'info');
+    
+    const result = await apiCall('/telescope/connect', 'POST');
+    if (result && result.success) {
+        isConnected = true;
+        showStatus('Connected successfully!', 'success');
+        
+        // Start status polling
+        if (statusPollInterval) clearInterval(statusPollInterval);
+        statusPollInterval = setInterval(updateStatus, 2000); // Every 2s
+        
+        updateConnectionUI();
+        updateStatus();
+        startPreview();
+    }
+}
 
-    // Status Message
-    statusMessage: document.getElementById('statusMessage'),
+async function disconnect() {
+    console.log('[Telescope] Disconnecting...');
+    showStatus('Disconnecting...', 'info');
+    
+    const result = await apiCall('/telescope/disconnect', 'POST');
+    if (result && result.success) {
+        isConnected = false;
+        isRecording = false;
+        showStatus('Disconnected', 'info');
+        
+        // Stop polling
+        if (statusPollInterval) {
+            clearInterval(statusPollInterval);
+            statusPollInterval = null;
+        }
+        
+        updateConnectionUI();
+        stopPreview();
+    }
+}
 
-    // Last Update Status
-    lastUpdateStatus: document.getElementById('lastUpdateStatus')
-};
+function updateConnectionUI() {
+    // Update connection status display
+    const statusDot = document.getElementById('statusDot');
+    const statusText = document.getElementById('connectionStatus');
+    const connectBtn = document.getElementById('connectBtn');
+    const disconnectBtn = document.getElementById('disconnectBtn');
+    
+    if (!statusDot || !statusText) {
+        console.warn('[Telescope] Connection UI elements not found');
+        return;
+    }
+    
+    if (isConnected) {
+        statusDot.className = 'status-dot connected';
+        statusText.textContent = 'Connected';
+        if (connectBtn) connectBtn.disabled = true;
+        if (disconnectBtn) disconnectBtn.disabled = false;
+    } else {
+        statusDot.className = 'status-dot disconnected';
+        statusText.textContent = 'Disconnected';
+        if (connectBtn) connectBtn.disabled = false;
+        if (disconnectBtn) disconnectBtn.disabled = true;
+    }
+    
+    // Enable/disable all controls based on connection
+    updateButtonStates();
+}
 
-// API Functions
+function updateButtonStates() {
+    // Update all buttons that require connection
+    const buttons = [
+        'targetSunBtn',
+        'targetMoonBtn', 
+        'capturePhotoBtn',
+        'startRecordingBtn',
+        'stopRecordingBtn',
+        'refreshFilesBtn'
+    ];
+    
+    buttons.forEach(id => {
+        const btn = document.getElementById(id);
+        if (btn && !btn.classList.contains('force-enabled')) {
+            btn.disabled = !isConnected;
+        }
+    });
+}
+
+async function updateStatus() {
+    const result = await apiCall('/telescope/status', 'GET');
+    if (result) {
+        isConnected = result.connected || false;
+        // Don't overwrite isRecording if we're actively recording locally
+        // The status endpoint doesn't know about our RTSP recordings
+        if (!isRecording) {
+            isRecording = result.is_recording || false;
+        }
+        
+        updateConnectionUI();
+        updateRecordingUI();
+        
+        // Update last update timestamp
+        if (result.last_update) {
+            const timestamp = document.getElementById('lastUpdate');
+            if (timestamp) {
+                const date = new Date(result.last_update);
+                timestamp.dataset.lastUpdate = date.getTime();
+            }
+        }
+    }
+}
+
+function updateLastUpdateTime() {
+    const timestamp = document.getElementById('lastUpdate');
+    if (!timestamp || !timestamp.dataset.lastUpdate) return;
+    
+    const lastUpdate = parseInt(timestamp.dataset.lastUpdate);
+    const now = Date.now();
+    const seconds = Math.floor((now - lastUpdate) / 1000);
+    
+    if (seconds < 60) {
+        timestamp.textContent = `${seconds}s ago`;
+    } else if (seconds < 3600) {
+        timestamp.textContent = `${Math.floor(seconds / 60)}m ago`;
+    } else {
+        timestamp.textContent = `${Math.floor(seconds / 3600)}h ago`;
+    }
+}
+
+// ============================================================================
+// TARGET SELECTION & VISIBILITY
+// ============================================================================
+
+async function updateTargetVisibility() {
+    console.log('[Telescope] Updating target visibility');
+    
+    const result = await apiCall('/telescope/target/visibility', 'GET');
+    if (!result) return;
+    
+    // Update Sun
+    const sunBadge = document.getElementById('sunBadge');
+    const sunCoords = document.getElementById('sunCoords');
+    const sunBtn = document.getElementById('targetSunBtn');
+    
+    if (result.sun && sunCoords && sunBadge) {
+        sunCoords.textContent = `Alt: ${result.sun.altitude.toFixed(1)}° / Az: ${result.sun.azimuth.toFixed(1)}°`;
+        
+        if (result.sun.visible) {
+            sunBadge.textContent = 'Visible';
+            sunBadge.className = 'visibility-badge visible';
+            if (isConnected && sunBtn) sunBtn.disabled = false;
+        } else {
+            sunBadge.textContent = 'Below Horizon';
+            sunBadge.className = 'visibility-badge not-visible';
+            if (sunBtn) sunBtn.disabled = true;
+        }
+    }
+    
+    // Update Moon
+    const moonBadge = document.getElementById('moonBadge');
+    const moonCoords = document.getElementById('moonCoords');
+    const moonBtn = document.getElementById('targetMoonBtn');
+    
+    if (result.moon && moonCoords && moonBadge) {
+        moonCoords.textContent = `Alt: ${result.moon.altitude.toFixed(1)}° / Az: ${result.moon.azimuth.toFixed(1)}°`;
+        
+        if (result.moon.visible) {
+            moonBadge.textContent = 'Visible';
+            moonBadge.className = 'visibility-badge visible';
+            if (isConnected && moonBtn) moonBtn.disabled = false;
+        } else {
+            moonBadge.textContent = 'Below Horizon';
+            moonBadge.className = 'visibility-badge not-visible';
+            if (moonBtn) moonBtn.disabled = true;
+        }
+    }
+}
+
+async function switchToSun() {
+    console.log('[Telescope] Switching to Sun');
+    showStatus('Switching to Solar mode...', 'info');
+    
+    const result = await apiCall('/telescope/target/sun', 'POST');
+    if (result && result.success) {
+        showStatus('Switched to Solar mode', 'success', 5000);
+        
+        // Show solar filter warning
+        showWarning(
+            '⚠️ SOLAR FILTER REQUIRED - Ensure solar filter is installed before viewing!',
+            'warning',
+            10000
+        );
+    }
+}
+
+async function switchToMoon() {
+    console.log('[Telescope] Switching to Moon');
+    showStatus('Switching to Lunar mode...', 'info');
+    
+    const result = await apiCall('/telescope/target/moon', 'POST');
+    if (result && result.success) {
+        showStatus('Switched to Lunar mode', 'success', 5000);
+        
+        // Show lunar filter reminder
+        showWarning(
+            '✓ Remove solar filter if installed - Lunar viewing safe without filter',
+            'info',
+            10000
+        );
+    }
+}
+
+// ============================================================================
+// CAPTURE CONTROLS
+// ============================================================================
+
+async function capturePhoto() {
+    console.log('[Telescope] Capturing photo');
+    
+    showStatus('Capturing photo...', 'info');
+    
+    // Handle simulation mode
+    if (isSimulating) {
+        simulateCapturePhoto();
+        return;
+    }
+    
+    const result = await apiCall('/telescope/capture/photo', 'POST', {});
+    
+    if (result && result.success) {
+        showStatus('Photo captured successfully!', 'success', 5000);
+        
+        // Refresh file list after a short delay
+        setTimeout(refreshFiles, 2000);
+    }
+}
+
+// Recording state
+let recordingStartTime = null;
+let recordingTimerInterval = null;
+
+async function startRecording() {
+    console.log('[Telescope] Starting recording');
+    showStatus('Starting recording...', 'info');
+    
+    const durationInput = document.getElementById('videoDuration');
+    const intervalInput = document.getElementById('frameInterval');
+    
+    const duration = durationInput ? parseInt(durationInput.value) : 30;
+    const interval = intervalInput ? parseFloat(intervalInput.value) : 0;
+    
+    // Handle simulation mode
+    if (isSimulating) {
+        simulateStartRecording(duration, interval);
+        return;
+    }
+    
+    const result = await apiCall('/telescope/recording/start', 'POST', {
+        duration: duration,
+        interval: interval
+    });
+    
+    if (result && result.success) {
+        isRecording = true;
+        recordingStartTime = Date.now();
+        updateRecordingUI();
+        startRecordingTimer(duration);
+        
+        const mode = interval > 0 ? `timelapse (${interval}s interval)` : 'normal';
+        showStatus(`Recording started (${duration}s ${mode})`, 'success', 5000);
+    }
+}
+
+async function stopRecording() {
+    console.log('[Telescope] Stopping recording');
+    showStatus('Stopping recording...', 'info');
+    
+    // Handle simulation mode
+    if (isSimulating) {
+        simulateStopRecording();
+        return;
+    }
+    
+    const result = await apiCall('/telescope/recording/stop', 'POST');
+    if (result && result.success) {
+        isRecording = false;
+        stopRecordingTimer();
+        updateRecordingUI();
+        showStatus('Recording stopped', 'success', 5000);
+        
+        // Refresh file list after a short delay
+        setTimeout(refreshFiles, 2000);
+    }
+}
+
+function startRecordingTimer(totalDuration) {
+    const timerSpan = document.getElementById('recordingTimer');
+    if (!timerSpan) return;
+    
+    // Update timer every 100ms
+    recordingTimerInterval = setInterval(() => {
+        if (!recordingStartTime) return;
+        
+        const elapsed = (Date.now() - recordingStartTime) / 1000;
+        const remaining = Math.max(0, totalDuration - elapsed);
+        
+        timerSpan.textContent = `${elapsed.toFixed(1)}s / ${totalDuration}s`;
+        
+        // Auto-stop when duration reached
+        if (remaining <= 0 && isRecording) {
+            stopRecording();
+        }
+    }, 100);
+}
+
+function stopRecordingTimer() {
+    if (recordingTimerInterval) {
+        clearInterval(recordingTimerInterval);
+        recordingTimerInterval = null;
+    }
+    recordingStartTime = null;
+    
+    const timerSpan = document.getElementById('recordingTimer');
+    if (timerSpan) timerSpan.textContent = '';
+}
+
+function updateRecordingUI() {
+    const startBtn = document.getElementById('startRecordingBtn');
+    const stopBtn = document.getElementById('stopRecordingBtn');
+    const recordingDot = document.getElementById('recordingDot');
+    const recordingText = document.getElementById('recordingText');
+    
+    console.log('[Telescope] updateRecordingUI called, isRecording:', isRecording);
+    console.log('[Telescope] Start button:', startBtn, 'Stop button:', stopBtn);
+    
+    if (isRecording) {
+        if (startBtn) {
+            startBtn.disabled = true;
+            startBtn.style.display = 'none';
+        }
+        if (stopBtn) {
+            stopBtn.disabled = false;
+            stopBtn.style.display = 'inline-block';  // Use inline-block instead of block
+            console.log('[Telescope] Stop button should now be visible');
+        }
+        if (recordingDot) recordingDot.className = 'status-dot recording';
+        if (recordingText) recordingText.textContent = 'Recording...';
+    } else {
+        if (startBtn) {
+            startBtn.disabled = !isConnected;
+            startBtn.style.display = 'inline-block';  // Use inline-block instead of block
+        }
+        if (stopBtn) {
+            stopBtn.disabled = true;
+            stopBtn.style.display = 'none';
+        }
+        if (recordingDot) recordingDot.className = 'status-dot';
+        if (recordingText) recordingText.textContent = 'Not Recording';
+    }
+}
+
+// ============================================================================
+// LIVE PREVIEW
+// ============================================================================
+
+function startPreview() {
+    console.log('[Telescope] Starting preview stream');
+    
+    const previewImage = document.getElementById('previewImage');
+    const previewPlaceholder = document.getElementById('previewPlaceholder');
+    const previewStatusDot = document.getElementById('previewStatusDot');
+    const previewStatusText = document.getElementById('previewStatusText');
+    const previewTitleIcon = document.getElementById('previewTitleIcon');
+    
+    if (!previewImage) {
+        console.error('[Telescope] Preview image element not found');
+        return;
+    }
+    
+    // Set stream URL (adds timestamp to avoid caching)
+    const streamUrl = `/telescope/preview/stream.mjpg?t=${Date.now()}`;
+    console.log('[Telescope] Loading stream from:', streamUrl);
+    
+    previewImage.src = streamUrl;
+    
+    // Show image, hide placeholder
+    previewImage.style.display = 'block';
+    if (previewPlaceholder) {
+        previewPlaceholder.style.display = 'none';
+    }
+    
+    // Set status to connecting
+    if (previewStatusDot) previewStatusDot.className = 'status-dot';
+    if (previewStatusText) previewStatusText.textContent = 'Connecting...';
+    if (previewTitleIcon) previewTitleIcon.textContent = '🟡';
+    
+    // After 2 seconds, assume stream is active (MJPEG streams don't trigger onload)
+    setTimeout(() => {
+        console.log('[Telescope] Stream assumed active');
+        if (previewStatusDot) previewStatusDot.className = 'status-dot connected';
+        if (previewStatusText) previewStatusText.textContent = 'Live Stream Active';
+        if (previewTitleIcon) previewTitleIcon.textContent = '🟢';
+        
+        // Fit to window
+        zoomFit();
+    }, 2000);
+    
+    // Error handler
+    previewImage.onerror = () => {
+        console.error('[Telescope] Preview stream failed');
+        if (previewStatusDot) previewStatusDot.className = 'status-dot disconnected';
+        if (previewStatusText) previewStatusText.textContent = 'Stream Error';
+        if (previewTitleIcon) previewTitleIcon.textContent = '🔴';
+    };
+}
+
+function zoomIn() {
+    currentZoom += zoomStep;
+    if (currentZoom > 3.0) currentZoom = 3.0;
+    applyZoom();
+}
+
+function zoomOut() {
+    currentZoom -= zoomStep;
+    if (currentZoom < 0.5) currentZoom = 0.5;
+    applyZoom();
+}
+
+function zoomReset() {
+    currentZoom = 1.0;
+    applyZoom();
+}
+
+function zoomFit() {
+    // Fit the image/video to container
+    currentZoom = 1.0;
+    const image = document.getElementById('previewImage');
+    const video = document.getElementById('simulationVideo');
+    const container = document.getElementById('previewContainer');
+    
+    if (!container) return;
+    
+    const element = (video && video.style.display !== 'none') ? video : image;
+    if (!element) return;
+    
+    // Remove transform to reset
+    element.classList.remove('zoomed');
+    element.style.transform = '';
+    element.style.width = '100%';
+    element.style.height = 'auto';
+    
+    // Reset scroll
+    container.scrollTop = 0;
+    container.scrollLeft = 0;
+    
+    updateSlider();
+}
+
+function setZoom(value) {
+    currentZoom = value / 100;
+    applyZoom();
+}
+
+function updateSlider() {
+    const slider = document.getElementById('zoomSlider');
+    const percent = document.getElementById('zoomPercent');
+    if (slider) slider.value = currentZoom * 100;
+    if (percent) percent.textContent = Math.round(currentZoom * 100) + '%';
+}
+
+function applyZoom() {
+    const image = document.getElementById('previewImage');
+    const video = document.getElementById('simulationVideo');
+    const container = document.getElementById('previewContainer');
+    
+    if (!container) return;
+    
+    // Determine which element is active (image or video)
+    const element = (video && video.style.display !== 'none') ? video : image;
+    if (!element) return;
+    
+    if (currentZoom === 1.0) {
+        element.classList.remove('zoomed');
+        element.style.transform = '';
+        element.style.width = '100%';
+        element.style.height = 'auto';
+        container.scrollTop = 0;
+        container.scrollLeft = 0;
+        updateSlider();
+        return;
+    }
+    
+    // Store current scroll position as percentage
+    const scrollXPercent = container.scrollLeft / (container.scrollWidth - container.clientWidth || 1);
+    const scrollYPercent = container.scrollTop / (container.scrollHeight - container.clientHeight || 1);
+    
+    // Apply zoom using CSS transform
+    element.classList.add('zoomed');
+    element.style.transform = `scale(${currentZoom})`;
+    element.style.transformOrigin = 'center center';
+    element.style.width = '100%';
+    element.style.height = 'auto';
+    
+    updateSlider();
+    
+    // Restore scroll position after zoom
+    setTimeout(() => {
+        container.scrollLeft = scrollXPercent * (container.scrollWidth - container.clientWidth);
+        container.scrollTop = scrollYPercent * (container.scrollHeight - container.clientHeight);
+    }, 10);
+}
+
+function centerPreview() {
+    const container = document.getElementById('previewContainer');
+    const image = document.getElementById('previewImage');
+    
+    if (!container || !image) return;
+    
+    // Wait a bit for image to render, then center
+    setTimeout(() => {
+        const scrollHeight = container.scrollHeight;
+        const clientHeight = container.clientHeight;
+        const centerPosition = (scrollHeight - clientHeight) / 2;
+        
+        container.scrollTop = centerPosition;
+        console.log('[Telescope] Preview centered at', centerPosition);
+    }, 500);
+}
+
+function stopPreview() {
+    console.log('[Telescope] Stopping preview stream');
+    
+    const previewImage = document.getElementById('previewImage');
+    const previewPlaceholder = document.getElementById('previewPlaceholder');
+    const previewStatusDot = document.getElementById('previewStatusDot');
+    const previewStatusText = document.getElementById('previewStatusText');
+    const previewTitleIcon = document.getElementById('previewTitleIcon');
+    
+    if (previewImage) {
+        previewImage.src = '';
+        previewImage.style.display = 'none';
+    }
+    
+    // Show placeholder again
+    if (previewPlaceholder) previewPlaceholder.style.display = 'flex';
+    
+    if (previewStatusDot) previewStatusDot.className = 'status-dot';
+    if (previewStatusText) previewStatusText.textContent = 'Preview Inactive';
+    if (previewTitleIcon) previewTitleIcon.textContent = '⚫';
+}
+
+// ============================================================================
+// FILE MANAGEMENT
+// ============================================================================
+
+async function refreshFiles() {
+    console.log('[Telescope] Refreshing file list');
+    
+    const result = await apiCall('/telescope/files', 'GET');
+    if (!result) return;
+    
+    const fileCount = document.getElementById('fileCount');
+    const files = result.files || [];
+    
+    // Store globally for modal
+    window.currentFiles = files.map(f => ({ path: f.url, name: f.name }));
+    
+    // Update count badge
+    if (fileCount) {
+        fileCount.textContent = files.length;
+    }
+    
+    // Update filmstrip
+    updateFilmstrip(window.currentFiles);
+    
+    // Enable/disable controls
+    const refreshBtn = document.getElementById('refreshFilesBtn');
+    const expandBtn = document.getElementById('expandFilesBtn');
+    if (refreshBtn) refreshBtn.disabled = false;
+    if (expandBtn) expandBtn.disabled = files.length === 0;
+}
+
+function downloadFile(url, filename) {
+    console.log('[Telescope] Downloading file:', filename);
+    
+    // Create temporary link and trigger download
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = filename;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    
+    showStatus(`Downloading ${filename}...`, 'info', 3000);
+}
+
+async function deleteFile(url, filename) {
+    if (!confirm(`Delete ${filename}?`)) {
+        return;
+    }
+    
+    console.log('[Telescope] Deleting file:', filename);
+    
+    try {
+        const result = await apiCall('/telescope/files/delete', 'POST', {
+            path: url.replace('/static/', '')
+        });
+        
+        if (result && result.success) {
+            showStatus(`Deleted ${filename}`, 'success', 3000);
+            refreshFiles();
+        }
+    } catch (error) {
+        console.error('[Telescope] Delete failed:', error);
+        showStatus(`Failed to delete ${filename}`, 'error', 5000);
+    }
+}
+
+// ============================================================================
+// UI HELPERS
+// ============================================================================
+
+function showStatus(message, type = 'info', autohide = 0) {
+    const statusBox = document.getElementById('statusMessage');
+    if (!statusBox) return;
+    
+    statusBox.textContent = message;
+    statusBox.className = `status-message ${type}`;
+    statusBox.style.display = 'block';
+    
+    // Auto-hide after timeout
+    if (autohide > 0) {
+        setTimeout(() => {
+            statusBox.style.display = 'none';
+        }, autohide);
+    }
+}
+
+function showWarning(message, type = 'warning', autohide = 0) {
+    // Create or update warning box
+    let warningBox = document.getElementById('dynamicWarning');
+    
+    if (!warningBox) {
+        warningBox = document.createElement('div');
+        warningBox.id = 'dynamicWarning';
+        warningBox.className = `warning-box ${type}`;
+        
+        const targetSection = document.querySelector('.target-selection');
+        if (targetSection) {
+            targetSection.appendChild(warningBox);
+        }
+    }
+    
+    warningBox.textContent = message;
+    warningBox.className = `warning-box ${type}`;
+    warningBox.style.display = 'block';
+    
+    // Auto-hide after timeout
+    if (autohide > 0) {
+        setTimeout(() => {
+            warningBox.style.display = 'none';
+        }, autohide);
+    }
+}
+
+// ============================================================================
+// API HELPERS
+// ============================================================================
 
 async function apiCall(endpoint, method = 'GET', body = null) {
     try {
@@ -41,251 +727,467 @@ async function apiCall(endpoint, method = 'GET', body = null) {
                 'Content-Type': 'application/json'
             }
         };
-
+        
         if (body) {
             options.body = JSON.stringify(body);
         }
-
+        
         const response = await fetch(endpoint, options);
         const data = await response.json();
-
+        
         if (!response.ok) {
             throw new Error(data.error || `HTTP ${response.status}`);
         }
-
+        
         return data;
+        
     } catch (error) {
-        console.error(`API call failed: ${endpoint}`, error);
-        throw error;
+        console.error(`[Telescope] API call failed: ${endpoint}`, error);
+        showStatus(`Error: ${error.message}`, 'error');
+        return null;
     }
 }
 
-async function connectTelescope() {
+// ============================================================================
+// TRANSIT AUTO-CAPTURE
+// ============================================================================
+
+async function checkTransits() {
     try {
-        showMessage('Connecting to telescope...', 'info');
-        const result = await apiCall('/telescope/connect', 'POST');
-        showMessage(result.message, 'success');
-        await updateStatus();
+        const response = await fetch('/telescope/transit/status');
+        if (!response.ok) return;
+        
+        const data = await response.json();
+        upcomingTransits = data.transits || [];
+        
+        updateTransitList();
+        checkAutoCapture();
     } catch (error) {
-        showMessage(`Connection failed: ${error.message}`, 'error');
+        console.warn('[Telescope] Transit check failed:', error);
     }
 }
 
-async function disconnectTelescope() {
-    try {
-        const result = await apiCall('/telescope/disconnect', 'POST');
-        showMessage(result.message, 'success');
-        await updateStatus();
-    } catch (error) {
-        showMessage(`Disconnect failed: ${error.message}`, 'error');
-    }
-}
-
-async function toggleSimulateMode() {
-    try {
-        const result = await apiCall('/telescope/simulate', 'POST');
-        const btn = document.getElementById('simulateBtn');
-        if (result.simulate_mode) {
-            btn.classList.add('btn-active');
-            btn.textContent = '🎭 Simulating';
-        } else {
-            btn.classList.remove('btn-active');
-            btn.textContent = '🎭 Simulate';
-        }
-        showMessage(result.message, 'success');
-        await updateStatus();
-    } catch (error) {
-        showMessage(`Toggle simulate failed: ${error.message}`, 'error');
-    }
-}
-
-
-
-async function refreshFiles() {
-    try {
-        const result = await apiCall('/telescope/files', 'GET');
-        displayFiles(result);
-        showMessage(`Loaded ${result.total_files} files from ${result.albums.length} albums`, 'success');
-    } catch (error) {
-        showMessage(`Failed to load files: ${error.message}`, 'error');
-        elements.filesList.innerHTML = '<p class="files-empty">Failed to load files</p>';
-    }
-}
-
-async function updateStatus() {
-    try {
-        const status = await apiCall('/telescope/status', 'GET');
-
-        // Record update time
-        lastUpdateTime = Date.now();
-
-        // Update connection status
-        isConnected = status.connected;
-        elements.statusDot.className = 'status-dot' + (isConnected ? ' connected' : '');
-
-        // Show mock mode indicator
-        const mockIndicator = status.mock_mode ? ' [MOCK MODE]' : '';
-        elements.connectionStatus.textContent = (isConnected ? 'Connected' : 'Disconnected') + mockIndicator;
-
-        if (isConnected) {
-            elements.connectionInfo.textContent = `${status.host}:${status.port}`;
-        } else {
-            elements.connectionInfo.textContent = status.mock_mode ? 'Mock telescope ready' : '';
-        }
-
-        // Update UI state
-        updateUIState();
-
-        // Update last update display
-        updateLastUpdateDisplay();
-
-    } catch (error) {
-        console.error('Status update failed:', error);
-        // Don't show error message for status polling failures
-    }
-}
-
-// UI State Management
-
-async function showSetupInstructions() {
-    try {
-        const target = await apiCall('/telescope/target', 'GET');
-
-        const targetEmoji = target.target === 'sun' ? '☀️' : '🌙';
-        const targetName = target.target === 'sun' ? 'Sun' : 'Moon';
-
-        const message = `${targetEmoji} Please set up your Seestar to track the ${targetName}.\n\nFlymoon will automatically start/stop recording during transit events.`;
-
-        alert(message);
-    } catch (error) {
-        console.error('Failed to get target info:', error);
-    }
-}
-
-function updateUIState() {
-    // Connection buttons
-    elements.connectBtn.disabled = isConnected;
-    elements.disconnectBtn.disabled = !isConnected;
-
-    // Files button
-    elements.refreshFilesBtn.disabled = !isConnected;
-}
-
-// Status Polling
-
-function startStatusPolling() {
-    // Initial update
-    updateStatus();
-
-    // Poll every 2 seconds
-    statusPollingInterval = setInterval(updateStatus, 2000);
-
-    // Update last update display every 15 seconds
-    updateLastUpdateDisplay();
-    lastUpdateDisplayInterval = setInterval(updateLastUpdateDisplay, 15000);
-}
-
-function stopStatusPolling() {
-    if (statusPollingInterval) {
-        clearInterval(statusPollingInterval);
-        statusPollingInterval = null;
-    }
-    if (lastUpdateDisplayInterval) {
-        clearInterval(lastUpdateDisplayInterval);
-        lastUpdateDisplayInterval = null;
-    }
-}
-
-function updateLastUpdateDisplay() {
-    console.log('updateLastUpdateDisplay called, lastUpdateTime:', lastUpdateTime);
-
-    if (!lastUpdateTime) {
-        console.log('No lastUpdateTime, returning early');
+function updateTransitList() {
+    const list = document.getElementById('transitList');
+    if (!list) return;
+    
+    if (upcomingTransits.length === 0) {
+        list.innerHTML = '<p class="empty-state">No transits detected</p>';
         return;
     }
-
-    const now = Date.now();
-    const elapsedSeconds = Math.floor((now - lastUpdateTime) / 1000);
-    const minutes = Math.floor(elapsedSeconds / 60);
-    const seconds = elapsedSeconds % 60;
-
-    const timeStr = `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
-
-    const updateDate = new Date(lastUpdateTime);
-    const hours = String(updateDate.getHours()).padStart(2, '0');
-    const mins = String(updateDate.getMinutes()).padStart(2, '0');
-    const secs = String(updateDate.getSeconds()).padStart(2, '0');
-    const timestampStr = `${hours}:${mins}:${secs}`;
-
-    const displayText = `Time since last update ${timeStr} at ${timestampStr}`;
-    console.log('Setting text to:', displayText);
-    console.log('Element:', elements.lastUpdateStatus);
-
-    elements.lastUpdateStatus.textContent = displayText;
+    
+    list.innerHTML = upcomingTransits.map(transit => {
+        const countdown = formatCountdown(transit.seconds_until);
+        const probabilityClass = transit.probability.toLowerCase();
+        
+        return `
+            <div class="transit-item ${probabilityClass}">
+                <div class="transit-header">
+                    <span class="transit-flight">✈️ ${transit.flight}</span>
+                    <span class="transit-countdown">${countdown}</span>
+                </div>
+                <div class="transit-info">
+                    ${transit.target} • ${transit.probability} probability<br>
+                    Alt: ${transit.altitude}° • Az: ${transit.azimuth}°
+                </div>
+                <div class="transit-actions">
+                    <button class="btn-transit primary" onclick="recordTransit('${transit.flight}', ${transit.seconds_until})">
+                        📹 Record Now
+                    </button>
+                    <button class="btn-transit dismiss" onclick="dismissTransit('${transit.flight}')">✕</button>
+                </div>
+            </div>
+        `;
+    }).join('');
 }
 
-// File Display
+function formatCountdown(seconds) {
+    if (seconds < 0) return 'PASSED';
+    const mins = Math.floor(seconds / 60);
+    const secs = seconds % 60;
+    return `${mins}:${secs.toString().padStart(2, '0')}`;
+}
 
-function displayFiles(data) {
-    if (!data.albums || data.albums.length === 0) {
-        elements.filesList.innerHTML = '<p class="files-empty">No files found</p>';
-        elements.fileCount.textContent = '';
-        return;
+function checkAutoCapture() {
+    const autoCapture = document.getElementById('autoCaptureToggle').checked;
+    if (!autoCapture || !isConnected || transitCaptureActive) return;
+    
+    // Check for imminent transits (within 15 seconds)
+    const imminent = upcomingTransits.find(t => t.seconds_until <= 15 && t.seconds_until > 0);
+    if (imminent) {
+        console.log('[Telescope] Auto-capturing imminent transit:', imminent.flight);
+        recordTransit(imminent.flight, imminent.seconds_until);
     }
-
-    elements.fileCount.textContent = `${data.total_files} file(s)`;
-
-    let html = '';
-    data.albums.forEach(album => {
-        html += `<div class="album">`;
-        html += `<div class="album-name">📁 ${album.name}</div>`;
-
-        if (album.files && album.files.length > 0) {
-            album.files.forEach(file => {
-                html += `<div class="file-item">`;
-                html += `<a href="${file.url}" class="file-link" target="_blank">📹 ${file.name}</a>`;
-                html += `</div>`;
-            });
-        } else {
-            html += `<p class="files-empty">No files in this album</p>`;
-        }
-
-        html += `</div>`;
-    });
-
-    elements.filesList.innerHTML = html;
 }
 
-// Status Message
-
-function showMessage(message, type = 'info') {
-    elements.statusMessage.textContent = message;
-    elements.statusMessage.className = `status-message ${type}`;
-
-    // Auto-hide after 5 seconds
+async function recordTransit(flight, secondsUntil) {
+    // Stop any current recording
+    if (isRecording) {
+        console.log('[Telescope] Interrupting current recording for transit');
+        await stopRecording();
+        await new Promise(resolve => setTimeout(resolve, 1000)); // Wait for stop
+    }
+    
+    // Show overlay
+    transitCaptureActive = true;
+    const overlay = document.getElementById('transitOverlay');
+    const overlayInfo = document.getElementById('transitOverlayInfo');
+    if (overlay) {
+        overlayInfo.textContent = `${flight} in ${secondsUntil}s`;
+        overlay.style.display = 'flex';
+    }
+    
+    // Calculate recording duration (pre + post buffers)
+    const preBuffer = 10; // seconds before transit
+    const postBuffer = 10; // seconds after transit
+    const totalDuration = Math.max(secondsUntil - preBuffer, 0) + postBuffer;
+    
+    // Start recording
+    document.getElementById('videoDuration').value = totalDuration;
+    document.getElementById('frameInterval').value = 0; // Normal video
+    await startRecording();
+    
+    // Hide overlay after transit passes
     setTimeout(() => {
-        elements.statusMessage.style.display = 'none';
-    }, 5000);
+        if (overlay) overlay.style.display = 'none';
+        transitCaptureActive = false;
+    }, (secondsUntil + postBuffer) * 1000);
 }
 
-// Event Listeners
+function dismissTransit(flight) {
+    upcomingTransits = upcomingTransits.filter(t => t.flight !== flight);
+    updateTransitList();
+}
 
-elements.connectBtn.addEventListener('click', connectTelescope);
-elements.disconnectBtn.addEventListener('click', disconnectTelescope);
-elements.refreshFilesBtn.addEventListener('click', refreshFiles);
-document.getElementById('simulateBtn').addEventListener('click', toggleSimulateMode);
-
-// Page Lifecycle
-
-window.addEventListener('load', () => {
-    console.log('Telescope control interface loaded');
-    startStatusPolling();
-    showSetupInstructions();
+// Save auto-capture preference
+document.addEventListener('DOMContentLoaded', () => {
+    const toggle = document.getElementById('autoCaptureToggle');
+    if (toggle) {
+        toggle.addEventListener('change', (e) => {
+            localStorage.setItem('autoCaptureTransits', e.target.checked);
+        });
+    }
 });
+
+// ============================================================================
+// FILMSTRIP & MODAL
+// ============================================================================
+
+function toggleFilesModal() {
+    const modal = document.getElementById('filesModal');
+    if (!modal) return;
+    
+    if (modal.style.display === 'none' || !modal.style.display) {
+        modal.style.display = 'flex';
+        updateFilesGrid();
+    } else {
+        modal.style.display = 'none';
+    }
+}
+
+function updateFilmstrip(files) {
+    const filmstrip = document.getElementById('filmstripList');
+    if (!filmstrip) return;
+    
+    if (files.length === 0) {
+        filmstrip.innerHTML = '<p class="empty-state">No files captured yet</p>';
+        return;
+    }
+    
+    filmstrip.innerHTML = files.slice(-10).reverse().map(file => {
+        const isTemp = file.isSimulation;
+        const badge = isTemp ? '<span class="temp-badge">TEMP</span>' : '';
+        const itemClass = isTemp ? 'filmstrip-item temp-file' : 'filmstrip-item';
+        
+        return `
+        <div class="${itemClass}" onclick="viewFile('${file.path}')">
+            ${badge}
+            <img src="${file.path}" alt="${file.name}" class="filmstrip-thumbnail">
+            <div class="filmstrip-info">
+                <span>${file.name.split('_')[0]}</span>
+                <div class="filmstrip-actions">
+                    <button class="btn-icon" onclick="event.stopPropagation(); downloadFile('${file.path}', '${file.name}')" title="Download" ${isTemp ? 'disabled' : ''}>⬇️</button>
+                    <button class="btn-icon btn-danger" onclick="event.stopPropagation(); deleteFile('${file.path}', '${file.name}')" title="Delete" ${isTemp ? 'disabled' : ''}>🗑️</button>
+                </div>
+            </div>
+        </div>
+    `;
+    }).join('');
+}
+
+function updateFilesGrid() {
+    const grid = document.getElementById('filesGrid');
+    if (!grid) return;
+    
+    // Get files from the global state (refreshed by refreshFiles)
+    const files = window.currentFiles || [];
+    
+    if (files.length === 0) {
+        grid.innerHTML = '<p class="empty-state">No files</p>';
+        return;
+    }
+    
+    grid.innerHTML = files.map(file => `
+        <div class="file-item">
+            <img src="${file.path}" alt="${file.name}" class="file-thumbnail" onclick="viewFile('${file.path}')">
+            <div class="file-info">
+                <span class="file-name" title="${file.name}">${file.name}</span>
+                <div class="file-actions">
+                    <button class="btn-icon" onclick="downloadFile('${file.path}', '${file.name}')" title="Download">⬇️</button>
+                    <button class="btn-icon btn-danger" onclick="deleteFile('${file.path}', '${file.name}')" title="Delete">🗑️</button>
+                </div>
+            </div>
+        </div>
+    `).join('');
+}
+
+function viewFile(path) {
+    window.open(path, '_blank');
+}
+
+// ============================================================================
+// SIMULATION MODE
+// ============================================================================
+
+async function toggleSimulation() {
+    if (!isSimulating) {
+        startSimulation();
+    } else {
+        stopSimulation();
+    }
+}
+
+function startSimulation() {
+    console.log('[Telescope] Starting simulation mode');
+    isSimulating = true;
+    
+    // Update UI
+    const simulateBtn = document.getElementById('simulateBtn');
+    const connectBtn = document.getElementById('connectBtn');
+    const disconnectBtn = document.getElementById('disconnectBtn');
+    const statusDot = document.getElementById('statusDot');
+    const statusText = document.getElementById('connectionStatus');
+    
+    if (simulateBtn) {
+        simulateBtn.textContent = 'Stop Sim';
+        simulateBtn.className = 'btn btn-warning';
+    }
+    if (connectBtn) connectBtn.disabled = true;
+    if (disconnectBtn) disconnectBtn.disabled = true;
+    
+    // Update status
+    if (statusDot) statusDot.className = 'status-dot connected';
+    if (statusText) statusText.textContent = 'Simulating';
+    
+    // Simulate connected state
+    isConnected = true;
+    updateButtonStates();
+    
+    // Start simulated preview
+    startSimulatedPreview();
+    
+    showStatus('Simulation mode active - Using recorded footage', 'info');
+}
+
+function stopSimulation() {
+    console.log('[Telescope] Stopping simulation mode');
+    isSimulating = false;
+    isConnected = false;
+    
+    // Clean up temporary simulation files
+    cleanupSimulationFiles();
+    
+    // Update UI
+    const simulateBtn = document.getElementById('simulateBtn');
+    const connectBtn = document.getElementById('connectBtn');
+    const disconnectBtn = document.getElementById('disconnectBtn');
+    const statusDot = document.getElementById('statusDot');
+    const statusText = document.getElementById('connectionStatus');
+    
+    if (simulateBtn) {
+        simulateBtn.textContent = 'Simulate';
+        simulateBtn.className = 'btn btn-info';
+    }
+    if (connectBtn) connectBtn.disabled = false;
+    if (disconnectBtn) disconnectBtn.disabled = true;
+    
+    // Update status
+    if (statusDot) statusDot.className = 'status-dot disconnected';
+    if (statusText) statusText.textContent = 'Disconnected';
+    
+    updateButtonStates();
+    stopSimulatedPreview();
+    
+    showStatus('Simulation stopped', 'info');
+}
+
+function startSimulatedPreview() {
+    console.log('[Telescope] Starting simulated preview');
+    
+    const previewImage = document.getElementById('previewImage');
+    const previewPlaceholder = document.getElementById('previewPlaceholder');
+    const previewStatusDot = document.getElementById('previewStatusDot');
+    const previewStatusText = document.getElementById('previewStatusText');
+    const previewTitleIcon = document.getElementById('previewTitleIcon');
+    const previewContainer = document.getElementById('previewContainer');
+    
+    // Hide placeholder and image
+    if (previewPlaceholder) previewPlaceholder.style.display = 'none';
+    if (previewImage) previewImage.style.display = 'none';
+    
+    // Create or get video element
+    simulationVideo = document.getElementById('simulationVideo');
+    if (!simulationVideo) {
+        simulationVideo = document.createElement('video');
+        simulationVideo.id = 'simulationVideo';
+        simulationVideo.autoplay = true;
+        simulationVideo.loop = true;
+        simulationVideo.muted = true;
+        simulationVideo.style.width = '100%';
+        simulationVideo.style.height = 'auto';
+        simulationVideo.style.display = 'block';
+        simulationVideo.style.objectFit = 'contain';
+        
+        // Use one of the recorded videos from safe location
+        simulationVideo.src = '/static/simulations/demo.mp4';
+        
+        if (previewContainer) {
+            previewContainer.appendChild(simulationVideo);
+        }
+    } else {
+        simulationVideo.style.display = 'block';
+        simulationVideo.play();
+    }
+    
+    // Update status
+    if (previewStatusDot) previewStatusDot.className = 'status-dot connected';
+    if (previewStatusText) previewStatusText.textContent = 'Simulation Active';
+    if (previewTitleIcon) previewTitleIcon.textContent = '🎬';
+}
+
+function stopSimulatedPreview() {
+    console.log('[Telescope] Stopping simulated preview');
+    
+    const previewImage = document.getElementById('previewImage');
+    const previewPlaceholder = document.getElementById('previewPlaceholder');
+    const previewStatusDot = document.getElementById('previewStatusDot');
+    const previewStatusText = document.getElementById('previewStatusText');
+    const previewTitleIcon = document.getElementById('previewTitleIcon');
+    
+    // Hide video
+    if (simulationVideo) {
+        simulationVideo.pause();
+        simulationVideo.style.display = 'none';
+    }
+    
+    // Show placeholder
+    if (previewPlaceholder) previewPlaceholder.style.display = 'flex';
+    if (previewImage) previewImage.style.display = 'none';
+    
+    // Update status
+    if (previewStatusDot) previewStatusDot.className = 'status-dot';
+    if (previewStatusText) previewStatusText.textContent = 'Preview Inactive';
+    if (previewTitleIcon) previewTitleIcon.textContent = '⚫';
+}
+
+function simulateCapturePhoto() {
+    console.log('[Telescope] Simulating photo capture');
+    
+    // Create a temporary file entry
+    const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, -5);
+    const filename = `sim_capture_${timestamp}.jpg`;
+    const tempFile = {
+        name: filename,
+        path: '/static/simulations/demo.mp4', // Use demo video as placeholder
+        url: '/static/simulations/demo.mp4',
+        isSimulation: true,
+        timestamp: Date.now()
+    };
+    
+    // Add to simulation files
+    simulationFiles.push(tempFile);
+    
+    // Add to window.currentFiles with simulation marker
+    if (!window.currentFiles) window.currentFiles = [];
+    window.currentFiles.unshift(tempFile);
+    
+    // Update filmstrip
+    updateFilmstrip(window.currentFiles);
+    
+    showStatus('📸 Photo captured (simulation - temporary)', 'success', 5000);
+}
+
+function simulateStartRecording(duration, interval) {
+    console.log('[Telescope] Simulating recording start');
+    
+    isRecording = true;
+    recordingStartTime = Date.now();
+    updateRecordingUI();
+    startRecordingTimer(duration);
+    
+    const mode = interval > 0 ? `timelapse (${interval}s interval)` : 'normal';
+    showStatus(`🎬 Recording started (simulation - ${duration}s ${mode})`, 'success', 5000);
+}
+
+function simulateStopRecording() {
+    console.log('[Telescope] Simulating recording stop');
+    
+    isRecording = false;
+    stopRecordingTimer();
+    updateRecordingUI();
+    
+    // Create a temporary file entry
+    const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, -5);
+    const filename = `sim_recording_${timestamp}.mp4`;
+    const tempFile = {
+        name: filename,
+        path: '/static/simulations/demo.mp4',
+        url: '/static/simulations/demo.mp4',
+        isSimulation: true,
+        timestamp: Date.now()
+    };
+    
+    // Add to simulation files
+    simulationFiles.push(tempFile);
+    
+    // Add to window.currentFiles
+    if (!window.currentFiles) window.currentFiles = [];
+    window.currentFiles.unshift(tempFile);
+    
+    // Update filmstrip
+    updateFilmstrip(window.currentFiles);
+    
+    showStatus('🎬 Recording stopped (simulation - temporary)', 'success', 5000);
+}
+
+function cleanupSimulationFiles() {
+    console.log('[Telescope] Cleaning up simulation files');
+    
+    if (simulationFiles.length === 0) return;
+    
+    // Remove simulation files from window.currentFiles
+    if (window.currentFiles) {
+        window.currentFiles = window.currentFiles.filter(f => !f.isSimulation);
+    }
+    
+    // Clear simulation files array
+    simulationFiles = [];
+    
+    // Refresh filmstrip
+    updateFilmstrip(window.currentFiles || []);
+    
+    console.log('[Telescope] Cleaned up', simulationFiles.length, 'temporary files');
+}
+
+// ============================================================================
+// CLEANUP
+// ============================================================================
 
 window.addEventListener('beforeunload', () => {
-    stopStatusPolling();
-    if (lastUpdateDisplayInterval) {
-        clearInterval(lastUpdateDisplayInterval);
-    }
+    // Clean up intervals
+    if (statusPollInterval) clearInterval(statusPollInterval);
+    if (visibilityPollInterval) clearInterval(visibilityPollInterval);
+    if (lastUpdateInterval) clearInterval(lastUpdateInterval);
 });
+
+console.log('[Telescope] Module loaded');

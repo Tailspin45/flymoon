@@ -383,8 +383,79 @@ def get_transits(
 
             logger.info(data[-1])
     else:
-        logger.warning(
+        logger.debug(
             f"{target_name} target is under horizon, skipping checking for transits..."
         )
 
+    return {"flights": data, "targetCoordinates": current_target_coordinates}
+
+
+def recalculate_transits(
+    flights: List[dict],
+    latitude: float,
+    longitude: float,
+    elevation: float,
+    target_name: str = "moon",
+    alt_threshold: float = 5.0,
+    az_threshold: float = 10.0,
+) -> List[dict]:
+    """
+    Recalculate transit predictions for existing flights with updated positions.
+    Does NOT call FlightAware API - uses provided flight data.
+    
+    Args:
+        flights: List of flight dicts with updated positions (lat, lon, elevation, speed, direction)
+        latitude: Observer latitude
+        longitude: Observer longitude
+        elevation: Observer elevation (meters)
+        target_name: "sun" or "moon"
+        alt_threshold: Altitude threshold in degrees
+        az_threshold: Azimuth threshold in degrees
+        
+    Returns:
+        List of flight dicts with updated transit predictions
+    """
+    # Ensure thresholds are floats
+    alt_threshold = float(alt_threshold)
+    az_threshold = float(az_threshold)
+    
+    MY_POSITION = get_my_pos(
+        lat=latitude,
+        lon=longitude,
+        elevation=elevation,
+        base_ref=EARTH,
+    )
+    
+    window_time = np.linspace(
+        0, TOP_MINUTE, TOP_MINUTE * (NUM_SECONDS_PER_MIN // INTERVAL_IN_SECS)
+    )
+    
+    # Get local timezone
+    local_timezone = get_localzone_name()
+    naive_datetime_now = datetime.now()
+    ref_datetime = naive_datetime_now.replace(tzinfo=ZoneInfo(local_timezone))
+    
+    celestial_obj = CelestialObject(name=target_name, observer_position=MY_POSITION)
+    celestial_obj.update_position(ref_datetime=ref_datetime)
+    current_target_coordinates = celestial_obj.get_coordinates()
+    
+    data = []
+    
+    if current_target_coordinates["altitude"] > 0:
+        for flight in flights:
+            celestial_obj.update_position(ref_datetime=ref_datetime)
+            
+            data.append(
+                check_transit(
+                    flight,
+                    window_time,
+                    ref_datetime,
+                    MY_POSITION,
+                    celestial_obj,
+                    EARTH,
+                    alt_threshold,
+                    az_threshold,
+                )
+            )
+    
     return {"flights": data, "targetCoordinates": current_target_coordinates}

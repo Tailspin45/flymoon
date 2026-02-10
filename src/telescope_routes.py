@@ -2,16 +2,25 @@
 Telescope control endpoints for Seestar integration.
 
 Provides RESTful web API for controlling the Seestar telescope, including
-connection management, viewing modes, video recording, and file management.
+connection management, viewing modes, video recording, photo capture, 
+live preview, and file management.
 """
 
 import os
+import subprocess
 from datetime import datetime
 from typing import Optional, Dict, Any
-from flask import request, jsonify
+from flask import request, jsonify, Response
+from zoneinfo import ZoneInfo
 
 from src.seestar_client import SeestarClient
+from src.astro import CelestialObject
+from src.position import get_my_pos
+from src.constants import ASTRO_EPHEMERIS
 from src import logger
+
+# Get EARTH reference for position calculations
+EARTH = ASTRO_EPHEMERIS['earth']
 
 
 # Mock Telescope Client for Testing
@@ -102,6 +111,48 @@ class MockSeestarClient:
     def is_recording(self) -> bool:
         """Check if recording."""
         return self._recording
+
+    def start_solar_mode(self) -> bool:
+        """Simulate starting solar viewing mode."""
+        if not self._connected:
+            raise RuntimeError("Cannot start solar mode: not connected")
+        logger.info("[Mock] Started solar viewing mode")
+        return True
+
+    def start_lunar_mode(self) -> bool:
+        """Simulate starting lunar viewing mode."""
+        if not self._connected:
+            raise RuntimeError("Cannot start lunar mode: not connected")
+        logger.info("[Mock] Started lunar viewing mode")
+        return True
+
+    def capture_photo(self, exposure_time: float = 1.0) -> dict:
+        """Simulate photo capture."""
+        if not self._connected:
+            raise RuntimeError("Cannot capture photo: not connected")
+        logger.info(f"[Mock] Captured photo (exposure: {exposure_time}s)")
+        return {"result": "success", "exposure_time": exposure_time}
+
+    def get_albums(self) -> dict:
+        """Simulate getting albums."""
+        if not self._connected:
+            raise RuntimeError("Cannot get albums: not connected")
+        logger.info("[Mock] Retrieved albums")
+        return {
+            "path": "DCIM",
+            "list": [
+                {
+                    "name": "2026-02-07",
+                    "files": [
+                        {
+                            "name": "test_photo.jpg",
+                            "thn": "test_photo_thumb.jpg",
+                            "size": 1024000
+                        }
+                    ]
+                }
+            ]
+        }
 
     def list_files(self) -> dict:
         """Return mock file list."""
@@ -344,7 +395,7 @@ def get_current_target():
 # Recording Endpoints
 
 def start_recording():
-    """POST /telescope/recording/start - Start video recording."""
+    """POST /telescope/recording/start - Start video recording from RTSP stream."""
     logger.info("[Telescope] POST /telescope/recording/start")
 
     try:
@@ -360,26 +411,90 @@ def start_recording():
                 "recording": True
             }), 409
 
-        # Get optional duration from request body
-        duration = None
-        if request.is_json and "duration" in request.json:
-            duration = request.json.get("duration")
+        # Get parameters from request
+        duration = 30  # default
+        interval = 0   # default (normal video)
+        
+        if request.is_json:
+            duration = int(request.json.get("duration", 30))
+            interval = float(request.json.get("interval", 0))
 
-        client.start_recording(duration)
+        # Get RTSP stream URL
+        rtsp_port = int(os.getenv("SEESTAR_RTSP_PORT", "4554"))
+        rtsp_url = f"rtsp://{client.host}:{rtsp_port}/stream"
+        
+        # Generate filename with timestamp
+        from datetime import datetime
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        mode_suffix = f"_timelapse_{interval}s" if interval > 0 else ""
+        filename = f"recording_{timestamp}{mode_suffix}.mp4"
+        
+        # Create year/month directories
+        now = datetime.now()
+        year_month_path = os.path.join('static/captures', str(now.year), f"{now.month:02d}")
+        os.makedirs(year_month_path, exist_ok=True)
+        
+        filepath = os.path.join(year_month_path, filename)
+        
+        logger.info(f"[Telescope] Starting recording: {filepath} (duration={duration}s, interval={interval}s)")
+        
+        # Build FFmpeg command
+        if interval > 0:
+            # Timelapse mode: capture frames at specified interval
+            cmd = [
+                'ffmpeg',
+                '-rtsp_transport', 'tcp',
+                '-i', rtsp_url,
+                '-t', str(duration),
+                '-vf', f'fps=1/{interval}',  # 1 frame every N seconds
+                '-c:v', 'libx264',
+                '-preset', 'fast',
+                '-crf', '23',
+                '-y',
+                filepath
+            ]
+        else:
+            # Normal video mode: record at full framerate
+            cmd = [
+                'ffmpeg',
+                '-rtsp_transport', 'tcp',
+                '-i', rtsp_url,
+                '-t', str(duration),
+                '-c:v', 'libx264',
+                '-preset', 'fast',
+                '-crf', '23',
+                '-y',
+                filepath
+            ]
+        
+        # Start FFmpeg in background
+        process = subprocess.Popen(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE
+        )
+        
         _recording_state = {
             "active": True,
-            "start_time": datetime.now()
+            "start_time": datetime.now(),
+            "process": process,
+            "filepath": filepath,
+            "filename": filename,
+            "duration": duration
         }
 
-        logger.info(f"[Telescope] Recording started (duration: {duration}s)")
+        logger.info(f"[Telescope] Recording started (PID: {process.pid})")
         return jsonify({
             "success": True,
             "recording": True,
             "start_time": _recording_state["start_time"].isoformat(),
+            "duration": duration,
+            "interval": interval,
             "message": "Recording started"
         }), 200
 
     except Exception as e:
+        logger.error(f"[Telescope] Failed to start recording: {e}", exc_info=True)
         return handle_error(e)
 
 
@@ -389,10 +504,6 @@ def stop_recording():
 
     try:
         global _recording_state
-
-        client = get_telescope_client()
-        if not client or not client.is_connected():
-            return jsonify({"error": "Not connected to telescope"}), 400
 
         if not _recording_state["active"]:
             return jsonify({
@@ -405,21 +516,50 @@ def stop_recording():
         if _recording_state["start_time"]:
             duration = (datetime.now() - _recording_state["start_time"]).total_seconds()
 
-        client.stop_recording()
+        # Terminate FFmpeg process
+        if "process" in _recording_state and _recording_state["process"]:
+            process = _recording_state["process"]
+            process.terminate()
+            try:
+                process.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                process.wait()
+            logger.info(f"[Telescope] FFmpeg process terminated")
+        
+        filename = _recording_state.get("filename", "unknown")
+        filepath = _recording_state.get("filepath", "")
+        
+        # Create metadata
+        if filepath and os.path.exists(filepath):
+            metadata = {
+                "timestamp": _recording_state["start_time"].isoformat() if _recording_state["start_time"] else None,
+                "duration": duration,
+                "source": "rtsp_stream",
+                "type": "video"
+            }
+            
+            metadata_path = filepath.rsplit('.', 1)[0] + '.json'
+            with open(metadata_path, 'w') as f:
+                import json
+                json.dump(metadata, f, indent=2)
+
         _recording_state = {
             "active": False,
             "start_time": None
         }
 
-        logger.info(f"[Telescope] Recording stopped (duration: {duration:.1f}s)")
+        logger.info(f"[Telescope] Recording stopped: {filename} (duration: {duration:.1f}s)")
         return jsonify({
             "success": True,
             "recording": False,
             "duration": duration,
+            "filename": filename,
             "message": "Recording stopped"
         }), 200
 
     except Exception as e:
+        logger.error(f"[Telescope] Failed to stop recording: {e}", exc_info=True)
         return handle_error(e)
 
 
@@ -447,53 +587,445 @@ def get_recording_status():
 # File Management Endpoint
 
 def list_telescope_files():
-    """GET /telescope/files - List recorded files on telescope."""
+    """GET /telescope/files - List locally captured files."""
     logger.info("[Telescope] GET /telescope/files")
+
+    try:
+        # List files from local captures directory
+        captures_path = 'static/captures'
+        files = []
+        
+        if os.path.exists(captures_path):
+            # Walk through captures directory
+            for root, dirs, filenames in os.walk(captures_path):
+                for filename in filenames:
+                    if filename.lower().endswith(('.jpg', '.jpeg', '.png', '.mp4', '.avi')):
+                        full_path = os.path.join(root, filename)
+                        rel_path = os.path.relpath(full_path, 'static')
+                        
+                        # Get file modification time
+                        mtime = os.path.getmtime(full_path)
+                        
+                        files.append({
+                            "name": filename,
+                            "url": f"/static/{rel_path.replace(os.sep, '/')}",
+                            "mtime": mtime
+                        })
+        
+        # Sort by modification time (newest first)
+        files.sort(key=lambda x: x['mtime'], reverse=True)
+        
+        logger.info(f"[Telescope] Retrieved {len(files)} local files")
+        return jsonify({
+            "files": files,
+            "total": len(files),
+            "source": "local_captures"
+        }), 200
+
+    except Exception as e:
+        logger.error(f"[Telescope] Error listing files: {e}")
+        return handle_error(e)
+
+
+def delete_telescope_file():
+    """POST /telescope/files/delete - Delete a captured file."""
+    logger.info("[Telescope] POST /telescope/files/delete")
+
+    try:
+        if not request.is_json:
+            return jsonify({"error": "Request must be JSON"}), 400
+        
+        file_path = request.json.get('path')
+        if not file_path:
+            return jsonify({"error": "Missing 'path' parameter"}), 400
+        
+        # Security: ensure path is within captures directory
+        full_path = os.path.join('static', file_path)
+        abs_path = os.path.abspath(full_path)
+        captures_abs = os.path.abspath('static/captures')
+        
+        if not abs_path.startswith(captures_abs):
+            logger.warning(f"[Telescope] Attempted to delete file outside captures: {file_path}")
+            return jsonify({"error": "Invalid file path"}), 403
+        
+        # Delete image file
+        if os.path.exists(abs_path):
+            os.remove(abs_path)
+            logger.info(f"[Telescope] Deleted file: {file_path}")
+        else:
+            return jsonify({"error": "File not found"}), 404
+        
+        # Delete metadata file if exists
+        metadata_path = abs_path.rsplit('.', 1)[0] + '.json'
+        if os.path.exists(metadata_path):
+            os.remove(metadata_path)
+            logger.info(f"[Telescope] Deleted metadata: {metadata_path}")
+        
+        return jsonify({
+            "success": True,
+            "message": f"Deleted {os.path.basename(file_path)}"
+        }), 200
+
+    except Exception as e:
+        logger.error(f"[Telescope] Error deleting file: {e}")
+        return handle_error(e)
+
+
+# Photo Capture Endpoint
+
+def capture_photo():
+    """POST /telescope/capture/photo - Capture a single photo from live stream."""
+    logger.info("[Telescope] POST /telescope/capture/photo")
 
     try:
         client = get_telescope_client()
         if not client or not client.is_connected():
             return jsonify({"error": "Not connected to telescope"}), 400
 
-        files_data = client.list_files()
-
-        # Build download URLs for files
-        base_url = f"http://{client.host}"
-        parent_path = files_data.get("path", "")
-        albums = []
-        total_files = 0
-
-        for album in files_data.get("list", []):
-            album_name = album.get("name", "")
-            album_files = []
-
-            for file_info in album.get("files", []):
-                filename = file_info.get("name", "")
-                if filename:
-                    # Construct download URL
-                    url = f"{base_url}/{parent_path}/{album_name}/{filename}"
-                    album_files.append({
-                        "name": filename,
-                        "thumbnail": file_info.get("thn", ""),
-                        "url": url
-                    })
-                    total_files += 1
-
-            albums.append({
-                "name": album_name,
-                "files": album_files
-            })
-
-        logger.info(f"[Telescope] Retrieved {total_files} files from {len(albums)} albums")
+        # Get RTSP stream URL
+        rtsp_port = int(os.getenv("SEESTAR_RTSP_PORT", "4554"))
+        rtsp_url = f"rtsp://{client.host}:{rtsp_port}/stream"
+        
+        # Generate filename with timestamp
+        from datetime import datetime
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        filename = f"capture_{timestamp}.jpg"
+        
+        # Create year/month directories
+        now = datetime.now()
+        year_month_path = os.path.join('static/captures', str(now.year), f"{now.month:02d}")
+        os.makedirs(year_month_path, exist_ok=True)
+        
+        filepath = os.path.join(year_month_path, filename)
+        
+        logger.info(f"[Telescope] Capturing frame from RTSP stream to {filepath}")
+        
+        # Use FFmpeg to grab a single frame from RTSP stream
+        cmd = [
+            'ffmpeg',
+            '-rtsp_transport', 'tcp',
+            '-i', rtsp_url,
+            '-frames:v', '1',  # Capture only 1 frame
+            '-update', '1',  # Required for single image output
+            '-q:v', '2',  # High quality JPEG
+            '-y',  # Overwrite if exists
+            filepath
+        ]
+        
+        # Run FFmpeg with timeout
+        result = subprocess.run(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=10
+        )
+        
+        if result.returncode != 0:
+            logger.error(f"[Telescope] FFmpeg capture failed: {result.stderr.decode()}")
+            return jsonify({"error": "Failed to capture frame from stream"}), 500
+        
+        # Create metadata
+        metadata = {
+            "timestamp": now.isoformat(),
+            "source": "live_stream",
+            "telescope": client.host,
+            "viewing_mode": client._viewing_mode if hasattr(client, '_viewing_mode') else None
+        }
+        
+        metadata_path = filepath.rsplit('.', 1)[0] + '.json'
+        with open(metadata_path, 'w') as f:
+            import json
+            json.dump(metadata, f, indent=2)
+        
+        # Build web path for response
+        rel_path = os.path.relpath(filepath, 'static').replace('\\', '/')
+        
+        logger.info(f"[Telescope] Photo captured successfully: {filename}")
         return jsonify({
             "success": True,
-            "path": parent_path,
-            "albums": albums,
-            "total_files": total_files
+            "filename": filename,
+            "path": rel_path,
+            "url": f"/static/{rel_path}",
+            "message": "Photo captured from live stream"
+        }), 200
+
+    except subprocess.TimeoutExpired:
+        logger.error("[Telescope] Photo capture timeout")
+        return jsonify({"error": "Capture timeout"}), 500
+    except Exception as e:
+        logger.error(f"[Telescope] Photo capture error: {e}", exc_info=True)
+        return handle_error(e)
+
+
+# Target Visibility and Selection Endpoints
+
+def get_target_visibility():
+    """GET /telescope/target/visibility - Get Sun/Moon visibility status."""
+    logger.debug("[Telescope] GET /telescope/target/visibility")
+
+    try:
+        from tzlocal import get_localzone
+        
+        # Get observer position from environment
+        latitude = float(os.getenv("OBSERVER_LATITUDE", "0"))
+        longitude = float(os.getenv("OBSERVER_LONGITUDE", "0"))
+        elevation = float(os.getenv("OBSERVER_ELEVATION", "0"))
+        
+        # Create observer position
+        observer_position = get_my_pos(
+            lat=latitude,
+            lon=longitude,
+            elevation=elevation,
+            base_ref=EARTH
+        )
+        
+        # Get current time in local timezone
+        local_tz = get_localzone()
+        ref_datetime = datetime.now(local_tz)
+        
+        # Calculate Sun position
+        sun = CelestialObject(name="sun", observer_position=observer_position)
+        sun.update_position(ref_datetime=ref_datetime)
+        sun_coords = sun.get_coordinates()
+        
+        # Calculate Moon position
+        moon = CelestialObject(name="moon", observer_position=observer_position)
+        moon.update_position(ref_datetime=ref_datetime)
+        moon_coords = moon.get_coordinates()
+        
+        # Determine visibility (above horizon = altitude > 0)
+        sun_visible = bool(sun_coords["altitude"] > 0)
+        moon_visible = bool(moon_coords["altitude"] > 0)
+        
+        logger.debug(f"[Telescope] Sun: {sun_coords['altitude']:.1f}°, Moon: {moon_coords['altitude']:.1f}°")
+        
+        return jsonify({
+            "sun": {
+                "altitude": float(sun_coords["altitude"]),
+                "azimuth": float(sun_coords["azimuthal"]),
+                "visible": sun_visible
+            },
+            "moon": {
+                "altitude": float(moon_coords["altitude"]),
+                "azimuth": float(moon_coords["azimuthal"]),
+                "visible": moon_visible
+            },
+            "timestamp": ref_datetime.isoformat()
+        }), 200
+
+    except Exception as e:
+        logger.error(f"[Telescope] Failed to get target visibility: {e}")
+        return handle_error(e)
+
+
+def switch_to_sun():
+    """POST /telescope/target/sun - Switch telescope to solar viewing mode."""
+    logger.info("[Telescope] POST /telescope/target/sun")
+
+    try:
+        client = get_telescope_client()
+        if not client or not client.is_connected():
+            return jsonify({"error": "Not connected to telescope"}), 400
+
+        # Get observer position
+        latitude = float(os.getenv("OBSERVER_LATITUDE", "0"))
+        longitude = float(os.getenv("OBSERVER_LONGITUDE", "0"))
+        elevation = float(os.getenv("OBSERVER_ELEVATION", "0"))
+        
+        observer_position = get_my_pos(
+            lat=latitude,
+            lon=longitude,
+            elevation=elevation,
+            base_ref=EARTH
+        )
+
+        # Check if Sun is visible
+        from tzlocal import get_localzone
+        local_tz = get_localzone()
+        ref_datetime = datetime.now(local_tz)
+        
+        sun = CelestialObject(name="sun", observer_position=observer_position)
+        sun.update_position(ref_datetime=ref_datetime)
+        sun_coords = sun.get_coordinates()
+        
+        if sun_coords["altitude"] <= 0:
+            return jsonify({
+                "error": "Sun is below horizon",
+                "altitude": sun_coords["altitude"],
+                "visible": False
+            }), 400
+
+        # Switch to solar mode
+        client.start_solar_mode()
+
+        logger.info("[Telescope] Switched to solar viewing mode")
+        return jsonify({
+            "success": True,
+            "target": "sun",
+            "altitude": sun_coords["altitude"],
+            "azimuth": sun_coords["azimuthal"],
+            "message": "⚠️ SOLAR FILTER REQUIRED - Ensure solar filter is installed before viewing!",
+            "warning": "solar_filter_required"
         }), 200
 
     except Exception as e:
         return handle_error(e)
+
+
+def switch_to_moon():
+    """POST /telescope/target/moon - Switch telescope to lunar viewing mode."""
+    logger.info("[Telescope] POST /telescope/target/moon")
+
+    try:
+        client = get_telescope_client()
+        if not client or not client.is_connected():
+            return jsonify({"error": "Not connected to telescope"}), 400
+
+        # Get observer position
+        latitude = float(os.getenv("OBSERVER_LATITUDE", "0"))
+        longitude = float(os.getenv("OBSERVER_LONGITUDE", "0"))
+        elevation = float(os.getenv("OBSERVER_ELEVATION", "0"))
+        
+        observer_position = get_my_pos(
+            lat=latitude,
+            lon=longitude,
+            elevation=elevation,
+            base_ref=EARTH
+        )
+
+        # Check if Moon is visible
+        from tzlocal import get_localzone
+        local_tz = get_localzone()
+        ref_datetime = datetime.now(local_tz)
+        
+        moon = CelestialObject(name="moon", observer_position=observer_position)
+        moon.update_position(ref_datetime=ref_datetime)
+        moon_coords = moon.get_coordinates()
+        
+        if moon_coords["altitude"] <= 0:
+            return jsonify({
+                "error": "Moon is below horizon",
+                "altitude": moon_coords["altitude"],
+                "visible": False
+            }), 400
+
+        # Switch to lunar mode
+        client.start_lunar_mode()
+
+        logger.info("[Telescope] Switched to lunar viewing mode")
+        return jsonify({
+            "success": True,
+            "target": "moon",
+            "altitude": moon_coords["altitude"],
+            "azimuth": moon_coords["azimuthal"],
+            "message": "✓ Remove solar filter if installed - Lunar viewing safe without filter",
+            "warning": "remove_solar_filter"
+        }), 200
+
+    except Exception as e:
+        return handle_error(e)
+
+
+# Live Preview Stream Endpoint
+
+def telescope_preview_stream():
+    """GET /telescope/preview/stream.mjpg - MJPEG live preview stream from RTSP."""
+    logger.info("[Telescope] GET /telescope/preview/stream.mjpg - Starting MJPEG stream")
+
+    try:
+        client = get_telescope_client()
+        if not client or not client.is_connected():
+            return jsonify({"error": "Not connected to telescope"}), 400
+
+        # Get RTSP stream URL
+        rtsp_port = int(os.getenv("SEESTAR_RTSP_PORT", "4554"))
+        rtsp_url = f"rtsp://{client.host}:{rtsp_port}/stream"
+        
+        logger.info(f"[Telescope] Transcoding RTSP stream: {rtsp_url}")
+
+        def generate_mjpeg():
+            """Generate MJPEG frames from RTSP stream using FFmpeg."""
+            # FFmpeg command to transcode RTSP → individual JPEG frames
+            cmd = [
+                'ffmpeg',
+                '-rtsp_transport', 'tcp',
+                '-i', rtsp_url,
+                '-f', 'image2pipe',
+                '-vcodec', 'mjpeg',
+                '-q:v', '5',
+                '-r', '10',
+                '-update', '1',
+                'pipe:1'
+            ]
+            
+            process = None
+            try:
+                process = subprocess.Popen(
+                    cmd,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    bufsize=0
+                )
+                
+                logger.info(f"[Telescope] FFmpeg process started (PID: {process.pid})")
+                
+                # Buffer for accumulating data
+                buffer = b''
+                
+                while True:
+                    # Read data in small chunks
+                    chunk = process.stdout.read(4096)
+                    if not chunk:
+                        break
+                    
+                    buffer += chunk
+                    
+                    # Look for complete JPEG frames (start: FF D8, end: FF D9)
+                    while True:
+                        # Find JPEG start
+                        start_idx = buffer.find(b'\xff\xd8')
+                        if start_idx == -1:
+                            break
+                        
+                        # Find JPEG end after start
+                        end_idx = buffer.find(b'\xff\xd9', start_idx + 2)
+                        if end_idx == -1:
+                            # Incomplete frame, keep buffering
+                            break
+                        
+                        # Extract complete JPEG frame
+                        jpeg_frame = buffer[start_idx:end_idx + 2]
+                        buffer = buffer[end_idx + 2:]
+                        
+                        # Yield MJPEG frame
+                        yield (b'--frame\r\n'
+                               b'Content-Type: image/jpeg\r\n'
+                               b'Content-Length: ' + str(len(jpeg_frame)).encode() + b'\r\n'
+                               b'\r\n' + jpeg_frame + b'\r\n')
+                
+            except GeneratorExit:
+                logger.info("[Telescope] Client disconnected from stream")
+            except Exception as e:
+                logger.error(f"[Telescope] FFmpeg stream error: {e}")
+            finally:
+                if process:
+                    process.kill()
+                    process.wait()
+                    logger.info("[Telescope] FFmpeg process terminated")
+
+        return Response(
+            generate_mjpeg(),
+            mimetype='multipart/x-mixed-replace; boundary=frame'
+        )
+
+    except Exception as e:
+        logger.error(f"[Telescope] Preview stream failed: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
+# ============================================================================
+# TRANSIT MONITORING
+# ============================================================================
 
 
 # Simulation Mode Toggle
@@ -545,9 +1077,15 @@ def register_routes(app):
     app.add_url_rule("/telescope/status", "telescope_status",
                      get_telescope_status, methods=["GET"])
 
-    # Target info
+    # Target info and visibility
     app.add_url_rule("/telescope/target", "telescope_get_target",
                      get_current_target, methods=["GET"])
+    app.add_url_rule("/telescope/target/visibility", "telescope_target_visibility",
+                     get_target_visibility, methods=["GET"])
+    app.add_url_rule("/telescope/target/sun", "telescope_switch_sun",
+                     switch_to_sun, methods=["POST"])
+    app.add_url_rule("/telescope/target/moon", "telescope_switch_moon",
+                     switch_to_moon, methods=["POST"])
 
     # Recording
     app.add_url_rule("/telescope/recording/start", "telescope_recording_start",
@@ -557,9 +1095,23 @@ def register_routes(app):
     app.add_url_rule("/telescope/recording/status", "telescope_recording_status",
                      get_recording_status, methods=["GET"])
 
+    # Photo capture
+    app.add_url_rule("/telescope/capture/photo", "telescope_capture_photo",
+                     capture_photo, methods=["POST"])
+
+    # Live preview
+    app.add_url_rule("/telescope/preview/stream.mjpg", "telescope_preview_stream",
+                     telescope_preview_stream, methods=["GET"])
+
     # File management
     app.add_url_rule("/telescope/files", "telescope_files",
                      list_telescope_files, methods=["GET"])
+    app.add_url_rule("/telescope/files/delete", "telescope_files_delete",
+                     delete_telescope_file, methods=["POST"])
+    
+    # Transit monitoring
+    app.add_url_rule("/telescope/transit/status", "telescope_transit_status",
+                     get_transit_status, methods=["GET"])
 
     # Simulation mode
     app.add_url_rule("/telescope/simulate", "telescope_simulate_toggle",
@@ -568,3 +1120,26 @@ def register_routes(app):
                      get_simulate_status, methods=["GET"])
 
     logger.info("[Telescope] Routes registered")
+
+
+def get_transit_status():
+    """
+    Get upcoming transit information from the cached monitor.
+    
+    Returns cached transit data without making new API calls.
+    """
+    logger.info("[Telescope] GET /telescope/transit/status")
+    
+    try:
+        from src.transit_monitor import get_monitor
+        
+        monitor = get_monitor()
+        return jsonify(monitor.get_transits())
+        
+    except Exception as e:
+        logger.error(f"[Telescope] Error getting transit status: {e}")
+        return jsonify({
+            'success': False,
+            'error': str(e),
+            'transits': []
+        }), 500

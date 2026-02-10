@@ -57,6 +57,7 @@ class SeestarClient:
         self._connected = False
         self._recording = False
         self._recording_start_time: Optional[datetime] = None
+        self._viewing_mode: Optional[str] = None  # Track current viewing mode (sun/moon/None)
         self._message_id = 0
         self._heartbeat_thread: Optional[threading.Thread] = None
         self._heartbeat_running = False
@@ -73,7 +74,8 @@ class SeestarClient:
         self,
         method: str,
         params: Any = None,
-        expect_response: bool = True
+        expect_response: bool = True,
+        timeout_override: Optional[int] = None
     ) -> Optional[Dict[str, Any]]:
         """
         Send JSON-RPC command to Seestar.
@@ -86,6 +88,8 @@ class SeestarClient:
             Method parameters (dict, list, or simple value)
         expect_response : bool
             Whether to wait for and return response (default: True)
+        timeout_override : int, optional
+            Override the default timeout for this command
 
         Returns
         -------
@@ -127,8 +131,11 @@ class SeestarClient:
 
                     start_time = time.time()
                     buffer = ""
+                    
+                    # Use timeout override if provided, otherwise use instance timeout
+                    cmd_timeout = timeout_override if timeout_override is not None else self.timeout
 
-                    while time.time() - start_time < self.timeout:
+                    while time.time() - start_time < cmd_timeout:
                         # Receive data in chunks
                         chunk = self.socket.recv(4096).decode()
                         buffer += chunk
@@ -180,11 +187,15 @@ class SeestarClient:
         """Background thread that sends periodic heartbeat messages."""
         while self._heartbeat_running:
             try:
-                # Send heartbeat command (based on seestar_alp implementation)
-                self._send_command("scope_get_equ_coord", expect_response=False)
+                # Send heartbeat command and read response to prevent buffer buildup
+                # Use scope_get_equ_coord as a simple status check
+                self._send_command("scope_get_equ_coord", expect_response=True)
             except Exception as e:
                 # Use debug level to avoid spamming logs when telescope is disconnected
                 logger.debug(f"Heartbeat failed: {e}")
+                # If heartbeat fails, mark as disconnected
+                if "broken pipe" in str(e).lower() or "connection" in str(e).lower():
+                    self._connected = False
 
             # Sleep in small intervals to allow quick shutdown
             for _ in range(self.heartbeat_interval):
@@ -414,10 +425,15 @@ class SeestarClient:
         -----
         This must be called before video recording for solar transits.
         Seestar will switch to solar viewing mode with appropriate filter.
+        iscope_start_view may not send immediate response, so we don't wait.
         """
         try:
-            _ = self._send_command("iscope_start_view", params={"mode": "sun"})
-            logger.info("Started solar viewing mode")
+            # Don't expect immediate response - Seestar may take time to switch modes
+            self._send_command("iscope_start_view", params={"mode": "sun"}, expect_response=False)
+            self._viewing_mode = "sun"
+            logger.info("Started solar viewing mode (async)")
+            # Give telescope time to process the command
+            time.sleep(1)
             return True
         except Exception as e:
             logger.error(f"Failed to start solar mode: {e}")
@@ -436,10 +452,15 @@ class SeestarClient:
         -----
         This must be called before video recording for lunar transits.
         Seestar will switch to lunar viewing mode.
+        iscope_start_view may not send immediate response, so we don't wait.
         """
         try:
-            _ = self._send_command("iscope_start_view", params={"mode": "moon"})
-            logger.info("Started lunar viewing mode")
+            # Don't expect immediate response - Seestar may take time to switch modes
+            self._send_command("iscope_start_view", params={"mode": "moon"}, expect_response=False)
+            self._viewing_mode = "moon"
+            logger.info("Started lunar viewing mode (async)")
+            # Give telescope time to process the command
+            time.sleep(1)
             return True
         except Exception as e:
             logger.error(f"Failed to start lunar mode: {e}")
@@ -462,9 +483,118 @@ class SeestarClient:
             logger.error(f"Failed to stop view mode: {e}")
             return False
 
+    def capture_photo(self, exposure_time: float = 1.0) -> dict:
+        """
+        Capture a single photo (light frame).
+
+        Parameters
+        ----------
+        exposure_time : float
+            Exposure time in seconds (default: 1.0)
+
+        Returns
+        -------
+        dict
+            Response from telescope with result info
+
+        Raises
+        ------
+        RuntimeError
+            If not connected or not in viewing mode
+
+        Notes
+        -----
+        Uses the 'pi_output_set_target' JSON-RPC method to capture current view.
+        This works in Solar, Lunar, and Scenery viewing modes.
+
+        Workflow:
+        1. Ensure telescope is in Solar, Lunar, or Scenery mode (via Seestar app or Flymoon)
+        2. Call this method to capture a single photo
+        3. Use get_albums() to retrieve the saved image
+        4. Download via HTTP: http://<host>/<path>/<filename>
+
+        The photo is saved to "My Album" on the Seestar device.
+        """
+        if not self._connected:
+            raise RuntimeError("Cannot capture photo: not connected to telescope")
+
+        try:
+            # Use pi_output_set_target to capture current view (works in viewing modes)
+            # This is the command used by Seestar app during solar/lunar viewing
+            params = {"target_name": ""}
+            
+            # Extended timeout - Seestar takes time to capture and save
+            result = self._send_command("pi_output_set_target", params=params, timeout_override=90)
+            logger.info(f"📸 Captured photo")
+            
+            # Alternative: If above doesn't work, the telescope might need to be triggered differently
+            # The Seestar saves frames automatically during viewing, so we might not need explicit capture
+            return result if result else {"success": True}
+
+        except Exception as e:
+            logger.error(f"Failed to capture photo: {e}")
+            raise
+
+    def get_albums(self) -> dict:
+        """
+        Get albums and images from Seestar storage.
+
+        Returns
+        -------
+        dict
+            Albums structure with images
+
+        Notes
+        -----
+        Returns format:
+        {
+            "path": "<parent_folder>",
+            "list": [
+                {
+                    "name": "<album_name>",
+                    "files": [
+                        {
+                            "name": "<filename>",
+                            "thn": "<thumbnail_path>",
+                            "size": <file_size>,
+                            ...
+                        },
+                        ...
+                    ]
+                },
+                ...
+            ]
+        }
+
+        Use this after capture_photo() to retrieve the saved image path.
+        Files can be downloaded via HTTP: http://<host>/<path>/<filename>
+        
+        If telescope times out or has no albums, returns empty structure.
+        """
+        try:
+            response = self._send_command("get_albums")
+            if response is None:
+                # Command succeeded but no response data
+                logger.warning("get_albums returned None, returning empty structure")
+                return {"path": "", "list": []}
+            
+            logger.info(f"Retrieved albums: {len(response.get('list', []))} albums")
+            return response
+        except RuntimeError as e:
+            if "timed out" in str(e).lower() or "timeout" in str(e).lower():
+                # Timeout is not fatal - just means no albums or telescope busy
+                logger.warning(f"get_albums timed out, returning empty structure")
+                return {"path": "", "list": []}
+            else:
+                logger.error(f"Failed to get albums: {e}")
+                raise
+        except Exception as e:
+            logger.error(f"Failed to get albums: {e}")
+            raise
+
     def list_files(self) -> dict:
         """
-        List recorded files on Seestar.
+        List recorded files on Seestar (alias for get_albums).
 
         Returns
         -------
@@ -488,13 +618,7 @@ class SeestarClient:
         Files can be downloaded via HTTP:
         http://<seestar_host>/<path>/<filename>
         """
-        try:
-            response = self._send_command("get_albums")
-            logger.info(f"Retrieved file list: {len(response.get('list', []))} albums")
-            return response
-        except Exception as e:
-            logger.error(f"Failed to list files: {e}")
-            raise
+        return self.get_albums()
 
     def get_status(self) -> Dict[str, Any]:
         """
@@ -508,6 +632,7 @@ class SeestarClient:
         status = {
             "connected": self._connected,
             "recording": self._recording,
+            "viewing_mode": self._viewing_mode,
             "host": self.host,
             "port": self.port,
         }

@@ -14,7 +14,7 @@
             <img src="{{ url_for('static', filename='images/logo.svg') }}" alt="Flymoon Transit Tracker" class="logo" />
         </a>
         <div style="flex: 1; text-align: center;">
-            <div style="font-size: 1.2em;">🔭 Telescope Control</div>
+            <div style="font-size: 1.2em;">🔭 Seestar S50 Control</div>
             <div id="lastUpdateStatus" style="font-size: 0.9em; color: #666; margin-top: 4px;"></div>
         </div>
         <a href="/" class="btn-sm">← Back</a>
@@ -24,37 +24,174 @@
         <!-- Status Message Area -->
         <div id="statusMessage" class="status-message"></div>
 
-        <!-- Connection Panel -->
-        <div class="control-panel">
-            <h2>Connection</h2>
-            <div class="connection-status">
-                <div class="status-indicator" id="connectionIndicator">
-                    <span class="status-dot" id="statusDot"></span>
-                    <span id="connectionStatus">Disconnected</span>
+        <!-- Main Layout: Sidebars + Preview + Filmstrip -->
+        <div class="telescope-layout">
+            
+            <!-- Left Sidebar: Transits -->
+            <div class="sidebar sidebar-left">
+                <!-- Transit Auto-Capture Settings -->
+                <div class="sidebar-panel">
+                    <h3>🚨 Transit Auto-Capture</h3>
+                    <div class="setting-item">
+                        <label class="toggle-label">
+                            <input type="checkbox" id="autoCaptureToggle" checked>
+                            <span class="toggle-slider"></span>
+                            <span class="toggle-text">Auto-Record Transits</span>
+                        </label>
+                    </div>
+                    <div class="setting-info">
+                        Automatically stop any recording and capture transits when detected within 15 seconds.
+                    </div>
                 </div>
-                <div class="connection-info" id="connectionInfo"></div>
+
+                <!-- Transit Notifications -->
+                <div class="sidebar-panel" id="transitPanel">
+                    <h3>✈️ Upcoming Transits</h3>
+                    <div id="transitList" class="transit-list">
+                        <p class="empty-state">No transits detected</p>
+                    </div>
+                </div>
             </div>
-            <div class="button-group">
-                <button id="connectBtn" class="btn btn-primary">Connect</button>
-                <button id="disconnectBtn" class="btn btn-secondary" disabled>Disconnect</button>
-                <button id="simulateBtn" class="btn btn-secondary" title="Toggle simulation mode for demos">🎭 Simulate</button>
+
+            <!-- Center: Live Preview -->
+            <div class="preview-area">
+                <div class="preview-header">
+                    <h2><span id="previewTitleIcon">⚫</span> Live Preview</h2>
+                    <div class="preview-status" id="previewStatus">
+                        <span class="status-dot" id="previewStatusDot"></span>
+                        <span id="previewStatusText">Preview Inactive</span>
+                    </div>
+                </div>
+                <div class="preview-wrapper">
+                    <!-- Zoom Slider -->
+                    <div class="zoom-slider">
+                        <button class="zoom-btn" onclick="zoomIn()" title="Zoom In">+</button>
+                        <input type="range" id="zoomSlider" min="50" max="300" value="100" step="1" orient="vertical" oninput="setZoom(this.value)">
+                        <span id="zoomPercent" class="zoom-percent">100%</span>
+                        <button class="zoom-btn" onclick="zoomOut()" title="Zoom Out">−</button>
+                        <button class="zoom-btn" onclick="zoomFit()" title="Fit to Window">⊡</button>
+                    </div>
+                    <div class="preview-container" id="previewContainer">
+                        <img id="previewImage" src="" alt="Live Preview" style="display: none;">
+                        <div class="preview-placeholder" id="previewPlaceholder">
+                            <div class="placeholder-icon">📹</div>
+                            <div class="placeholder-text">Connect telescope to view live stream</div>
+                        </div>
+                        <!-- Transit Capture Overlay -->
+                        <div id="transitOverlay" class="transit-overlay" style="display: none;">
+                            <div class="transit-overlay-content">
+                                <div class="transit-overlay-icon">🎯</div>
+                                <div class="transit-overlay-text">TRANSIT CAPTURE IN PROGRESS</div>
+                                <div id="transitOverlayInfo" class="transit-overlay-info"></div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Right Sidebar: Controls -->
+            <div class="sidebar sidebar-right">
+                
+                <!-- Connection Panel -->
+                <div class="sidebar-panel sidebar-panel-compact">
+                    <h3>🔌 Connection</h3>
+                    <div class="status-indicator">
+                        <span class="status-dot" id="statusDot"></span>
+                        <span id="connectionStatus">Disconnected</span>
+                    </div>
+                    <div class="button-group">
+                        <button id="connectBtn" class="btn btn-primary" onclick="connect()">Connect</button>
+                        <button id="disconnectBtn" class="btn btn-secondary" onclick="disconnect()" disabled>Disconnect</button>
+                        <button id="simulateBtn" class="btn btn-info" onclick="toggleSimulation()">Simulate</button>
+                    </div>
+                </div>
+
+                <!-- Target Selection Panel -->
+                <div class="sidebar-panel">
+                    <h3>🎯 Target</h3>
+                    <div class="target-compact target-button" id="sunStatus" onclick="switchToSun()">
+                        <span class="target-icon">☀️</span>
+                        <div class="target-info">
+                            <div class="target-name">Sun</div>
+                            <div class="target-coords" id="sunCoords">--</div>
+                        </div>
+                        <span class="visibility-badge" id="sunBadge">--</span>
+                    </div>
+                    <div class="target-compact target-button" id="moonStatus" onclick="switchToMoon()">
+                        <span class="target-icon">🌙</span>
+                        <div class="target-info">
+                            <div class="target-name">Moon</div>
+                            <div class="target-coords" id="moonCoords">--</div>
+                        </div>
+                        <span class="visibility-badge" id="moonBadge">--</span>
+                    </div>
+                    <div id="targetWarning" class="warning-box" style="display: none;"></div>
+                </div>
+
+                <!-- Capture Controls Panel -->
+                <div class="sidebar-panel">
+                    <h3>📸 Capture</h3>
+                    
+                    <!-- Photo Capture -->
+                    <div class="capture-compact">
+                        <div class="capture-header-compact">
+                            <span>📷 Photo</span>
+                        </div>
+                        <button id="capturePhotoBtn" class="btn btn-primary btn-compact" onclick="capturePhoto()" disabled>Capture</button>
+                    </div>
+
+                    <!-- Video Recording -->
+                    <div class="capture-compact">
+                        <div class="capture-header-compact">
+                            <span>📹 Video</span>
+                        </div>
+                        <div class="input-row">
+                            <input type="number" id="videoDuration" value="30" min="1" max="3600" step="1" class="input-compact" placeholder="Duration (s)">
+                            <input type="number" id="frameInterval" value="0" min="0" max="60" step="0.1" class="input-compact" placeholder="Interval" title="0 = normal, >0 = timelapse">
+                        </div>
+                        <div class="recording-status-compact" id="recordingStatus">
+                            <span class="status-dot" id="recordingDot"></span>
+                            <span id="recordingText">Ready</span>
+                            <span id="recordingTimer"></span>
+                        </div>
+                        <div class="button-group">
+                            <button id="startRecordingBtn" class="btn btn-primary btn-compact" onclick="startRecording()" disabled>⏺️ Record</button>
+                            <button id="stopRecordingBtn" class="btn btn-danger btn-compact" onclick="stopRecording()" disabled style="display: none;">⏹️ Stop</button>
+                        </div>
+                    </div>
+                </div>
+
             </div>
         </div>
 
-
-        <!-- Files Panel -->
-        <div class="control-panel">
-            <h2>Recorded Files</h2>
-            <div class="files-controls">
-                <button id="refreshFilesBtn" class="btn btn-secondary" disabled>🔄 Refresh</button>
-                <span id="fileCount" class="file-count"></span>
+        <!-- Bottom Filmstrip -->
+        <div class="filmstrip">
+            <div class="filmstrip-header">
+                <span class="filmstrip-title">📁 Captured Files (<span id="fileCount">0</span>)</span>
+                <div class="filmstrip-controls">
+                    <button id="refreshFilesBtn" class="btn-icon" onclick="refreshFiles()" disabled title="Refresh">🔄</button>
+                    <button id="expandFilesBtn" class="btn-icon" onclick="toggleFilesModal()" disabled title="Show all files">⛶</button>
+                </div>
             </div>
-            <div id="filesList" class="files-list">
-                <p class="files-empty">Connect to telescope to view files</p>
+            <div id="filmstripList" class="filmstrip-list">
+                <p class="empty-state">No files captured yet</p>
+            </div>
+        </div>
+
+        <!-- Full Files Modal -->
+        <div id="filesModal" class="modal" style="display: none;">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h2>📁 All Captured Files</h2>
+                    <button class="modal-close" onclick="toggleFilesModal()">✕</button>
+                </div>
+                <div id="filesGrid" class="files-grid-modal">
+                    <p class="empty-state">No files</p>
+                </div>
             </div>
         </div>
     </div>
 
-    <script src="{{ url_for('static', filename='telescope.js') }}"></script>
+    <script src="{{ url_for('static', filename='telescope.js') }}?v=21"></script>
 </body>
 </html>

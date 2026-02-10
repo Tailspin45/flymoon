@@ -17,7 +17,6 @@ Routes:
 - /flights/<id>/route - Flight route information
 - /flights/<id>/track - Flight historical track
 - /telescope/* - Telescope control endpoints
-- /gallery - Transit image gallery
 
 Environment Variables (see SETUP.md):
 - AEROAPI_API_KEY - FlightAware API key (required)
@@ -33,18 +32,14 @@ import argparse
 import asyncio
 import json
 import os
-import secrets
 import time
 from datetime import date, datetime
-from functools import wraps
-from http import HTTPStatus
 from zoneinfo import ZoneInfo
 
 import requests
 from dotenv import load_dotenv
 from flask import Flask, jsonify, render_template, request
 from tzlocal import get_localzone_name
-from werkzeug.utils import secure_filename
 
 from src.constants import POSSIBLE_TRANSITS_LOGFILENAME, ASTRO_EPHEMERIS, get_aeroapi_key
 
@@ -62,41 +57,6 @@ from src.transit import get_transits
 from src import telescope_routes
 from src.seestar_client import TransitRecorder
 from src.constants import PossibilityLevel
-
-# Gallery authentication token from environment
-GALLERY_AUTH_TOKEN = os.getenv("GALLERY_AUTH_TOKEN", "")
-
-# Security decorator for gallery write operations
-def require_gallery_auth(f):
-    """Decorator to require authentication for gallery write operations."""
-    @wraps(f)
-    def decorated_function(*args, **kwargs):
-        # If no token is configured, deny all write operations
-        if not GALLERY_AUTH_TOKEN:
-            logger.warning(f"Gallery write operation attempted but GALLERY_AUTH_TOKEN not configured")
-            return jsonify({
-                "error": "Gallery write operations disabled. Set GALLERY_AUTH_TOKEN in .env to enable."
-            }), HTTPStatus.FORBIDDEN
-        
-        # Check for Authorization header
-        auth_header = request.headers.get('Authorization')
-        if not auth_header:
-            logger.warning(f"Gallery write operation attempted without Authorization header from {request.remote_addr}")
-            return jsonify({"error": "Authorization required"}), HTTPStatus.UNAUTHORIZED
-        
-        # Expected format: "Bearer <token>"
-        if not auth_header.startswith('Bearer '):
-            return jsonify({"error": "Invalid authorization format. Use: Bearer <token>"}), HTTPStatus.UNAUTHORIZED
-        
-        token = auth_header[7:]  # Remove "Bearer " prefix
-        
-        # Constant-time comparison to prevent timing attacks
-        if not secrets.compare_digest(token, GALLERY_AUTH_TOKEN):
-            logger.warning(f"Gallery write operation attempted with invalid token from {request.remote_addr}")
-            return jsonify({"error": "Invalid authorization token"}), HTTPStatus.UNAUTHORIZED
-        
-        return f(*args, **kwargs)
-    return decorated_function
 
 # Global test/demo mode flag
 test_mode = False
@@ -120,12 +80,6 @@ class TelescopeStatusFilter(logging.Filter):
         return '/telescope/status' not in record.getMessage()
 
 werkzeug_logger.addFilter(TelescopeStatusFilter())
-
-# Gallery configuration
-UPLOAD_FOLDER = 'static/gallery'
-ALLOWED_EXTENSIONS = {'png', 'jpg', 'jpeg', 'gif'}
-app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
-app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024  # 16 MB limit
 
 # Transit recorder for automatic video capture
 _transit_recorder = None
@@ -188,10 +142,6 @@ def calculate_adaptive_interval(flights: list) -> int:
         return 600  # 10 minutes (default)
 
 
-def allowed_file(filename):
-    return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
-
-
 @app.route("/")
 def index():
     return render_template("index.html")
@@ -203,7 +153,7 @@ def get_config():
     return jsonify({
         "autoRefreshIntervalMinutes": int(os.getenv("AUTO_REFRESH_INTERVAL_MINUTES", 10)),
         "cacheEnabled": True,
-        "cacheTTLSeconds": 120
+        "cacheTTLSeconds": 600
     })
 
 
@@ -380,6 +330,127 @@ def get_flight_route(fa_flight_id):
         return jsonify({"error": str(e)}), 500
 
 
+@app.route("/transits/recalculate", methods=["POST"])
+def recalculate_transits_endpoint():
+    """
+    Recalculate transit predictions for flights with updated positions.
+    Does NOT call FlightAware API - uses provided flight data from soft refresh.
+    
+    Request JSON:
+    {
+        "flights": [...],  // Array of flight objects with updated positions
+        "latitude": 34.0,
+        "longitude": -118.0,
+        "elevation": 100,
+        "target": "moon",  // or "sun"
+        "min_altitude": 15.0,  // Optional minimum altitude for target
+        "alt_threshold": 1.0,  // Optional
+        "az_threshold": 1.0    // Optional
+    }
+    
+    Returns:
+    {
+        "flights": [...],  // Updated flight objects with new transit predictions
+        "targetCoordinates": {...}
+    }
+    """
+    try:
+        data = request.get_json()
+        
+        flights = data.get("flights", [])
+        latitude = float(data["latitude"])
+        longitude = float(data["longitude"])
+        elevation = float(data["elevation"])
+        target = data.get("target", "auto")
+        min_altitude = float(data.get("min_altitude", 15.0))
+        alt_threshold = float(data.get("alt_threshold", 
+                                      float(os.getenv("ALT_THRESHOLD", "1.0"))))
+        az_threshold = float(data.get("az_threshold", 
+                                     float(os.getenv("AZ_THRESHOLD", "1.0"))))
+        
+        if not flights:
+            return jsonify({"flights": [], "targetCoordinates": {}}), 200
+        
+        # Import here to avoid circular dependency
+        from src.transit import recalculate_transits
+        from src.astro import CelestialObject
+        from src.position import get_my_pos
+        from src.constants import ASTRO_EPHEMERIS
+        from zoneinfo import ZoneInfo
+        from tzlocal import get_localzone_name
+        from math import radians, sin, cos, sqrt, atan2
+        
+        EARTH = ASTRO_EPHEMERIS["earth"]
+        MY_POSITION = get_my_pos(lat=latitude, lon=longitude, elevation=elevation, base_ref=EARTH)
+        local_timezone = get_localzone_name()
+        ref_datetime = datetime.now().replace(tzinfo=ZoneInfo(local_timezone))
+        
+        all_flights = []
+        target_coordinates = {}
+        tracking_targets = []
+        
+        # Determine which targets to check
+        targets_to_check = []
+        if target == "auto":
+            targets_to_check = ["sun", "moon"]
+        else:
+            targets_to_check = [target]
+        
+        for target_name in targets_to_check:
+            # Check altitude
+            celestial_obj = CelestialObject(name=target_name, observer_position=MY_POSITION)
+            celestial_obj.update_position(ref_datetime=ref_datetime)
+            coords = celestial_obj.get_coordinates()
+            target_coordinates[target_name] = coords
+            
+            if coords["altitude"] >= min_altitude:
+                tracking_targets.append(target_name)
+                logger.info(f"Recalculating transits for {target_name} (altitude: {coords['altitude']:.1f}°)")
+                
+                result = recalculate_transits(
+                    flights,
+                    latitude,
+                    longitude,
+                    elevation,
+                    target_name,
+                    alt_threshold,
+                    az_threshold
+                )
+                
+                # Tag each flight with target and add computed fields
+                for flight in result["flights"]:
+                    flight["target"] = target_name
+                    if "aircraft_elevation" in flight:
+                        flight["aircraft_elevation_feet"] = int(flight["aircraft_elevation"] * 3.28084)
+                    # Calculate distance
+                    if "latitude" in flight and "longitude" in flight:
+                        lat1, lon1 = radians(latitude), radians(longitude)
+                        lat2, lon2 = radians(flight["latitude"]), radians(flight["longitude"])
+                        dlat, dlon = lat2 - lat1, lon2 - lon1
+                        a = sin(dlat/2)**2 + cos(lat1) * cos(lat2) * sin(dlon/2)**2
+                        c = 2 * atan2(sqrt(a), sqrt(1-a))
+                        distance_km = 6371 * c
+                        flight["distance_nm"] = distance_km * 0.539957
+                
+                all_flights.extend(result["flights"])
+        
+        return jsonify({
+            "flights": all_flights,
+            "targetCoordinates": target_coordinates,
+            "trackingTargets": tracking_targets
+        })
+    
+    except KeyError as e:
+        logger.error(f"Missing required parameter: {e}")
+        return jsonify({"error": f"Missing required parameter: {e}"}), 400
+    except ValueError as e:
+        logger.error(f"Invalid parameter value: {e}")
+        return jsonify({"error": f"Invalid parameter value: {e}"}), 400
+    except Exception as e:
+        logger.error(f"Error in /transits/recalculate: {str(e)}", exc_info=True)
+        return jsonify({"error": f"Server error: {str(e)}"}), 500
+
+
 @app.route("/flights/<fa_flight_id>/track")
 def get_flight_track(fa_flight_id):
     """Get the historical track positions for a specific flight."""
@@ -398,181 +469,19 @@ def get_flight_track(fa_flight_id):
         return jsonify({"error": str(e)}), 500
 
 
-@app.route("/gallery")
-def gallery():
-    """Display the transit image gallery page."""
-    return render_template("gallery.html")
-
-
 @app.route("/telescope")
 def telescope():
     """Display the telescope control page."""
     return render_template("telescope.html")
 
 
-@app.route("/gallery/upload", methods=['POST'])
-@require_gallery_auth
-def upload_transit_image():
-    """Upload a transit image with metadata. Requires authentication."""
-    if 'file' not in request.files:
-        return jsonify({"error": "No file provided"}), 400
-
-    file = request.files['file']
-    if file.filename == '':
-        return jsonify({"error": "No file selected"}), 400
-
-    if file and allowed_file(file.filename):
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        flight_id = request.form.get('flight_id', 'UNKNOWN').replace('/', '_')
-        ext = file.filename.rsplit('.', 1)[1].lower()
-
-        # Create year/month directories
-        now = datetime.now()
-        year_month_path = os.path.join(app.config['UPLOAD_FOLDER'], str(now.year), f"{now.month:02d}")
-        os.makedirs(year_month_path, exist_ok=True)
-
-        # Save image
-        filename = secure_filename(f"{timestamp}_{flight_id}.{ext}")
-        filepath = os.path.join(year_month_path, filename)
-        file.save(filepath)
-
-        # Save metadata
-        metadata = {
-            "flight_id": request.form.get('flight_id', ''),
-            "aircraft_type": request.form.get('aircraft_type', ''),
-            "timestamp": datetime.now().isoformat(),
-            "target": request.form.get('target', ''),
-            "caption": request.form.get('caption', ''),
-            "equipment": request.form.get('equipment', ''),
-            "observer_lat": request.form.get('observer_lat', ''),
-            "observer_lon": request.form.get('observer_lon', ''),
-        }
-
-        metadata_path = filepath.rsplit('.', 1)[0] + '.json'
-        with open(metadata_path, 'w') as f:
-            json.dump(metadata, f, indent=2)
-
-        logger.info(f"Uploaded transit image: {filename}")
-        return jsonify({"success": True, "filename": filename}), 200
-
-    return jsonify({"error": "Invalid file type. Allowed: png, jpg, jpeg, gif"}), 400
-
-
-@app.route("/gallery/list")
-def list_gallery():
-    """List all gallery images with metadata."""
-    gallery_path = app.config['UPLOAD_FOLDER']
-    images = []
-
-    # Create gallery directory if it doesn't exist
-    os.makedirs(gallery_path, exist_ok=True)
-
-    # Walk directory structure
-    for root, dirs, files in os.walk(gallery_path):
-        for file in files:
-            if file.lower().endswith(('.png', '.jpg', '.jpeg', '.gif')):
-                full_path = os.path.join(root, file)
-                rel_path = os.path.relpath(full_path, 'static')
-                # Use forward slashes for web paths
-                rel_path = rel_path.replace('\\', '/')
-                metadata_path = full_path.rsplit('.', 1)[0] + '.json'
-
-                metadata = {}
-                if os.path.exists(metadata_path):
-                    try:
-                        with open(metadata_path, 'r') as f:
-                            metadata = json.load(f)
-                    except Exception as e:
-                        logger.error(f"Error reading metadata for {file}: {str(e)}")
-
-                images.append({
-                    "path": rel_path,
-                    "filename": file,
-                    "full_path": full_path,  # For delete operations
-                    "metadata": metadata
-                })
-
-    # Sort by timestamp (most recent first)
-    images.sort(key=lambda x: x['metadata'].get('timestamp', ''), reverse=True)
-    return jsonify(images)
-
-
-@app.route("/gallery/delete/<path:filepath>", methods=['DELETE'])
-@require_gallery_auth
-def delete_gallery_image(filepath):
-    """Delete a gallery image and its metadata. Requires authentication."""
-    try:
-        # Security check - ensure filepath is within gallery directory
-        full_path = os.path.join('static', filepath)
-        abs_path = os.path.abspath(full_path)
-        gallery_abs = os.path.abspath(app.config['UPLOAD_FOLDER'])
-
-        if not abs_path.startswith(gallery_abs):
-            return jsonify({"error": "Invalid file path"}), 403
-
-        # Delete image file
-        if os.path.exists(abs_path):
-            os.remove(abs_path)
-            logger.info(f"Deleted image: {filepath}")
-
-        # Delete metadata file
-        metadata_path = abs_path.rsplit('.', 1)[0] + '.json'
-        if os.path.exists(metadata_path):
-            os.remove(metadata_path)
-            logger.info(f"Deleted metadata: {metadata_path}")
-
-        return jsonify({"success": True}), 200
-    except Exception as e:
-        logger.error(f"Error deleting image {filepath}: {str(e)}")
-        return jsonify({"error": str(e)}), 500
-
-
-@app.route("/gallery/update/<path:filepath>", methods=['POST'])
-@require_gallery_auth
-def update_gallery_metadata(filepath):
-    """Update metadata for a gallery image. Requires authentication."""
-    try:
-        # Security check - ensure filepath is within gallery directory
-        full_path = os.path.join('static', filepath)
-        abs_path = os.path.abspath(full_path)
-        gallery_abs = os.path.abspath(app.config['UPLOAD_FOLDER'])
-
-        if not abs_path.startswith(gallery_abs):
-            return jsonify({"error": "Invalid file path"}), 403
-
-        # Get metadata file path
-        metadata_path = abs_path.rsplit('.', 1)[0] + '.json'
-
-        # Read existing metadata
-        metadata = {}
-        if os.path.exists(metadata_path):
-            with open(metadata_path, 'r') as f:
-                metadata = json.load(f)
-
-        # Update with new values from request
-        metadata.update({
-            "flight_id": request.form.get('flight_id', metadata.get('flight_id', '')),
-            "aircraft_type": request.form.get('aircraft_type', metadata.get('aircraft_type', '')),
-            "target": request.form.get('target', metadata.get('target', '')),
-            "caption": request.form.get('caption', metadata.get('caption', '')),
-            "equipment": request.form.get('equipment', metadata.get('equipment', '')),
-            "observer_lat": request.form.get('observer_lat', metadata.get('observer_lat', '')),
-            "observer_lon": request.form.get('observer_lon', metadata.get('observer_lon', '')),
-        })
-
-        # Save updated metadata
-        with open(metadata_path, 'w') as f:
-            json.dump(metadata, f, indent=2)
-
-        logger.info(f"Updated metadata for: {filepath}")
-        return jsonify({"success": True, "metadata": metadata}), 200
-    except Exception as e:
-        logger.error(f"Error updating metadata for {filepath}: {str(e)}")
-        return jsonify({"error": str(e)}), 500
-
-
 # Register telescope control routes
 telescope_routes.register_routes(app)
+
+# Start transit monitor
+from src.transit_monitor import get_monitor
+transit_monitor = get_monitor()
+transit_monitor.start()
 
 
 if __name__ == "__main__":
@@ -602,7 +511,14 @@ if __name__ == "__main__":
     
     if port is None:
         logger.error("❌ No available ports in range 8000-8100")
+        print("❌ No available ports in range 8000-8100")
         exit(1)
     
-    logger.info(f"🚀 Starting server on port {port}")
+    print(f"🚀 Starting server on port {port}")
+    
+    # Reduce werkzeug logging noise
+    import logging
+    log = logging.getLogger('werkzeug')
+    log.setLevel(logging.WARNING)
+    
     app.run(host="0.0.0.0", port=port, debug=False)
