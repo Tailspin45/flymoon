@@ -183,23 +183,22 @@ function updateObserverMarker(lat, lon, elevation) {
     map.setView([lat, lon], map.getZoom());
 }
 
-function updateBoundingBox(latLowerLeft, lonLowerLeft, latUpperRight, lonUpperRight) {
+function updateBoundingBox(latLowerLeft, lonLowerLeft, latUpperRight, lonUpperRight, fitToBox = true) {
     if (!map) return;
 
-    // Skip if user has manually edited the bounding box
-    if (boundingBoxUserEdited && boundingBoxLayer) {
-        return;
-    }
-
-    // Use saved custom bounding box if it exists
+    // Use saved custom bounding box if it exists (overrides server values)
     const savedBox = localStorage.getItem('customBoundingBox');
-    if (boundingBoxUserEdited && savedBox) {
-        const customBox = JSON.parse(savedBox);
-        latLowerLeft = customBox.latLowerLeft;
-        lonLowerLeft = customBox.lonLowerLeft;
-        latUpperRight = customBox.latUpperRight;
-        lonUpperRight = customBox.lonUpperRight;
-        window.lastBoundingBox = customBox;
+    if (savedBox) {
+        try {
+            const customBox = JSON.parse(savedBox);
+            latLowerLeft = customBox.latLowerLeft;
+            lonLowerLeft = customBox.lonLowerLeft;
+            latUpperRight = customBox.latUpperRight;
+            lonUpperRight = customBox.lonUpperRight;
+            window.lastBoundingBox = customBox;
+        } catch (e) {
+            console.error('Error parsing saved bounding box:', e);
+        }
     }
 
     // Remove existing bounding box
@@ -208,10 +207,10 @@ function updateBoundingBox(latLowerLeft, lonLowerLeft, latUpperRight, lonUpperRi
     }
 
     // Create rectangle for bounding box
-    const bounds = [
+    const bounds = L.latLngBounds(
         [latLowerLeft, lonLowerLeft],
         [latUpperRight, lonUpperRight]
-    ];
+    );
 
     boundingBoxLayer = L.rectangle(bounds, {
         color: '#FF0000',
@@ -219,6 +218,11 @@ function updateBoundingBox(latLowerLeft, lonLowerLeft, latUpperRight, lonUpperRi
         fillOpacity: 0.1,
         dashArray: '5, 10'
     }).addTo(map).bindPopup('<b>Search Bounding Box</b><br>Drag corners to resize');
+
+    // Fit map to bounding box on initial load
+    if (fitToBox) {
+        map.fitBounds(bounds, { padding: [20, 20] });
+    }
 
     // Enable editing (draggable corners)
     if (boundingBoxLayer.enableEdit) {
@@ -230,22 +234,27 @@ function updateBoundingBox(latLowerLeft, lonLowerLeft, latUpperRight, lonUpperRi
             localStorage.setItem('boundingBoxUserEdited', 'true');
 
             // Save the new bounding box coordinates
-            const bounds = boundingBoxLayer.getBounds();
+            const newBounds = boundingBoxLayer.getBounds();
             const newBoundingBox = {
-                latLowerLeft: bounds.getSouth(),
-                lonLowerLeft: bounds.getWest(),
-                latUpperRight: bounds.getNorth(),
-                lonUpperRight: bounds.getEast()
+                latLowerLeft: newBounds.getSouth(),
+                lonLowerLeft: newBounds.getWest(),
+                latUpperRight: newBounds.getNorth(),
+                lonUpperRight: newBounds.getEast()
             };
             window.lastBoundingBox = newBoundingBox;
             localStorage.setItem('customBoundingBox', JSON.stringify(newBoundingBox));
-            console.log("Bounding box updated and saved:", newBoundingBox);
+            localStorage.setItem('boundingBox', JSON.stringify(newBoundingBox));
+            console.log("Bounding box resized - triggering API refresh");
 
-            // Don't auto-zoom when user edits - they're controlling the view manually
+            // Fit map to new bounding box
+            map.fitBounds(newBounds, { padding: [20, 20] });
+
+            // Trigger API refresh with new bounding box
+            if (typeof fetchFlights === 'function') {
+                fetchFlights();
+            }
         });
     }
-
-    // Don't auto-fit to bounding box - let aircraft markers control the zoom
 }
 
 function clearAzimuthArrows() {

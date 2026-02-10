@@ -238,57 +238,72 @@ function softRefresh() {
     const secondsElapsed = (Date.now() - lastFlightUpdateTime) / 1000;
     
     // Don't soft refresh if too much time has passed (data too stale)
-    if (secondsElapsed > 300) {  // 5 minutes
+    if (secondsElapsed > 600) {  // 10 minutes
         console.log('Data too stale for soft refresh, waiting for full refresh');
         return;
     }
 
-    // Clone and update flight positions
+    // Clone and update ALL flight positions (not just transits)
     const updatedFlights = lastFlightData.flights.map(flight => {
         const updated = {...flight};
         
+        // Update ETA for transits
         if (updated.is_possible_transit === 1 && updated.time !== null) {
-            // Update ETA (time remaining in minutes)
             updated.time = Math.max(0, updated.time - (secondsElapsed / 60));
+        }
+        
+        // Extrapolate position for ALL aircraft with valid data
+        if (updated.latitude && updated.longitude && updated.speed && updated.direction) {
+            const speedKmPerSec = updated.speed / 3600;  // km/h to km/s
+            const distanceKm = speedKmPerSec * secondsElapsed;
             
-            // If we have position data, extrapolate it
-            if (updated.latitude && updated.longitude && updated.speed && updated.direction) {
-                const speedKmPerSec = updated.speed / 3600;  // km/h to km/s
-                const distanceKm = speedKmPerSec * secondsElapsed;
-                
-                // Convert heading to radians
-                const headingRad = updated.direction * Math.PI / 180;
-                
-                // Update position (simplified flat-earth model, good enough for short distances)
-                const latChange = (distanceKm / 111.32) * Math.cos(headingRad);
-                const lonChange = (distanceKm / (111.32 * Math.cos(updated.latitude * Math.PI / 180))) * Math.sin(headingRad);
-                
-                updated.latitude += latChange;
-                updated.longitude += lonChange;
-            }
+            // Convert heading to radians
+            const headingRad = updated.direction * Math.PI / 180;
+            
+            // Update position (simplified flat-earth model, good enough for short distances)
+            const latChange = (distanceKm / 111.32) * Math.cos(headingRad);
+            const lonChange = (distanceKm / (111.32 * Math.cos(updated.latitude * Math.PI / 180))) * Math.sin(headingRad);
+            
+            updated.latitude += latChange;
+            updated.longitude += lonChange;
         }
         
         return updated;
     });
 
-    // Update the table without full re-render
+    // Update the table and map
     updateFlightTable(updatedFlights);
+    if (mapVisible && typeof updateAircraftMarkers === 'function') {
+        const lat = parseFloat(document.getElementById("latitude").value);
+        const lon = parseFloat(document.getElementById("longitude").value);
+        updateAircraftMarkers(updatedFlights, lat, lon);
+    }
     
     // Update "Last updated" display
     updateLastUpdateDisplay();
 }
 
 /**
- * Update flight table with new data
+ * Update flight table with extrapolated data during soft refresh
  */
 function updateFlightTable(flights) {
     flights.forEach(flight => {
-        const row = document.querySelector(`tr[data-flight-id="${flight.id}"]`);
-        if (row && flight.is_possible_transit === 1) {
-            // Update time cell
-            const timeCell = row.querySelector('td:nth-child(17)'); // Adjust column index if needed
-            if (timeCell && flight.time !== null) {
-                timeCell.textContent = flight.time.toFixed(1);
+        const normalizedId = String(flight.id).trim().toUpperCase();
+        const row = document.querySelector(`tr[data-flight-id="${normalizedId}"]`);
+        if (!row) return;
+        
+        const cells = row.querySelectorAll('td');
+        
+        // Update ETA/time for transits (column index may vary - find by checking content pattern)
+        if (flight.is_possible_transit === 1 && flight.time !== null) {
+            // Time is typically one of the last columns
+            for (let i = cells.length - 1; i >= 0; i--) {
+                const cellText = cells[i].textContent;
+                // Look for a cell that looks like a time value (decimal number)
+                if (/^\d+\.\d$/.test(cellText)) {
+                    cells[i].textContent = flight.time.toFixed(1);
+                    break;
+                }
             }
         }
     });
@@ -409,57 +424,56 @@ function playTrackOffSound() {
 }
 
 function updateTrackedFlight() {
-    if (!trackingFlightId) return;
+    if (!trackingFlightId || !lastFlightData) return;
 
-    let latitude = document.getElementById("latitude").value;
-    let longitude = document.getElementById("longitude").value;
-    let elevation = document.getElementById("elevation").value;
-    const minAltitude = getMinAltitudeAllQuadrants();
-
-    let endpoint_url = (
-        `/flights?target=${encodeURIComponent(target)}`
-        + `&latitude=${encodeURIComponent(latitude)}`
-        + `&longitude=${encodeURIComponent(longitude)}`
-        + `&elevation=${encodeURIComponent(elevation)}`
-        + `&min_altitude=${encodeURIComponent(minAltitude)}`
-        + `&send-notification=true`
+    // Find the tracked flight in cached data
+    const originalFlight = lastFlightData.flights.find(f =>
+        String(f.id).trim().toUpperCase() === trackingFlightId
     );
 
-    if (window.lastBoundingBox) {
-        endpoint_url += `&bbox_lat_ll=${encodeURIComponent(window.lastBoundingBox.latLowerLeft)}`;
-        endpoint_url += `&bbox_lon_ll=${encodeURIComponent(window.lastBoundingBox.lonLowerLeft)}`;
-        endpoint_url += `&bbox_lat_ur=${encodeURIComponent(window.lastBoundingBox.latUpperRight)}`;
-        endpoint_url += `&bbox_lon_ur=${encodeURIComponent(window.lastBoundingBox.lonUpperRight)}`;
+    if (!originalFlight) {
+        console.log(`Track mode: flight ${trackingFlightId} no longer in cached data`);
+        stopTracking();
+        return;
     }
 
-    fetch(endpoint_url)
-    .then(response => response.json())
-    .then(data => {
-        // Find the tracked flight in the response
-        const trackedFlight = data.flights.find(f =>
-            String(f.id).trim().toUpperCase() === trackingFlightId
-        );
+    // Calculate time elapsed since last API update
+    const secondsElapsed = (Date.now() - lastFlightUpdateTime) / 1000;
 
-        if (!trackedFlight) {
-            console.log(`Track mode: flight ${trackingFlightId} no longer in range`);
-            stopTracking();
-            return;
-        }
+    // Clone and extrapolate position
+    const trackedFlight = {...originalFlight};
 
-        // Update only the tracked flight's row
-        const row = document.querySelector(`tr[data-flight-id="${trackingFlightId}"]`);
-        if (row) {
-            updateFlightRow(row, trackedFlight);
-        }
+    if (trackedFlight.is_possible_transit === 1 && trackedFlight.time !== null) {
+        // Update ETA (time remaining in minutes)
+        trackedFlight.time = Math.max(0, trackedFlight.time - (secondsElapsed / 60));
+    }
 
-        // Update the marker on the map
-        if (typeof updateSingleAircraftMarker === 'function') {
-            updateSingleAircraftMarker(trackedFlight);
-        }
-    })
-    .catch(error => {
-        console.error('Track mode update error:', error);
-    });
+    // Extrapolate position if we have the necessary data
+    if (trackedFlight.latitude && trackedFlight.longitude && trackedFlight.speed && trackedFlight.direction) {
+        const speedKmPerSec = trackedFlight.speed / 3600;  // km/h to km/s
+        const distanceKm = speedKmPerSec * secondsElapsed;
+
+        // Convert heading to radians
+        const headingRad = trackedFlight.direction * Math.PI / 180;
+
+        // Update position (simplified flat-earth model)
+        const latChange = (distanceKm / 111.32) * Math.cos(headingRad);
+        const lonChange = (distanceKm / (111.32 * Math.cos(trackedFlight.latitude * Math.PI / 180))) * Math.sin(headingRad);
+
+        trackedFlight.latitude += latChange;
+        trackedFlight.longitude += lonChange;
+    }
+
+    // Update only the tracked flight's row
+    const row = document.querySelector(`tr[data-flight-id="${trackingFlightId}"]`);
+    if (row) {
+        updateFlightRow(row, trackedFlight);
+    }
+
+    // Update the marker on the map
+    if (typeof updateSingleAircraftMarker === 'function') {
+        updateSingleAircraftMarker(trackedFlight);
+    }
 }
 
 function updateFlightRow(row, flight) {
@@ -921,6 +935,11 @@ function fetchFlights() {
         window.lastFlightUpdateTime = Date.now();
         lastFlightData = data;
         updateLastUpdateDisplay();
+        
+        // Start soft refresh if not already running
+        if (!softRefreshInterval) {
+            softRefreshInterval = setInterval(softRefresh, 15000);
+        }
 
         // Hide loading spinner
         document.getElementById("loadingSpinner").style.display = "none";

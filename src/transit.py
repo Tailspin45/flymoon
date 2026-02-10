@@ -349,10 +349,19 @@ def get_transits(
 
         flight_data = list()
 
+        filtered_count = 0
         for flight in raw_flight_data["flights"]:
-            flight_data.append(parse_fligh_data(flight))
+            parsed = parse_fligh_data(flight)
+            # Filter: only include flights whose current position is within the bounding box
+            lat, lon = parsed["latitude"], parsed["longitude"]
+            if (bbox.lat_lower_left <= lat <= bbox.lat_upper_right and
+                bbox.long_lower_left <= lon <= bbox.long_upper_right):
+                flight_data.append(parsed)
+            else:
+                filtered_count += 1
 
-        logger.info(f"there are {len(flight_data)} flights near")
+        if filtered_count > 0:
+            logger.debug(f"Bbox filter: {filtered_count} flights outside box")
 
         # Process all flights - pre-filtering disabled as it was too aggressive
         # and incorrectly compared angular altitude with linear elevation
