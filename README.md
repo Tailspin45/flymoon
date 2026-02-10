@@ -157,6 +157,30 @@ python3 transit_capture.py --test-seestar
 
 Both scripts can run in the background (append `&` on Unix/Mac or use Task Scheduler on Windows) and will continuously monitor for transits.
 
+### Windows System Tray Monitor
+
+For Windows users, a system tray application is available:
+
+1. **Install Windows dependencies:**
+   ```cmd
+   pip install -r requirements-windows.txt
+   ```
+
+2. **Configure** `.env` with your observer location and optionally Telegram credentials
+
+3. **Run the monitor:**
+   ```cmd
+   python windows_monitor.py
+   ```
+
+The app runs in your system tray with a color-coded icon:
+- **Gray** - Idle (not monitoring)
+- **Green** - Monitoring active
+- **Orange** - Transit detected!
+- **Red** - Error
+
+Right-click the tray icon to change targets, start/stop monitoring, or quit.
+
 ### macOS Application Bundle
 
 For macOS users, a double-clickable `.app` is available:

@@ -1,0 +1,8 @@
+# Windows-specific dependencies for system tray monitor
+# Install with: pip install -r requirements-windows.txt
+
+# System tray support
+pystray>=0.19.5
+
+# Image processing for tray icon
+pillow>=10.0.0
