@@ -397,7 +397,9 @@ function updateFlightTableFull(flights) {
             cells[10].textContent = Math.round(flight.az_diff) + "º";
         }
         if (flight.distance_nm !== null && cells[14]) {
-            cells[14].textContent = flight.distance_nm.toFixed(1);
+            const km = (flight.distance_nm * 1.852).toFixed(1);
+            const miles = (flight.distance_nm * 1.15078).toFixed(1);
+            cells[14].textContent = `${km}/${miles}`;
         }
         if (flight.time !== null && cells[16]) {
             cells[16].textContent = flight.time.toFixed(1);
@@ -608,7 +610,9 @@ function updateFlightRow(row, flight) {
                 cell.textContent = altitude.toLocaleString('en-US');
             }
         } else if (column === "distance_nm") {
-            cell.textContent = value.toFixed(1);
+            const km = (value * 1.852).toFixed(1);
+            const miles = (value * 1.15078).toFixed(1);
+            cell.textContent = `${km}/${miles}`;
         } else if (column === "direction") {
             cell.textContent = Math.round(value) + "°";
         } else if (column === "alt_diff" || column === "az_diff") {
@@ -1270,8 +1274,10 @@ function fetchFlights() {
                         val.textContent = altitude.toLocaleString('en-US');
                     }
                 } else if (column === "distance_nm") {
-                    // Show distance in nautical miles with one decimal place
-                    val.textContent = value.toFixed(1);
+                    // Show distance in km/miles (converted from nautical miles)
+                    const km = (value * 1.852).toFixed(1);
+                    const miles = (value * 1.15078).toFixed(1);
+                    val.textContent = `${km}/${miles}`;
                 } else if (column === "direction") {
                     // Convert true heading to magnetic heading
                     const trueHeading = value;
