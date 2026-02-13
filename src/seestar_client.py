@@ -704,6 +704,12 @@ class TransitRecorder:
         duration will be: pre_buffer + transit_duration + post_buffer
         """
         try:
+            # Cancel existing timer for this flight if any (prevents memory leak)
+            if flight_id in self._scheduled_recordings:
+                old_timer = self._scheduled_recordings[flight_id]
+                old_timer.cancel()
+                logger.debug(f"Cancelled previous timer for {flight_id}")
+
             # Calculate timing
             start_delay = max(0, eta_seconds - self.pre_buffer)
             total_duration = self.pre_buffer + transit_duration_estimate + self.post_buffer

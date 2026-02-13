@@ -13,6 +13,9 @@ from src import logger
 class FlightDataCache:
     """Simple in-memory cache for flight data with TTL support."""
 
+    # Maximum number of cache entries before forced cleanup
+    MAX_CACHE_SIZE = 100
+
     def __init__(self, ttl_seconds: int = 120):
         """
         Initialize cache with time-to-live.
@@ -73,6 +76,19 @@ class FlightDataCache:
         logger.info(f"Cache HIT for {key} (age: {age:.1f}s, ttl: {self.ttl}s)")
         return entry["data"]
 
+    def _cleanup_expired(self) -> None:
+        """Remove all expired entries from cache."""
+        now = time.time()
+        expired_keys = [
+            key for key, entry in self._cache.items()
+            if now - entry["timestamp"] > self.ttl
+        ]
+        for key in expired_keys:
+            del self._cache[key]
+            self._stats["evictions"] += 1
+        if expired_keys:
+            logger.debug(f"Cleaned up {len(expired_keys)} expired cache entries")
+
     def set(self, lat_ll: float, lon_ll: float, lat_ur: float, lon_ur: float,
             data: List[dict], target: Optional[str] = None) -> None:
         """
@@ -89,6 +105,10 @@ class FlightDataCache:
         target : str, optional
             Target celestial object (sun/moon)
         """
+        # Cleanup expired entries periodically to prevent memory leak
+        if len(self._cache) >= self.MAX_CACHE_SIZE:
+            self._cleanup_expired()
+
         key = self._make_key((lat_ll, lon_ll, lat_ur, lon_ur), target)
         self._cache[key] = {
             "data": data,
