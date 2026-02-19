@@ -48,9 +48,9 @@ pip install -r requirements.txt
 
 3. **Set your observer location:**
    ```
-   OBSERVER_LATITUDE=33.111369
-   OBSERVER_LONGITUDE=-117.310169
-   OBSERVER_ELEVATION=0
+   OBSERVER_LATITUDE=your_latitude_here
+   OBSERVER_LONGITUDE=your_longitude_here
+   OBSERVER_ELEVATION=your elevation_above_sealevel_here
    ```
 
 4. **Optional: Set up Telegram or Telescope** - See [SETUP.md](SETUP.md) for detailed instructions
