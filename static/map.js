@@ -26,7 +26,7 @@ let aircraftRouteCache = {};  // Cache fetched routes/tracks
 let currentRouteLayer = null;  // Currently displayed route/track
 let userInteractingWithMap = false;  // Prevent auto-zoom during user interaction
 let headingArrows = {};  // Store heading arrows for medium/high probability transits
-let ghostMarkers = {};  // Small dots showing previous aircraft positions (one per flight)
+let ghostMarkers = {};  // Arrays of dots showing breadcrumb trail per flight (ghostMarkers[id] = [circleMarker, ...])
 
 // Arrow colors for each target
 const ARROW_COLORS = {
@@ -414,11 +414,10 @@ function updateAircraftMarkers(flights, observerLat, observerLon, isFullRefresh 
             userInteractingWithMap = false;
         }
     } else {
-        // Soft refresh: snapshot current positions as small ghost dots before clearing
+        // Soft refresh: add a new breadcrumb dot at current position for each aircraft
         Object.entries(aircraftMarkers).forEach(([id, marker]) => {
-            if (ghostMarkers[id]) ghostLayer.removeLayer(ghostMarkers[id]);
             const latlng = marker.getLatLng();
-            ghostMarkers[id] = L.circleMarker(latlng, {
+            const dot = L.circleMarker(latlng, {
                 radius: 3,
                 color: '#888',
                 fillColor: '#aaa',
@@ -426,6 +425,8 @@ function updateAircraftMarkers(flights, observerLat, observerLon, isFullRefresh 
                 weight: 1,
                 interactive: false
             }).addTo(ghostLayer);
+            if (!ghostMarkers[id]) ghostMarkers[id] = [];
+            ghostMarkers[id].push(dot);
         });
     }
 
@@ -635,12 +636,16 @@ async function toggleFlightRouteTrack(faFlightId, flightId) {
         return;
     }
 
-    // If already showing this flight's route, hide it
+    // If already showing this flight's route, hide it and restore breadcrumbs
     if (currentRouteLayer && currentRouteLayer.flightId === flightId) {
         console.log('Hiding current route layer for', flightId);
         map.removeLayer(currentRouteLayer);
         currentRouteLayer = null;
         userInteractingWithMap = false;  // Allow auto-zoom again
+        // Restore breadcrumb dots for this flight
+        if (ghostMarkers[flightId]) {
+            ghostMarkers[flightId].forEach(dot => ghostLayer.addLayer(dot));
+        }
         return;
     }
 
@@ -648,9 +653,18 @@ async function toggleFlightRouteTrack(faFlightId, flightId) {
     userInteractingWithMap = true;
     console.log('User interacting with map, fetching route/track...');
 
-    // Remove previous route if showing different flight
+    // Hide breadcrumb dots for this flight while track is shown
+    if (ghostMarkers[flightId]) {
+        ghostMarkers[flightId].forEach(dot => ghostLayer.removeLayer(dot));
+    }
+
+    // Remove previous route if showing different flight, restore its breadcrumbs
     if (currentRouteLayer) {
+        const prevId = currentRouteLayer.flightId;
         map.removeLayer(currentRouteLayer);
+        if (prevId && ghostMarkers[prevId]) {
+            ghostMarkers[prevId].forEach(dot => ghostLayer.addLayer(dot));
+        }
     }
 
     // Check cache first
