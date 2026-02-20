@@ -298,6 +298,7 @@ async function capturePhoto() {
 
 // Recording state
 let recordingStartTime = null;
+let recordingEndTime = null;   // absolute ms timestamp — can be extended for overlapping transits
 let recordingTimerInterval = null;
 
 async function startRecording() {
@@ -357,21 +358,31 @@ async function stopRecording() {
 function startRecordingTimer(totalDuration) {
     const timerSpan = document.getElementById('recordingTimer');
     if (!timerSpan) return;
-    
-    // Update timer every 100ms
+
+    recordingEndTime = Date.now() + totalDuration * 1000;
+
     recordingTimerInterval = setInterval(() => {
-        if (!recordingStartTime) return;
-        
-        const elapsed = (Date.now() - recordingStartTime) / 1000;
-        const remaining = Math.max(0, totalDuration - elapsed);
-        
-        timerSpan.textContent = `${elapsed.toFixed(1)}s / ${totalDuration}s`;
-        
-        // Auto-stop when duration reached
+        if (!recordingStartTime || !recordingEndTime) return;
+
+        const elapsed   = (Date.now() - recordingStartTime) / 1000;
+        const remaining = Math.max(0, (recordingEndTime - Date.now()) / 1000);
+        const total     = elapsed + remaining;
+
+        timerSpan.textContent = `${elapsed.toFixed(1)}s / ${total.toFixed(0)}s`;
+
         if (remaining <= 0 && isRecording) {
             stopRecording();
         }
     }, 100);
+}
+
+/** Extend an active recording so it ends no sooner than newEndMs */
+function extendRecording(newEndMs) {
+    if (recordingEndTime === null) return;
+    if (newEndMs > recordingEndTime) {
+        recordingEndTime = newEndMs;
+        console.log(`[Recording] Extended end time by ${((newEndMs - Date.now()) / 1000).toFixed(0)}s`);
+    }
 }
 
 function stopRecordingTimer() {
@@ -380,7 +391,8 @@ function stopRecordingTimer() {
         recordingTimerInterval = null;
     }
     recordingStartTime = null;
-    
+    recordingEndTime = null;
+
     const timerSpan = document.getElementById('recordingTimer');
     if (timerSpan) timerSpan.textContent = '';
 }
@@ -844,13 +856,26 @@ function formatCountdown(seconds) {
 
 function checkAutoCapture() {
     const autoCapture = document.getElementById('autoCaptureToggle').checked;
-    if (!autoCapture || !isConnected || transitCaptureActive) return;
+    if (!autoCapture || !isConnected) return;
 
-    // Trigger recording exactly when PRE seconds remain (so recording starts right on time)
-    const PRE = 10;
-    const imminent = upcomingTransits.find(t => t.seconds_until <= PRE && t.seconds_until > 0);
-    if (imminent) {
-        console.log('[Telescope] Auto-capturing imminent transit:', imminent.flight, `(${imminent.seconds_until}s)`);
+    const PRE = 10, POST = 10;
+
+    // Find next unhandled transit within PRE seconds
+    const imminent = upcomingTransits.find(t =>
+        t.seconds_until <= PRE && t.seconds_until > 0 && !t.handled
+    );
+    if (!imminent) return;
+
+    imminent.handled = true; // prevent re-triggering each tick
+
+    if (isRecording) {
+        // Already recording — extend to 10s after this transit instead of interrupting
+        const newEndMs = Date.now() + (imminent.seconds_until + POST) * 1000;
+        extendRecording(newEndMs);
+        showStatus(`📹 Recording extended for ${imminent.flight} (transit in ${imminent.seconds_until}s)`, 'info', 5000);
+        console.log('[Telescope] Extended recording for overlapping transit:', imminent.flight);
+    } else {
+        console.log('[Telescope] Auto-capturing transit:', imminent.flight, `(${imminent.seconds_until}s)`);
         recordTransit(imminent.flight, imminent.seconds_until);
     }
 }
