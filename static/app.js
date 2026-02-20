@@ -399,7 +399,7 @@ function updateFlightTableFull(flights) {
         if (flight.distance_nm !== null && cells[14]) {
             const km = (flight.distance_nm * 1.852).toFixed(1);
             const miles = (flight.distance_nm * 1.15078).toFixed(1);
-            cells[14].textContent = `${km}/${miles}`;
+            cells[14].innerHTML = `<span style="display:inline-block;text-align:right;min-width:4ch">${km}</span>/<span style="display:inline-block;text-align:left;min-width:4ch">${miles}</span>`;
         }
         if (flight.time !== null && cells[16]) {
             cells[16].textContent = flight.time.toFixed(1);
@@ -612,9 +612,7 @@ function updateFlightRow(row, flight) {
         } else if (column === "distance_nm") {
             const km = (value * 1.852).toFixed(1);
             const miles = (value * 1.15078).toFixed(1);
-            cell.textContent = `${km}/${miles}`;
-        } else if (column === "direction") {
-            cell.textContent = Math.round(value) + "°";
+            cell.innerHTML = `<span style="display:inline-block;text-align:right;min-width:4ch">${km}</span>/<span style="display:inline-block;text-align:left;min-width:4ch">${miles}</span>`;
         } else if (column === "alt_diff" || column === "az_diff") {
             const roundedValue = Math.round(value);
             cell.textContent = roundedValue + "º";
@@ -1292,7 +1290,7 @@ function fetchFlights() {
                     // Show distance in km/miles (converted from nautical miles)
                     const km = (value * 1.852).toFixed(1);
                     const miles = (value * 1.15078).toFixed(1);
-                    val.textContent = `${km}/${miles}`;
+                    val.innerHTML = `<span style="display:inline-block;text-align:right;min-width:4ch">${km}</span>/<span style="display:inline-block;text-align:left;min-width:4ch">${miles}</span>`;
                 } else if (column === "direction") {
                     // Convert true heading to magnetic heading
                     const trueHeading = value;

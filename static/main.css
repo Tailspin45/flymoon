@@ -163,6 +163,13 @@ body {
     text-align: right;
 }
 
+/* Dist column: align on / using tabular numbers */
+#resultsTable td:nth-child(15) {
+    font-variant-numeric: tabular-nums;
+    font-family: monospace;
+    white-space: nowrap;
+}
+
 #resultsTable tr {
     background-color: #f5f5f5;
     color: black;
