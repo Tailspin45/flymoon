@@ -1349,9 +1349,11 @@ function updateFilmstrip(files) {
         const badge = isTemp ? '<span class="temp-badge">TEMP</span>' : '';
         const itemClass = isTemp ? 'filmstrip-item temp-file' : 'filmstrip-item';
         const isVideo = file.path.match(/\.(mp4|avi|mov)$/i);
-        const thumbnail = isVideo
-            ? `<div class="filmstrip-thumbnail video-thumb">🎬</div>`
-            : `<img src="${file.path}" alt="${file.name}" class="filmstrip-thumbnail">`;
+        const thumbnail = file.thumbnail
+            ? `<img src="${file.thumbnail}" alt="${file.name}" class="filmstrip-thumbnail">`
+            : isVideo
+                ? `<div class="filmstrip-thumbnail video-thumb">🎬</div>`
+                : `<img src="${file.path}" alt="${file.name}" class="filmstrip-thumbnail">`;
         
         return `
         <div class="${itemClass}" onclick="viewFile('${file.path}')">
@@ -1581,14 +1583,59 @@ function triggerSimTransit() {
     // Audio beep
     playSimBeep();
 
-    // Plane fly-through animation
+    // Plane fly-through animation; snapshot captured at mid-flight (~1.6s in)
     animateSimPlane();
+    setTimeout(captureSimTransitSnapshot, 1600);
 
     // Shutter flash
     simCaptureFlash();
 
     showStatus(`🎯 TRANSIT NOW — recording ${SIM_POST}s more`, 'success', SIM_POST * 1000);
     // Recording auto-stops via startRecordingTimer; auto-cycle is triggered from stopSimRecording()
+}
+
+let _simTransitSnapshot = null;  // canvas data URL captured at transit mid-point
+
+/** Composite the live sim video frame + plane image into a canvas thumbnail. */
+function captureSimTransitSnapshot() {
+    try {
+        const video = document.getElementById('simulationVideo');
+        const plane = document.getElementById('simPlane');
+        const container = document.getElementById('previewContainer');
+        if (!video || !container) return;
+
+        const cw = container.offsetWidth  || 640;
+        const ch = container.offsetHeight || 360;
+        const canvas = document.createElement('canvas');
+        canvas.width  = cw;
+        canvas.height = ch;
+        const ctx = canvas.getContext('2d');
+
+        // Draw video frame
+        ctx.drawImage(video, 0, 0, cw, ch);
+
+        // Draw plane if visible and positioned
+        if (plane && plane.style.display !== 'none') {
+            const img = plane.querySelector('img');
+            if (img && img.complete) {
+                const x = parseInt(plane.style.left) || cw / 2;
+                const y = parseInt(plane.style.top)  || ch * 0.42;
+                ctx.drawImage(img, x, y, 95, 80);
+            }
+        }
+
+        // Label it as a simulation snapshot
+        ctx.fillStyle = 'rgba(0,0,0,0.45)';
+        ctx.fillRect(0, ch - 22, cw, 22);
+        ctx.fillStyle = '#ffd700';
+        ctx.font = 'bold 12px monospace';
+        ctx.fillText('⚠ SIMULATION — transit captured', 6, ch - 6);
+
+        _simTransitSnapshot = canvas.toDataURL('image/png');
+    } catch (e) {
+        console.warn('[Sim] Snapshot failed:', e);
+        _simTransitSnapshot = null;
+    }
 }
 
 /** Blinking REC overlay + fake filmstrip entry */
@@ -1620,15 +1667,17 @@ function stopSimRecording() {
     const rec = document.getElementById('simRecOverlay');
     if (rec) rec.style.display = 'none';
 
-    // Add fake recording to filmstrip
+    // Add fake recording to filmstrip, using transit snapshot as thumbnail if captured
     const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, -5);
     const tempFile = {
         name: `sim_transit_${timestamp}.mp4`,
         path: '/static/simulations/demo.mp4',
         url:  '/static/simulations/demo.mp4',
         isSimulation: true,
+        thumbnail: _simTransitSnapshot || null,
         timestamp: Date.now()
     };
+    _simTransitSnapshot = null;  // reset for next transit
     simulationFiles.push(tempFile);
     if (!window.currentFiles) window.currentFiles = [];
     window.currentFiles.unshift(tempFile);

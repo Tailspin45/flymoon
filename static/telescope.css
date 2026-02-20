@@ -280,39 +280,40 @@
 /* Transit Overlay */
 .transit-overlay {
     position: absolute;
-    top: 0;
+    bottom: 0;
     left: 0;
     right: 0;
-    bottom: 0;
-    background: rgba(0, 0, 0, 0.85);
+    background: rgba(180, 0, 0, 0.82);
     display: flex;
     align-items: center;
     justify-content: center;
+    gap: 10px;
+    padding: 6px 12px;
     z-index: 1000;
-    backdrop-filter: blur(10px);
 }
 
 .transit-overlay-content {
-    text-align: center;
-    animation: pulse-glow 2s infinite;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    animation: pulse-glow 1.5s infinite;
 }
 
 .transit-overlay-icon {
-    font-size: 5em;
-    margin-bottom: 16px;
+    font-size: 1.2em;
 }
 
 .transit-overlay-text {
-    font-size: 1.8em;
+    font-size: 0.9em;
     font-weight: 700;
-    color: #ff4444;
-    letter-spacing: 2px;
-    margin-bottom: 12px;
+    color: #fff;
+    letter-spacing: 1px;
 }
 
 .transit-overlay-info {
-    font-size: 1.2em;
-    color: #039c9c;
+    font-size: 0.85em;
+    color: #ffd;
+    opacity: 0.9;
 }
 
 @keyframes pulse-glow {
