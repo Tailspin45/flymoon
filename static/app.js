@@ -618,7 +618,7 @@ function updateFlightRow(row, flight) {
         } else if (column === "alt_diff" || column === "az_diff") {
             const roundedValue = Math.round(value);
             cell.textContent = roundedValue + "º";
-            cell.style.color = Math.abs(roundedValue) > 10 ? "#888" : "";
+            cell.style.color = Math.abs(roundedValue) >= 3 ? "#888" : "";
         } else if (column === "target_alt" || column === "target_az") {
             const numValue = value.toFixed(1);
             cell.textContent = numValue + "º";
