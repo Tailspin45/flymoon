@@ -1648,12 +1648,77 @@ function captureSimTransitSnapshot() {
 }
 
 /** Blinking REC overlay + fake filmstrip entry */
+
+// Canvas compositor state for MediaRecorder-based sim recording
+let _simCompositorCanvas = null;
+let _simCompositorRAF    = null;
+let _simCanvasRecorder   = null;
+let _simRecordedChunks   = [];
+
+/** Draw one composited frame: sim video + plane overlay */
+function _drawSimFrame(ctx, video, plane, container, cw, ch) {
+    const vw = video.videoWidth  || cw;
+    const vh = video.videoHeight || ch;
+    const scale = Math.min(cw / vw, ch / vh);
+    const dx = (cw - vw * scale) / 2;
+    const dy = (ch - vh * scale) / 2;
+    ctx.fillStyle = '#000';
+    ctx.fillRect(0, 0, cw, ch);
+    ctx.drawImage(video, dx, dy, vw * scale, vh * scale);
+
+    if (plane && plane.style.display !== 'none') {
+        const img = plane.querySelector('img');
+        const containerRect = container.getBoundingClientRect();
+        const planeRect = plane.getBoundingClientRect();
+        if (img && img.complete && planeRect.width > 0) {
+            ctx.drawImage(img,
+                planeRect.left - containerRect.left,
+                planeRect.top  - containerRect.top,
+                planeRect.width, planeRect.height);
+        }
+    }
+}
+
 function startSimRecording(duration = SIM_PRE + SIM_POST) {
     isRecording = true;
-    recordingIsReal = false;   // sim recording — real transit can preempt
+    recordingIsReal = false;
     recordingStartTime = Date.now();
     updateRecordingUI();
     startRecordingTimer(duration);
+
+    // Start canvas compositor + MediaRecorder so the aircraft is in the video
+    const video = document.getElementById('simulationVideo');
+    const plane = document.getElementById('simPlane');
+    const container = document.getElementById('previewContainer');
+    if (video && container && window.MediaRecorder) {
+        const cw = container.offsetWidth  || 640;
+        const ch = container.offsetHeight || 360;
+        _simCompositorCanvas = document.createElement('canvas');
+        _simCompositorCanvas.width  = cw;
+        _simCompositorCanvas.height = ch;
+        const ctx = _simCompositorCanvas.getContext('2d');
+
+        const loop = () => {
+            _drawSimFrame(ctx, video, plane, container, cw, ch);
+            _simCompositorRAF = requestAnimationFrame(loop);
+        };
+        loop();
+
+        const mimeType = ['video/webm;codecs=vp9', 'video/webm', '']
+            .find(t => !t || MediaRecorder.isTypeSupported(t));
+        try {
+            const stream = _simCompositorCanvas.captureStream(30);
+            _simRecordedChunks = [];
+            _simCanvasRecorder = new MediaRecorder(stream, mimeType ? { mimeType } : {});
+            _simCanvasRecorder.ondataavailable = e => {
+                if (e.data.size > 0) _simRecordedChunks.push(e.data);
+            };
+            _simCanvasRecorder.start(100);
+        } catch (e) {
+            console.warn('[Sim] MediaRecorder unavailable, falling back to demo.mp4:', e);
+            _simCanvasRecorder = null;
+        }
+    }
 
     const rec = document.getElementById('simRecOverlay');
     if (rec) {
@@ -1676,21 +1741,45 @@ function stopSimRecording() {
     const rec = document.getElementById('simRecOverlay');
     if (rec) rec.style.display = 'none';
 
-    // Add fake recording to filmstrip, using transit snapshot as thumbnail if captured
-    const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, -5);
-    const tempFile = {
-        name: `sim_transit_${timestamp}.mp4`,
-        path: '/static/simulations/demo.mp4',
-        url:  '/static/simulations/demo.mp4',
-        isSimulation: true,
-        thumbnail: _simTransitSnapshot || null,
-        timestamp: Date.now()
+    // Stop compositor
+    if (_simCompositorRAF) { cancelAnimationFrame(_simCompositorRAF); _simCompositorRAF = null; }
+
+    const snapshot   = _simTransitSnapshot;
+    _simTransitSnapshot = null;
+
+    const timestamp  = new Date().toISOString().replace(/[:.]/g, '-').slice(0, -5);
+    const fileName   = `sim_transit_${timestamp}.webm`;
+
+    const _addToFilmstrip = (url, path) => {
+        const tempFile = {
+            name: fileName,
+            path,
+            url,
+            isSimulation: true,
+            thumbnail: snapshot || null,
+            timestamp: Date.now()
+        };
+        simulationFiles.push(tempFile);
+        if (!window.currentFiles) window.currentFiles = [];
+        window.currentFiles.unshift(tempFile);
+        updateFilmstrip(window.currentFiles);
     };
-    _simTransitSnapshot = null;  // reset for next transit
-    simulationFiles.push(tempFile);
-    if (!window.currentFiles) window.currentFiles = [];
-    window.currentFiles.unshift(tempFile);
-    updateFilmstrip(window.currentFiles);
+
+    if (_simCanvasRecorder && _simCanvasRecorder.state !== 'inactive') {
+        _simCanvasRecorder.onstop = () => {
+            const blob = new Blob(_simRecordedChunks, { type: 'video/webm' });
+            const url  = URL.createObjectURL(blob);
+            _addToFilmstrip(url, url);
+            _simCanvasRecorder  = null;
+            _simRecordedChunks  = [];
+            _simCompositorCanvas = null;
+        };
+        _simCanvasRecorder.stop();
+    } else {
+        // Fallback: no MediaRecorder — use demo.mp4
+        _addToFilmstrip('/static/simulations/demo.mp4', '/static/simulations/demo.mp4');
+        _simCompositorCanvas = null;
+    }
 
     // Auto-cycle: schedule next sim transit 60s after this recording ends
     if (isSimulating) {
