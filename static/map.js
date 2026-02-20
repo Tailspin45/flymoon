@@ -418,10 +418,10 @@ function updateAircraftMarkers(flights, observerLat, observerLon, isFullRefresh 
         Object.entries(aircraftMarkers).forEach(([id, marker]) => {
             const latlng = marker.getLatLng();
             const dot = L.circleMarker(latlng, {
-                radius: 3,
+                radius: 1,
                 color: '#888',
-                fillColor: '#aaa',
-                fillOpacity: 0.6,
+                fillColor: '#888',
+                fillOpacity: 1,
                 weight: 1,
                 interactive: false
             }).addTo(ghostLayer);
