@@ -532,11 +532,9 @@ function updateAircraftMarkers(flights, observerLat, observerLon, isFullRefresh 
         );
         
         if (hasTransits) {
-            // Zoom in more for transits to fill about half the window
-            map.fitBounds(aircraftBounds, { padding: [30, 30], maxZoom: 15 });
+            map.fitBounds(aircraftBounds, { padding: [10, 10] });
         } else {
-            // Normal view - always fit all aircraft in window
-            map.fitBounds(aircraftBounds, { padding: [50, 50], maxZoom: 13 });
+            map.fitBounds(aircraftBounds, { padding: [10, 10] });
         }
     } else if (Object.keys(aircraftMarkers).length === 0) {
         // No aircraft - center on observer at reasonable zoom
