@@ -55,10 +55,10 @@ function getMinAltitudeForAzimuth(azimuth) {
         return defaultMinAlt;
     }
 
-    const minAltN = parseFloat(minAltNEl.value) || defaultMinAlt;
-    const minAltE = parseFloat(minAltEEl.value) || defaultMinAlt;
-    const minAltS = parseFloat(minAltSEl.value) || defaultMinAlt;
-    const minAltW = parseFloat(minAltWEl.value) || defaultMinAlt;
+    const minAltN = ((v => isNaN(v) ? defaultMinAlt : v)(parseFloat(minAltNEl.value)));
+    const minAltE = ((v => isNaN(v) ? defaultMinAlt : v)(parseFloat(minAltEEl.value)));
+    const minAltS = ((v => isNaN(v) ? defaultMinAlt : v)(parseFloat(minAltSEl.value)));
+    const minAltW = ((v => isNaN(v) ? defaultMinAlt : v)(parseFloat(minAltWEl.value)));
 
     if (azimuth === null || azimuth === undefined || isNaN(azimuth)) {
         // If no azimuth, use the minimum of all quadrants
@@ -94,10 +94,10 @@ function getMinAltitudeAllQuadrants() {
         return defaultMinAlt;
     }
 
-    const minAltN = parseFloat(minAltNEl.value) || defaultMinAlt;
-    const minAltE = parseFloat(minAltEEl.value) || defaultMinAlt;
-    const minAltS = parseFloat(minAltSEl.value) || defaultMinAlt;
-    const minAltW = parseFloat(minAltWEl.value) || defaultMinAlt;
+    const minAltN = ((v => isNaN(v) ? defaultMinAlt : v)(parseFloat(minAltNEl.value)));
+    const minAltE = ((v => isNaN(v) ? defaultMinAlt : v)(parseFloat(minAltEEl.value)));
+    const minAltS = ((v => isNaN(v) ? defaultMinAlt : v)(parseFloat(minAltSEl.value)));
+    const minAltW = ((v => isNaN(v) ? defaultMinAlt : v)(parseFloat(minAltWEl.value)));
     return Math.min(minAltN, minAltE, minAltS, minAltW);
 }
 
