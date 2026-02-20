@@ -1049,10 +1049,6 @@ function fetchFlights() {
         lastFlightData = data;
         updateLastUpdateDisplay();
 
-        // Hide loading spinner
-        document.getElementById("loadingSpinner").style.display = "none";
-        document.getElementById("results").style.display = "block";
-
         if(data.flights.length == 0) {
             alertNoResults.innerHTML = "No flights!"
         }
@@ -1390,6 +1386,10 @@ function fetchFlights() {
 
         // Update altitude display - DISABLED: updateAltitudeOverlay in map.js handles this now
         // updateAltitudeDisplay(data.flights);
+
+        // Hide spinner only after all rendering is complete
+        document.getElementById("loadingSpinner").style.display = "none";
+        document.getElementById("results").style.display = "block";
     })
     .catch(error => {
         // Hide loading spinner on error
