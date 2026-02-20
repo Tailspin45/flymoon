@@ -361,16 +361,16 @@ function updateSingleAircraftMarker(flight) {
         else if (level === 3) color = COLORS.HIGH;
     }
 
-    // Use diamond for transit aircraft, airplane emoji for others
+    // Use diamond for transit aircraft, SVG airplane for others
     const isTransit = flight.is_possible_transit === 1;
-    const rotation = (flight.direction - 45);
+    const rotation = flight.direction; // SVG points north (up), rotate by true heading
 
     const aircraftIcon = L.divIcon({
         html: isTransit
             ? `<div style="font-size: 36px; color: ${color}; text-shadow: 0 0 3px black, 0 0 3px black, 0 0 8px ${color}, 1px 1px 0 black, -1px -1px 0 black, 1px -1px 0 black, -1px 1px 0 black; display: flex; align-items: center; justify-content: center; width: 36px; height: 36px; line-height: 1;">◆</div>`
-            : `<div style="transform: rotate(${rotation}deg); font-size: 20px;">✈️</div>`,
-        iconSize: [36, 36],
-        iconAnchor: [18, 18],
+            : `<div style="transform: rotate(${rotation}deg); width: 20px; height: 20px;"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="#333" width="20" height="20"><path d="M12 2 L7 14 L12 11 L17 14 Z M12 11 L10 22 L12 19 L14 22 Z"/></svg></div>`,
+        iconSize: [20, 20],
+        iconAnchor: [10, 10],
         className: 'aircraft-icon'
     });
 
@@ -448,17 +448,16 @@ function updateAircraftMarkers(flights, observerLat, observerLon, isFullRefresh 
             else if (level === 3) color = COLORS.HIGH;
         }
 
-        // FlightAware heading is true heading (GPS-derived) - use directly on true-north map
+                // SVG airplane points north (up), rotate by true heading — works on all platforms
         const isTransit = flight.is_possible_transit === 1;
-        // Airplane emoji points right (90°), subtract 90 to align with true north compass
-        const rotation = (flight.direction - 45);
+        const rotation = flight.direction;
 
         const aircraftIcon = L.divIcon({
             html: isTransit
                 ? `<div style="font-size: 36px; color: ${color}; text-shadow: 0 0 3px black, 0 0 3px black, 0 0 8px ${color}, 1px 1px 0 black, -1px -1px 0 black, 1px -1px 0 black, -1px 1px 0 black; display: flex; align-items: center; justify-content: center; width: 36px; height: 36px; line-height: 1;">◆</div>`
-                : `<div style="transform: rotate(${rotation}deg); font-size: 20px;">✈️</div>`,
-            iconSize: [36, 36],
-            iconAnchor: [18, 18],  // Center the icon on coordinates
+                : `<div style="transform: rotate(${rotation}deg); width: 20px; height: 20px;"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="#333" width="20" height="20"><path d="M12 2 L7 14 L12 11 L17 14 Z M12 11 L10 22 L12 19 L14 22 Z"/></svg></div>`,
+            iconSize: [20, 20],
+            iconAnchor: [10, 10],  // Center the icon on coordinates
             className: 'aircraft-icon'
         });
 
