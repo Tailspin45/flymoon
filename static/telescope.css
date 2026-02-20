@@ -1022,3 +1022,132 @@
         flex-wrap: wrap;
     }
 }
+
+/* ═══════════════════════════════════════════════════════════════
+   ECLIPSE ALERT SYSTEM
+   Levels: outlook (yellow) → watch (amber) → warning (red pulse)
+           → active (red solid) → cleared (green fade)
+   Solar:  ☀️  orange/gold theme modifier (.eclipse-solar)
+   Lunar:  🌙  blue/silver theme modifier (.eclipse-lunar)
+   ═══════════════════════════════════════════════════════════════ */
+
+/* ── Outlook banner (full-width, top of page) ─────────────────── */
+.eclipse-banner {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 8px 16px;
+    font-size: 0.9em;
+    font-weight: 600;
+    letter-spacing: 0.02em;
+    position: relative;
+    z-index: 200;
+}
+.eclipse-banner.eclipse-solar  { background: #7a4500; color: #ffd580; border-bottom: 2px solid #f90; }
+.eclipse-banner.eclipse-lunar  { background: #0d2545; color: #a8caff; border-bottom: 2px solid #4a90e2; }
+.eclipse-banner-dismiss {
+    margin-left: auto;
+    background: transparent;
+    border: none;
+    color: inherit;
+    opacity: 0.6;
+    cursor: pointer;
+    font-size: 1.1em;
+    line-height: 1;
+    padding: 2px 6px;
+    border-radius: 4px;
+    transition: opacity 0.2s;
+}
+.eclipse-banner-dismiss:hover { opacity: 1; background: rgba(255,255,255,0.15); }
+
+/* ── Eclipse card (inside transit sidebar panel) ──────────────── */
+.eclipse-card {
+    border-radius: 8px;
+    padding: 12px 14px;
+    margin-bottom: 12px;
+    border: 2px solid transparent;
+    transition: background 0.4s, border-color 0.4s;
+}
+
+/* Outlook: shown in banner only, not as card */
+
+/* Watch */
+.eclipse-card.watch {
+    background: rgba(180, 100, 0, 0.18);
+    border-color: #b46400;
+}
+.eclipse-card.watch .ec-label { color: #f5a623; }
+
+/* Warning */
+.eclipse-card.warning {
+    background: rgba(200, 30, 30, 0.2);
+    border-color: #c81e1e;
+    animation: eclipseWarnPulse 1.2s ease-in-out infinite;
+}
+@keyframes eclipseWarnPulse {
+    0%, 100% { box-shadow: 0 0 0 0 rgba(200, 30, 30, 0.0); }
+    50%       { box-shadow: 0 0 0 6px rgba(200, 30, 30, 0.35); }
+}
+.eclipse-card.warning .ec-label { color: #ff6060; }
+
+/* Active */
+.eclipse-card.active {
+    background: rgba(180, 20, 20, 0.25);
+    border-color: #e02020;
+}
+.eclipse-card.active .ec-label { color: #ff8080; }
+
+/* Cleared */
+.eclipse-card.cleared {
+    background: rgba(0, 140, 60, 0.18);
+    border-color: #00a040;
+    animation: eclipseClearedFade 30s forwards;
+}
+@keyframes eclipseClearedFade { 0% { opacity: 1; } 80% { opacity: 1; } 100% { opacity: 0; } }
+.eclipse-card.cleared .ec-label { color: #40d080; }
+
+/* Solar vs Lunar tint modifiers on the card */
+.eclipse-card.eclipse-solar { border-left: 4px solid #f90; }
+.eclipse-card.eclipse-lunar { border-left: 4px solid #4a90e2; }
+
+/* Card internals */
+.ec-header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 6px;
+}
+.ec-icon  { font-size: 1.4em; }
+.ec-label {
+    font-size: 0.75em;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+}
+.ec-type {
+    font-size: 0.95em;
+    font-weight: 600;
+    color: #ddd;
+    margin-bottom: 4px;
+}
+.ec-countdown {
+    font-size: 2em;
+    font-weight: 800;
+    font-variant-numeric: tabular-nums;
+    line-height: 1.1;
+    color: #fff;
+    margin: 4px 0;
+}
+.ec-phase {
+    font-size: 0.8em;
+    font-style: italic;
+    color: #aaa;
+    margin-top: 2px;
+}
+.ec-contacts {
+    font-size: 0.75em;
+    color: #888;
+    margin-top: 6px;
+    line-height: 1.6;
+}
+.ec-contacts span { color: #bbb; }

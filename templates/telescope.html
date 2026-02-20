@@ -9,6 +9,13 @@
     <link rel="stylesheet" href="{{ url_for('static', filename='telescope.css') }}">
 </head>
 <body>
+    <!-- Eclipse Outlook/Watch/Warning banner — hidden until eclipse is within 48h -->
+    <div id="eclipseBanner" class="eclipse-banner" style="display:none">
+        <span id="eclipseBannerIcon"></span>
+        <span id="eclipseBannerText"></span>
+        <button class="eclipse-banner-dismiss" onclick="dismissEclipseBanner()" title="Dismiss (will reappear next session)">✕</button>
+    </div>
+
     <div class="header-row">
         <a href="/" style="text-decoration: none;">
             <img src="{{ url_for('static', filename='images/logo.svg') }}" alt="Flymoon Transit Tracker" class="logo" />
@@ -46,6 +53,8 @@
 
                 <!-- Transit Notifications -->
                 <div class="sidebar-panel" id="transitPanel">
+                    <!-- Eclipse watch/warning/active card — shown when eclipse is imminent/active -->
+                    <div id="eclipseCard" style="display:none"></div>
                     <h3>✈️ Upcoming Transits</h3>
                     <div id="transitList" class="transit-list">
                         <p class="empty-state">No transits detected</p>

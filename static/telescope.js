@@ -20,6 +20,11 @@ let isSimulating = false;
 let simulationVideo = null;
 let simulationFiles = []; // Track temporary simulation files
 
+// Eclipse state
+let eclipseData = null;         // populated from /telescope/status
+let eclipseAlertLevel = null;   // 'outlook'|'watch'|'warning'|'active'|'cleared'|null
+let eclipseBannerDismissed = false; // per-session dismiss flag
+
 // Initialize on page load
 document.addEventListener('DOMContentLoaded', () => {
     console.log('[Telescope] Initializing interface');
@@ -43,10 +48,12 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // 1-second local tick: decrement seconds_until and refresh the countdown display
     transitTickInterval = setInterval(() => {
-        if (upcomingTransits.length === 0) return;
-        upcomingTransits.forEach(t => t.seconds_until--);
-        updateTransitList();
-        checkAutoCapture();
+        if (upcomingTransits.length > 0) {
+            upcomingTransits.forEach(t => t.seconds_until--);
+            updateTransitList();
+            checkAutoCapture();
+        }
+        updateEclipseState();  // eclipse state machine runs every second
     }, 1000);
     
     // Load auto-capture preference
@@ -156,7 +163,12 @@ async function updateStatus() {
         if (!isRecording) {
             isRecording = result.is_recording || false;
         }
-        
+
+        // Update eclipse data from server (refreshes seconds_to_c1 baseline)
+        if (result.eclipse !== undefined) {
+            eclipseData = result.eclipse;  // may be null
+        }
+
         updateConnectionUI();
         updateRecordingUI();
         
@@ -874,10 +886,304 @@ function checkAutoCapture() {
         extendRecording(newEndMs);
         showStatus(`📹 Recording extended for ${imminent.flight} (transit in ${imminent.seconds_until}s)`, 'info', 5000);
         console.log('[Telescope] Extended recording for overlapping transit:', imminent.flight);
+        // If an eclipse is active, mark this transit as a timestamped event within the clip
+        if (eclipseAlertLevel === 'active' && recordingStartTime) {
+            addTransitMarkerToEclipseRecording(imminent.flight, Date.now() - recordingStartTime);
+        }
     } else {
         console.log('[Telescope] Auto-capturing transit:', imminent.flight, `(${imminent.seconds_until}s)`);
         recordTransit(imminent.flight, imminent.seconds_until);
     }
+}
+
+// ============================================================================
+// ECLIPSE ALERT SYSTEM
+// ============================================================================
+//
+// Alert levels (mirroring NWS Watch/Warning convention):
+//   outlook  — eclipse within 48 h; banner shown, no card
+//   watch    — eclipse within 60 min; countdown card added to transit panel
+//   warning  — eclipse within 30 s of C1; card pulses red, recording arms
+//   active   — C1 ≤ now ≤ C4; recording in progress
+//   cleared  — ≤ 30 min past C4; summary card, then fades
+//   null     — no eclipse in window
+//
+// Recording rule: recordingEndTime can only move LATER.  Once an eclipse
+// goes Active, recordingEndTime is pinned to ≥ C4 + 10 s.  Aircraft transits
+// that happen during the eclipse window extend recordingEndTime further and
+// add a ✈️ marker in the filmstrip entry.
+// ============================================================================
+
+/**
+ * Parse an ISO date string from the server into a JS Date.
+ * Returns null if input is null/undefined.
+ */
+function _parseEclipseDate(iso) {
+    return iso ? new Date(iso) : null;
+}
+
+/**
+ * Format seconds as M:SS or H:MM:SS countdown string.
+ */
+function _fmtCountdown(sec) {
+    sec = Math.abs(Math.round(sec));
+    const h = Math.floor(sec / 3600);
+    const m = Math.floor((sec % 3600) / 60);
+    const s = sec % 60;
+    if (h > 0) return `${h}:${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`;
+    return `${m}:${String(s).padStart(2,'0')}`;
+}
+
+/**
+ * Return the current phase label for a given time relative to eclipse contacts.
+ *   c1, c2, c3, c4 are Date objects (c2/c3 may be null for partial eclipses).
+ */
+function renderEclipsePhase(c1, c2, c3, c4) {
+    const now = new Date();
+    if (now < c1) return 'Pre-eclipse';
+    if (c2 && now < c2) return 'Partial (ingress)';
+    if (c2 && c3 && now >= c2 && now <= c3) return 'Totality';
+    if (c3 && now > c3 && now <= c4) return 'Partial (egress)';
+    if (now <= c4) return 'Partial';
+    return 'Post-eclipse';
+}
+
+/**
+ * Main eclipse state machine — called every second from transitTickInterval.
+ * Computes the current alert level, updates UI, and arms/extends recording.
+ */
+function updateEclipseState() {
+    if (!eclipseData) {
+        // Clear any stale eclipse UI
+        if (eclipseAlertLevel !== null) {
+            eclipseAlertLevel = null;
+            _hideEclipseCard();
+            _hideEclipseBanner();
+        }
+        return;
+    }
+
+    const c1  = _parseEclipseDate(eclipseData.c1);
+    const c2  = _parseEclipseDate(eclipseData.c2);
+    const c3  = _parseEclipseDate(eclipseData.c3);
+    const c4  = _parseEclipseDate(eclipseData.c4);
+    const now = new Date();
+
+    const secsToC1 = (c1 - now) / 1000;
+    const secsToC4 = (c4 - now) / 1000;
+
+    // Determine alert level
+    let level;
+    const CLEARED_WINDOW = 30 * 60; // show Cleared card for 30 min after C4
+    if (secsToC4 < -CLEARED_WINDOW) {
+        // Eclipse is fully over and Cleared window has passed — remove data
+        eclipseData = null;
+        level = null;
+    } else if (secsToC4 < 0) {
+        level = 'cleared';
+    } else if (secsToC1 <= 0) {
+        level = 'active';
+    } else if (secsToC1 <= 30) {
+        level = 'warning';
+    } else if (secsToC1 <= 3600) {
+        level = 'watch';
+    } else {
+        level = 'outlook';
+    }
+
+    const levelChanged = level !== eclipseAlertLevel;
+    eclipseAlertLevel = level;
+
+    if (!level) {
+        _hideEclipseCard();
+        _hideEclipseBanner();
+        return;
+    }
+
+    // ── Banner (outlook only — or watch/warning if still showing) ────────
+    updateEclipseBanner(level, c1, eclipseData);
+
+    // ── Card (watch, warning, active, cleared) ────────────────────────────
+    if (level === 'outlook') {
+        _hideEclipseCard();
+    } else {
+        updateEclipseCard(level, c1, c2, c3, c4, secsToC1, eclipseData);
+    }
+
+    // ── Recording logic ───────────────────────────────────────────────────
+    if (level === 'warning' && !isRecording) {
+        // Arm: start recording at C1 − 10 s
+        // We're within 30 s of C1; if C1 is ≤ 10 s away, start immediately
+        const startDelay = Math.max(0, secsToC1 - 10);
+        if (levelChanged) {
+            console.log(`[Eclipse] Warning — recording starts in ${startDelay.toFixed(0)}s`);
+            setTimeout(() => startEclipseRecording(c1, c4, eclipseData), startDelay * 1000);
+        }
+    } else if (level === 'active') {
+        if (isRecording) {
+            // Ensure recording end is pinned to C4 + 10 s
+            const c4PlusTen = c4.getTime() + 10000;
+            extendRecording(c4PlusTen);
+        } else if (levelChanged) {
+            // Eclipse became Active but we somehow aren't recording — start now
+            startEclipseRecording(c1, c4, eclipseData);
+        }
+    }
+}
+
+/**
+ * Start a recording that spans the eclipse: begins immediately (or from C1−10s
+ * if called during the warning phase), ends at C4+10s.
+ */
+async function startEclipseRecording(c1, c4, eclipse) {
+    if (isRecording) {
+        // Already recording (e.g. from an aircraft transit) — just extend
+        extendRecording(c4.getTime() + 10000);
+        console.log('[Eclipse] Extended existing recording to cover eclipse C4+10s');
+        return;
+    }
+    const totalSecs = Math.max(20, Math.ceil((c4.getTime() + 10000 - Date.now()) / 1000));
+    const typeLabel = eclipse.eclipse_class.charAt(0).toUpperCase() + eclipse.eclipse_class.slice(1);
+    const label = `${typeLabel} ${eclipse.type === 'solar' ? 'Solar' : 'Lunar'} Eclipse`;
+    console.log(`[Eclipse] Starting eclipse recording: ${label} — ${totalSecs}s`);
+
+    if (isSimulating) {
+        // In sim mode, treat like a regular recording
+        startSimRecording(totalSecs);
+        return;
+    }
+
+    const result = await apiCall('/telescope/recording/start', 'POST', {
+        duration: totalSecs,
+        interval: 0
+    });
+    if (result && result.success) {
+        isRecording = true;
+        recordingStartTime = Date.now();
+        recordingEndTime = c4.getTime() + 10000;
+        updateRecordingUI();
+        startRecordingTimer(totalSecs);
+        showStatus(`🌙 Eclipse recording started: ${label} (${totalSecs}s)`, 'success', 8000);
+    }
+}
+
+/**
+ * Called by checkAutoCapture when an aircraft transit occurs during an active
+ * eclipse recording.  Extends the recording and adds a ✈️ marker.
+ */
+function addTransitMarkerToEclipseRecording(flight, offsetMs) {
+    console.log(`[Eclipse] Aircraft transit during eclipse: ${flight} at +${(offsetMs/1000).toFixed(1)}s`);
+    // Add a visual marker to the active filmstrip entry if possible
+    const activeEntry = document.querySelector('.filmstrip-entry.recording-active');
+    if (activeEntry) {
+        const marker = document.createElement('span');
+        marker.className = 'ec-transit-marker';
+        marker.title = `${flight} transit at +${(offsetMs/1000).toFixed(0)}s`;
+        marker.textContent = '✈️';
+        const meta = activeEntry.querySelector('.entry-meta') || activeEntry;
+        meta.appendChild(marker);
+    }
+}
+
+// ── Banner rendering ──────────────────────────────────────────────────────────
+
+function updateEclipseBanner(level, c1, eclipse) {
+    const banner = document.getElementById('eclipseBanner');
+    const icon   = document.getElementById('eclipseBannerIcon');
+    const text   = document.getElementById('eclipseBannerText');
+    if (!banner) return;
+
+    // Never show banner once dismissed this session
+    if (eclipseBannerDismissed) {
+        banner.style.display = 'none';
+        return;
+    }
+
+    // Only show banner for outlook; hide once we enter watch/warning (card takes over)
+    if (level !== 'outlook') {
+        banner.style.display = 'none';
+        return;
+    }
+
+    const isSolar = eclipse.type === 'solar';
+    const typeStr = `${eclipse.eclipse_class.charAt(0).toUpperCase()}${eclipse.eclipse_class.slice(1)} ${isSolar ? 'Solar' : 'Lunar'} Eclipse`;
+    const dateStr = c1.toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', timeZoneName: 'short' });
+    const hoursAway = Math.round((c1 - new Date()) / 3600000);
+
+    banner.className = `eclipse-banner ${isSolar ? 'eclipse-solar' : 'eclipse-lunar'}`;
+    icon.textContent  = isSolar ? '☀️' : '🌙';
+    text.textContent  = `${typeStr} — ${dateStr}  (${hoursAway}h away) · Recording will start automatically`;
+    banner.style.display = 'flex';
+}
+
+function _hideEclipseBanner() {
+    const banner = document.getElementById('eclipseBanner');
+    if (banner) banner.style.display = 'none';
+}
+
+function dismissEclipseBanner() {
+    eclipseBannerDismissed = true;
+    _hideEclipseBanner();
+}
+
+// ── Card rendering ────────────────────────────────────────────────────────────
+
+function updateEclipseCard(level, c1, c2, c3, c4, secsToC1, eclipse) {
+    const card = document.getElementById('eclipseCard');
+    if (!card) return;
+
+    const isSolar   = eclipse.type === 'solar';
+    const typeEmoji = isSolar ? '☀️' : '🌙';
+    const typeStr   = `${eclipse.eclipse_class.charAt(0).toUpperCase()}${eclipse.eclipse_class.slice(1)} ${isSolar ? 'Solar' : 'Lunar'} Eclipse`;
+    const typeClass = isSolar ? 'eclipse-solar' : 'eclipse-lunar';
+
+    let labelText, countdownHtml, phaseHtml = '';
+
+    if (level === 'watch') {
+        labelText = '🔭 Eclipse Watch';
+        countdownHtml = `<div class="ec-countdown">${_fmtCountdown(secsToC1)}</div>`;
+        phaseHtml = '<div class="ec-phase">First contact approaching</div>';
+    } else if (level === 'warning') {
+        labelText = '🔴 Eclipse Warning';
+        countdownHtml = `<div class="ec-countdown">${_fmtCountdown(secsToC1)}</div>`;
+        phaseHtml = '<div class="ec-phase">Recording starting soon</div>';
+    } else if (level === 'active') {
+        labelText = '🔴 Eclipse Active';
+        const phase = renderEclipsePhase(c1, c2, c3, c4);
+        const secsIntoEclipse = (new Date() - c1) / 1000;
+        countdownHtml = `<div class="ec-countdown">${_fmtCountdown(secsIntoEclipse)} in</div>`;
+        phaseHtml = `<div class="ec-phase">${phase}</div>`;
+    } else if (level === 'cleared') {
+        labelText = '✅ Eclipse Complete';
+        countdownHtml = '';
+        phaseHtml = '<div class="ec-phase">Recording saved to filmstrip</div>';
+    }
+
+    // Contact times summary
+    const fmtTime = d => d ? d.toLocaleTimeString([], {hour:'2-digit',minute:'2-digit',second:'2-digit'}) : '—';
+    const contactsHtml = `
+        <div class="ec-contacts">
+            C1 <span>${fmtTime(c1)}</span>
+            ${c2 ? `· C2 <span>${fmtTime(c2)}</span> · C3 <span>${fmtTime(c3)}</span>` : ''}
+            · C4 <span>${fmtTime(c4)}</span>
+        </div>`;
+
+    card.className = `eclipse-card ${level} ${typeClass}`;
+    card.style.display = 'block';
+    card.innerHTML = `
+        <div class="ec-header">
+            <span class="ec-icon">${typeEmoji}</span>
+            <span class="ec-label">${labelText}</span>
+        </div>
+        <div class="ec-type">${typeStr}</div>
+        ${countdownHtml}
+        ${phaseHtml}
+        ${contactsHtml}`;
+}
+
+function _hideEclipseCard() {
+    const card = document.getElementById('eclipseCard');
+    if (card) card.style.display = 'none';
 }
 
 async function recordTransit(flight, secondsUntil) {
