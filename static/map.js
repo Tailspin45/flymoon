@@ -495,8 +495,9 @@ function updateAircraftMarkers(flights, observerLat, observerLon, isFullRefresh 
         }
     });
 
-    // Fit map to show aircraft and observer
-    // Skip auto-zoom if user is interacting with map (viewing route/track)
+    // Fit map to show aircraft and observer — only on full refresh, not soft refresh
+    if (!isFullRefresh) return;
+
     if (Object.keys(aircraftMarkers).length > 0 && !userInteractingWithMap) {
         const aircraftBounds = L.latLngBounds(
             Object.values(aircraftMarkers).map(marker => marker.getLatLng())
