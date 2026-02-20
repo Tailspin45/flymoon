@@ -957,6 +957,18 @@ function refreshTimer() {
 
 var _fetchRequestSeq = 0; // Sequence counter to discard stale concurrent responses
 
+function showErrorBanner(msg) {
+    const banner = document.getElementById("errorBanner");
+    if (!banner) return;
+    banner.textContent = msg;
+    banner.style.display = "block";
+}
+
+function clearErrorBanner() {
+    const banner = document.getElementById("errorBanner");
+    if (banner) banner.style.display = "none";
+}
+
 function fetchFlights() {
     const thisSeq = ++_fetchRequestSeq;
     let latitude = document.getElementById("latitude").value;
@@ -1023,6 +1035,7 @@ function fetchFlights() {
         bodyTable.innerHTML = '';
 
         // Record update time and cache data
+        clearErrorBanner();
         window.lastFlightUpdateTime = Date.now();
         lastFlightData = data;
         updateLastUpdateDisplay();
@@ -1370,11 +1383,13 @@ function fetchFlights() {
         document.getElementById("results").style.display = "block";
         
         let errorMsg = error.message || "Unknown error";
+        let displayMsg = errorMsg;
         if (errorMsg.includes("AEROAPI") || errorMsg.includes("API key")) {
-            alert("⚠️ FlightAware API key not configured.\n\nPlease set AEROAPI_API_KEY in your .env file.\nSee SETUP.md for instructions.");
+            displayMsg = "⚠️ FlightAware API key not configured.\n\nPlease set AEROAPI_API_KEY in your .env file.\nSee SETUP.md for instructions.";
         } else {
-            alert(`Error getting flight data:\n${errorMsg}\n\nCheck console for details.`);
+            displayMsg = `⚠️ Error getting flight data:\n${errorMsg}`;
         }
+        showErrorBanner(displayMsg);
         console.error("Error:", error);
     });
 }
