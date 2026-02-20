@@ -374,12 +374,20 @@ async function stopRecording() {
         
         // Refresh file list after a short delay
         setTimeout(refreshFiles, 2000);
+    } else {
+        showStatus('⚠️ Could not stop recording — telescope may be disconnected', 'warning', 6000);
     }
 }
 
 function startRecordingTimer(totalDuration) {
     const timerSpan = document.getElementById('recordingTimer');
     if (!timerSpan) return;
+
+    // Clear any existing timer to avoid ghost intervals calling stopRecording twice
+    if (recordingTimerInterval) {
+        clearInterval(recordingTimerInterval);
+        recordingTimerInterval = null;
+    }
 
     recordingEndTime = Date.now() + totalDuration * 1000;
 
@@ -1167,52 +1175,76 @@ function updateEclipseCard(level, c1, c2, c3, c4, secsToC1, eclipse) {
     if (!card) return;
 
     const isSolar   = eclipse.type === 'solar';
-    const typeEmoji = isSolar ? '☀️' : '🌙';
-    const typeStr   = `${eclipse.eclipse_class.charAt(0).toUpperCase()}${eclipse.eclipse_class.slice(1)} ${isSolar ? 'Solar' : 'Lunar'} Eclipse`;
     const typeClass = isSolar ? 'eclipse-solar' : 'eclipse-lunar';
+    const newClass  = `eclipse-card ${level} ${typeClass}`;
 
-    let labelText, countdownHtml, phaseHtml = '';
+    // Only rebuild the full card when the level (and therefore structure) changes.
+    // On subsequent ticks just patch the countdown in-place so CSS animations
+    // (pulse, fade) are not reset every second — which made numbers look frozen.
+    if (card.dataset.eclipseLevel !== level) {
+        card.dataset.eclipseLevel = level;
 
-    if (level === 'watch') {
-        labelText = '🔭 Eclipse Watch';
-        countdownHtml = `<div class="ec-countdown">${_fmtCountdown(secsToC1)}</div>`;
-        phaseHtml = '<div class="ec-phase">First contact approaching</div>';
-    } else if (level === 'warning') {
-        labelText = '🔴 Eclipse Warning';
-        countdownHtml = `<div class="ec-countdown">${_fmtCountdown(secsToC1)}</div>`;
-        phaseHtml = '<div class="ec-phase">Recording starting soon</div>';
-    } else if (level === 'active') {
-        labelText = '🔴 Eclipse Active';
-        const phase = renderEclipsePhase(c1, c2, c3, c4);
-        const secsIntoEclipse = (new Date() - c1) / 1000;
-        countdownHtml = `<div class="ec-countdown">${_fmtCountdown(secsIntoEclipse)} in</div>`;
-        phaseHtml = `<div class="ec-phase">${phase}</div>`;
-    } else if (level === 'cleared') {
-        labelText = '✅ Eclipse Complete';
-        countdownHtml = '';
-        phaseHtml = '<div class="ec-phase">Recording saved to filmstrip</div>';
+        const typeEmoji = isSolar ? '☀️' : '🌙';
+        const typeStr   = `${eclipse.eclipse_class.charAt(0).toUpperCase()}${eclipse.eclipse_class.slice(1)} ${isSolar ? 'Solar' : 'Lunar'} Eclipse`;
+
+        let labelText, phaseHtml = '';
+        let showCountdown = true;
+
+        if (level === 'watch') {
+            labelText    = '🔭 Eclipse Watch';
+            phaseHtml    = '<div class="ec-phase">First contact approaching</div>';
+        } else if (level === 'warning') {
+            labelText    = '🔴 Eclipse Warning';
+            phaseHtml    = '<div class="ec-phase">Recording starting soon</div>';
+        } else if (level === 'active') {
+            labelText    = '🔴 Eclipse Active';
+            phaseHtml    = `<div class="ec-phase" id="eclipsePhase">${renderEclipsePhase(c1, c2, c3, c4)}</div>`;
+        } else if (level === 'cleared') {
+            labelText    = '✅ Eclipse Complete';
+            showCountdown = false;
+            phaseHtml    = '<div class="ec-phase">Recording saved to filmstrip</div>';
+        }
+
+        const fmtTime = d => d ? d.toLocaleTimeString([], {hour:'2-digit',minute:'2-digit',second:'2-digit'}) : '—';
+        const contactsHtml = `
+            <div class="ec-contacts">
+                C1 <span>${fmtTime(c1)}</span>
+                ${c2 ? `· C2 <span>${fmtTime(c2)}</span> · C3 <span>${fmtTime(c3)}</span>` : ''}
+                · C4 <span>${fmtTime(c4)}</span>
+            </div>`;
+
+        card.className   = newClass;
+        card.style.display = 'block';
+        card.innerHTML   = `
+            <div class="ec-header">
+                <span class="ec-icon">${typeEmoji}</span>
+                <span class="ec-label">${labelText}</span>
+            </div>
+            <div class="ec-type">${typeStr}</div>
+            ${showCountdown ? '<div class="ec-countdown" id="eclipseCountdown"></div>' : ''}
+            ${phaseHtml}
+            ${contactsHtml}`;
+    } else {
+        // Patch className in case type class changed (shouldn't, but be safe)
+        card.className = newClass;
     }
 
-    // Contact times summary
-    const fmtTime = d => d ? d.toLocaleTimeString([], {hour:'2-digit',minute:'2-digit',second:'2-digit'}) : '—';
-    const contactsHtml = `
-        <div class="ec-contacts">
-            C1 <span>${fmtTime(c1)}</span>
-            ${c2 ? `· C2 <span>${fmtTime(c2)}</span> · C3 <span>${fmtTime(c3)}</span>` : ''}
-            · C4 <span>${fmtTime(c4)}</span>
-        </div>`;
+    // Always update the live countdown number in-place
+    const cdEl = document.getElementById('eclipseCountdown');
+    if (cdEl) {
+        if (level === 'active') {
+            const secsToC4 = (c4 - new Date()) / 1000;
+            cdEl.textContent = secsToC4 > 0 ? `${_fmtCountdown(secsToC4)} remaining` : 'Eclipse ending…';
+        } else {
+            cdEl.textContent = _fmtCountdown(secsToC1);
+        }
+    }
 
-    card.className = `eclipse-card ${level} ${typeClass}`;
-    card.style.display = 'block';
-    card.innerHTML = `
-        <div class="ec-header">
-            <span class="ec-icon">${typeEmoji}</span>
-            <span class="ec-label">${labelText}</span>
-        </div>
-        <div class="ec-type">${typeStr}</div>
-        ${countdownHtml}
-        ${phaseHtml}
-        ${contactsHtml}`;
+    // Always update phase label during active (changes as eclipse progresses)
+    if (level === 'active') {
+        const phaseEl = document.getElementById('eclipsePhase');
+        if (phaseEl) phaseEl.textContent = renderEclipsePhase(c1, c2, c3, c4);
+    }
 }
 
 function _hideEclipseCard() {
