@@ -1382,15 +1382,18 @@ function fetchFlights() {
         document.getElementById("loadingSpinner").style.display = "none";
         document.getElementById("results").style.display = "block";
         
-        let errorMsg = error.message || "Unknown error";
-        let displayMsg = errorMsg;
+        const errorMsg = error.message || error.toString() || "Unknown error";
+        const stack = error.stack ? `\n\n${error.stack}` : "";
+        let displayMsg;
         if (errorMsg.includes("AEROAPI") || errorMsg.includes("API key")) {
             displayMsg = "⚠️ FlightAware API key not configured.\n\nPlease set AEROAPI_API_KEY in your .env file.\nSee SETUP.md for instructions.";
+        } else if (errorMsg.includes("Failed to fetch") || errorMsg.includes("ERR_EMPTY_RESPONSE") || errorMsg === "") {
+            displayMsg = "⚠️ Server not responding (ERR_EMPTY_RESPONSE)\n\nThe Flask server may have crashed. Check the terminal running app.py for the Python traceback.";
         } else {
-            displayMsg = `⚠️ Error getting flight data:\n${errorMsg}`;
+            displayMsg = `⚠️ Error getting flight data:\n${errorMsg}${stack}`;
         }
         showErrorBanner(displayMsg);
-        console.error("Error:", error);
+        console.error("Fetch error:", error);
     });
 }
 
