@@ -833,10 +833,15 @@ function updateTransitCountdown() {
     const bgColor = isHigh ? '#dc3545' : '#fd7e14';  // red for HIGH, orange for MEDIUM
     const levelText = isHigh ? 'High' : 'Medium';
 
+    const targetName = nextTransit.flight && nextTransit.flight.target
+        ? nextTransit.flight.target.charAt(0).toUpperCase() + nextTransit.flight.target.slice(1)
+        : '';
+    const targetEmoji = nextTransit.flight && nextTransit.flight.target === 'sun' ? '☀️' : '🌙';
+
     countdownDiv.style.backgroundColor = bgColor;
     countdownDiv.style.color = 'white';
     countdownDiv.style.display = 'block';
-    countdownDiv.innerHTML = `${levelText} probability transit in ${timeStr}`;
+    countdownDiv.innerHTML = `${targetEmoji} ${targetName} — ${levelText} probability transit in ${timeStr}`;
 }
 
 function clearPosition() {

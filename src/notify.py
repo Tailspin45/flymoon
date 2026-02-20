@@ -24,10 +24,12 @@ async def send_notifications(flight_data: List[dict], target: str) -> None:
             PossibilityLevel.HIGH.value,
         ):
             diff_sum = flight["alt_diff"] + flight["az_diff"]
+            flight_target = flight.get("target", target or "")
+            emoji = TARGET_TO_EMOJI.get(flight_target, "")
             possible_transits_data.append(
-                f"{flight['id']} in {flight['time']} min."
+                f"{emoji} {flight_target.capitalize() if flight_target else ''} — {flight['id']} in {flight['time']} min."
                 f" {flight['origin']}->{flight['destination']}"
-                f" ∑△{diff_sum}"
+                f" ∑△{diff_sum:.2f}°"
             )
 
         if len(possible_transits_data) >= MAX_NUM_ITEMS_TO_NOTIFY:
@@ -45,7 +47,7 @@ async def send_notifications(flight_data: List[dict], target: str) -> None:
     transit_txt = "transit" if len(possible_transits_data) == 1 else "transits"
 
     _ = pb.push_note(
-        title=f"{len(possible_transits_data)} possible {transit_txt} {emoji}",
+        title=f"{len(possible_transits_data)} possible {transit_txt}",
         body=body_message,
     )
 

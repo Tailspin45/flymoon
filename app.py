@@ -280,7 +280,7 @@ def get_all_flights():
             try:
                 # Send Telegram notification for medium/high probability transits
                 # Notification will include which target (sun/moon) each transit is for
-                asyncio.run(send_telegram_notification(data["flights"], "sun/moon"))
+                asyncio.run(send_telegram_notification(data["flights"], None))
             except Exception as e:
                 logger.error(f"Error while trying to send Telegram notification. Details:\n{str(e)}")
 
