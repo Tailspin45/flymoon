@@ -1356,7 +1356,7 @@ function updateFilmstrip(files) {
                 : `<img src="${file.path}" alt="${file.name}" class="filmstrip-thumbnail">`;
         
         return `
-        <div class="${itemClass}" onclick="viewFile('${file.path}')">
+        <div class="${itemClass}" onclick="viewFile('${file.url || file.path}', '${file.name}')">
             ${badge}
             ${thumbnail}
             <div class="filmstrip-info">
@@ -1402,9 +1402,9 @@ function updateFilesGrid() {
     `}).join('');
 }
 
-function viewFile(path) {
-    const name = path.split('/').pop();
-    const isVideo = /\.(mp4|avi|mov|mkv)$/i.test(name);
+function viewFile(path, name) {
+    name = name || path.split('/').pop();
+    const isVideo = /\.(mp4|avi|mov|mkv|webm)$/i.test(name);
     const viewer = document.getElementById('fileViewer');
     const body = document.getElementById('fileViewerBody');
     const nameEl = document.getElementById('fileViewerName');
