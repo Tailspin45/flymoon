@@ -311,6 +311,10 @@ async function capturePhoto() {
 // Recording state
 let recordingStartTime = null;
 let recordingEndTime = null;   // absolute ms timestamp — can be extended for overlapping transits
+// True when current recording was triggered by a real transit/eclipse (not sim demo).
+// Real transits always outrank sim recordings: if a real transit arrives while a
+// sim recording is running, the sim is stopped and the real transit recorded instead.
+let recordingIsReal = false;
 let recordingTimerInterval = null;
 
 async function startRecording() {
@@ -336,6 +340,7 @@ async function startRecording() {
     
     if (result && result.success) {
         isRecording = true;
+        recordingIsReal = true;    // real hardware recording
         recordingStartTime = Date.now();
         updateRecordingUI();
         startRecordingTimer(duration);
@@ -404,6 +409,7 @@ function stopRecordingTimer() {
     }
     recordingStartTime = null;
     recordingEndTime = null;
+    recordingIsReal = false;
 
     const timerSpan = document.getElementById('recordingTimer');
     if (timerSpan) timerSpan.textContent = '';
@@ -880,15 +886,28 @@ function checkAutoCapture() {
 
     imminent.handled = true; // prevent re-triggering each tick
 
+    const isSimFlight = imminent.flight === SIM_TRANSIT.flight ||
+                        imminent.flight === SIM_ECLIPSE_TRANSIT.flight;
+
     if (isRecording) {
-        // Already recording — extend to 10s after this transit instead of interrupting
-        const newEndMs = Date.now() + (imminent.seconds_until + POST) * 1000;
-        extendRecording(newEndMs);
-        showStatus(`📹 Recording extended for ${imminent.flight} (transit in ${imminent.seconds_until}s)`, 'info', 5000);
-        console.log('[Telescope] Extended recording for overlapping transit:', imminent.flight);
-        // If an eclipse is active, mark this transit as a timestamped event within the clip
-        if (eclipseAlertLevel === 'active' && recordingStartTime) {
-            addTransitMarkerToEclipseRecording(imminent.flight, Date.now() - recordingStartTime);
+        if (!recordingIsReal && !isSimFlight) {
+            // Sim recording is running but a REAL transit is imminent.
+            // Real always wins — stop sim and let recordTransit() take over.
+            console.log(`[Telescope] Real transit ${imminent.flight} preempts sim recording`);
+            showStatus(`✈️ Real transit ${imminent.flight} — stopping sim, switching to real capture`, 'warning', 5000);
+            stopRecording();  // routes to simulateStopRecording() in sim mode
+            // Small delay to let stop settle, then record the real transit
+            setTimeout(() => recordTransit(imminent.flight, imminent.seconds_until), 300);
+        } else {
+            // Real-vs-real or sim-vs-sim: extend instead of interrupting
+            const newEndMs = Date.now() + (imminent.seconds_until + POST) * 1000;
+            extendRecording(newEndMs);
+            showStatus(`📹 Recording extended for ${imminent.flight} (transit in ${imminent.seconds_until}s)`, 'info', 5000);
+            console.log('[Telescope] Extended recording for overlapping transit:', imminent.flight);
+            // If an eclipse is active, mark this transit as a timestamped event within the clip
+            if (eclipseAlertLevel === 'active' && recordingStartTime) {
+                addTransitMarkerToEclipseRecording(imminent.flight, Date.now() - recordingStartTime);
+            }
         }
     } else {
         console.log('[Telescope] Auto-capturing transit:', imminent.flight, `(${imminent.seconds_until}s)`);
@@ -1062,6 +1081,7 @@ async function startEclipseRecording(c1, c4, eclipse) {
     });
     if (result && result.success) {
         isRecording = true;
+        recordingIsReal = true;    // real eclipse recording
         recordingStartTime = Date.now();
         recordingEndTime = c4.getTime() + 10000;
         updateRecordingUI();
@@ -1190,11 +1210,13 @@ function _hideEclipseCard() {
 }
 
 async function recordTransit(flight, secondsUntil) {
-    // Stop any current recording
+    // Stop any current recording (normally checkAutoCapture handles preemption,
+    // but guard here too for manual triggers)
     if (isRecording) {
-        console.log('[Telescope] Interrupting current recording for transit');
+        console.log('[Telescope] Interrupting current recording for transit:', flight);
         await stopRecording();
-        await new Promise(resolve => setTimeout(resolve, 1000));
+        // Wait for hardware to stop (skip in sim mode — no hardware involved)
+        if (!isSimulating) await new Promise(resolve => setTimeout(resolve, 1000));
     }
 
     const PRE  = 10; // seconds to record before transit
@@ -1529,6 +1551,7 @@ function triggerSimTransit() {
 /** Blinking REC overlay + fake filmstrip entry */
 function startSimRecording(duration = SIM_PRE + SIM_POST) {
     isRecording = true;
+    recordingIsReal = false;   // sim recording — real transit can preempt
     recordingStartTime = Date.now();
     updateRecordingUI();
     startRecordingTimer(duration);
@@ -1699,6 +1722,7 @@ function simulateCapturePhoto() {
 
 function simulateStartRecording(duration, interval) {
     isRecording = true;
+    recordingIsReal = false;   // sim recording — real transit can preempt
     recordingStartTime = Date.now();
     updateRecordingUI();
     startRecordingTimer(duration);
