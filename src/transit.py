@@ -58,7 +58,7 @@ def get_thresholds(altitude: float) -> Tuple[float, float]:
 
 
 def get_possibility_level(
-    altitude: float, alt_diff: float, az_diff: float, eta: float = None
+    altitude: float, alt_diff: float, az_diff: float
 ) -> str:
     """
     Determine transit possibility level based on angular separation.
@@ -144,10 +144,12 @@ def check_transit(
         future_time = ref_datetime + timedelta(minutes=int(minute))
 
         # Convert future position of plane to alt-azimuthal coordinates
+        # Support both 'elevation' (internal) and 'aircraft_elevation' (API response) field names
+        flight_elevation = flight.get("elevation") or flight.get("aircraft_elevation", 0)
         future_alt, future_az = geographic_to_altaz(
             future_lat,
             future_lon,
-            flight["elevation"],
+            flight_elevation,
             earth_ref,
             my_position,
             future_time,
@@ -199,15 +201,15 @@ def check_transit(
 
             if update_response:
                 response = {
-                    "id": flight["name"],
+                    "id": flight.get("name") or flight.get("id", ""),
                     "fa_flight_id": flight.get("fa_flight_id", ""),
-                    "origin": flight["origin"],
-                    "destination": flight["destination"],
+                    "origin": flight.get("origin", ""),
+                    "destination": flight.get("destination", ""),
                     "latitude": flight["latitude"],
                     "longitude": flight["longitude"],
-                    "aircraft_elevation": flight["elevation"],
+                    "aircraft_elevation": flight.get("elevation") or flight.get("aircraft_elevation", 0),
                     "aircraft_type": flight.get("aircraft_type", "N/A"),
-                    "speed": flight["speed"],
+                    "speed": flight.get("speed", 0),
                     "alt_diff": round(float(alt_diff), 3),
                     "az_diff": round(float(az_diff), 3),
                     "time": round(float(minute), 3),
@@ -217,12 +219,12 @@ def check_transit(
                     "plane_az": round(float(future_az), 2),
                     "is_possible_transit": 1,
                     "possibility_level": get_possibility_level(
-                        target.altitude.degrees, alt_diff, az_diff, minute
+                        target.altitude.degrees, alt_diff, az_diff
                     ),
                     "elevation_change": CHANGE_ELEVATION.get(
-                        flight["elevation_change"], None
+                        flight.get("elevation_change"), None
                     ),
-                    "direction": flight["direction"],
+                    "direction": flight.get("direction", 0),
                 }
         update_response = False
 
@@ -231,19 +233,19 @@ def check_transit(
 
     # Return closest approach data even if threshold not met
     result = {
-        "id": flight["name"],
+        "id": flight.get("name") or flight.get("id", ""),
         "fa_flight_id": flight.get("fa_flight_id", ""),
-        "origin": flight["origin"],
-        "destination": flight["destination"],
+        "origin": flight.get("origin", ""),
+        "destination": flight.get("destination", ""),
         "latitude": flight["latitude"],
         "longitude": flight["longitude"],
-        "aircraft_elevation": flight["elevation"],
+        "aircraft_elevation": flight.get("elevation") or flight.get("aircraft_elevation", 0),
         "aircraft_type": flight.get("aircraft_type", "N/A"),
-        "speed": flight["speed"],
+        "speed": flight.get("speed", 0),
         "is_possible_transit": 0,
         "possibility_level": PossibilityLevel.UNLIKELY.value,
-        "elevation_change": CHANGE_ELEVATION.get(flight["elevation_change"], None),
-        "direction": flight["direction"],
+        "elevation_change": CHANGE_ELEVATION.get(flight.get("elevation_change"), None),
+        "direction": flight.get("direction", 0),
     }
     
     # Include closest approach data if we found any
@@ -322,14 +324,14 @@ def get_transits(
             raw_flight_data = load_existing_flight_data(TEST_DATA_PATH)
             logger.info("Loading existing flight data since is using TEST mode")
         else:
-            # Check cache first
+            # Check cache first - use bbox-only key so sun/moon share the same cached flight data
             cache = get_cache()
             cached_data = cache.get(
                 bbox.lat_lower_left,
                 bbox.long_lower_left,
                 bbox.lat_upper_right,
-                bbox.long_upper_right,
-                target_name
+                bbox.long_upper_right
+                # Note: no target_name - single fetch serves both sun and moon
             )
             
             if cached_data is not None:
@@ -337,14 +339,14 @@ def get_transits(
                 logger.info(f"Using cached flight data ({cache.get_stats()['hit_rate_percent']}% hit rate)")
             else:
                 raw_flight_data = get_flight_data(bbox, API_URL, API_KEY)
-                # Cache the raw response
+                # Cache the raw response - bbox-only key
                 cache.set(
                     bbox.lat_lower_left,
                     bbox.long_lower_left,
                     bbox.lat_upper_right,
                     bbox.long_upper_right,
-                    raw_flight_data,
-                    target_name
+                    raw_flight_data
+                    # Note: no target_name - single fetch serves both sun and moon
                 )
 
         flight_data = list()

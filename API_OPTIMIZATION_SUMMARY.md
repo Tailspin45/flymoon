@@ -72,13 +72,22 @@ App starts successfully:
 ✓ Server running on http://localhost:8001
 ```
 
+## V3 Enhancements (2026-02)
+
+1. **Single-fetch-per-cycle**: Cache key no longer includes target name, so sun/moon share the same flight data fetch
+2. **OpenSky last-mile**: New `src/opensky_client.py` queries OpenSky by callsign when a candidate is <60s from transit
+3. **Duplicate-schedule guards**: `TransitRecorder.schedule_transit_recording()` now skips if a timer is already active for the same flight
+4. **Timer cleanup**: `cleanup_stale_timers()` removes finished/cancelled timers each polling cycle
+5. **Fixed bugs**: Timestamp consistency in app.js, transit_monitor.py time parsing, map.js column index
+
 ## Next Steps
 
 1. ✅ Implementation complete
-2. ⏳ Test auto-refresh in browser
-3. ⏳ Monitor API usage for 24-48 hours
-4. ⏳ Verify cache hit rates
-5. ⏳ Confirm adaptive intervals working correctly
+2. ✅ V3 enhancements complete
+3. ⏳ Test auto-refresh in browser
+4. ⏳ Monitor API usage for 24-48 hours
+5. ⏳ Verify cache hit rates and OpenSky refinement logs
+6. ⏳ Confirm adaptive intervals working correctly
 
 ## How to Monitor
 

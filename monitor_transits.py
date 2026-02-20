@@ -95,7 +95,7 @@ class TransitMonitor:
         logger.info(f"Check interval: {check_interval_minutes} min")
         logger.info(f"Warning lead time: {warning_minutes} min")
 
-    async def get_high_probability_transits(self) -> List[dict]:
+    def get_high_probability_transits(self) -> List[dict]:
         """
         Get upcoming HIGH probability transits.
 
@@ -105,9 +105,11 @@ class TransitMonitor:
             List of HIGH probability transit data
         """
         try:
-            all_transits = await get_transits(
+            # get_transits is synchronous, returns dict with 'flights' key
+            result = get_transits(
                 self.latitude, self.longitude, self.elevation, self.target
             )
+            all_transits = result.get('flights', [])
 
             # Filter for HIGH probability only
             high_prob = [
@@ -153,9 +155,9 @@ class TransitMonitor:
         """Get unique identifier for transit."""
         return f"{transit['id']}_{transit['time']}"
 
-    async def check_and_notify(self) -> None:
+    def check_and_notify(self) -> None:
         """Check for transits and send appropriate notifications."""
-        transits = await self.get_high_probability_transits()
+        transits = self.get_high_probability_transits()
 
         if not transits:
             logger.debug("No HIGH probability transits found")
@@ -225,7 +227,7 @@ class TransitMonitor:
                     f"URGENT: Transit {transit['id']} in {time_minutes:.1f} minutes!"
                 )
 
-    async def run(self) -> None:
+    def run(self) -> None:
         """Main monitoring loop."""
         logger.info("=" * 60)
         logger.info("Transit Monitor Started")
@@ -245,17 +247,18 @@ class TransitMonitor:
             f"Warning lead: {self.warning_minutes} min",
         )
 
+        import time
         try:
             while True:
                 logger.info(f"\n[{datetime.now().strftime('%H:%M:%S')}] Checking for transits...")
-                await self.check_and_notify()
+                self.check_and_notify()
 
                 # Wait for next check
                 logger.info(
                     f"Next check in {self.check_interval} minutes at "
                     f"{(datetime.now() + timedelta(minutes=self.check_interval)).strftime('%H:%M:%S')}"
                 )
-                await asyncio.sleep(self.check_interval * 60)
+                time.sleep(self.check_interval * 60)
 
         except KeyboardInterrupt:
             logger.info("\n" + "=" * 60)
@@ -342,8 +345,8 @@ def main():
         warning_minutes=args.warning,
     )
 
-    # Run async loop
-    asyncio.run(monitor.run())
+    # Run synchronous loop
+    monitor.run()
 
 
 if __name__ == "__main__":

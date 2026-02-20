@@ -702,14 +702,21 @@ class TransitRecorder:
         -----
         Aircraft transits are typically 0.5-2 seconds long. The total recording
         duration will be: pre_buffer + transit_duration + post_buffer
+        
+        Duplicate detection: if a recording for the same flight_id is already
+        scheduled, this call is ignored to prevent timer accumulation.
         """
         try:
-            # Cancel existing timer for this flight if any (prevents memory leak)
+            # Duplicate detection: skip if already scheduled for this flight
             if flight_id in self._scheduled_recordings:
-                old_timer = self._scheduled_recordings[flight_id]
-                old_timer.cancel()
-                logger.debug(f"Cancelled previous timer for {flight_id}")
-
+                existing_timer = self._scheduled_recordings[flight_id]
+                if existing_timer.is_alive():
+                    logger.debug(f"Recording already scheduled for {flight_id}, skipping duplicate")
+                    return True  # Already scheduled, return success
+                else:
+                    # Timer finished or cancelled, remove stale entry
+                    del self._scheduled_recordings[flight_id]
+            
             # Calculate timing
             start_delay = max(0, eta_seconds - self.pre_buffer)
             total_duration = self.pre_buffer + transit_duration_estimate + self.post_buffer
@@ -730,10 +737,24 @@ class TransitRecorder:
         except Exception as e:
             logger.error(f"Failed to schedule transit recording: {e}")
             return False
+    
+    def cleanup_stale_timers(self):
+        """Remove completed or cancelled timers from the scheduled recordings dict."""
+        stale_keys = [
+            fid for fid, timer in self._scheduled_recordings.items()
+            if not timer.is_alive()
+        ]
+        for fid in stale_keys:
+            del self._scheduled_recordings[fid]
+        if stale_keys:
+            logger.debug(f"Cleaned up {len(stale_keys)} stale timer(s)")
 
     def _start_recording(self, flight_id: str, duration: float):
         """Internal method to start recording and schedule stop."""
         try:
+            # OpenSky last-mile refinement: get fresh position right before recording
+            self._opensky_refine(flight_id)
+            
             logger.info(f"Starting recording for transit {flight_id}")
             self.client.start_recording()
 
@@ -744,6 +765,29 @@ class TransitRecorder:
 
         except Exception as e:
             logger.error(f"Failed to start recording for {flight_id}: {e}")
+    
+    def _opensky_refine(self, flight_id: str):
+        """Query OpenSky for latest position before recording (last-mile refinement)."""
+        try:
+            from src.opensky_client import get_opensky_client
+            
+            client = get_opensky_client()
+            # Try to get position by callsign (flight_id is typically the callsign)
+            position = client.get_aircraft_position(flight_id)
+            
+            if position:
+                lat, lon, alt_m, heading, speed_ms = position
+                alt_ft = alt_m * 3.28084 if alt_m else 0
+                speed_kts = speed_ms * 1.94384 if speed_ms else 0
+                logger.info(
+                    f"[OpenSky Refinement] {flight_id}: "
+                    f"({lat:.4f}, {lon:.4f}) alt={alt_ft:.0f}ft hdg={heading:.0f}° spd={speed_kts:.0f}kts"
+                )
+            else:
+                logger.debug(f"[OpenSky Refinement] {flight_id}: not found in OpenSky data")
+        except Exception as e:
+            # OpenSky refinement is best-effort, don't fail recording if it errors
+            logger.debug(f"[OpenSky Refinement] Error for {flight_id}: {e}")
 
     def _stop_recording(self, flight_id: str):
         """Internal method to stop recording."""

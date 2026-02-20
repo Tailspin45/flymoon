@@ -115,29 +115,20 @@ class TransitMonitor:
                 )
                 
                 for transit in transit_data.get('flights', []):
-                    # Parse the transit time
-                    transit_time_str = transit.get('time', '')
-                    if not transit_time_str:
+                    # Transit 'time' is minutes until transit (float), not ISO datetime
+                    time_minutes = transit.get('time')
+                    if time_minutes is None or not isinstance(time_minutes, (int, float)):
                         continue
                     
-                    # Handle timezone-aware datetime
-                    try:
-                        transit_time = datetime.fromisoformat(transit_time_str)
-                    except:
-                        continue
-                    
-                    # Calculate seconds until transit
-                    if transit_time.tzinfo is None:
-                        transit_time = transit_time.replace(tzinfo=ZoneInfo("UTC"))
-                    
-                    seconds_until = (transit_time - now).total_seconds()
+                    # Convert minutes to seconds
+                    seconds_until = float(time_minutes) * 60
                     
                     # Only include if not passed and within 5 minutes
                     if 0 < seconds_until <= 300:
                         probability = transit.get('possibility_level')
                         
-                        # Only include HIGH and MEDIUM probability
-                        if probability in [PossibilityLevel.HIGH, PossibilityLevel.MEDIUM]:
+                        # Only include HIGH and MEDIUM probability (compare to enum values, not enums)
+                        if probability in [PossibilityLevel.HIGH.value, PossibilityLevel.MEDIUM.value]:
                             all_transits.append({
                                 'flight': transit.get('name', 'Unknown'),
                                 'target': target_name.title(),

@@ -898,11 +898,15 @@ function updateFilmstrip(files) {
         const isTemp = file.isSimulation;
         const badge = isTemp ? '<span class="temp-badge">TEMP</span>' : '';
         const itemClass = isTemp ? 'filmstrip-item temp-file' : 'filmstrip-item';
+        const isVideo = file.path.match(/\.(mp4|avi|mov)$/i);
+        const thumbnail = isVideo
+            ? `<div class="filmstrip-thumbnail video-thumb">🎬</div>`
+            : `<img src="${file.path}" alt="${file.name}" class="filmstrip-thumbnail">`;
         
         return `
         <div class="${itemClass}" onclick="viewFile('${file.path}')">
             ${badge}
-            <img src="${file.path}" alt="${file.name}" class="filmstrip-thumbnail">
+            ${thumbnail}
             <div class="filmstrip-info">
                 <span>${file.name.split('_')[0]}</span>
                 <div class="filmstrip-actions">
@@ -927,9 +931,14 @@ function updateFilesGrid() {
         return;
     }
     
-    grid.innerHTML = files.map(file => `
+    grid.innerHTML = files.map(file => {
+        const isVideo = file.path.match(/\.(mp4|avi|mov)$/i);
+        const thumbnail = isVideo
+            ? `<div class="file-thumbnail video-thumb" onclick="viewFile('${file.path}')">🎬</div>`
+            : `<img src="${file.path}" alt="${file.name}" class="file-thumbnail" onclick="viewFile('${file.path}')">`;
+        return `
         <div class="file-item">
-            <img src="${file.path}" alt="${file.name}" class="file-thumbnail" onclick="viewFile('${file.path}')">
+            ${thumbnail}
             <div class="file-info">
                 <span class="file-name" title="${file.name}">${file.name}</span>
                 <div class="file-actions">
@@ -938,7 +947,7 @@ function updateFilesGrid() {
                 </div>
             </div>
         </div>
-    `).join('');
+    `}).join('');
 }
 
 function viewFile(path) {

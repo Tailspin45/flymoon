@@ -186,7 +186,7 @@ var refreshTimerLabelInterval = null; // Countdown timer interval
 var softRefreshInterval = null; // For client-side position updates
 var remainingSeconds = 600; // Track remaining seconds for countdown (default 10 min)
 var lastFlightData = null; // Cache last flight response for soft refresh
-var lastFlightUpdateTime = 0; // Timestamp of last API call
+window.lastFlightUpdateTime = 0; // Timestamp of last API call (window scope for consistency)
 var currentCheckInterval = 600; // Current adaptive interval in seconds (default 10 min to match cache TTL)
 displayTarget();
 
@@ -230,11 +230,11 @@ document.addEventListener('visibilitychange', function() {
  * Now also recalculates transit predictions with updated positions
  */
 async function softRefresh() {
-    if (!lastFlightData || !lastFlightUpdateTime) {
+    if (!lastFlightData || !window.lastFlightUpdateTime) {
         return; // No data to update
     }
 
-    const secondsElapsed = (Date.now() - lastFlightUpdateTime) / 1000;
+    const secondsElapsed = (Date.now() - window.lastFlightUpdateTime) / 1000;
     
     // Don't soft refresh if too much time has passed (data too stale)
     if (secondsElapsed > 300) {  // 5 minutes
@@ -877,10 +877,10 @@ function go() {
 
     // Check if data is fresh (within cache TTL)
     const cacheValidSeconds = 600; // 10 minutes - matches backend cache
-    const secondsSinceUpdate = (Date.now() - lastFlightUpdateTime) / 1000;
+    const secondsSinceUpdate = (Date.now() - window.lastFlightUpdateTime) / 1000;
     
     // Always show warning if we have recent data
-    if (lastFlightUpdateTime > 0 && secondsSinceUpdate < cacheValidSeconds) {
+    if (window.lastFlightUpdateTime > 0 && secondsSinceUpdate < cacheValidSeconds) {
         const minutesRemaining = Math.ceil((cacheValidSeconds - secondsSinceUpdate) / 60);
         const secondsRemaining = Math.floor(cacheValidSeconds - secondsSinceUpdate);
         
@@ -954,7 +954,10 @@ function refreshTimer() {
     updateLastUpdateDisplay();
 }
 
+var _fetchRequestSeq = 0; // Sequence counter to discard stale concurrent responses
+
 function fetchFlights() {
+    const thisSeq = ++_fetchRequestSeq;
     let latitude = document.getElementById("latitude").value;
     let longitude = document.getElementById("longitude").value;
     let elevation = document.getElementById("elevation").value;
@@ -965,7 +968,6 @@ function fetchFlights() {
     const bodyTable = document.getElementById('flightData');
     let alertNoResults = document.getElementById("noResults");
     let alertTargetUnderHorizon = document.getElementById("targetUnderHorizon");
-    bodyTable.innerHTML = '';
     alertNoResults.innerHTML = '';
     alertTargetUnderHorizon = '';
 
@@ -1010,6 +1012,15 @@ function fetchFlights() {
         return response.json();
     })
     .then(data => {
+        // Discard stale responses from concurrent fetches
+        if (thisSeq !== _fetchRequestSeq) {
+            console.log(`[fetchFlights] Discarding stale response (seq ${thisSeq} < ${_fetchRequestSeq})`);
+            return;
+        }
+
+        // Clear table here (inside async callback) to prevent duplicate rows from concurrent fetches
+        bodyTable.innerHTML = '';
+
         // Record update time and cache data
         window.lastFlightUpdateTime = Date.now();
         lastFlightData = data;
@@ -1194,11 +1205,15 @@ function fetchFlights() {
         filteredFlights.forEach(item => {
             const row = document.createElement('tr');
 
-            // Store normalized flight ID and possibility level for cross-referencing
+            // Store normalized flight ID, possibility level, and transit time for cross-referencing
             const normalizedId = String(item.id).trim().toUpperCase();
             const possibilityLevel = item.is_possible_transit === 1 ? parseInt(item.possibility_level) : 0;
             row.setAttribute('data-flight-id', normalizedId);
             row.setAttribute('data-possibility', possibilityLevel);
+            // Store transit time for route/track conditional fetching
+            if (item.time !== null && item.time !== undefined) {
+                row.setAttribute('data-transit-time', item.time);
+            }
 
             // Click handler: normal click flashes, Cmd/Ctrl+click toggles tracking
             row.addEventListener('click', function(e) {
@@ -1428,7 +1443,7 @@ function updateAltitudeDisplay(flights) {
         });
 
         // Add click handler to flash aircraft on map
-        const normalizedId = flight.id.replace(/[^a-zA-Z0-9]/g, '_');
+        const normalizedId = String(flight.id).trim().toUpperCase();
         line.addEventListener('click', () => {
             if (typeof flashAircraftMarker === 'function') {
                 flashAircraftMarker(normalizedId);
@@ -1636,7 +1651,7 @@ function initializeAutoRefresh() {
     
     // Check cache age
     const cacheValidSeconds = 600; // 10 minutes
-    const secondsSinceUpdate = (Date.now() - lastFlightUpdateTime) / 1000;
+    const secondsSinceUpdate = (Date.now() - window.lastFlightUpdateTime) / 1000;
     
     // Start intervals regardless of cache state
     currentCheckInterval = appConfig.autoRefreshIntervalMinutes * 60;
@@ -1655,7 +1670,7 @@ function initializeAutoRefresh() {
     console.log('[Init] Soft refresh started (15s interval)');
     
     // Decide whether to fetch immediately
-    if (lastFlightUpdateTime === 0) {
+    if (window.lastFlightUpdateTime === 0) {
         // No cache - fetch immediately
         console.log('[Init] No cache found - fetching initial data');
         goFetch();

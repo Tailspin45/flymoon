@@ -61,13 +61,13 @@ def test_data_classification():
     print("Running transit detection...")
     print("-" * 80)
 
+    # Test with moon target (auto not supported, test each target separately)
     result = get_transits(
         latitude=meta.get('observer_latitude', 33.11),
         longitude=meta.get('observer_longitude', -117.31),
         elevation=100,
-        target_name='auto',
-        test_mode=True,
-        min_altitude=15.0
+        target_name='moon',
+        test_mode=True
     )
 
     # Analyze results

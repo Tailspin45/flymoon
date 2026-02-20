@@ -169,16 +169,20 @@ def get_all_flights():
     try:
         start_time = time.time()
 
-        latitude = float(request.args["latitude"])
-        longitude = float(request.args["longitude"])
-        elevation = float(request.args["elevation"])
+        latitude = float(request.args.get("latitude") or 0)
+        longitude = float(request.args.get("longitude") or 0)
+        elevation = float(request.args.get("elevation") or 0)
         min_altitude = float(request.args.get("min_altitude", 15))
         alt_threshold = float(request.args.get("alt_threshold", 5.0))
         az_threshold = float(request.args.get("az_threshold", 10.0))
-        
+
+        if latitude == 0 and longitude == 0:
+            logger.warning("[Flights] Missing or invalid coordinates")
+            return jsonify({"error": "Missing required parameter: 'latitude' and 'longitude'"}), 400
+
         logger.debug(f"Parameter types: min_altitude={type(min_altitude)}, alt_threshold={type(alt_threshold)}, az_threshold={type(az_threshold)}")
         
-        has_send_notification = request.args["send-notification"] == "true"
+        has_send_notification = request.args.get("send-notification") == "true"
 
         # Check for custom bounding box from user
         custom_bbox = None
@@ -283,6 +287,9 @@ def get_all_flights():
         # Schedule automatic recordings for high-probability transits
         transit_recorder = get_transit_recorder()
         if transit_recorder:
+            # Cleanup any stale timers from previous cycles
+            transit_recorder.cleanup_stale_timers()
+            
             for flight in data["flights"]:
                 # Only record HIGH probability transits (green rows)
                 if flight.get("possibility_level") == PossibilityLevel.HIGH.value:
@@ -358,9 +365,14 @@ def recalculate_transits_endpoint():
         data = request.get_json()
         
         flights = data.get("flights", [])
-        latitude = float(data["latitude"])
-        longitude = float(data["longitude"])
-        elevation = float(data["elevation"])
+        latitude = float(data.get("latitude", 0))
+        longitude = float(data.get("longitude", 0))
+        elevation = float(data.get("elevation", 0))
+        
+        # Skip if coordinates are invalid
+        if latitude == 0 and longitude == 0:
+            logger.warning("[Recalculate] Missing or invalid coordinates")
+            return jsonify({"flights": [], "targetCoordinates": {}}), 200
         target = data.get("target", "auto")
         min_altitude = float(data.get("min_altitude", 15.0))
         alt_threshold = float(data.get("alt_threshold", 

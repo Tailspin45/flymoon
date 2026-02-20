@@ -112,19 +112,6 @@ class MockSeestarClient:
         """Check if recording."""
         return self._recording
 
-    def start_solar_mode(self) -> bool:
-        """Simulate starting solar viewing mode."""
-        if not self._connected:
-            raise RuntimeError("Cannot start solar mode: not connected")
-        logger.info("[Mock] Started solar viewing mode")
-        return True
-
-    def start_lunar_mode(self) -> bool:
-        """Simulate starting lunar viewing mode."""
-        if not self._connected:
-            raise RuntimeError("Cannot start lunar mode: not connected")
-        logger.info("[Mock] Started lunar viewing mode")
-        return True
 
     def capture_photo(self, exposure_time: float = 1.0) -> dict:
         """Simulate photo capture."""
