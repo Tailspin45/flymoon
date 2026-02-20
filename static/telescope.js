@@ -1611,21 +1611,30 @@ function captureSimTransitSnapshot() {
         canvas.height = ch;
         const ctx = canvas.getContext('2d');
 
-        // Draw video frame
-        ctx.drawImage(video, 0, 0, cw, ch);
+        // Draw video frame letterboxed to avoid distortion
+        const vw = video.videoWidth  || cw;
+        const vh = video.videoHeight || ch;
+        const scale = Math.min(cw / vw, ch / vh);
+        const dx = (cw - vw * scale) / 2;
+        const dy = (ch - vh * scale) / 2;
+        ctx.fillStyle = '#000';
+        ctx.fillRect(0, 0, cw, ch);
+        ctx.drawImage(video, dx, dy, vw * scale, vh * scale);
 
-        // Draw plane if visible and positioned
+        // Draw plane at its *actual* animated position via getBoundingClientRect
         if (plane && plane.style.display !== 'none') {
             const img = plane.querySelector('img');
-            if (img && img.complete) {
-                const x = parseInt(plane.style.left) || cw / 2;
-                const y = parseInt(plane.style.top)  || ch * 0.42;
-                ctx.drawImage(img, x, y, 95, 80);
+            const containerRect = container.getBoundingClientRect();
+            const planeRect = plane.getBoundingClientRect();
+            if (img && img.complete && planeRect.width > 0) {
+                const px = planeRect.left - containerRect.left;
+                const py = planeRect.top  - containerRect.top;
+                ctx.drawImage(img, px, py, planeRect.width, planeRect.height);
             }
         }
 
         // Label it as a simulation snapshot
-        ctx.fillStyle = 'rgba(0,0,0,0.45)';
+        ctx.fillStyle = 'rgba(0,0,0,0.5)';
         ctx.fillRect(0, ch - 22, cw, 22);
         ctx.fillStyle = '#ffd700';
         ctx.font = 'bold 12px monospace';
