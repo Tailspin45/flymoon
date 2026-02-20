@@ -405,18 +405,31 @@ function updateSingleAircraftMarker(flight) {
     }
 }
 
-function updateAircraftMarkers(flights, observerLat, observerLon, isFullRefresh = false) {
+function updateAircraftMarkers(flights, observerLat, observerLon, isFullRefresh = false, isForceRefresh = false) {
     if (!map || !aircraftLayer) return;
 
     if (isFullRefresh) {
-        // Full refresh: clear all ghost dots atomically
-        ghostLayer.clearLayers();
-        ghostMarkers = {};
-        // Clear any stale route/track layer (flight may no longer be in view)
-        if (currentRouteLayer) {
-            map.removeLayer(currentRouteLayer);
-            currentRouteLayer = null;
-            userInteractingWithMap = false;
+        if (isForceRefresh) {
+            // Force refresh by user: clear all ghost dots
+            ghostLayer.clearLayers();
+            ghostMarkers = {};
+            // Clear track on explicit user force refresh
+            if (currentRouteLayer) {
+                map.removeLayer(currentRouteLayer);
+                currentRouteLayer = null;
+                userInteractingWithMap = false;
+            }
+        } else {
+            // Auto hard refresh: keep ghost dots; keep track if flight still in data
+            if (currentRouteLayer) {
+                const activeId = currentRouteLayer.flightId;
+                const stillPresent = flights.some(f => String(f.id).trim().toUpperCase() === activeId);
+                if (!stillPresent) {
+                    map.removeLayer(currentRouteLayer);
+                    currentRouteLayer = null;
+                    userInteractingWithMap = false;
+                }
+            }
         }
     } else {
         // Soft refresh: add a new breadcrumb dot at current position for each aircraft
@@ -638,10 +651,7 @@ function updateAltitudeOverlay(flights) {
 async function toggleFlightRouteTrack(faFlightId, flightId) {
     console.log('toggleFlightRouteTrack called:', { faFlightId, flightId });
     
-    if (!map || !faFlightId) {
-        console.log('Aborted: map or faFlightId missing', { map: !!map, faFlightId });
-        return;
-    }
+    if (!map) return;
 
     // If already showing this flight's route, hide it and restore breadcrumbs
     if (currentRouteLayer && currentRouteLayer.flightId === flightId) {
@@ -656,6 +666,22 @@ async function toggleFlightRouteTrack(faFlightId, flightId) {
         return;
     }
 
+    // Remove any previous route from a different flight and restore its breadcrumbs
+    if (currentRouteLayer) {
+        const prevId = currentRouteLayer.flightId;
+        map.removeLayer(currentRouteLayer);
+        currentRouteLayer = null;
+        if (prevId && ghostMarkers[prevId]) {
+            ghostMarkers[prevId].forEach(dot => ghostLayer.addLayer(dot));
+        }
+    }
+
+    // Need fa_flight_id to fetch route/track data
+    if (!faFlightId) {
+        console.log('No faFlightId — cannot show track for', flightId);
+        return;
+    }
+
     // User is now interacting with the map - prevent auto-zoom
     userInteractingWithMap = true;
     console.log('User interacting with map, fetching route/track...');
@@ -663,15 +689,6 @@ async function toggleFlightRouteTrack(faFlightId, flightId) {
     // Hide breadcrumb dots for this flight while track is shown
     if (ghostMarkers[flightId]) {
         ghostMarkers[flightId].forEach(dot => ghostLayer.removeLayer(dot));
-    }
-
-    // Remove previous route if showing different flight, restore its breadcrumbs
-    if (currentRouteLayer) {
-        const prevId = currentRouteLayer.flightId;
-        map.removeLayer(currentRouteLayer);
-        if (prevId && ghostMarkers[prevId]) {
-            ghostMarkers[prevId].forEach(dot => ghostLayer.addLayer(dot));
-        }
     }
 
     // Check cache first
@@ -859,7 +876,7 @@ function toggleMap() {
 }
 
 // Update map with all data from API response
-function updateMapVisualization(data, observerLat, observerLon, observerElev) {
+function updateMapVisualization(data, observerLat, observerLon, observerElev, isForceRefresh = false) {
     if (!map || !mapInitialized) {
         initializeMap(observerLat, observerLon);
     }
@@ -895,7 +912,7 @@ function updateMapVisualization(data, observerLat, observerLon, observerElev) {
     }
 
     // Update aircraft markers (always call to clear stale markers even if empty)
-    updateAircraftMarkers(data.flights || [], observerLat, observerLon, true);
+    updateAircraftMarkers(data.flights || [], observerLat, observerLon, true, isForceRefresh);
     if (data.flights && data.flights.length > 0) {
         updateAltitudeOverlay(data.flights);
     }

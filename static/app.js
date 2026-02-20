@@ -922,7 +922,8 @@ function go() {
         mapContainer.style.display = 'block';
     }
 
-    // Fetch fresh data
+    // Fetch fresh data — mark this as a user-forced refresh so map clears breadcrumbs
+    window._pendingForceRefresh = true;
     fetchFlights();
 }
 
@@ -1376,7 +1377,9 @@ function fetchFlights() {
         // Always update map visualization when data is fetched (use filtered flights)
         if(mapVisible) {
             const mapData = {...data, flights: filteredFlights};
-            updateMapVisualization(mapData, parseFloat(latitude), parseFloat(longitude), parseFloat(elevation));
+            const isForceRefresh = !!window._pendingForceRefresh;
+            window._pendingForceRefresh = false;
+            updateMapVisualization(mapData, parseFloat(latitude), parseFloat(longitude), parseFloat(elevation), isForceRefresh);
         }
 
         // Update altitude display - DISABLED: updateAltitudeOverlay in map.js handles this now
