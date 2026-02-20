@@ -132,7 +132,7 @@ class TransitMonitor:
                             all_transits.append({
                                 'flight': transit.get('name', 'Unknown'),
                                 'target': target_name.title(),
-                                'probability': probability.name,
+                                'probability': PossibilityLevel(probability).name,
                                 'seconds_until': int(seconds_until),
                                 'altitude': round(float(transit.get('target_altitude', 0)), 1),
                                 'azimuth': round(float(transit.get('target_azimuth', 0)), 1)
