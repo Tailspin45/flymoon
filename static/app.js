@@ -1034,6 +1034,9 @@ function fetchFlights() {
         // Discard stale responses from concurrent fetches
         if (thisSeq !== _fetchRequestSeq) {
             console.log(`[fetchFlights] Discarding stale response (seq ${thisSeq} < ${_fetchRequestSeq})`);
+            // Still hide spinner — the winning request will show its own results
+            document.getElementById("loadingSpinner").style.display = "none";
+            document.getElementById("results").style.display = "block";
             return;
         }
 
