@@ -825,33 +825,44 @@ async function recordTransit(flight, secondsUntil) {
     if (isRecording) {
         console.log('[Telescope] Interrupting current recording for transit');
         await stopRecording();
-        await new Promise(resolve => setTimeout(resolve, 1000)); // Wait for stop
+        await new Promise(resolve => setTimeout(resolve, 1000));
     }
-    
+
+    const PRE  = 10; // seconds to record before transit
+    const POST = 10; // seconds to record after transit
+    const totalDuration = PRE + POST; // always 20s
+
     // Show overlay
     transitCaptureActive = true;
     const overlay = document.getElementById('transitOverlay');
     const overlayInfo = document.getElementById('transitOverlayInfo');
     if (overlay) {
-        overlayInfo.textContent = `${flight} in ${secondsUntil}s`;
+        overlayInfo.textContent = `${flight} — recording starts in ${Math.max(0, secondsUntil - PRE)}s`;
         overlay.style.display = 'flex';
     }
-    
-    // Calculate recording duration (pre + post buffers)
-    const preBuffer = 10; // seconds before transit
-    const postBuffer = 10; // seconds after transit
-    const totalDuration = Math.max(secondsUntil - preBuffer, 0) + postBuffer;
-    
-    // Start recording
-    document.getElementById('videoDuration').value = totalDuration;
-    document.getElementById('frameInterval').value = 0; // Normal video
-    await startRecording();
-    
-    // Hide overlay after transit passes
+
+    const startDelayMs = Math.max(0, (secondsUntil - PRE)) * 1000;
+
+    const doRecord = async () => {
+        if (!isConnected && !isSimulating) return;
+        if (overlayInfo) overlayInfo.textContent = `${flight} — transit in ${PRE}s`;
+        document.getElementById('videoDuration').value = totalDuration;
+        document.getElementById('frameInterval').value = 0;
+        await startRecording();
+    };
+
+    if (startDelayMs > 0) {
+        showStatus(`⏳ Recording starts in ${Math.round(startDelayMs / 1000)}s (${PRE}s before transit)`, 'info', startDelayMs);
+        simCycleTimeout = setTimeout(doRecord, startDelayMs);
+    } else {
+        await doRecord();
+    }
+
+    // Hide overlay after transit + post buffer
     setTimeout(() => {
         if (overlay) overlay.style.display = 'none';
         transitCaptureActive = false;
-    }, (secondsUntil + postBuffer) * 1000);
+    }, (secondsUntil + POST) * 1000);
 }
 
 function dismissTransit(flight) {
@@ -992,7 +1003,8 @@ const SIM_TRANSIT = {
     azimuth: 188.7,
 };
 const SIM_COUNTDOWN_START = 30; // seconds until simulated transit
-const SIM_RECORD_DURATION = 12; // seconds of simulated recording
+const SIM_PRE  = 10; // seconds to record before transit
+const SIM_POST = 10; // seconds to record after transit
 
 async function toggleSimulation() {
     if (!isSimulating) {
@@ -1092,10 +1104,16 @@ function scheduleSimTransit(secondsUntil) {
         const entry = upcomingTransits.find(t => t.flight === SIM_TRANSIT.flight);
         if (entry) { entry.seconds_until = remaining; updateTransitList(); }
 
-        // Show countdown overlay on video when ≤15s
+        // Start recording 10s before transit
+        if (remaining === SIM_PRE) {
+            showStatus(`🔴 Recording started — transit in ${SIM_PRE}s`, 'success', SIM_PRE * 1000);
+            startSimRecording(SIM_PRE + SIM_POST);
+        }
+
+        // Show countdown overlay when ≤10s to transit
         const overlay = document.getElementById('simCountdownOverlay');
         if (overlay) {
-            if (remaining > 0 && remaining <= 15) {
+            if (remaining > 0 && remaining <= SIM_PRE) {
                 overlay.style.display = 'block';
                 overlay.textContent = `🌙 Transit in ${remaining}s`;
             } else {
@@ -1111,7 +1129,7 @@ function scheduleSimTransit(secondsUntil) {
     }, 1000);
 }
 
-/** Called at the moment of simulated transit */
+/** Called at the moment of simulated transit — effects only, recording already running */
 function triggerSimTransit() {
     if (!isSimulating) return;
     console.log('[Sim] Transit triggered!');
@@ -1129,29 +1147,16 @@ function triggerSimTransit() {
     // Shutter flash
     simCaptureFlash();
 
-    // Start recording overlay + fake filmstrip entry
-    startSimRecording();
-
-    showStatus('🎯 TRANSIT IN PROGRESS — Recording!', 'success', SIM_RECORD_DURATION * 1000);
-
-    // Stop recording after SIM_RECORD_DURATION seconds, then schedule next cycle
-    simCycleTimeout = setTimeout(() => {
-        if (!isSimulating) return;
-        stopSimRecording();
-        showStatus('✅ Sim transit complete. Next transit in 60s…', 'info', 8000);
-        // Auto-cycle: schedule next transit in ~60s
-        simCycleTimeout = setTimeout(() => {
-            if (isSimulating) scheduleSimTransit(SIM_COUNTDOWN_START);
-        }, 60000);
-    }, SIM_RECORD_DURATION * 1000);
+    showStatus(`🎯 TRANSIT NOW — recording ${SIM_POST}s more`, 'success', SIM_POST * 1000);
+    // Recording auto-stops via startRecordingTimer; auto-cycle is triggered from stopSimRecording()
 }
 
 /** Blinking REC overlay + fake filmstrip entry */
-function startSimRecording() {
+function startSimRecording(duration = SIM_PRE + SIM_POST) {
     isRecording = true;
     recordingStartTime = Date.now();
     updateRecordingUI();
-    startRecordingTimer(SIM_RECORD_DURATION);
+    startRecordingTimer(duration);
 
     const rec = document.getElementById('simRecOverlay');
     if (rec) {
@@ -1187,6 +1192,14 @@ function stopSimRecording() {
     if (!window.currentFiles) window.currentFiles = [];
     window.currentFiles.unshift(tempFile);
     updateFilmstrip(window.currentFiles);
+
+    // Auto-cycle: schedule next sim transit 60s after this recording ends
+    if (isSimulating) {
+        showStatus('✅ Sim transit complete. Next transit in 60s…', 'info', 8000);
+        simCycleTimeout = setTimeout(() => {
+            if (isSimulating) scheduleSimTransit(SIM_COUNTDOWN_START);
+        }, 60000);
+    }
 }
 
 /** White camera-shutter flash */
