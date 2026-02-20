@@ -1210,22 +1210,23 @@ function animateSimPlane() {
 
     const w = container.offsetWidth;
     const h = container.offsetHeight;
-    const y = Math.round(h * 0.42); // slightly above centre like a real transit
+    const planeH = 46; // matches SVG height
+    const y = Math.round(h * 0.42) - Math.round(planeH / 2); // vertically centred slightly above middle
 
     plane.style.display = 'block';
     plane.style.top = y + 'px';
-    plane.style.left = '-40px';
-    plane.style.transition = `left 2.4s linear`;
+    plane.style.left = '-140px';
+    plane.style.transition = `left 3.2s linear`;
 
     // Force reflow so transition fires
     plane.getBoundingClientRect();
-    plane.style.left = (w + 50) + 'px';
+    plane.style.left = (w + 150) + 'px';
 
     setTimeout(() => {
         plane.style.display = 'none';
         plane.style.transition = '';
-        plane.style.left = '-40px';
-    }, 2500);
+        plane.style.left = '-140px';
+    }, 3400);
 }
 
 /** Short sine-wave beep via Web Audio API */
