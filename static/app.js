@@ -1031,12 +1031,10 @@ function fetchFlights() {
         return response.json();
     })
     .then(data => {
-        // Discard stale responses from concurrent fetches
+        // Discard stale responses from concurrent fetches; leave spinner running
+        // so it stays visible until the winning request finishes rendering.
         if (thisSeq !== _fetchRequestSeq) {
             console.log(`[fetchFlights] Discarding stale response (seq ${thisSeq} < ${_fetchRequestSeq})`);
-            // Still hide spinner — the winning request will show its own results
-            document.getElementById("loadingSpinner").style.display = "none";
-            document.getElementById("results").style.display = "block";
             return;
         }
 
