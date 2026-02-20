@@ -1151,3 +1151,55 @@
     line-height: 1.6;
 }
 .ec-contacts span { color: #bbb; }
+
+/* ── Eclipse simulator controls ──────────────────────────────────── */
+.btn-eclipse {
+    background: linear-gradient(135deg, #1a1a4e 0%, #2d1b6e 100%);
+    color: #c8a8ff;
+    border: 1px solid #5a3a9e;
+}
+.btn-eclipse:hover { background: linear-gradient(135deg, #2a2a6e 0%, #3d2b8e 100%); }
+.btn-eclipse.active {
+    background: linear-gradient(135deg, #4a2a8e 0%, #7a3a9e 100%);
+    color: #fff;
+    border-color: #9a6aee;
+    animation: eclipseBtnPulse 2s ease-in-out infinite;
+}
+@keyframes eclipseBtnPulse {
+    0%,100% { box-shadow: 0 0 0 0 rgba(154,106,238,0); }
+    50%      { box-shadow: 0 0 0 5px rgba(154,106,238,0.4); }
+}
+
+#simEclipseControls {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+    padding: 6px 0 2px;
+}
+.sim-eclipse-select {
+    background: #1e1e2e;
+    color: #c8a8ff;
+    border: 1px solid #5a3a9e;
+    border-radius: 5px;
+    padding: 4px 8px;
+    font-size: 0.82em;
+    cursor: pointer;
+}
+.sim-eclipse-check {
+    font-size: 0.82em;
+    color: #aaa;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    white-space: nowrap;
+}
+.btn-transit-fire {
+    background: #2a3a1a;
+    color: #8edd6a;
+    border: 1px solid #4a7a2a;
+    font-size: 0.78em;
+    padding: 3px 8px;
+}
+.btn-transit-fire:hover { background: #3a5a2a; }

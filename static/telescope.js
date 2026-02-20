@@ -1029,6 +1029,9 @@ function updateEclipseState() {
             startEclipseRecording(c1, c4, eclipseData);
         }
     }
+
+    // Update Fire Transit button visibility (sim eclipse only)
+    _updateSimEclipseFireBtn();
 }
 
 /**
@@ -1415,6 +1418,9 @@ function stopSimulation() {
     isSimulating = false;
     isConnected = false;
 
+    // Stop eclipse sim if running
+    if (_simEclipseActive) stopSimEclipse();
+
     clearTimeout(simCycleTimeout);
     clearTimeout(recordDelayTimeout);
     clearInterval(simTransitInterval);
@@ -1712,6 +1718,208 @@ function cleanupSimulationFiles() {
     simulationFiles = [];
     updateFilmstrip(window.currentFiles || []);
 }
+
+// ============================================================================
+// ECLIPSE SIMULATOR
+// ============================================================================
+//
+// Injects fake eclipseData with compressed contact times so the full
+// Outlook → Watch → Warning → Active → Cleared sequence plays in ~2 minutes.
+//
+// Timeline (seconds after "Sim Eclipse" pressed):
+//   T+0   button pressed, type selected
+//   T+0   eclipseData injected with C1 = now + 35s  → Watch card appears
+//   T+5   C1 within 30s                              → Warning (pulsing)
+//   T+35  C1 reached                                 → Active, recording starts
+//   T+55  C2 (totality/annularity start, if applicable)
+//   T+85  C3 (totality end, if applicable)
+//   T+105 C4 reached                                 → Cleared card, rec stops
+//   T+135 Cleared card auto-fades, eclipseData cleared
+//
+// "Show Outlook Banner" checkbox forces the banner visible independently
+// of the 48h threshold (useful since the compressed demo skips Outlook).
+//
+// "Fire Transit" button (visible during Active phase only) injects a fake
+// aircraft transit 8s away, triggering recording extension + ✈️ marker.
+// ============================================================================
+
+let _simEclipseActive = false;
+let _simEclipseTimeout = null;   // used to cancel pending cleanup
+
+// Eclipse type presets: [type, eclipse_class, label emoji]
+const SIM_ECLIPSE_TYPES = {
+    lunar_total:    { type: 'lunar', eclipse_class: 'total',    target: 'Moon', icon: '🌙' },
+    lunar_partial:  { type: 'lunar', eclipse_class: 'partial',  target: 'Moon', icon: '🌙' },
+    solar_partial:  { type: 'solar', eclipse_class: 'partial',  target: 'Sun',  icon: '☀️' },
+    solar_total:    { type: 'solar', eclipse_class: 'total',    target: 'Sun',  icon: '☀️' },
+    solar_annular:  { type: 'solar', eclipse_class: 'annular',  target: 'Sun',  icon: '☀️' },
+};
+
+function toggleSimEclipse() {
+    if (_simEclipseActive) {
+        stopSimEclipse();
+    } else {
+        startSimEclipse();
+    }
+}
+
+function startSimEclipse() {
+    // Must be in simulation mode (need isConnected = true for recording arm)
+    if (!isSimulating) {
+        showStatus('Start Simulate first, then Sim Eclipse', 'warning', 4000);
+        return;
+    }
+
+    _simEclipseActive = true;
+
+    const typeKey  = document.getElementById('simEclipseType')?.value || 'lunar_total';
+    const preset   = SIM_ECLIPSE_TYPES[typeKey] || SIM_ECLIPSE_TYPES.lunar_total;
+
+    // Build compressed contact times
+    const now = Date.now();
+    const hasInnerContacts = preset.eclipse_class !== 'partial';
+    const c1 = new Date(now + 35_000);
+    const c2 = hasInnerContacts ? new Date(now + 55_000) : null;
+    const c3 = hasInnerContacts ? new Date(now + 85_000) : null;
+    const c4 = new Date(now + 105_000);
+    const max = new Date(now + 70_000);
+
+    eclipseData = {
+        type:          preset.type,
+        eclipse_class: preset.eclipse_class,
+        target:        preset.target,
+        c1:            c1.toISOString(),
+        c2:            c2 ? c2.toISOString() : null,
+        c3:            c3 ? c3.toISOString() : null,
+        c4:            c4.toISOString(),
+        max:           max.toISOString(),
+        seconds_to_c1: 35,   // will be recomputed by updateEclipseState each second
+    };
+    eclipseAlertLevel = null;  // let updateEclipseState compute it fresh
+    eclipseBannerDismissed = false; // reset so banner can show if checkbox ticked
+
+    // Style the button as active
+    const btn = document.getElementById('simEclipseBtn');
+    if (btn) { btn.textContent = `${preset.icon} Stop Eclipse`; btn.classList.add('active'); }
+
+    // Show the controls row
+    const controls = document.getElementById('simEclipseControls');
+    if (controls) controls.style.display = 'flex';
+
+    // Schedule cleanup after Cleared window (C4 + 30 min compressed to C4 + 30s)
+    clearTimeout(_simEclipseTimeout);
+    _simEclipseTimeout = setTimeout(() => {
+        if (_simEclipseActive) stopSimEclipse();
+    }, 140_000);  // 105s (C4) + 35s grace
+
+    console.log(`[SimEclipse] Started: ${preset.eclipse_class} ${preset.type}`);
+    showStatus(`🌑 Eclipse simulation started (${preset.eclipse_class} ${preset.type})`, 'info', 5000);
+}
+
+function stopSimEclipse() {
+    _simEclipseActive = false;
+    clearTimeout(_simEclipseTimeout);
+
+    // Clear eclipse state and UI
+    eclipseData = null;
+    eclipseAlertLevel = null;
+    eclipseBannerDismissed = false;
+    updateEclipseState();  // immediately clears card and banner
+
+    const btn = document.getElementById('simEclipseBtn');
+    if (btn) { btn.textContent = '🌑 Sim Eclipse'; btn.classList.remove('active'); }
+
+    // Hide fire-transit button and controls
+    const fireBtn = document.getElementById('simFireTransitBtn');
+    if (fireBtn) fireBtn.style.display = 'none';
+
+    // Keep controls row visible (type picker stays accessible)
+    console.log('[SimEclipse] Stopped');
+    showStatus('Eclipse simulation stopped', 'info', 3000);
+}
+
+/**
+ * Called from the "Show Outlook Banner" checkbox.
+ * Forces the banner visible (bypassing the 48h threshold) regardless of
+ * eclipseBannerDismissed state — useful to demo the Outlook level which
+ * would otherwise be skipped in the compressed timeline.
+ */
+function toggleSimEclipseOutlook(checked) {
+    const banner = document.getElementById('eclipseBanner');
+    const icon   = document.getElementById('eclipseBannerIcon');
+    const text   = document.getElementById('eclipseBannerText');
+    if (!banner) return;
+
+    if (checked && eclipseData) {
+        const isSolar  = eclipseData.type === 'solar';
+        const c1       = new Date(eclipseData.c1);
+        const typeStr  = `${eclipseData.eclipse_class.charAt(0).toUpperCase()}${eclipseData.eclipse_class.slice(1)} ${isSolar ? 'Solar' : 'Lunar'} Eclipse`;
+        const dateStr  = c1.toLocaleString([], { month:'short', day:'numeric', hour:'2-digit', minute:'2-digit' });
+
+        eclipseBannerDismissed = false;
+        banner.className = `eclipse-banner ${isSolar ? 'eclipse-solar' : 'eclipse-lunar'}`;
+        icon.textContent = isSolar ? '☀️' : '🌙';
+        text.textContent = `[SIM] ${typeStr} — ${dateStr}  · Recording will start automatically`;
+        banner.style.display = 'flex';
+    } else {
+        eclipseBannerDismissed = true;
+        banner.style.display = 'none';
+    }
+}
+
+/**
+ * Inject a fake aircraft transit 8 seconds away while eclipse is Active.
+ * Demonstrates recording extension and ✈️ filmstrip marker.
+ */
+const SIM_ECLIPSE_TRANSIT = {
+    flight: 'SIM-002', target: 'Moon', probability: 'HIGH',
+    altitude: 35000, azimuth: 180, seconds_until: 8, handled: false
+};
+
+function fireSimTransitDuringEclipse() {
+    if (!_simEclipseActive || eclipseAlertLevel !== 'active') {
+        showStatus('Fire Transit only works during Active eclipse phase', 'warning', 3000);
+        return;
+    }
+
+    // Check auto-capture is on; warn if not
+    const autoCapture = document.getElementById('autoCaptureToggle');
+    if (autoCapture && !autoCapture.checked) {
+        showStatus('ℹ️ Auto-capture is off — enabling it for this demo', 'info', 3000);
+        autoCapture.checked = true;
+    }
+
+    // Inject transit 8s away (handled=false so checkAutoCapture picks it up)
+    const fake = { ...SIM_ECLIPSE_TRANSIT, seconds_until: 8, handled: false };
+    upcomingTransits = upcomingTransits.filter(t => t.flight !== SIM_ECLIPSE_TRANSIT.flight);
+    upcomingTransits.push(fake);
+    updateTransitList();
+
+    // Hide the button so it can't be double-fired
+    const btn = document.getElementById('simFireTransitBtn');
+    if (btn) btn.style.display = 'none';
+
+    showStatus('✈️ Transit fired — watch recording extend and ✈️ marker appear', 'success', 6000);
+    console.log('[SimEclipse] Injected transit during active eclipse');
+}
+
+/**
+ * Hook into updateEclipseState to show/hide the "Fire Transit" button
+ * based on the current eclipse alert level.
+ */
+function _updateSimEclipseFireBtn() {
+    const fireBtn = document.getElementById('simFireTransitBtn');
+    if (!fireBtn) return;
+    if (_simEclipseActive && eclipseAlertLevel === 'active') {
+        fireBtn.style.display = '';
+    } else {
+        fireBtn.style.display = 'none';
+    }
+}
+
+// Also stop sim eclipse when main simulation is stopped (clean slate)
+// Note: we call stopSimEclipse directly from stopSimulation() rather than
+// wrapping, to avoid hoisting / double-declaration issues.
 
 // ============================================================================
 // CLEANUP

@@ -120,6 +120,22 @@
                         <button id="connectBtn" class="btn btn-primary" onclick="connect()">Connect</button>
                         <button id="disconnectBtn" class="btn btn-secondary" onclick="disconnect()" disabled>Disconnect</button>
                         <button id="simulateBtn" class="btn btn-info" onclick="toggleSimulation()">Simulate</button>
+                        <button id="simEclipseBtn" class="btn btn-eclipse" onclick="toggleSimEclipse()" title="Simulate a full eclipse alert sequence (Watch → Warning → Active → Cleared)">🌑 Sim Eclipse</button>
+                    </div>
+                    <!-- Eclipse sim controls — shown only while sim eclipse is running -->
+                    <div id="simEclipseControls" style="display:none; margin-top:8px">
+                        <select id="simEclipseType" class="sim-eclipse-select">
+                            <option value="lunar_total">🌙 Total Lunar</option>
+                            <option value="lunar_partial">🌙 Partial Lunar</option>
+                            <option value="solar_partial">☀️ Partial Solar</option>
+                            <option value="solar_total">☀️ Total Solar</option>
+                            <option value="solar_annular">☀️ Annular Solar</option>
+                        </select>
+                        <label class="sim-eclipse-check">
+                            <input type="checkbox" id="simEclipseOutlook" onchange="toggleSimEclipseOutlook(this.checked)">
+                            Show Outlook Banner
+                        </label>
+                        <button id="simFireTransitBtn" class="btn btn-sm btn-transit-fire" onclick="fireSimTransitDuringEclipse()" style="display:none" title="Inject an aircraft transit during the eclipse to demo recording extension + ✈️ marker">✈️ Fire Transit</button>
                     </div>
                 </div>
 
