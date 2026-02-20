@@ -1210,7 +1210,7 @@ function animateSimPlane() {
 
     const w = container.offsetWidth;
     const h = container.offsetHeight;
-    const planeH = 52; // matches SVG height
+    const planeH = 80; // matches sim_plane.png height
     const y = Math.round(h * 0.42) - Math.round(planeH / 2); // vertically centred slightly above middle
 
     plane.style.display = 'block';
