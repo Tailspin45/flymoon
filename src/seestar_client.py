@@ -197,26 +197,64 @@ class SeestarClient:
                 self._connected = False
                 raise RuntimeError(f"Communication failed: {e}")
 
+    def _reconnect(self) -> bool:
+        """Attempt to re-establish the TCP connection without starting a new heartbeat thread.
+        Called from within the heartbeat thread after a drop is detected."""
+        try:
+            if self.socket:
+                try:
+                    self.socket.close()
+                except Exception:
+                    pass
+                self.socket = None
+            self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            self.socket.settimeout(self.timeout)
+            self.socket.connect((self.host, self.port))
+            self._connected = True
+            logger.info("Reconnected to Seestar")
+            return True
+        except socket.error as e:
+            logger.debug(f"Reconnect attempt failed: {e}")
+            if self.socket:
+                try:
+                    self.socket.close()
+                except Exception:
+                    pass
+                self.socket = None
+            return False
+
     def _heartbeat_loop(self):
-        """Background thread that sends periodic heartbeat messages."""
+        """Background thread: sends periodic keepalive pings and auto-reconnects on drop."""
+        RECONNECT_INTERVAL = 10  # seconds between reconnect attempts
+        reconnect_wait = 0
+
         while self._heartbeat_running:
-            # Stop heartbeating once we know the connection is gone
+            # Auto-reconnect when connection has dropped
             if not self._connected:
-                logger.debug("Heartbeat stopping — not connected")
-                self._heartbeat_running = False
-                break
+                reconnect_wait += 1
+                if reconnect_wait >= RECONNECT_INTERVAL:
+                    reconnect_wait = 0
+                    logger.info("Heartbeat: connection lost — attempting reconnect...")
+                    self._reconnect()  # sets _connected = True on success
+                time.sleep(1)
+                continue
+
+            reconnect_wait = 0  # reset backoff once connected
 
             try:
-                # Use scope_get_equ_coord as a lightweight status ping.
-                # quiet=True suppresses WARNING/ERROR log spam — heartbeat
-                # failures are expected during disconnection and are already
-                # handled by setting _connected = False below.
+                # Use scope_get_equ_coord as a lightweight keepalive ping.
+                # quiet=True suppresses WARNING/ERROR log spam.
                 self._send_command("scope_get_equ_coord", expect_response=True, quiet=True)
             except Exception as e:
-                logger.debug(f"Heartbeat failed: {e}")
-                # Mark disconnected so the loop exits on next iteration
-                if any(kw in str(e).lower() for kw in ("broken pipe", "connection", "timed out")):
+                err = str(e).lower()
+                # Only mark disconnected on real socket errors, not command timeouts.
+                # A timeout means the telescope is busy, not that the TCP link is broken.
+                if any(kw in err for kw in ("broken pipe", "connection reset", "connection refused",
+                                             "communication failed")):
+                    logger.debug(f"Heartbeat: socket error, marking disconnected: {e}")
                     self._connected = False
+                else:
+                    logger.debug(f"Heartbeat ping timed out (telescope busy): {e}")
 
             # Sleep in small intervals to allow quick shutdown
             for _ in range(self.heartbeat_interval):
