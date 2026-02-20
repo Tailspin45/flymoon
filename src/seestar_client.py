@@ -75,10 +75,18 @@ class SeestarClient:
         method: str,
         params: Any = None,
         expect_response: bool = True,
-        timeout_override: Optional[int] = None
+        timeout_override: Optional[int] = None,
+        quiet: bool = False,
     ) -> Optional[Dict[str, Any]]:
         """
         Send JSON-RPC command to Seestar.
+
+        Parameters
+        ----------
+        quiet : bool
+            If True, demote timeout/socket errors to DEBUG level instead of
+            WARNING/ERROR.  Used by the heartbeat loop to avoid log spam when
+            the telescope is unreachable.
 
         Parameters
         ----------
@@ -174,27 +182,40 @@ class SeestarClient:
 
             except socket.timeout:
                 # Socket timeout - command took too long, but connection may still be alive
-                logger.warning(f"Command timeout: {method}")
+                if quiet:
+                    logger.debug(f"Command timeout: {method}")
+                else:
+                    logger.warning(f"Command timeout: {method}")
                 raise RuntimeError("timed out")
 
             except socket.error as e:
                 # Actual socket error - connection is broken
-                logger.error(f"Socket error: {e}")
+                if quiet:
+                    logger.debug(f"Socket error: {e}")
+                else:
+                    logger.error(f"Socket error: {e}")
                 self._connected = False
                 raise RuntimeError(f"Communication failed: {e}")
 
     def _heartbeat_loop(self):
         """Background thread that sends periodic heartbeat messages."""
         while self._heartbeat_running:
+            # Stop heartbeating once we know the connection is gone
+            if not self._connected:
+                logger.debug("Heartbeat stopping — not connected")
+                self._heartbeat_running = False
+                break
+
             try:
-                # Send heartbeat command and read response to prevent buffer buildup
-                # Use scope_get_equ_coord as a simple status check
-                self._send_command("scope_get_equ_coord", expect_response=True)
+                # Use scope_get_equ_coord as a lightweight status ping.
+                # quiet=True suppresses WARNING/ERROR log spam — heartbeat
+                # failures are expected during disconnection and are already
+                # handled by setting _connected = False below.
+                self._send_command("scope_get_equ_coord", expect_response=True, quiet=True)
             except Exception as e:
-                # Use debug level to avoid spamming logs when telescope is disconnected
                 logger.debug(f"Heartbeat failed: {e}")
-                # If heartbeat fails, mark as disconnected
-                if "broken pipe" in str(e).lower() or "connection" in str(e).lower():
+                # Mark disconnected so the loop exits on next iteration
+                if any(kw in str(e).lower() for kw in ("broken pipe", "connection", "timed out")):
                     self._connected = False
 
             # Sleep in small intervals to allow quick shutdown

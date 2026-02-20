@@ -797,7 +797,13 @@ async function checkTransits() {
         if (!response.ok) return;
         
         const data = await response.json();
-        upcomingTransits = data.transits || [];
+
+        // Preserve any sim transits (SIM-*) already in the list — server
+        // doesn't know about them and would wipe them on every 15s poll.
+        const simTransits = upcomingTransits.filter(t =>
+            t.flight && t.flight.startsWith('SIM-')
+        );
+        upcomingTransits = [...(data.transits || []), ...simTransits];
         
         updateTransitList();
         checkAutoCapture();
