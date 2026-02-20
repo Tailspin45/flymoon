@@ -980,6 +980,20 @@ function closeFileViewer() {
 // SIMULATION MODE
 // ============================================================================
 
+let simTransitInterval = null;   // drives countdown tick
+let simRecBlinkInterval = null;  // drives REC blink
+let simCycleTimeout = null;      // schedules next auto-cycle
+
+const SIM_TRANSIT = {
+    flight: 'SIM-001',
+    target: 'Moon',
+    probability: 'HIGH',
+    altitude: 42.3,
+    azimuth: 188.7,
+};
+const SIM_COUNTDOWN_START = 30; // seconds until simulated transit
+const SIM_RECORD_DURATION = 12; // seconds of simulated recording
+
 async function toggleSimulation() {
     if (!isSimulating) {
         startSimulation();
@@ -989,84 +1003,259 @@ async function toggleSimulation() {
 }
 
 function startSimulation() {
-    console.log('[Telescope] Starting simulation mode');
+    console.log('[Sim] Starting simulation mode');
     isSimulating = true;
-    
-    // Update UI
+
     const simulateBtn = document.getElementById('simulateBtn');
-    const connectBtn = document.getElementById('connectBtn');
+    const connectBtn  = document.getElementById('connectBtn');
     const disconnectBtn = document.getElementById('disconnectBtn');
-    const statusDot = document.getElementById('statusDot');
-    const statusText = document.getElementById('connectionStatus');
-    
-    if (simulateBtn) {
-        simulateBtn.textContent = 'Stop Sim';
-        simulateBtn.className = 'btn btn-warning';
-    }
-    if (connectBtn) connectBtn.disabled = true;
+    const statusDot   = document.getElementById('statusDot');
+    const statusText  = document.getElementById('connectionStatus');
+
+    if (simulateBtn)   { simulateBtn.textContent = 'Stop Sim'; simulateBtn.className = 'btn btn-warning'; }
+    if (connectBtn)    connectBtn.disabled = true;
     if (disconnectBtn) disconnectBtn.disabled = true;
-    
-    // Update status
-    if (statusDot) statusDot.className = 'status-dot connected';
-    if (statusText) statusText.textContent = 'Simulating';
-    
-    // Simulate connected state
+    if (statusDot)     statusDot.className = 'status-dot connected';
+    if (statusText)    statusText.textContent = 'Simulating';
+
     isConnected = true;
     updateButtonStates();
-    
-    // Start simulated preview
     startSimulatedPreview();
-    
-    showStatus('Simulation mode active - Using recorded footage', 'info');
+
+    // Show SIM badge
+    const badge = document.getElementById('simBadge');
+    if (badge) badge.style.display = 'block';
+
+    showStatus('Simulation mode active — Using recorded footage', 'info');
+    scheduleSimTransit(SIM_COUNTDOWN_START);
 }
 
 function stopSimulation() {
-    console.log('[Telescope] Stopping simulation mode');
+    console.log('[Sim] Stopping simulation mode');
     isSimulating = false;
     isConnected = false;
-    
-    // Clean up temporary simulation files
+
+    clearTimeout(simCycleTimeout);
+    clearInterval(simTransitInterval);
+    clearInterval(simRecBlinkInterval);
+    simTransitInterval = null;
+    simRecBlinkInterval = null;
+    simCycleTimeout = null;
+
+    // Hide all sim overlays
+    ['simBadge','simCountdownOverlay','simRecOverlay','simFlash','simPlane'].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.style.display = 'none';
+    });
+
+    // Remove fake transit from list
+    upcomingTransits = upcomingTransits.filter(t => t.flight !== SIM_TRANSIT.flight);
+    updateTransitList();
+
     cleanupSimulationFiles();
-    
-    // Update UI
-    const simulateBtn = document.getElementById('simulateBtn');
-    const connectBtn = document.getElementById('connectBtn');
+
+    const simulateBtn   = document.getElementById('simulateBtn');
+    const connectBtn    = document.getElementById('connectBtn');
     const disconnectBtn = document.getElementById('disconnectBtn');
-    const statusDot = document.getElementById('statusDot');
-    const statusText = document.getElementById('connectionStatus');
-    
-    if (simulateBtn) {
-        simulateBtn.textContent = 'Simulate';
-        simulateBtn.className = 'btn btn-info';
-    }
-    if (connectBtn) connectBtn.disabled = false;
+    const statusDot     = document.getElementById('statusDot');
+    const statusText    = document.getElementById('connectionStatus');
+
+    if (simulateBtn)   { simulateBtn.textContent = 'Simulate'; simulateBtn.className = 'btn btn-info'; }
+    if (connectBtn)    connectBtn.disabled = false;
     if (disconnectBtn) disconnectBtn.disabled = true;
-    
-    // Update status
-    if (statusDot) statusDot.className = 'status-dot disconnected';
-    if (statusText) statusText.textContent = 'Disconnected';
-    
+    if (statusDot)     statusDot.className = 'status-dot disconnected';
+    if (statusText)    statusText.textContent = 'Disconnected';
+
     updateButtonStates();
     stopSimulatedPreview();
-    
     showStatus('Simulation stopped', 'info');
 }
 
+/** Inject a fake transit entry and start its countdown */
+function scheduleSimTransit(secondsUntil) {
+    if (!isSimulating) return;
+
+    // Insert fake transit into the upcoming list
+    const fake = { ...SIM_TRANSIT, seconds_until: secondsUntil };
+    upcomingTransits = upcomingTransits.filter(t => t.flight !== SIM_TRANSIT.flight);
+    upcomingTransits.unshift(fake);
+    updateTransitList();
+
+    let remaining = secondsUntil;
+
+    clearInterval(simTransitInterval);
+    simTransitInterval = setInterval(() => {
+        if (!isSimulating) { clearInterval(simTransitInterval); return; }
+        remaining--;
+
+        // Update transit list countdown
+        const entry = upcomingTransits.find(t => t.flight === SIM_TRANSIT.flight);
+        if (entry) { entry.seconds_until = remaining; updateTransitList(); }
+
+        // Show countdown overlay on video when ≤15s
+        const overlay = document.getElementById('simCountdownOverlay');
+        if (overlay) {
+            if (remaining > 0 && remaining <= 15) {
+                overlay.style.display = 'block';
+                overlay.textContent = `🌙 Transit in ${remaining}s`;
+            } else {
+                overlay.style.display = 'none';
+            }
+        }
+
+        if (remaining <= 0) {
+            clearInterval(simTransitInterval);
+            simTransitInterval = null;
+            triggerSimTransit();
+        }
+    }, 1000);
+}
+
+/** Called at the moment of simulated transit */
+function triggerSimTransit() {
+    if (!isSimulating) return;
+    console.log('[Sim] Transit triggered!');
+
+    // Hide countdown overlay
+    const countdown = document.getElementById('simCountdownOverlay');
+    if (countdown) countdown.style.display = 'none';
+
+    // Audio beep
+    playSimBeep();
+
+    // Plane fly-through animation
+    animateSimPlane();
+
+    // Shutter flash
+    simCaptureFlash();
+
+    // Start recording overlay + fake filmstrip entry
+    startSimRecording();
+
+    showStatus('🎯 TRANSIT IN PROGRESS — Recording!', 'success', SIM_RECORD_DURATION * 1000);
+
+    // Stop recording after SIM_RECORD_DURATION seconds, then schedule next cycle
+    simCycleTimeout = setTimeout(() => {
+        if (!isSimulating) return;
+        stopSimRecording();
+        showStatus('✅ Sim transit complete. Next transit in 60s…', 'info', 8000);
+        // Auto-cycle: schedule next transit in ~60s
+        simCycleTimeout = setTimeout(() => {
+            if (isSimulating) scheduleSimTransit(SIM_COUNTDOWN_START);
+        }, 60000);
+    }, SIM_RECORD_DURATION * 1000);
+}
+
+/** Blinking REC overlay + fake filmstrip entry */
+function startSimRecording() {
+    isRecording = true;
+    recordingStartTime = Date.now();
+    updateRecordingUI();
+    startRecordingTimer(SIM_RECORD_DURATION);
+
+    const rec = document.getElementById('simRecOverlay');
+    if (rec) {
+        rec.style.display = 'block';
+        let visible = true;
+        simRecBlinkInterval = setInterval(() => {
+            visible = !visible;
+            rec.style.opacity = visible ? '1' : '0';
+        }, 500);
+    }
+}
+
+function stopSimRecording() {
+    isRecording = false;
+    stopRecordingTimer();
+    updateRecordingUI();
+
+    clearInterval(simRecBlinkInterval);
+    simRecBlinkInterval = null;
+    const rec = document.getElementById('simRecOverlay');
+    if (rec) rec.style.display = 'none';
+
+    // Add fake recording to filmstrip
+    const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, -5);
+    const tempFile = {
+        name: `sim_transit_${timestamp}.mp4`,
+        path: '/static/simulations/demo.mp4',
+        url:  '/static/simulations/demo.mp4',
+        isSimulation: true,
+        timestamp: Date.now()
+    };
+    simulationFiles.push(tempFile);
+    if (!window.currentFiles) window.currentFiles = [];
+    window.currentFiles.unshift(tempFile);
+    updateFilmstrip(window.currentFiles);
+}
+
+/** White camera-shutter flash */
+function simCaptureFlash() {
+    const flash = document.getElementById('simFlash');
+    if (!flash) return;
+    flash.style.display = 'block';
+    flash.style.opacity = '0.9';
+    flash.style.transition = 'opacity 0.4s ease';
+    setTimeout(() => {
+        flash.style.opacity = '0';
+        setTimeout(() => { flash.style.display = 'none'; flash.style.transition = ''; }, 420);
+    }, 60);
+}
+
+/** Aircraft SVG glides across the preview */
+function animateSimPlane() {
+    const container = document.getElementById('previewContainer');
+    const plane = document.getElementById('simPlane');
+    if (!plane || !container) return;
+
+    const w = container.offsetWidth;
+    const h = container.offsetHeight;
+    const y = Math.round(h * 0.42); // slightly above centre like a real transit
+
+    plane.style.display = 'block';
+    plane.style.top = y + 'px';
+    plane.style.left = '-40px';
+    plane.style.transition = `left 2.4s linear`;
+
+    // Force reflow so transition fires
+    plane.getBoundingClientRect();
+    plane.style.left = (w + 50) + 'px';
+
+    setTimeout(() => {
+        plane.style.display = 'none';
+        plane.style.transition = '';
+        plane.style.left = '-40px';
+    }, 2500);
+}
+
+/** Short sine-wave beep via Web Audio API */
+function playSimBeep() {
+    try {
+        const ctx = new (window.AudioContext || window.webkitAudioContext)();
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.connect(gain);
+        gain.connect(ctx.destination);
+        osc.type = 'sine';
+        osc.frequency.setValueAtTime(880, ctx.currentTime);
+        gain.gain.setValueAtTime(0.3, ctx.currentTime);
+        gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.4);
+        osc.start(ctx.currentTime);
+        osc.stop(ctx.currentTime + 0.4);
+    } catch (e) { /* audio not available */ }
+}
+
 function startSimulatedPreview() {
-    console.log('[Telescope] Starting simulated preview');
-    
-    const previewImage = document.getElementById('previewImage');
+    const previewImage       = document.getElementById('previewImage');
     const previewPlaceholder = document.getElementById('previewPlaceholder');
-    const previewStatusDot = document.getElementById('previewStatusDot');
-    const previewStatusText = document.getElementById('previewStatusText');
-    const previewTitleIcon = document.getElementById('previewTitleIcon');
-    const previewContainer = document.getElementById('previewContainer');
-    
-    // Hide placeholder and image
+    const previewStatusDot   = document.getElementById('previewStatusDot');
+    const previewStatusText  = document.getElementById('previewStatusText');
+    const previewTitleIcon   = document.getElementById('previewTitleIcon');
+    const previewContainer   = document.getElementById('previewContainer');
+
     if (previewPlaceholder) previewPlaceholder.style.display = 'none';
     if (previewImage) previewImage.style.display = 'none';
-    
-    // Create or get video element
+
     simulationVideo = document.getElementById('simulationVideo');
     if (!simulationVideo) {
         simulationVideo = document.createElement('video');
@@ -1074,140 +1263,71 @@ function startSimulatedPreview() {
         simulationVideo.autoplay = true;
         simulationVideo.loop = true;
         simulationVideo.muted = true;
-        simulationVideo.style.width = '100%';
-        simulationVideo.style.height = 'auto';
-        simulationVideo.style.display = 'block';
-        simulationVideo.style.objectFit = 'contain';
-        
-        // Use one of the recorded videos from safe location
+        simulationVideo.style.cssText = 'width:100%; height:auto; display:block; object-fit:contain;';
         simulationVideo.src = '/static/simulations/demo.mp4';
-        
-        if (previewContainer) {
-            previewContainer.appendChild(simulationVideo);
-        }
+        if (previewContainer) previewContainer.appendChild(simulationVideo);
     } else {
         simulationVideo.style.display = 'block';
         simulationVideo.play();
     }
-    
-    // Update status
-    if (previewStatusDot) previewStatusDot.className = 'status-dot connected';
+
+    if (previewStatusDot)  previewStatusDot.className = 'status-dot connected';
     if (previewStatusText) previewStatusText.textContent = 'Simulation Active';
-    if (previewTitleIcon) previewTitleIcon.textContent = '🎬';
+    if (previewTitleIcon)  previewTitleIcon.textContent = '🎬';
 }
 
 function stopSimulatedPreview() {
-    console.log('[Telescope] Stopping simulated preview');
-    
-    const previewImage = document.getElementById('previewImage');
+    const previewImage       = document.getElementById('previewImage');
     const previewPlaceholder = document.getElementById('previewPlaceholder');
-    const previewStatusDot = document.getElementById('previewStatusDot');
-    const previewStatusText = document.getElementById('previewStatusText');
-    const previewTitleIcon = document.getElementById('previewTitleIcon');
-    
-    // Hide video
-    if (simulationVideo) {
-        simulationVideo.pause();
-        simulationVideo.style.display = 'none';
-    }
-    
-    // Show placeholder
+    const previewStatusDot   = document.getElementById('previewStatusDot');
+    const previewStatusText  = document.getElementById('previewStatusText');
+    const previewTitleIcon   = document.getElementById('previewTitleIcon');
+
+    if (simulationVideo) { simulationVideo.pause(); simulationVideo.style.display = 'none'; }
     if (previewPlaceholder) previewPlaceholder.style.display = 'flex';
     if (previewImage) previewImage.style.display = 'none';
-    
-    // Update status
-    if (previewStatusDot) previewStatusDot.className = 'status-dot';
+    if (previewStatusDot)  previewStatusDot.className = 'status-dot';
     if (previewStatusText) previewStatusText.textContent = 'Preview Inactive';
-    if (previewTitleIcon) previewTitleIcon.textContent = '⚫';
+    if (previewTitleIcon)  previewTitleIcon.textContent = '⚫';
 }
 
 function simulateCapturePhoto() {
-    console.log('[Telescope] Simulating photo capture');
-    
-    // Create a temporary file entry
+    simCaptureFlash();
     const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, -5);
-    const filename = `sim_capture_${timestamp}.jpg`;
     const tempFile = {
-        name: filename,
-        path: '/static/simulations/demo.mp4', // Use demo video as placeholder
-        url: '/static/simulations/demo.mp4',
+        name: `sim_capture_${timestamp}.jpg`,
+        path: '/static/simulations/demo.mp4',
+        url:  '/static/simulations/demo.mp4',
         isSimulation: true,
         timestamp: Date.now()
     };
-    
-    // Add to simulation files
     simulationFiles.push(tempFile);
-    
-    // Add to window.currentFiles with simulation marker
     if (!window.currentFiles) window.currentFiles = [];
     window.currentFiles.unshift(tempFile);
-    
-    // Update filmstrip
     updateFilmstrip(window.currentFiles);
-    
-    showStatus('📸 Photo captured (simulation - temporary)', 'success', 5000);
+    showStatus('📸 Photo captured (simulation — temporary)', 'success', 5000);
 }
 
 function simulateStartRecording(duration, interval) {
-    console.log('[Telescope] Simulating recording start');
-    
     isRecording = true;
     recordingStartTime = Date.now();
     updateRecordingUI();
     startRecordingTimer(duration);
-    
     const mode = interval > 0 ? `timelapse (${interval}s interval)` : 'normal';
-    showStatus(`🎬 Recording started (simulation - ${duration}s ${mode})`, 'success', 5000);
+    showStatus(`🎬 Recording started (simulation — ${duration}s ${mode})`, 'success', 5000);
 }
 
 function simulateStopRecording() {
-    console.log('[Telescope] Simulating recording stop');
-    
-    isRecording = false;
-    stopRecordingTimer();
-    updateRecordingUI();
-    
-    // Create a temporary file entry
-    const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, -5);
-    const filename = `sim_recording_${timestamp}.mp4`;
-    const tempFile = {
-        name: filename,
-        path: '/static/simulations/demo.mp4',
-        url: '/static/simulations/demo.mp4',
-        isSimulation: true,
-        timestamp: Date.now()
-    };
-    
-    // Add to simulation files
-    simulationFiles.push(tempFile);
-    
-    // Add to window.currentFiles
-    if (!window.currentFiles) window.currentFiles = [];
-    window.currentFiles.unshift(tempFile);
-    
-    // Update filmstrip
-    updateFilmstrip(window.currentFiles);
-    
-    showStatus('🎬 Recording stopped (simulation - temporary)', 'success', 5000);
+    stopSimRecording();
+    showStatus('🎬 Recording stopped (simulation — temporary)', 'success', 5000);
 }
 
 function cleanupSimulationFiles() {
-    console.log('[Telescope] Cleaning up simulation files');
-    
-    if (simulationFiles.length === 0) return;
-    
-    // Remove simulation files from window.currentFiles
     if (window.currentFiles) {
         window.currentFiles = window.currentFiles.filter(f => !f.isSimulation);
     }
-    
-    // Clear simulation files array
     simulationFiles = [];
-    
-    // Refresh filmstrip
     updateFilmstrip(window.currentFiles || []);
-    
-    console.log('[Telescope] Cleaned up', simulationFiles.length, 'temporary files');
 }
 
 // ============================================================================
