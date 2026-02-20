@@ -1794,10 +1794,10 @@ function toggleSimEclipse() {
 }
 
 function startSimEclipse() {
-    // Must be in simulation mode (need isConnected = true for recording arm)
+    // Auto-start simulation mode if not already running — Sim Eclipse needs
+    // isConnected = true so recording can arm, but shouldn't require a separate click.
     if (!isSimulating) {
-        showStatus('Start Simulate first, then Sim Eclipse', 'warning', 4000);
-        return;
+        startSimulation();
     }
 
     _simEclipseActive = true;

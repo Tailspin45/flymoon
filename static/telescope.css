@@ -482,6 +482,13 @@
     gap: 6px;
 }
 
+/* 2×2 connection button grid */
+.button-grid-2x2 {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 6px;
+}
+
 .btn {
     flex: 1;
     padding: 8px 12px;

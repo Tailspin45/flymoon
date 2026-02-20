@@ -116,13 +116,11 @@
                         <span class="status-dot" id="statusDot"></span>
                         <span id="connectionStatus">Disconnected</span>
                     </div>
-                    <div class="button-group">
+                    <div class="button-grid-2x2">
                         <button id="connectBtn" class="btn btn-primary" onclick="connect()">Connect</button>
                         <button id="disconnectBtn" class="btn btn-secondary" onclick="disconnect()" disabled>Disconnect</button>
                         <button id="simulateBtn" class="btn btn-info" onclick="toggleSimulation()">Simulate</button>
-                    </div>
-                    <div class="button-group" style="margin-top:5px">
-                        <button id="simEclipseBtn" class="btn btn-eclipse btn-compact" onclick="toggleSimEclipse()" title="Simulate a full eclipse alert sequence (Watch → Warning → Active → Cleared)">🌑 Sim Eclipse</button>
+                        <button id="simEclipseBtn" class="btn btn-eclipse" onclick="toggleSimEclipse()" title="Simulate a full eclipse alert sequence (Watch → Warning → Active → Cleared)">🌑 Sim Eclipse</button>
                     </div>
                     <!-- Eclipse sim controls — shown only while sim eclipse is running -->
                     <div id="simEclipseControls" style="display:none; margin-top:8px">
@@ -172,7 +170,9 @@
                         <div class="capture-header-compact">
                             <span>📷 Photo</span>
                         </div>
-                        <button id="capturePhotoBtn" class="btn btn-primary btn-compact" onclick="capturePhoto()" disabled>Capture</button>
+                        <div class="button-group">
+                            <button id="capturePhotoBtn" class="btn btn-primary btn-compact" onclick="capturePhoto()" disabled>📷 Capture</button>
+                        </div>
                     </div>
 
                     <!-- Video Recording -->
