@@ -25,9 +25,9 @@ const COLUMN_NAMES = [
     "destination",
     "target_alt",
     "plane_alt",
-    "alt_diff",
     "target_az",
     "plane_az",
+    "alt_diff",
     "az_diff",
     "elevation_change",
     "aircraft_elevation_feet",
@@ -302,9 +302,10 @@ async function softRefresh() {
         
         if (response.ok) {
             const recalcData = await response.json();
-            
+            const scrollY = window.scrollY;
             // Update table with recalculated transit data
             updateFlightTableFull(recalcData.flights);
+            window.scrollTo(0, scrollY);
             
             // Update map markers
             if (mapVisible && typeof updateAircraftMarkers === 'function') {
@@ -374,9 +375,9 @@ function updateFlightTableFull(flights) {
         // Update all relevant cells by column index
         const cells = row.querySelectorAll('td');
         
-        // Column indexes (adjust if table structure changes)
-        // 0: Target, 1: ID, 2: Type, 3: Origin, 4: Dest, 5: Target Alt, 6: Plane Alt, 7: Alt Diff
-        // 8: Target Az, 9: Plane Az, 10: Az Diff, 11: Elev Change, 12: Aircraft Alt (ft), 13: Direction, 14: Distance, 15: Speed, 16: Time
+        // Column indexes (0: Target, 1: ID, 2: Type, 3: Origin, 4: Dest, 5: Target Alt, 6: Plane Alt,
+        // 7: Target Az, 8: Plane Az, 9: Alt Diff, 10: Az Diff, 11: Elev Change, 12: Aircraft Alt (ft),
+        // 13: Direction, 14: Distance, 15: Speed, 16: Time)
         
         if (flight.target_alt !== null && cells[5]) {
             cells[5].textContent = flight.target_alt.toFixed(1) + "º";
@@ -384,17 +385,19 @@ function updateFlightTableFull(flights) {
         if (flight.plane_alt !== null && cells[6]) {
             cells[6].textContent = flight.plane_alt.toFixed(1) + "º";
         }
-        if (flight.alt_diff !== null && cells[7]) {
-            cells[7].textContent = Math.round(flight.alt_diff) + "º";
+        if (flight.target_az !== null && cells[7]) {
+            cells[7].textContent = flight.target_az.toFixed(1) + "º";
         }
-        if (flight.target_az !== null && cells[8]) {
-            cells[8].textContent = flight.target_az.toFixed(1) + "º";
+        if (flight.plane_az !== null && cells[8]) {
+            cells[8].textContent = flight.plane_az.toFixed(1) + "º";
         }
-        if (flight.plane_az !== null && cells[9]) {
-            cells[9].textContent = flight.plane_az.toFixed(1) + "º";
+        if (flight.alt_diff !== null && cells[9]) {
+            cells[9].textContent = Math.round(flight.alt_diff) + "º";
+            cells[9].style.color = Math.abs(Math.round(flight.alt_diff)) >= 3 ? "#888" : "";
         }
         if (flight.az_diff !== null && cells[10]) {
             cells[10].textContent = Math.round(flight.az_diff) + "º";
+            cells[10].style.color = Math.abs(Math.round(flight.az_diff)) >= 3 ? "#888" : "";
         }
         if (flight.distance_nm !== null && cells[14]) {
             const km = (flight.distance_nm * 1.852).toFixed(1);
