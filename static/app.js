@@ -1374,6 +1374,9 @@ function fetchFlights() {
         // renderTargetCoordinates(data.targetCoordinates); // Disabled - now using inline display above
         if (hasVeryPossibleTransits == true) soundAlert(transitDetails);
 
+        // Update cached flights to the filtered+deduped set so soft refresh uses the same list
+        lastFlightData = {...data, flights: filteredFlights};
+
         // Always update map visualization when data is fetched (use filtered flights)
         if(mapVisible) {
             const mapData = {...data, flights: filteredFlights};
