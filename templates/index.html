@@ -188,10 +188,21 @@
         // Auto-show results and map if position is saved
         window.addEventListener('DOMContentLoaded', function() {
             const savedLat = localStorage.getItem("latitude");
+            const savedLon = localStorage.getItem("longitude");
             if (savedLat && savedLat !== "" && savedLat !== "null") {
-                // Position is saved, auto-fetch and show results
+                // Show map immediately so it loads tiles while waiting for flight data
+                const mapContainer = document.getElementById("mapContainer");
+                if (mapContainer) mapContainer.style.display = 'block';
+                mapVisible = true;
+                const lat = parseFloat(savedLat);
+                const lon = parseFloat(savedLon || "0");
+                if (!isNaN(lat) && !isNaN(lon) && typeof initializeMap === 'function') {
+                    initializeMap(lat, lon);
+                }
+
+                // Fetch flight data shortly after
                 setTimeout(() => {
-                    go();  // This will toggle results on and fetch data
+                    go();
                 }, 100);
             }
         });
