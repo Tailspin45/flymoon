@@ -387,86 +387,55 @@
     gap: 8px;
 }
 
-.transit-item {
-    background: rgba(255, 100, 100, 0.1);
-    border: 1px solid rgba(255, 100, 100, 0.3);
-    border-radius: 6px;
-    padding: 12px;
-    animation: transit-pulse 3s infinite;
+/* Transit alert card */
+.transit-alert {
+    border-radius: 8px;
+    padding: 12px 14px;
+    border-left: 4px solid #888;
+    background: rgba(255,255,255,0.05);
 }
+.transit-alert.high   { border-left-color: #ff4444; background: rgba(255,50,50,0.1); }
+.transit-alert.medium { border-left-color: #ff8c00; background: rgba(255,140,0,0.08); }
+.transit-alert.low    { border-left-color: #888;    background: rgba(150,150,150,0.06); }
 
-.transit-item.high {
-    background: rgba(255, 50, 50, 0.15);
-    border-color: rgba(255, 50, 50, 0.5);
-}
-
-.transit-item.medium {
-    background: rgba(255, 140, 0, 0.1);
-    border-color: rgba(255, 140, 0, 0.3);
+.transit-alert.state-recording,
+.transit-alert.state-transit {
+    animation: transit-pulse 1s infinite;
 }
 
 @keyframes transit-pulse {
     0%, 100% { opacity: 1; }
-    50% { opacity: 0.8; }
+    50% { opacity: 0.7; }
 }
 
-.transit-header {
+.ta-header {
     display: flex;
-    align-items: center;
     justify-content: space-between;
-    margin-bottom: 8px;
+    align-items: center;
+    margin-bottom: 2px;
 }
+.ta-flight { font-weight: 700; color: #fff; font-size: 0.95em; }
+.ta-prob   { font-size: 0.78em; color: #aaa; text-transform: uppercase; letter-spacing: 0.5px; }
+.ta-target { font-size: 0.8em; color: #999; margin-bottom: 8px; }
 
-.transit-flight {
-    font-weight: 600;
-    color: #fff;
-    font-size: 0.95em;
+/* Big countdown number */
+.tc-big {
+    font-size: 2.2em;
+    font-weight: 800;
+    color: #ffcc00;
+    text-align: center;
+    line-height: 1;
+    margin: 6px 0 4px;
+    letter-spacing: -1px;
 }
+.tc-big.tc-red { color: #ff4444; }
+.tc-big.tc-dim { color: #888; }
 
-.transit-countdown {
-    font-size: 1.1em;
-    font-weight: 700;
-    color: #ff4444;
-}
-
-.transit-info {
-    font-size: 0.85em;
-    color: #aaa;
-    margin-bottom: 8px;
-}
-
-.transit-actions {
-    display: flex;
-    gap: 6px;
-}
-
-.btn-transit {
-    flex: 1;
-    padding: 6px 10px;
-    font-size: 0.85em;
-    border: none;
-    border-radius: 4px;
-    cursor: pointer;
-    font-weight: 600;
-    transition: all 0.2s;
-}
-
-.btn-transit.primary {
-    background: #039c9c;
-    color: white;
-}
-
-.btn-transit.primary:hover {
-    background: #027a7a;
-}
-
-.btn-transit.dismiss {
-    background: rgba(255, 255, 255, 0.1);
-    color: #888;
-}
-
-.btn-transit.dismiss:hover {
-    background: rgba(255, 255, 255, 0.15);
+.ta-state {
+    font-size: 0.82em;
+    text-align: center;
+    color: #bbb;
+    margin-top: 2px;
 }
 
 /* Compact Controls */

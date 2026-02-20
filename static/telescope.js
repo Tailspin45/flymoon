@@ -11,6 +11,7 @@ let statusPollInterval = null;
 let visibilityPollInterval = null;
 let lastUpdateInterval = null;
 let transitPollInterval = null;
+let transitTickInterval = null; // 1-second local countdown tick
 let transitCaptureActive = false;
 let upcomingTransits = [];
 let currentZoom = 1.0;
@@ -39,6 +40,14 @@ document.addEventListener('DOMContentLoaded', () => {
     // Start transit polling
     checkTransits();
     transitPollInterval = setInterval(checkTransits, 15000); // Every 15s
+
+    // 1-second local tick: decrement seconds_until and refresh the countdown display
+    transitTickInterval = setInterval(() => {
+        if (upcomingTransits.length === 0) return;
+        upcomingTransits.forEach(t => t.seconds_until--);
+        updateTransitList();
+        checkAutoCapture();
+    }, 1000);
     
     // Load auto-capture preference
     const autoCapture = localStorage.getItem('autoCaptureTransits');
@@ -770,32 +779,57 @@ async function checkTransits() {
 function updateTransitList() {
     const list = document.getElementById('transitList');
     if (!list) return;
-    
+
+    // Auto-remove transits that are more than POST seconds past (recording done)
+    const POST = 10;
+    upcomingTransits = upcomingTransits.filter(t => t.seconds_until > -POST);
+
     if (upcomingTransits.length === 0) {
         list.innerHTML = '<p class="empty-state">No transits detected</p>';
         return;
     }
-    
+
     list.innerHTML = upcomingTransits.map(transit => {
-        const countdown = formatCountdown(transit.seconds_until);
-        const probabilityClass = transit.probability.toLowerCase();
-        
+        const s = transit.seconds_until;
+        const PRE = 10;
+
+        let stateClass, stateLabel, countdownHtml;
+
+        if (s > PRE) {
+            // Waiting — not yet recording
+            const mins = Math.floor(s / 60);
+            const secs = s % 60;
+            const timeStr = mins > 0 ? `${mins}m ${secs}s` : `${secs}s`;
+            stateClass = 'state-waiting';
+            stateLabel = `Transit in ${timeStr}`;
+            countdownHtml = `<div class="tc-big">${timeStr}</div>`;
+        } else if (s > 0) {
+            // Recording + imminent
+            stateClass = 'state-recording';
+            stateLabel = `🔴 Recording — transit in ${s}s`;
+            countdownHtml = `<div class="tc-big tc-red">${s}s</div>`;
+        } else if (s === 0) {
+            stateClass = 'state-transit';
+            stateLabel = '🎯 TRANSIT NOW';
+            countdownHtml = `<div class="tc-big tc-red">NOW</div>`;
+        } else {
+            // Post-transit, still recording
+            stateClass = 'state-post';
+            stateLabel = `🔴 Recording — transit passed ${Math.abs(s)}s ago`;
+            countdownHtml = `<div class="tc-big tc-dim">+${Math.abs(s)}s</div>`;
+        }
+
+        const probClass = (transit.probability || '').toLowerCase();
+
         return `
-            <div class="transit-item ${probabilityClass}">
-                <div class="transit-header">
-                    <span class="transit-flight">✈️ ${transit.flight}</span>
-                    <span class="transit-countdown">${countdown}</span>
+            <div class="transit-alert ${probClass} ${stateClass}">
+                <div class="ta-header">
+                    <span class="ta-flight">✈️ ${transit.flight}</span>
+                    <span class="ta-prob">${transit.probability}</span>
                 </div>
-                <div class="transit-info">
-                    ${transit.target} • ${transit.probability} probability<br>
-                    Alt: ${transit.altitude}° • Az: ${transit.azimuth}°
-                </div>
-                <div class="transit-actions">
-                    <button class="btn-transit primary" onclick="recordTransit('${transit.flight}', ${transit.seconds_until})">
-                        📹 Record Now
-                    </button>
-                    <button class="btn-transit dismiss" onclick="dismissTransit('${transit.flight}')">✕</button>
-                </div>
+                <div class="ta-target">${transit.target || ''} &nbsp;·&nbsp; Alt ${transit.altitude}° Az ${transit.azimuth}°</div>
+                ${countdownHtml}
+                <div class="ta-state">${stateLabel}</div>
             </div>
         `;
     }).join('');
@@ -1353,6 +1387,8 @@ window.addEventListener('beforeunload', () => {
     if (statusPollInterval) clearInterval(statusPollInterval);
     if (visibilityPollInterval) clearInterval(visibilityPollInterval);
     if (lastUpdateInterval) clearInterval(lastUpdateInterval);
+    if (transitPollInterval) clearInterval(transitPollInterval);
+    if (transitTickInterval) clearInterval(transitTickInterval);
 });
 
 console.log('[Telescope] Module loaded');
