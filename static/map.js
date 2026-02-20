@@ -368,9 +368,9 @@ function updateSingleAircraftMarker(flight) {
     const aircraftIcon = L.divIcon({
         html: isTransit
             ? `<div style="font-size: 36px; color: ${color}; text-shadow: 0 0 3px black, 0 0 3px black, 0 0 8px ${color}, 1px 1px 0 black, -1px -1px 0 black, 1px -1px 0 black, -1px 1px 0 black; display: flex; align-items: center; justify-content: center; width: 36px; height: 36px; line-height: 1;">◆</div>`
-            : `<div style="transform: rotate(${rotation}deg); width: 20px; height: 20px;"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="#333" width="20" height="20"><path d="M12 2 L7 14 L12 11 L17 14 Z M12 11 L10 22 L12 19 L14 22 Z"/></svg></div>`,
-        iconSize: [20, 20],
-        iconAnchor: [10, 10],
+            : `<div style="transform: rotate(${rotation}deg); width: 24px; height: 24px;"><svg xmlns="http://www.w3.org/2000/svg" viewBox="10 13 30 24" width="24" height="24" fill="#333"><rect x="23.5" y="14" width="3" height="22" rx="1.5"/><polygon points="25,14 23.5,18 26.5,18"/><polygon points="10,27 23.5,23 23.5,27 12,29"/><polygon points="40,27 26.5,23 26.5,27 38,29"/><polygon points="20,35 23.5,33 23.5,35"/><polygon points="30,35 26.5,33 26.5,35"/></svg></div>`,
+        iconSize: [24, 24],
+        iconAnchor: [12, 12],
         className: 'aircraft-icon'
     });
 
@@ -455,9 +455,9 @@ function updateAircraftMarkers(flights, observerLat, observerLon, isFullRefresh 
         const aircraftIcon = L.divIcon({
             html: isTransit
                 ? `<div style="font-size: 36px; color: ${color}; text-shadow: 0 0 3px black, 0 0 3px black, 0 0 8px ${color}, 1px 1px 0 black, -1px -1px 0 black, 1px -1px 0 black, -1px 1px 0 black; display: flex; align-items: center; justify-content: center; width: 36px; height: 36px; line-height: 1;">◆</div>`
-                : `<div style="transform: rotate(${rotation}deg); width: 20px; height: 20px;"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="#333" width="20" height="20"><path d="M12 2 L7 14 L12 11 L17 14 Z M12 11 L10 22 L12 19 L14 22 Z"/></svg></div>`,
-            iconSize: [20, 20],
-            iconAnchor: [10, 10],  // Center the icon on coordinates
+                : `<div style="transform: rotate(${rotation}deg); width: 24px; height: 24px;"><svg xmlns="http://www.w3.org/2000/svg" viewBox="10 13 30 24" width="24" height="24" fill="#333"><rect x="23.5" y="14" width="3" height="22" rx="1.5"/><polygon points="25,14 23.5,18 26.5,18"/><polygon points="10,27 23.5,23 23.5,27 12,29"/><polygon points="40,27 26.5,23 26.5,27 38,29"/><polygon points="20,35 23.5,33 23.5,35"/><polygon points="30,35 26.5,33 26.5,35"/></svg></div>`,
+            iconSize: [24, 24],
+            iconAnchor: [12, 12],  // Center the icon on coordinates
             className: 'aircraft-icon'
         });
 
