@@ -1302,9 +1302,9 @@ function fetchFlights() {
                 } else if (column === "alt_diff" || column === "az_diff") {
                     const roundedValue = Math.round(value);
                     val.textContent = roundedValue + "º";
-                    // Color code large angle differences
-                    if (Math.abs(roundedValue) > 10) {
-                        val.style.color = "#888"; // Gray for large differences
+                    // Black if within 3°, grey otherwise
+                    if (Math.abs(roundedValue) >= 3) {
+                        val.style.color = "#888";
                     }
                 } else if (column === "target_alt" || column === "target_az") {
                     // Always show target values, color code negative/invalid
