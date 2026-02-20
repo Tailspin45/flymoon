@@ -164,10 +164,15 @@ async function updateStatus() {
             isRecording = result.is_recording || false;
         }
 
-        // Update eclipse data from server (refreshes seconds_to_c1 baseline)
-        if (result.eclipse !== undefined) {
-            eclipseData = result.eclipse;  // may be null
+        // Update eclipse data from server (refreshes seconds_to_c1 baseline).
+        // Don't clobber an active sim eclipse with a null server response —
+        // real eclipse data always wins, but sim data is preserved when server has none.
+        if (result.eclipse !== null && result.eclipse !== undefined) {
+            eclipseData = result.eclipse;  // real eclipse — always take it
+        } else if (!_simEclipseActive) {
+            eclipseData = result.eclipse;  // no sim running — clear if server says null
         }
+        // else: sim is active and server has no real eclipse — keep sim eclipseData
 
         updateConnectionUI();
         updateRecordingUI();
