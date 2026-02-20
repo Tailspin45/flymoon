@@ -161,9 +161,9 @@ function initializeMap(centerLat, centerLon) {
     }).addTo(map);
 
     // LayerGroups for atomic clear/add cycles
-    ghostLayer = L.layerGroup().addTo(map);
     aircraftLayer = L.layerGroup().addTo(map);
     headingArrowLayer = L.layerGroup().addTo(map);
+    ghostLayer = L.layerGroup().addTo(map);  // Added last so breadcrumbs render on top
 
     mapInitialized = true;
 }
@@ -418,11 +418,11 @@ function updateAircraftMarkers(flights, observerLat, observerLon, isFullRefresh 
         Object.entries(aircraftMarkers).forEach(([id, marker]) => {
             const latlng = marker.getLatLng();
             const dot = L.circleMarker(latlng, {
-                radius: 1,
+                radius: 2,
                 color: '#888',
                 fillColor: '#888',
                 fillOpacity: 1,
-                weight: 1,
+                weight: 0,
                 interactive: false
             }).addTo(ghostLayer);
             if (!ghostMarkers[id]) ghostMarkers[id] = [];
