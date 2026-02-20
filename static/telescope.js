@@ -845,11 +845,12 @@ function formatCountdown(seconds) {
 function checkAutoCapture() {
     const autoCapture = document.getElementById('autoCaptureToggle').checked;
     if (!autoCapture || !isConnected || transitCaptureActive) return;
-    
-    // Check for imminent transits (within 15 seconds)
-    const imminent = upcomingTransits.find(t => t.seconds_until <= 15 && t.seconds_until > 0);
+
+    // Trigger recording exactly when PRE seconds remain (so recording starts right on time)
+    const PRE = 10;
+    const imminent = upcomingTransits.find(t => t.seconds_until <= PRE && t.seconds_until > 0);
     if (imminent) {
-        console.log('[Telescope] Auto-capturing imminent transit:', imminent.flight);
+        console.log('[Telescope] Auto-capturing imminent transit:', imminent.flight, `(${imminent.seconds_until}s)`);
         recordTransit(imminent.flight, imminent.seconds_until);
     }
 }
@@ -887,7 +888,8 @@ async function recordTransit(flight, secondsUntil) {
 
     if (startDelayMs > 0) {
         showStatus(`⏳ Recording starts in ${Math.round(startDelayMs / 1000)}s (${PRE}s before transit)`, 'info', startDelayMs);
-        simCycleTimeout = setTimeout(doRecord, startDelayMs);
+        clearTimeout(recordDelayTimeout);
+        recordDelayTimeout = setTimeout(doRecord, startDelayMs);
     } else {
         await doRecord();
     }
@@ -1028,6 +1030,7 @@ function closeFileViewer() {
 let simTransitInterval = null;   // drives countdown tick
 let simRecBlinkInterval = null;  // drives REC blink
 let simCycleTimeout = null;      // schedules next auto-cycle
+let recordDelayTimeout = null;   // delays recording start until PRE seconds before transit
 
 const SIM_TRANSIT = {
     flight: 'SIM-001',
@@ -1082,6 +1085,7 @@ function stopSimulation() {
     isConnected = false;
 
     clearTimeout(simCycleTimeout);
+    clearTimeout(recordDelayTimeout);
     clearInterval(simTransitInterval);
     clearInterval(simRecBlinkInterval);
     simTransitInterval = null;
