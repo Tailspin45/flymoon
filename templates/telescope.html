@@ -190,6 +190,18 @@
                 </div>
             </div>
         </div>
+
+        <!-- File Viewer Lightbox -->
+        <div id="fileViewer" class="modal" style="display: none;" onclick="closeFileViewer()">
+            <div class="modal-content" style="max-width: 95vw; max-height: 95vh; background: #111; padding: 0; overflow: hidden;" onclick="event.stopPropagation()">
+                <div class="modal-header" style="background: #222; padding: 8px 12px;">
+                    <span id="fileViewerName" style="color: #eee; font-size: 0.9em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;"></span>
+                    <button class="modal-close" onclick="closeFileViewer()">✕</button>
+                </div>
+                <div id="fileViewerBody" style="display: flex; align-items: center; justify-content: center; min-height: 200px;">
+                </div>
+            </div>
+        </div>
     </div>
 
     <script src="{{ url_for('static', filename='telescope.js') }}?v=1771610000"></script>

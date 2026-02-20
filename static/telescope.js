@@ -866,6 +866,10 @@ document.addEventListener('DOMContentLoaded', () => {
         toggle.addEventListener('change', (e) => {
             localStorage.setItem('autoCaptureTransits', e.target.checked);
         });
+
+    document.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape') closeFileViewer();
+    });
     }
 });
 
@@ -951,7 +955,25 @@ function updateFilesGrid() {
 }
 
 function viewFile(path) {
-    window.open(path, '_blank');
+    const name = path.split('/').pop();
+    const isVideo = /\.(mp4|avi|mov|mkv)$/i.test(name);
+    const viewer = document.getElementById('fileViewer');
+    const body = document.getElementById('fileViewerBody');
+    const nameEl = document.getElementById('fileViewerName');
+
+    nameEl.textContent = name;
+    body.innerHTML = isVideo
+        ? `<video src="${path}" controls autoplay style="max-width:90vw; max-height:80vh;"></video>`
+        : `<img src="${path}" alt="${name}" style="max-width:90vw; max-height:80vh; object-fit:contain;">`;
+
+    viewer.style.display = 'flex';
+}
+
+function closeFileViewer() {
+    const viewer = document.getElementById('fileViewer');
+    const body = document.getElementById('fileViewerBody');
+    viewer.style.display = 'none';
+    body.innerHTML = '';  // Stop video playback
 }
 
 // ============================================================================
