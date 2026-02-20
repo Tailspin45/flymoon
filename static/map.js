@@ -163,7 +163,12 @@ function initializeMap(centerLat, centerLon) {
     // LayerGroups for atomic clear/add cycles
     aircraftLayer = L.layerGroup().addTo(map);
     headingArrowLayer = L.layerGroup().addTo(map);
-    ghostLayer = L.layerGroup().addTo(map);  // Added last so breadcrumbs render on top
+
+    // Ghost/breadcrumb layer: use a custom pane with pointer-events:none so it
+    // never intercepts clicks on aircraft markers beneath it
+    map.createPane('ghostPane');
+    map.getPane('ghostPane').style.pointerEvents = 'none';
+    ghostLayer = L.layerGroup({ pane: 'ghostPane' }).addTo(map);
 
     mapInitialized = true;
 }
@@ -423,7 +428,8 @@ function updateAircraftMarkers(flights, observerLat, observerLon, isFullRefresh 
                 fillColor: '#888',
                 fillOpacity: 1,
                 weight: 0,
-                interactive: false
+                interactive: false,
+                pane: 'ghostPane'
             }).addTo(ghostLayer);
             if (!ghostMarkers[id]) ghostMarkers[id] = [];
             ghostMarkers[id].push(dot);
