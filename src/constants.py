@@ -63,9 +63,9 @@ EARTH_TIMESCALE = load.timescale()
 
 
 # Window time
-# 60 * top_min = 900 datapoints for each flight
+# TOP_MINUTE * (60 / INTERVAL_IN_SECS) = datapoints for each flight
 TOP_MINUTE = 15
-INTERVAL_IN_SECS = 1
+INTERVAL_IN_SECS = 5  # 5-second sampling: 180 pts vs 900 — plenty for 1° threshold
 
 
 # Transit

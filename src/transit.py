@@ -130,6 +130,8 @@ def check_transit(
     closest_approach = None  # Track closest approach even if threshold not met
     no_decreasing_count = 0
     update_response = False
+    _pts_per_min = NUM_SECONDS_PER_MIN // INTERVAL_IN_SECS
+    _no_decrease_limit = 3 * _pts_per_min  # bail after 3 min of increasing diff
 
     for idx, minute in enumerate(window_time):
         # Get future position of plane
@@ -155,8 +157,8 @@ def check_transit(
             future_time,
         )
 
-        if idx > 0 and idx % 60 == 0:
-            # Update target position every 60 data points (1 min)
+        if idx > 0 and idx % _pts_per_min == 0:
+            # Update target position every 1 minute of data points
             target.update_position(future_time)
 
         alt_diff = abs(future_alt - target.altitude.degrees)
@@ -175,7 +177,8 @@ def check_transit(
                 "plane_az": round(float(future_az), 2),
             }
 
-        if no_decreasing_count >= 180:
+        # Early exit: if diff has been consistently increasing for ~3 min, skip rest
+        if no_decreasing_count >= _no_decrease_limit:
             logger.info(f"diff is increasing, stop checking, min={round(minute, 2)}")
             break
 
