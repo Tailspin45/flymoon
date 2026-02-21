@@ -275,7 +275,8 @@ def get_transits(
     az_threshold: float = 10.0,
     custom_bbox: dict = None,
 ) -> Dict[str, Any]:
-    
+    API_KEY = get_aeroapi_key()
+
     # Ensure thresholds are floats (in case they're passed as strings from Flask)
     alt_threshold = float(alt_threshold)
     az_threshold = float(az_threshold)
