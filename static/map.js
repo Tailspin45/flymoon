@@ -27,6 +27,7 @@ let currentRouteLayer = null;  // Currently displayed route/track
 let userInteractingWithMap = false;  // Prevent auto-zoom during user interaction
 let headingArrows = {};  // Store heading arrows for medium/high probability transits
 let ghostMarkers = {};  // Arrays of dots showing breadcrumb trail per flight (ghostMarkers[id] = [circleMarker, ...])
+let hardRefreshCount = 0;  // Counts auto hard refreshes; ghosts cleared every 3rd
 
 // Arrow colors for each target
 const ARROW_COLORS = {
@@ -410,9 +411,10 @@ function updateAircraftMarkers(flights, observerLat, observerLon, isFullRefresh 
 
     if (isFullRefresh) {
         if (isForceRefresh) {
-            // Force refresh by user: clear all ghost dots
+            // Force refresh by user: clear all ghost dots and reset counter
             ghostLayer.clearLayers();
             ghostMarkers = {};
+            hardRefreshCount = 0;
             // Clear track on explicit user force refresh
             if (currentRouteLayer) {
                 map.removeLayer(currentRouteLayer);
@@ -420,7 +422,13 @@ function updateAircraftMarkers(flights, observerLat, observerLon, isFullRefresh 
                 userInteractingWithMap = false;
             }
         } else {
-            // Auto hard refresh: keep ghost dots; keep track if flight still in data
+            // Auto hard refresh: clear ghost dots every 3rd refresh
+            hardRefreshCount++;
+            if (hardRefreshCount % 3 === 0) {
+                ghostLayer.clearLayers();
+                ghostMarkers = {};
+            }
+            // Keep track if flight still in data
             if (currentRouteLayer) {
                 const activeId = currentRouteLayer.flightId;
                 const stillPresent = flights.some(f => String(f.id).trim().toUpperCase() === activeId);
