@@ -26,6 +26,7 @@ let eclipseAlertLevel = null;   // 'outlook'|'watch'|'warning'|'active'|'cleared
 let _eclipseRecordingScheduled = false; // prevents duplicate setTimeout during warning phase
 let eclipseBannerDismissed = false; // per-session dismiss flag
 let currentViewingMode = null;  // 'sun'|'moon'|null — last known scope viewing mode
+let _mismatchDismissedFor = null; // which opposite target the user dismissed
 
 window.initTelescope = function() {
     console.log('[Telescope] Initializing interface');
@@ -305,6 +306,8 @@ async function switchToMoon() {
     }
 }
 
+let _mismatchDismissedFor = null; // "sun"|"moon" — which opposite target the user dismissed
+
 function checkTargetMismatch() {
     const banner = document.getElementById('mismatchBanner');
     const text   = document.getElementById('mismatchText');
@@ -325,7 +328,15 @@ function checkTargetMismatch() {
                   && f.time != null && f.time > 0)
         .sort((a, b) => a.time - b.time)[0];
 
-    if (!best) { banner.style.display = 'none'; return; }
+    if (!best) {
+        // Mismatch cleared — reset dismiss state so future mismatches show
+        _mismatchDismissedFor = null;
+        banner.style.display = 'none';
+        return;
+    }
+
+    // User already dismissed this mismatch — don't re-show
+    if (_mismatchDismissedFor === oppositeTarget) return;
 
     const targetLabel = oppositeTarget === 'sun' ? '☀️ Sun' : '🌙 Moon';
     const scopeLabel  = currentViewingMode  === 'sun' ? '☀️ Solar' : '🌙 Lunar';
@@ -336,6 +347,11 @@ function checkTargetMismatch() {
     btn.textContent  = `Switch to ${oppositeTarget === 'sun' ? 'Solar ☀️' : 'Lunar 🌙'}`;
     btn.onclick = oppositeTarget === 'sun' ? switchToSun : switchToMoon;
     banner.style.display = 'flex';
+}
+
+function dismissMismatchBanner() {
+    _mismatchDismissedFor = currentViewingMode === 'sun' ? 'moon' : 'sun';
+    document.getElementById('mismatchBanner').style.display = 'none';
 }
 
 // ============================================================================
