@@ -267,6 +267,13 @@ def get_all_flights():
         if not test_mode:
             try:
                 date_ = date.today().strftime("%Y%m%d")
+                # Stamp scope status onto each flight dict before saving
+                tc = telescope_routes.get_telescope_client()
+                scope_connected = bool(tc and tc.is_connected())
+                scope_mode = (tc._viewing_mode if tc and hasattr(tc, '_viewing_mode') else None) or ""
+                for f in data["flights"]:
+                    f["scope_connected"] = scope_connected
+                    f["scope_mode"] = scope_mode
                 asyncio.run(
                     save_possible_transits(
                         data["flights"], POSSIBLE_TRANSITS_LOGFILENAME.format(date_=date_)
@@ -528,6 +535,8 @@ def transit_log():
                                 "plane_alt": row.get("plane_alt", ""),
                                 "target_az": row.get("target_az", ""),
                                 "plane_az": row.get("plane_az", ""),
+                                "scope_connected": row.get("scope_connected", ""),
+                                "scope_mode": row.get("scope_mode", ""),
                             }
                     except (ValueError, KeyError):
                         continue

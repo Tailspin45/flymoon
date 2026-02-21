@@ -451,6 +451,15 @@
                     .then(data => {
                         const lvlLabel = l => l >= 3 ? '🟢 HIGH' : l === 2 ? '🟠 MED' : '⚪ LOW';
                         const targetIcon = t => t === 'sun' ? '☀️' : t === 'moon' ? '🌙' : t;
+                        const scopeIcon = (connected, mode) => {
+                            if (connected === '' || connected === undefined) return '<span title="No data">—</span>';
+                            const on = connected === 'True' || connected === true;
+                            if (!on) return '<span style="color:#888" title="Scope disconnected">🔭✗</span>';
+                            const m = (mode||'').toLowerCase();
+                            if (m === 'sun')  return '<span style="color:#ffcc00" title="Scope on Sun">🔭☀️</span>';
+                            if (m === 'moon') return '<span style="color:#aaddff" title="Scope on Moon">🔭🌙</span>';
+                            return '<span style="color:#88ff88" title="Scope connected">🔭✓</span>';
+                        };
                         let html = '<table style="width:100%;border-collapse:collapse;font-size:0.82em;">';
                         html += '<thead><tr style="color:#fff;border-bottom:1px solid #444;">' +
                             '<th style="text-align:left;padding:3px 6px">Date</th>' +
@@ -462,6 +471,7 @@
                             '<th style="padding:3px 6px">Sep°</th>' +
                             '<th style="padding:3px 6px">ETA min</th>' +
                             '<th style="padding:3px 6px">Level</th>' +
+                            '<th style="padding:3px 6px" title="Scope connected and mode at time of detection">Scope</th>' +
                             '<th style="text-align:left;padding:3px 6px">Route</th>' +
                             '</tr></thead><tbody>';
                         data.forEach((e, i) => {
@@ -477,6 +487,7 @@
                                 `<td style="text-align:center;padding:3px 6px;color:${sepColor};font-weight:bold">${e.sep.toFixed(3)}</td>` +
                                 `<td style="text-align:center;padding:3px 6px">${e.time ? parseFloat(e.time).toFixed(1) : '—'}</td>` +
                                 `<td style="text-align:center;padding:3px 6px">${lvlLabel(e.possibility_level)}</td>` +
+                                `<td style="text-align:center;padding:3px 6px">${scopeIcon(e.scope_connected, e.scope_mode)}</td>` +
                                 `<td style="padding:3px 6px">${e.origin} → ${e.destination}</td>` +
                                 '</tr>';
                         });
