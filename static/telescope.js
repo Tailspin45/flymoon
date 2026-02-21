@@ -32,7 +32,13 @@ window.initTelescope = function() {
 
     // Status polling (always poll while panel is open)
     statusPollInterval = setInterval(updateStatus, 2000);
-    updateStatus(); // immediate first check
+
+    // Auto-connect: check current state, then connect silently if not already connected
+    updateStatus().then(() => {
+        if (!isConnected) {
+            connect();
+        }
+    });
 
     // Start polling for target visibility
     updateTargetVisibility();
