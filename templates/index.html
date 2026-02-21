@@ -26,6 +26,7 @@
                 🔭 Telescope
                 <span id="telescopeStatusLight" style="position: absolute; top: 2px; right: 2px; width: 8px; height: 8px; border-radius: 50%; background-color: #999;" title="Telescope disconnected"></span>
             </button>
+            <button class="btn-sm" onclick="toggleNearMissLog()" title="Near-miss history">📋 Near Misses</button>
         </div>
         <!-- Quadrant Min Altitude Control -->
         <div class="quadrant-circle">
@@ -41,6 +42,15 @@
             <input type="number" id="minAltW" class="quadrant-input quadrant-input-w" placeholder="30" min="0" max="90" title="West Min Altitude (°)">
             <div class="quadrant-center" onclick="resetQuadrantValues()" title="Click to reset all to 0">Min Angle</div>
         </div>
+    </div>
+
+    <!-- Near-miss log panel -->
+    <div id="nearMissPanel" style="display:none; background:#1a1a2e; border-bottom:1px solid #333; padding:10px 16px; max-height:340px; overflow-y:auto;">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+            <strong style="color:#ddd;">📋 Historical Near Misses — closest angular approach per flight (sorted by separation)</strong>
+            <button onclick="toggleNearMissLog()" style="background:none;border:none;color:#aaa;cursor:pointer;font-size:1.1em;">✕</button>
+        </div>
+        <div id="nearMissContent" style="color:#bbb; font-size:0.85em;">Loading…</div>
     </div>
 
     <div class="controls-row">
@@ -427,6 +437,61 @@
             document.getElementById('telescopeView').style.display  = (name === 'telescope') ? '' : 'none';
             if (name === 'telescope' && typeof initTelescope    === 'function') initTelescope();
             if (name === 'map'       && typeof destroyTelescope === 'function') destroyTelescope();
+        }
+
+        let _nearMissLoaded = false;
+        function toggleNearMissLog() {
+            const panel = document.getElementById('nearMissPanel');
+            const visible = panel.style.display !== 'none';
+            panel.style.display = visible ? 'none' : 'block';
+            if (!visible && !_nearMissLoaded) {
+                _nearMissLoaded = true;
+                fetch('/transit-log')
+                    .then(r => r.json())
+                    .then(data => {
+                        const lvlLabel = l => l >= 3 ? '🟢 HIGH' : l === 2 ? '🟠 MED' : '⚪ LOW';
+                        const targetIcon = t => t === 'sun' ? '☀️' : t === 'moon' ? '🌙' : t;
+                        let html = '<table style="width:100%;border-collapse:collapse;font-size:0.82em;">';
+                        html += '<thead><tr style="color:#fff;border-bottom:1px solid #444;">' +
+                            '<th style="text-align:left;padding:3px 6px">Date</th>' +
+                            '<th style="text-align:left;padding:3px 6px">Flight</th>' +
+                            '<th style="padding:3px 6px">Type</th>' +
+                            '<th style="padding:3px 6px">Target</th>' +
+                            '<th style="padding:3px 6px">Alt°</th>' +
+                            '<th style="padding:3px 6px">Az°</th>' +
+                            '<th style="padding:3px 6px">Sep°</th>' +
+                            '<th style="padding:3px 6px">ETA min</th>' +
+                            '<th style="padding:3px 6px">Level</th>' +
+                            '<th style="text-align:left;padding:3px 6px">Route</th>' +
+                            '</tr></thead><tbody>';
+                        data.forEach((e, i) => {
+                            const bg = i % 2 === 0 ? '#1e1e35' : '#161628';
+                            const sepColor = e.sep <= 0.25 ? '#ff4444' : e.sep <= 0.5 ? '#ff9900' : '#cccccc';
+                            html += `<tr style="background:${bg}">` +
+                                `<td style="padding:3px 6px">${e.date.replace(/(\d{4})(\d{2})(\d{2})/, '$1-$2-$3')}</td>` +
+                                `<td style="padding:3px 6px"><strong>${e.flight}</strong></td>` +
+                                `<td style="text-align:center;padding:3px 6px">${e.aircraft_type || '—'}</td>` +
+                                `<td style="text-align:center;padding:3px 6px">${targetIcon(e.target)}</td>` +
+                                `<td style="text-align:center;padding:3px 6px">${e.alt_diff.toFixed(3)}</td>` +
+                                `<td style="text-align:center;padding:3px 6px">${e.az_diff.toFixed(3)}</td>` +
+                                `<td style="text-align:center;padding:3px 6px;color:${sepColor};font-weight:bold">${e.sep.toFixed(3)}</td>` +
+                                `<td style="text-align:center;padding:3px 6px">${e.time ? parseFloat(e.time).toFixed(1) : '—'}</td>` +
+                                `<td style="text-align:center;padding:3px 6px">${lvlLabel(e.possibility_level)}</td>` +
+                                `<td style="padding:3px 6px">${e.origin} → ${e.destination}</td>` +
+                                '</tr>';
+                        });
+                        html += '</tbody></table>';
+                        if (data.length === 0) html = '<em>No transit log data found.</em>';
+                        html += `<div style="margin-top:6px;color:#888;font-size:0.8em">${data.length} unique approaches logged. ` +
+                            `<span style="color:#ff4444">■</span> &lt;0.25° (inside disk) ` +
+                            `<span style="color:#ff9900">■</span> &lt;0.5° (disk edge) ` +
+                            `<span style="color:#ccc">■</span> &gt;0.5°</div>`;
+                        document.getElementById('nearMissContent').innerHTML = html;
+                    })
+                    .catch(() => {
+                        document.getElementById('nearMissContent').textContent = 'Failed to load transit log.';
+                    });
+            }
         }
 
         loadPosition();

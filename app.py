@@ -488,6 +488,56 @@ def telescope_page():
     return redirect("/")
 
 
+@app.route("/transit-log")
+def transit_log():
+    """Return deduplicated near-miss log: best angular separation per flight per day."""
+    import csv, glob, math
+
+    pattern = POSSIBLE_TRANSITS_LOGFILENAME.replace("{date_}", "*")
+    files = sorted(glob.glob(pattern))
+
+    best = {}  # key: (fa_flight_id, target, date) → best row
+    for filepath in files:
+        date_str = filepath.split("log_")[1].replace(".csv", "")
+        try:
+            with open(filepath, newline="") as fh:
+                for row in csv.DictReader(fh):
+                    try:
+                        alt = float(row.get("alt_diff") or 999)
+                        az  = float(row.get("az_diff") or 999)
+                        sep = math.sqrt(alt**2 + az**2)
+                        fid = row.get("fa_flight_id") or row.get("id", "?")
+                        target = row.get("target", "?")
+                        key = (fid, target, date_str)
+                        if key not in best or sep < best[key]["sep"]:
+                            best[key] = {
+                                "date": date_str,
+                                "timestamp": row.get("timestamp", ""),
+                                "flight": row.get("id", "?"),
+                                "fa_flight_id": fid,
+                                "aircraft_type": row.get("aircraft_type", ""),
+                                "origin": row.get("origin", ""),
+                                "destination": row.get("destination", ""),
+                                "target": target,
+                                "alt_diff": round(alt, 3),
+                                "az_diff": round(az, 3),
+                                "sep": round(sep, 3),
+                                "time": row.get("time", ""),
+                                "possibility_level": int(row.get("possibility_level") or 0),
+                                "target_alt": row.get("target_alt", ""),
+                                "plane_alt": row.get("plane_alt", ""),
+                                "target_az": row.get("target_az", ""),
+                                "plane_az": row.get("plane_az", ""),
+                            }
+                    except (ValueError, KeyError):
+                        continue
+        except OSError:
+            continue
+
+    events = sorted(best.values(), key=lambda x: x["sep"])
+    return jsonify(events)
+
+
 # Register telescope control routes
 telescope_routes.register_routes(app)
 
