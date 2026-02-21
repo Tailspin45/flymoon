@@ -180,7 +180,7 @@ var alertsEnabled = localStorage.getItem('alertsEnabled') === 'true' || false;
 // Transit countdown tracking
 var nextTransit = null;
 var transitCountdownInterval = null;
-var target = getLocalStorageItem("target", "auto");
+var target = "auto"; // Always auto-detect sun and moon
 var autoGoInterval = null; // Auto-refresh interval
 var refreshTimerLabelInterval = null; // Countdown timer interval
 var softRefreshInterval = null; // For client-side position updates
@@ -1491,15 +1491,7 @@ function updateAltitudeDisplay(flights) {
 }
 
 function toggleTarget() {
-    if(target == "moon") target = "sun";
-    else if(target == "sun") target = "auto";
-    else target = "moon";
-
-    document.getElementById("targetCoordinates").innerHTML = "";
-    document.getElementById("trackingStatus").innerHTML = "";
-    displayTarget();
-
-    resetResultsTable();
+    // Target is always "auto" — no toggle needed
 }
 
 function renderTargetCoordinates(coordinates) {
@@ -1524,8 +1516,7 @@ function renderTargetCoordinates(coordinates) {
 }
 
 function displayTarget() {
-    // Target icon removed from UI - automatic tracking now
-    localStorage.setItem("target", target);
+    localStorage.setItem("target", "auto");
 }
 
 function resetResultsTable() {
