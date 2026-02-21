@@ -186,7 +186,7 @@ var refreshTimerLabelInterval = null; // Countdown timer interval
 var softRefreshInterval = null; // For client-side position updates
 var remainingSeconds = 600; // Track remaining seconds for countdown (default 10 min)
 var lastFlightData = null; // Cache last flight response for soft refresh
-window.lastFlightUpdateTime = 0; // Timestamp of last API call (window scope for consistency)
+window.lastFlightUpdateTime = parseInt(sessionStorage.getItem('lastFlightUpdateTime') || '0', 10);
 var currentCheckInterval = 600; // Current adaptive interval in seconds (default 10 min to match cache TTL)
 displayTarget();
 
@@ -1048,6 +1048,7 @@ function fetchFlights() {
         // Record update time and cache data
         clearErrorBanner();
         window.lastFlightUpdateTime = Date.now();
+        sessionStorage.setItem('lastFlightUpdateTime', String(window.lastFlightUpdateTime));
         lastFlightData = data;
         updateLastUpdateDisplay();
 
