@@ -225,6 +225,7 @@ def check_transit(
                         flight.get("elevation_change"), None
                     ),
                     "direction": flight.get("direction", 0),
+                    "waypoints": flight.get("waypoints", []),
                 }
         update_response = False
 
@@ -246,6 +247,7 @@ def check_transit(
         "possibility_level": PossibilityLevel.UNLIKELY.value,
         "elevation_change": CHANGE_ELEVATION.get(flight.get("elevation_change"), None),
         "direction": flight.get("direction", 0),
+        "waypoints": flight.get("waypoints", []),
     }
     
     # Include closest approach data if we found any

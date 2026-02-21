@@ -23,6 +23,7 @@ let ghostLayer = null;      // LayerGroup for ghost dots (previous positions)
 let mapInitialized = false;
 let boundingBoxUserEdited = localStorage.getItem('boundingBoxUserEdited') === 'true';
 let aircraftRouteCache = {};  // Cache fetched routes/tracks
+let flightWaypointsMap = {};  // Waypoints from search data, keyed by normalised flight ID
 let currentRouteLayer = null;  // Currently displayed route/track
 let userInteractingWithMap = false;  // Prevent auto-zoom during user interaction
 let headingArrows = {};  // Store heading arrows for medium/high probability transits
@@ -520,7 +521,11 @@ function updateAircraftMarkers(flights, observerLat, observerLon, isFullRefresh 
             });
 
             aircraftMarkers[normalizedId] = marker;
-            
+            // Store waypoints from search data for route display
+            if (flight.waypoints && flight.waypoints.length >= 2) {
+                flightWaypointsMap[normalizedId] = flight.waypoints;
+            }
+
             // Add heading arrow for medium/high probability transits
             if (flight.is_possible_transit === 1) {
                 const level = parseInt(flight.possibility_level);
@@ -712,27 +717,22 @@ async function toggleFlightRouteTrack(faFlightId, flightId) {
         return;
     }
 
-    // Determine which data to fetch based on transit timing
-    const row = document.querySelector(`tr[data-flight-id="${flightId}"]`);
-    let transitTime = null;
-    if (row && row.hasAttribute('data-transit-time')) {
-        transitTime = parseFloat(row.getAttribute('data-transit-time'));
-    }
-
-    // Fetch both route and track in parallel - show whichever has data
+    // Fetch only the historical track; route comes from stored waypoints
     try {
-        console.log(`Fetching route and track for ${faFlightId}`);
-        const [routeResponse, trackResponse] = await Promise.all([
-            fetch(`/flights/${faFlightId}/route`).then(r => r.json()).catch(e => ({ error: e.message })),
-            fetch(`/flights/${faFlightId}/track`).then(r => r.json()).catch(e => ({ error: e.message }))
-        ]);
+        console.log(`Fetching track for ${faFlightId}`);
+        const trackResponse = await fetch(`/flights/${faFlightId}/track`)
+            .then(r => r.json())
+            .catch(e => ({ error: e.message }));
 
-        // Cache the data
-        aircraftRouteCache[flightId] = { route: routeResponse, track: trackResponse };
-        displayRouteTrack(aircraftRouteCache[flightId], flightId);
+        const cached = {
+            waypoints: flightWaypointsMap[flightId] || [],
+            track: trackResponse
+        };
+        aircraftRouteCache[flightId] = cached;
+        displayRouteTrack(cached, flightId);
     } catch (error) {
-        console.error('Error fetching route/track:', error);
-        alert('Could not fetch route/track data. This may be because the aircraft is not currently transmitting data or API rate limits have been reached.');
+        console.error('Error fetching track:', error);
+        alert('Could not fetch track data. This may be because the aircraft is not currently transmitting data or API rate limits have been reached.');
     }
 }
 
@@ -743,38 +743,24 @@ function displayRouteTrack(data, flightId) {
 
     console.log('Route/Track data for', flightId, ':', data);
 
-    // Display route (blue dashed)
-    if (data.route && !data.route.error) {
-        console.log('Route data:', data.route);
-
-        // Check different possible response structures
-        const waypoints = data.route.waypoints || data.route.route_waypoints || [];
-
-        if (waypoints.length > 0) {
-            const routePoints = waypoints
-                .filter(pt => pt.latitude != null && pt.longitude != null)
-                .map(pt => [pt.latitude, pt.longitude]);
-
-            if (routePoints.length > 0) {
-                console.log('Drawing route with', routePoints.length, 'points');
-                const routeLine = L.polyline(routePoints, {
-                    color: '#4169E1',
-                    weight: 3,
-                    dashArray: '10, 10',
-                    opacity: 0.7
-                });
-                layerGroup.addLayer(routeLine);
-                routeLine.bindPopup('📍 Planned Route (' + routePoints.length + ' waypoints)');
-            } else {
-                console.log('Route has waypoints but no valid lat/lon coordinates');
-            }
-        } else {
-            console.log('No waypoints in route data. Route may not be available for this flight.');
+    // Display route (blue dashed) from flat [lat,lon,lat,lon,...] waypoints array
+    if (data.waypoints && data.waypoints.length >= 2) {
+        const flat = data.waypoints;
+        const routePoints = [];
+        for (let i = 0; i + 1 < flat.length; i += 2) {
+            routePoints.push([flat[i], flat[i + 1]]);
         }
-    } else if (data.route && data.route.error) {
-        console.log('Route error:', data.route.error);
-    } else {
-        console.log('No route data available');
+        if (routePoints.length > 0) {
+            console.log('Drawing route with', routePoints.length, 'waypoints');
+            const routeLine = L.polyline(routePoints, {
+                color: '#4169E1',
+                weight: 3,
+                dashArray: '10, 10',
+                opacity: 0.7
+            });
+            layerGroup.addLayer(routeLine);
+            routeLine.bindPopup('📍 Planned Route (' + routePoints.length + ' points)');
+        }
     }
 
     // Display track (green solid with dots)

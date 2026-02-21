@@ -50,6 +50,7 @@ def parse_fligh_data(flight_data: dict):
         "elevation": int(flight_data["last_position"]["altitude"]) * 0.3048 * 100,  # hundreds of feet to meters (for calculations)
         "elevation_feet": int(flight_data["last_position"]["altitude"]) * 100,  # API returns hundreds of feet, multiply by 100
         "elevation_change": flight_data["last_position"]["altitude_change"],
+        "waypoints": flight_data.get("waypoints", []),
     }
 
 
