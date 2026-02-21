@@ -187,6 +187,11 @@ var softRefreshInterval = null; // For client-side position updates
 var remainingSeconds = 600; // Track remaining seconds for countdown (default 10 min)
 var lastFlightData = null; // Cache last flight response for soft refresh
 window.lastFlightUpdateTime = parseInt(sessionStorage.getItem('lastFlightUpdateTime') || '0', 10);
+// Restore cached flight data so the table is populated instantly on back-navigation
+try {
+    const _cached = sessionStorage.getItem('lastFlightData');
+    if (_cached) lastFlightData = JSON.parse(_cached);
+} catch(e) { lastFlightData = null; }
 var currentCheckInterval = 600; // Current adaptive interval in seconds (default 10 min to match cache TTL)
 displayTarget();
 
@@ -1050,6 +1055,7 @@ function fetchFlights() {
         window.lastFlightUpdateTime = Date.now();
         sessionStorage.setItem('lastFlightUpdateTime', String(window.lastFlightUpdateTime));
         lastFlightData = data;
+        try { sessionStorage.setItem('lastFlightData', JSON.stringify(data)); } catch(e) {}
         updateLastUpdateDisplay();
 
         if(data.flights.length == 0) {
@@ -1712,6 +1718,11 @@ function initializeAutoRefresh() {
         
         // Adjust countdown timer to match cache expiry
         remainingSeconds = remainingCacheTime;
+
+        // Restore table from cached flight data (e.g. after back-navigation from telescope)
+        if (lastFlightData && lastFlightData.flights) {
+            updateFlightTableFull(lastFlightData.flights);
+        }
     }
 }
 
