@@ -1821,5 +1821,30 @@ function initPauseWhenHidden() {
 }
 
 // Update telescope status every 2 seconds
-updateTelescopeStatus();
-setInterval(updateTelescopeStatus, 2000);
+var _telescopeStatusInterval = null;
+function startTelescopeStatusPolling() {
+    updateTelescopeStatus();
+    _telescopeStatusInterval = setInterval(updateTelescopeStatus, 2000);
+}
+startTelescopeStatusPolling();
+
+// bfcache support: pause all intervals on pagehide so there are no in-flight
+// requests blocking restoration. Restart on pageshow if restored from cache.
+window.addEventListener('pagehide', () => {
+    clearInterval(autoGoInterval);
+    clearInterval(softRefreshInterval);
+    clearInterval(refreshTimerLabelInterval);
+    clearInterval(_telescopeStatusInterval);
+    _telescopeStatusInterval = null;
+});
+
+window.addEventListener('pageshow', (e) => {
+    if (e.persisted) {
+        // Page was restored from bfcache — restart polling/timers,
+        // but do NOT re-render or re-fetch (data is already in memory).
+        startTelescopeStatusPolling();
+        autoGoInterval = setInterval(goFetch, currentCheckInterval * 1000);
+        softRefreshInterval = setInterval(softRefresh, 15000);
+        refreshTimerLabelInterval = setInterval(refreshTimer, 1000);
+    }
+});
