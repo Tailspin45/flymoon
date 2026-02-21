@@ -25,6 +25,7 @@ let eclipseData = null;         // populated from /telescope/status
 let eclipseAlertLevel = null;   // 'outlook'|'watch'|'warning'|'active'|'cleared'|null
 let _eclipseRecordingScheduled = false; // prevents duplicate setTimeout during warning phase
 let eclipseBannerDismissed = false; // per-session dismiss flag
+let currentViewingMode = null;  // 'sun'|'moon'|null — last known scope viewing mode
 
 window.initTelescope = function() {
     console.log('[Telescope] Initializing interface');
@@ -167,6 +168,7 @@ async function updateStatus() {
     const result = await apiCall('/telescope/status', 'GET');
     if (result) {
         isConnected = result.connected || false;
+        currentViewingMode = result.viewing_mode || null;
         // Don't overwrite isRecording if we're actively recording locally
         // The status endpoint doesn't know about our RTSP recordings
         if (!isRecording) {
@@ -185,6 +187,7 @@ async function updateStatus() {
 
         updateConnectionUI();
         updateRecordingUI();
+        checkTargetMismatch();
         
         // Auto-start preview if connected (e.g. navigating to the page while already connected)
         if (isConnected && typeof startPreview === 'function') {
@@ -300,6 +303,39 @@ async function switchToMoon() {
             10000
         );
     }
+}
+
+function checkTargetMismatch() {
+    const banner = document.getElementById('mismatchBanner');
+    const text   = document.getElementById('mismatchText');
+    const btn    = document.getElementById('mismatchSwitchBtn');
+    if (!banner || !text || !btn) return;
+
+    // Only relevant when connected and in a known viewing mode
+    if (!isConnected || !currentViewingMode) { banner.style.display = 'none'; return; }
+
+    const flights = window.lastFlightData || [];
+    const oppositeTarget = currentViewingMode === 'sun' ? 'moon' : 'sun';
+
+    // Find the soonest HIGH or MEDIUM transit on the opposite target
+    const best = flights
+        .filter(f => f.target === oppositeTarget
+                  && f.is_possible_transit === 1
+                  && parseInt(f.possibility_level) >= 2   // MEDIUM or HIGH
+                  && f.time != null && f.time > 0)
+        .sort((a, b) => a.time - b.time)[0];
+
+    if (!best) { banner.style.display = 'none'; return; }
+
+    const targetLabel = oppositeTarget === 'sun' ? '☀️ Sun' : '🌙 Moon';
+    const scopeLabel  = currentViewingMode  === 'sun' ? '☀️ Solar' : '🌙 Lunar';
+    const eta = best.time < 1 ? '<1' : best.time.toFixed(1);
+    const level = parseInt(best.possibility_level) === 3 ? 'HIGH' : 'MEDIUM';
+
+    text.textContent = `⚠️ ${level} probability ${targetLabel} transit in ${eta} min — scope is in ${scopeLabel} mode`;
+    btn.textContent  = `Switch to ${oppositeTarget === 'sun' ? 'Solar ☀️' : 'Lunar 🌙'}`;
+    btn.onclick = oppositeTarget === 'sun' ? switchToSun : switchToMoon;
+    banner.style.display = 'flex';
 }
 
 // ============================================================================
