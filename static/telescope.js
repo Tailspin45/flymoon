@@ -178,6 +178,11 @@ async function updateStatus() {
         updateConnectionUI();
         updateRecordingUI();
         
+        // Auto-start preview if connected (e.g. navigating to the page while already connected)
+        if (isConnected && typeof startPreview === 'function') {
+            startPreview();
+        }
+        
         // Update last update timestamp
         if (result.last_update) {
             const timestamp = document.getElementById('lastUpdate');
@@ -481,6 +486,9 @@ function startPreview() {
         console.error('[Telescope] Preview image element not found');
         return;
     }
+
+    // Already streaming — don't restart
+    if (previewImage.style.display === 'block' && previewImage.src) return;
     
     // Set stream URL (adds timestamp to avoid caching)
     const streamUrl = `/telescope/preview/stream.mjpg?t=${Date.now()}`;
