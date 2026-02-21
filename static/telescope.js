@@ -163,6 +163,7 @@ function updateButtonStates() {
 }
 
 async function updateStatus() {
+    if (isSimulating) return; // sim owns connection state — don't let real status poll overwrite it
     const result = await apiCall('/telescope/status', 'GET');
     if (result) {
         isConnected = result.connected || false;
