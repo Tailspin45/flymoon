@@ -79,19 +79,46 @@ def _angular_separation_rad(pos_a, pos_b) -> float:
     return math.acos(max(-1.0, min(1.0, cos_angle)))
 
 
-def _angular_radius_rad(body_pos, observer_pos) -> float:
+def _angular_radius_rad(body_pos, observer_pos, body_name: Optional[str] = None) -> float:
     """
     Angular radius of a solar-system body in radians.
-    body_pos: astrometric position from observer (in AU)
-    Radius values in km: Sun ≈ 696 000, Moon ≈ 1 737
+
+    Parameters
+    ----------
+    body_pos:
+        Astrometric position from observer (in AU).
+    observer_pos:
+        Observer position (currently unused, kept for API compatibility).
+    body_name:
+        Explicit body name, e.g. "sun" or "moon". If omitted the function
+        falls back to the public ``body_name`` attribute then the private
+        ``_body_name`` attribute on ``body_pos`` for backwards compatibility.
+
+    Raises
+    ------
+    ValueError
+        If the body name cannot be determined or is not supported.
     """
     AU_KM = 149_597_870.7
     RADII_KM = {"sun": 696_000.0, "moon": 1_737.4}
+
+    name = body_name
+    if name is None:
+        name = getattr(body_pos, "body_name", None)
+    if name is None:
+        name = getattr(body_pos, "_body_name", None)
+
+    if not isinstance(name, str):
+        logger.warning("Unable to determine body name for angular radius computation.")
+        raise ValueError("Unknown body for angular radius computation (no name provided).")
+
+    name_key = name.lower()
+    if name_key not in RADII_KM:
+        logger.warning("Unsupported body '%s' for angular radius computation.", name)
+        raise ValueError(f"Unsupported body '{name}' for angular radius computation.")
+
     distance_au = float(body_pos.distance().au)
-    name = getattr(body_pos, "_body_name", None)
-    if name not in RADII_KM:
-        return 0.0
-    return math.atan(RADII_KM[name] / (distance_au * AU_KM))
+    return math.atan(RADII_KM[name_key] / (distance_au * AU_KM))
 
 
 # ─────────────────────────────────────────────────────────────────────────────

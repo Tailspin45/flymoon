@@ -11,12 +11,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from src.transit import get_possibility_level
+from src.transit import get_possibility_level, calculate_angular_separation
 import math
-
-def calculate_angular_separation(alt_diff: float, az_diff: float) -> float:
-    """Calculate angular separation from altitude and azimuth differences."""
-    return math.sqrt(alt_diff**2 + az_diff**2)
 
 
 def test_angular_separation_calculation():

@@ -38,18 +38,50 @@ class OpenSkyClient:
         """
         self.auth = (username, password) if username and password else None
         self._last_request_time = 0
-        self._min_interval = 12.0  # Seconds between requests (5 req/min for anonymous)
+        self._min_interval = 12.0  # 5 req/min for anonymous
+        self._daily_limit = 100
         if self.auth:
             self._min_interval = 6.0  # 10 req/min for registered
-    
+            self._daily_limit = 400
+        self._day_key = self._current_day_key()
+        self._requests_today = 0
+
+    def _current_day_key(self) -> str:
+        """Return current UTC date string for daily quota tracking."""
+        return time.strftime("%Y-%m-%d", time.gmtime())
+
     def _rate_limit(self):
-        """Enforce rate limiting."""
+        """Enforce per-minute and per-day rate limiting."""
+        # Reset daily counter at UTC midnight
+        current_day = self._current_day_key()
+        if current_day != self._day_key:
+            logger.debug("[OpenSky] New UTC day — resetting daily request counter")
+            self._day_key = current_day
+            self._requests_today = 0
+
+        # Enforce daily limit
+        if self._requests_today >= self._daily_limit:
+            utc_now = time.gmtime()
+            seconds_today = utc_now.tm_hour * 3600 + utc_now.tm_min * 60 + utc_now.tm_sec
+            sleep_secs = max(0, 86400 - seconds_today)
+            logger.warning(
+                "[OpenSky] Daily limit reached (%d req). Sleeping %ds until next UTC day.",
+                self._daily_limit, sleep_secs,
+            )
+            if sleep_secs > 0:
+                time.sleep(sleep_secs)
+            self._day_key = self._current_day_key()
+            self._requests_today = 0
+            self._last_request_time = 0
+
+        # Enforce per-minute limit
         elapsed = time.time() - self._last_request_time
         if elapsed < self._min_interval:
             sleep_time = self._min_interval - elapsed
             logger.debug(f"[OpenSky] Rate limiting: sleeping {sleep_time:.1f}s")
             time.sleep(sleep_time)
         self._last_request_time = time.time()
+        self._requests_today += 1
     
     def get_aircraft_position(self, callsign: str) -> Optional[Tuple[float, float, float, float, float]]:
         """

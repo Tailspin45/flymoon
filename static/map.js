@@ -447,6 +447,15 @@ function updateAircraftMarkers(flights, observerLat, observerLon, isFullRefresh 
             if (!ghostMarkers[id]) ghostMarkers[id] = [];
             ghostMarkers[id].push(dot);
         });
+
+        // Remove ghost dots for aircraft no longer in the flight data
+        const activeIds = new Set(flights.map(f => String(f.id).trim().toUpperCase()));
+        Object.keys(ghostMarkers).forEach(id => {
+            if (!activeIds.has(id)) {
+                ghostMarkers[id].forEach(dot => ghostLayer.removeLayer(dot));
+                delete ghostMarkers[id];
+            }
+        });
     }
 
     // Atomically clear all aircraft markers and heading arrows

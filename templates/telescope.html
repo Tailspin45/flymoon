@@ -24,7 +24,7 @@
             <div style="font-size: 1.2em;">🔭 Seestar S50 Control</div>
             <div id="lastUpdateStatus" style="font-size: 0.9em; color: #666; margin-top: 4px;"></div>
         </div>
-        <a href="/" target="_blank" onclick="window.close(); return false;" class="btn-sm">← Back</a>
+        <a href="/" class="btn-sm" onclick="if (window.opener && !window.opener.closed) { window.close(); } else if (window.history.length > 1) { window.history.back(); } else { window.location.href = '/'; } return false;">← Back</a>
     </div>
 
     <div class="telescope-container">

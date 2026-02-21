@@ -169,16 +169,14 @@ def get_all_flights():
     try:
         start_time = time.time()
 
-        latitude = float(request.args.get("latitude") or 0)
-        longitude = float(request.args.get("longitude") or 0)
-        elevation = float(request.args.get("elevation") or 0)
-        min_altitude = float(request.args.get("min_altitude", 15))
-        alt_threshold = float(request.args.get("alt_threshold", 5.0))
-        az_threshold = float(request.args.get("az_threshold", 10.0))
-
-        if latitude == 0 and longitude == 0:
+        _lat_raw = request.args.get("latitude")
+        _lon_raw = request.args.get("longitude")
+        if _lat_raw is None or _lon_raw is None:
             logger.warning("[Flights] Missing or invalid coordinates")
             return jsonify({"error": "Missing required parameter: 'latitude' and 'longitude'"}), 400
+        latitude = float(_lat_raw)
+        longitude = float(_lon_raw)
+        elevation = float(request.args.get("elevation") or 0)
 
         logger.debug(f"Parameter types: min_altitude={type(min_altitude)}, alt_threshold={type(alt_threshold)}, az_threshold={type(az_threshold)}")
         
@@ -365,14 +363,14 @@ def recalculate_transits_endpoint():
         data = request.get_json()
         
         flights = data.get("flights", [])
-        latitude = float(data.get("latitude", 0))
-        longitude = float(data.get("longitude", 0))
-        elevation = float(data.get("elevation", 0))
-        
-        # Skip if coordinates are invalid
-        if latitude == 0 and longitude == 0:
+        _lat_raw = data.get("latitude")
+        _lon_raw = data.get("longitude")
+        if _lat_raw is None or _lon_raw is None:
             logger.warning("[Recalculate] Missing or invalid coordinates")
             return jsonify({"flights": [], "targetCoordinates": {}}), 200
+        latitude = float(_lat_raw)
+        longitude = float(_lon_raw)
+        elevation = float(data.get("elevation", 0))
         target = data.get("target", "auto")
         min_altitude = float(data.get("min_altitude", 15.0))
         alt_threshold = float(data.get("alt_threshold", 

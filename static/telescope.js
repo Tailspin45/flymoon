@@ -23,6 +23,7 @@ let simulationFiles = []; // Track temporary simulation files
 // Eclipse state
 let eclipseData = null;         // populated from /telescope/status
 let eclipseAlertLevel = null;   // 'outlook'|'watch'|'warning'|'active'|'cleared'|null
+let _eclipseRecordingScheduled = false; // prevents duplicate setTimeout during warning phase
 let eclipseBannerDismissed = false; // per-session dismiss flag
 
 // Initialize on page load
@@ -391,7 +392,7 @@ function startRecordingTimer(totalDuration) {
 
     recordingEndTime = Date.now() + totalDuration * 1000;
 
-    recordingTimerInterval = setInterval(() => {
+    recordingTimerInterval = setInterval(async () => {
         if (!recordingStartTime || !recordingEndTime) return;
 
         const elapsed   = (Date.now() - recordingStartTime) / 1000;
@@ -401,7 +402,7 @@ function startRecordingTimer(totalDuration) {
         timerSpan.textContent = `${elapsed.toFixed(1)}s / ${total.toFixed(0)}s`;
 
         if (remaining <= 0 && isRecording) {
-            stopRecording();
+            await stopRecording();
         }
     }, 100);
 }
@@ -1050,14 +1051,20 @@ function updateEclipseState() {
 
     // ── Recording logic ───────────────────────────────────────────────────
     if (level === 'warning' && !isRecording) {
-        // Arm: start recording at C1 − 10 s
-        // We're within 30 s of C1; if C1 is ≤ 10 s away, start immediately
+        // Arm: start recording at C1 − 10 s. Use a flag rather than levelChanged
+        // so that a page reload mid-warning correctly reschedules the recording.
         const startDelay = Math.max(0, secsToC1 - 10);
-        if (levelChanged) {
+        if (!_eclipseRecordingScheduled) {
+            _eclipseRecordingScheduled = true;
             console.log(`[Eclipse] Warning — recording starts in ${startDelay.toFixed(0)}s`);
-            setTimeout(() => startEclipseRecording(c1, c4, eclipseData), startDelay * 1000);
+            setTimeout(() => { _eclipseRecordingScheduled = false; startEclipseRecording(c1, c4, eclipseData); }, startDelay * 1000);
         }
-    } else if (level === 'active') {
+    } else if (level !== 'warning') {
+        // Reset flag whenever we leave warning phase
+        _eclipseRecordingScheduled = false;
+    }
+
+    if (level === 'active') {
         if (isRecording) {
             // Ensure recording end is pinned to C4 + 10 s
             const c4PlusTen = c4.getTime() + 10000;
@@ -1926,6 +1933,12 @@ function simulateStopRecording() {
 }
 
 function cleanupSimulationFiles() {
+    // Revoke blob URLs to free memory before clearing the list
+    simulationFiles.forEach(f => {
+        if (f.url && f.url.startsWith('blob:')) {
+            URL.revokeObjectURL(f.url);
+        }
+    });
     if (window.currentFiles) {
         window.currentFiles = window.currentFiles.filter(f => !f.isSimulation);
     }
