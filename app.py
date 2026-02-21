@@ -177,6 +177,9 @@ def get_all_flights():
         latitude = float(_lat_raw)
         longitude = float(_lon_raw)
         elevation = float(request.args.get("elevation") or 0)
+        min_altitude = float(request.args.get("min_altitude", 15))
+        alt_threshold = float(request.args.get("alt_threshold", 5.0))
+        az_threshold = float(request.args.get("az_threshold", 10.0))
 
         logger.debug(f"Parameter types: min_altitude={type(min_altitude)}, alt_threshold={type(alt_threshold)}, az_threshold={type(az_threshold)}")
         
