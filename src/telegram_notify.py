@@ -32,7 +32,7 @@ async def send_telegram_notification(flight_data: List[dict], target: str) -> bo
             PossibilityLevel.HIGH.value,
         ):
             eta_min = flight.get('time', 0)
-            diff_sum = flight.get("alt_diff", 0) + flight.get("az_diff", 0)
+            diff_sum = (flight.get("alt_diff") or 0) + (flight.get("az_diff") or 0)
             flight_target = flight.get("target", target or "")
             emoji = TARGET_TO_EMOJI.get(flight_target, "🌙")
             possible_transits.append(

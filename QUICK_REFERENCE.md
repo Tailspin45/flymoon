@@ -42,7 +42,7 @@
 | Route/track viewing | 2 per view | 1 per view | 50% |
 | Targets below horizon | Continues | Pauses | 100% |
 | **Daily Total** | **~240** | **~30-50** | **75-85%** |
-| **Monthly Total** | **~7,200** | **~900-1,500** | **75-85%** |
+| **Monthly Total** | **~7,200** | **~150-300** | **75-85%** |
 
 ## User Experience
 
@@ -144,4 +144,4 @@ With all optimizations active, you should see:
 - **Automatic pause** when targets not visible
 - **Smart polling** that speeds up when needed
 
-**Expected monthly usage: 900-1,500 calls (well under 500 with typical 8hr/day usage)**
+**Expected monthly usage: 150-300 calls (well under 500 with typical 8hr/day usage)**

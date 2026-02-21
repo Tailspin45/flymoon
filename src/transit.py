@@ -1,6 +1,6 @@
 import os
 from datetime import datetime, timedelta
-from typing import List, Tuple
+from typing import Any, Dict, List, Tuple
 from zoneinfo import ZoneInfo
 
 import numpy as np
@@ -274,8 +274,7 @@ def get_transits(
     alt_threshold: float = 5.0,
     az_threshold: float = 10.0,
     custom_bbox: dict = None,
-) -> List[dict]:
-    API_KEY = get_aeroapi_key()
+) -> Dict[str, Any]:
     
     # Ensure thresholds are floats (in case they're passed as strings from Flask)
     alt_threshold = float(alt_threshold)
@@ -400,7 +399,7 @@ def recalculate_transits(
     target_name: str = "moon",
     alt_threshold: float = 5.0,
     az_threshold: float = 10.0,
-) -> List[dict]:
+) -> Dict[str, Any]:
     """
     Recalculate transit predictions for existing flights with updated positions.
     Does NOT call FlightAware API - uses provided flight data.

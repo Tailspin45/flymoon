@@ -6,7 +6,7 @@ This prevents redundant API calls when users refresh multiple times in quick suc
 """
 
 import time
-from typing import Optional, Dict, List
+from typing import Any, Dict, List, Optional
 from src import logger
 
 
@@ -33,7 +33,7 @@ class FlightDataCache:
         """Generate cache key from bounding box."""
         return f"{bbox[0]:.4f},{bbox[1]:.4f},{bbox[2]:.4f},{bbox[3]:.4f}"
 
-    def get(self, lat_ll: float, lon_ll: float, lat_ur: float, lon_ur: float) -> Optional[List[dict]]:
+    def get(self, lat_ll: float, lon_ll: float, lat_ur: float, lon_ur: float) -> Optional[Any]:
         """
         Retrieve cached flight data if still valid.
 
@@ -46,8 +46,8 @@ class FlightDataCache:
 
         Returns
         -------
-        List[dict] or None
-            Cached flight data if valid, None if cache miss
+        dict or None
+            Cached raw FlightAware API response if valid, None if cache miss
         """
         key = self._make_key((lat_ll, lon_ll, lat_ur, lon_ur))
         
@@ -84,7 +84,7 @@ class FlightDataCache:
             logger.debug(f"Cleaned up {len(expired_keys)} expired cache entries")
 
     def set(self, lat_ll: float, lon_ll: float, lat_ur: float, lon_ur: float,
-            data: List[dict]) -> None:
+            data: Any) -> None:
         """
         Store flight data in cache.
 
@@ -94,8 +94,8 @@ class FlightDataCache:
             Lower-left corner of bounding box
         lat_ur, lon_ur : float
             Upper-right corner of bounding box
-        data : List[dict]
-            Flight data to cache
+        data : Any
+            Raw FlightAware API response to cache
         """
         # Cleanup expired entries periodically to prevent memory leak
         if len(self._cache) >= self.MAX_CACHE_SIZE:

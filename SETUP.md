@@ -470,12 +470,11 @@ Aircraft transits are extremely brief (0.5-2 seconds). The buffer configuration 
 
 ### Protocol Details
 
-Flymoon uses JSON-RPC 2.0 over TCP sockets to communicate with Seestar:
+Flymoon uses a JSON-RPC 2.0–style protocol over TCP sockets to communicate with Seestar. **Important:** Seestar requests do *not* include a `"jsonrpc"` field — only responses do.
 
 **Request format:**
 ```json
 {
-  "jsonrpc": "2.0",
   "method": "start_record_avi",
   "id": 1,
   "params": {"raw": false}

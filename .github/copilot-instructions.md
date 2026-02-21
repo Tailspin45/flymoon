@@ -95,7 +95,7 @@ CelestialObject.update_position() ← Skyfield + de421.bsp ←   ↓
 ### Environment Variables
 
 Required in `.env`:
-- `AEROAPI_KEY` - FlightAware API key (required)
+- `AEROAPI_API_KEY` - FlightAware API key (preferred; legacy aliases `AEROAPI_KEY` and `FLIGHTAWARE_API_KEY` are also supported)
 - Observer position: `OBSERVER_LATITUDE`, `OBSERVER_LONGITUDE`, `OBSERVER_ELEVATION`
 - Bounding box: `LAT_LOWER_LEFT`, `LONG_LOWER_LEFT`, `LAT_UPPER_RIGHT`, `LONG_UPPER_RIGHT`
 
