@@ -38,7 +38,7 @@ from zoneinfo import ZoneInfo
 
 import requests
 from dotenv import load_dotenv
-from flask import Flask, jsonify, render_template, request
+from flask import Flask, jsonify, redirect, render_template, request
 from tzlocal import get_localzone_name
 
 from src.constants import POSSIBLE_TRANSITS_LOGFILENAME, ASTRO_EPHEMERIS, get_aeroapi_key
@@ -483,9 +483,9 @@ def get_flight_track(fa_flight_id):
 
 
 @app.route("/telescope")
-def telescope():
-    """Display the telescope control page."""
-    return render_template("telescope.html")
+def telescope_page():
+    """Redirect legacy telescope URL to the main SPA."""
+    return redirect("/")
 
 
 # Register telescope control routes

@@ -26,43 +26,44 @@ let eclipseAlertLevel = null;   // 'outlook'|'watch'|'warning'|'active'|'cleared
 let _eclipseRecordingScheduled = false; // prevents duplicate setTimeout during warning phase
 let eclipseBannerDismissed = false; // per-session dismiss flag
 
-// Initialize on page load
-document.addEventListener('DOMContentLoaded', () => {
+window.initTelescope = function() {
     console.log('[Telescope] Initializing interface');
-    
-    // Check initial status
-    updateStatus();
-    
+    destroyTelescope(); // clear any existing intervals
+
+    // Status polling (always poll while panel is open)
+    statusPollInterval = setInterval(updateStatus, 2000);
+    updateStatus(); // immediate first check
+
     // Start polling for target visibility
     updateTargetVisibility();
-    visibilityPollInterval = setInterval(updateTargetVisibility, 30000); // Every 30s
-    
+    visibilityPollInterval = setInterval(updateTargetVisibility, 30000);
+
     // Update "last updated" timer
-    lastUpdateInterval = setInterval(updateLastUpdateTime, 1000); // Every 1s
-    
+    lastUpdateInterval = setInterval(updateLastUpdateTime, 1000);
+
     // Load initial file list
     refreshFiles();
-    
+
     // Start transit polling
     checkTransits();
-    transitPollInterval = setInterval(checkTransits, 15000); // Every 15s
+    transitPollInterval = setInterval(checkTransits, 15000);
 
-    // 1-second local tick: decrement seconds_until and refresh the countdown display
+    // 1-second local tick
     transitTickInterval = setInterval(() => {
         if (upcomingTransits.length > 0) {
             upcomingTransits.forEach(t => t.seconds_until--);
             updateTransitList();
             checkAutoCapture();
         }
-        updateEclipseState();  // eclipse state machine runs every second
+        updateEclipseState();
     }, 1000);
-    
+
     // Load auto-capture preference
     const autoCapture = localStorage.getItem('autoCaptureTransits');
     if (autoCapture !== null) {
         document.getElementById('autoCaptureToggle').checked = autoCapture === 'true';
     }
-});
+};
 
 // ============================================================================
 // CONNECTION MANAGEMENT
@@ -1320,19 +1321,18 @@ function dismissTransit(flight) {
     updateTransitList();
 }
 
-// Save auto-capture preference
-document.addEventListener('DOMContentLoaded', () => {
+// One-time UI event listeners — set up once at module load
+(function() {
     const toggle = document.getElementById('autoCaptureToggle');
     if (toggle) {
         toggle.addEventListener('change', (e) => {
             localStorage.setItem('autoCaptureTransits', e.target.checked);
         });
-
+    }
     document.addEventListener('keydown', (e) => {
         if (e.key === 'Escape') closeFileViewer();
     });
-    }
-});
+})();
 
 // ============================================================================
 // FILMSTRIP & MODAL
@@ -2160,13 +2160,12 @@ function _updateSimEclipseFireBtn() {
 // CLEANUP
 // ============================================================================
 
-window.addEventListener('beforeunload', () => {
-    // Clean up intervals
-    if (statusPollInterval) clearInterval(statusPollInterval);
-    if (visibilityPollInterval) clearInterval(visibilityPollInterval);
-    if (lastUpdateInterval) clearInterval(lastUpdateInterval);
-    if (transitPollInterval) clearInterval(transitPollInterval);
-    if (transitTickInterval) clearInterval(transitTickInterval);
-});
+window.destroyTelescope = function() {
+    if (statusPollInterval)     { clearInterval(statusPollInterval);     statusPollInterval     = null; }
+    if (visibilityPollInterval) { clearInterval(visibilityPollInterval); visibilityPollInterval = null; }
+    if (lastUpdateInterval)     { clearInterval(lastUpdateInterval);     lastUpdateInterval     = null; }
+    if (transitPollInterval)    { clearInterval(transitPollInterval);    transitPollInterval    = null; }
+    if (transitTickInterval)    { clearInterval(transitTickInterval);    transitTickInterval    = null; }
+};
 
 console.log('[Telescope] Module loaded');
