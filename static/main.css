@@ -396,6 +396,7 @@ body {
     max-height: 500px;
     background: rgba(26, 26, 26, 0.95);
     border-left: 2px solid #444;
+    border-right: 2px solid #444;
     padding: 5px;
     flex-shrink: 0;
     align-self: flex-start;
