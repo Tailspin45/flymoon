@@ -25,9 +25,9 @@ const COLUMN_NAMES = [
     "destination",
     "target_alt",
     "plane_alt",
-    "alt_diff",
     "target_az",
     "plane_az",
+    "alt_diff",
     "az_diff",
     "elevation_change",
     "aircraft_elevation_feet",
@@ -55,10 +55,10 @@ function getMinAltitudeForAzimuth(azimuth) {
         return defaultMinAlt;
     }
 
-    const minAltN = parseFloat(minAltNEl.value) || defaultMinAlt;
-    const minAltE = parseFloat(minAltEEl.value) || defaultMinAlt;
-    const minAltS = parseFloat(minAltSEl.value) || defaultMinAlt;
-    const minAltW = parseFloat(minAltWEl.value) || defaultMinAlt;
+    const minAltN = ((v => isNaN(v) ? defaultMinAlt : v)(parseFloat(minAltNEl.value)));
+    const minAltE = ((v => isNaN(v) ? defaultMinAlt : v)(parseFloat(minAltEEl.value)));
+    const minAltS = ((v => isNaN(v) ? defaultMinAlt : v)(parseFloat(minAltSEl.value)));
+    const minAltW = ((v => isNaN(v) ? defaultMinAlt : v)(parseFloat(minAltWEl.value)));
 
     if (azimuth === null || azimuth === undefined || isNaN(azimuth)) {
         // If no azimuth, use the minimum of all quadrants
@@ -94,10 +94,10 @@ function getMinAltitudeAllQuadrants() {
         return defaultMinAlt;
     }
 
-    const minAltN = parseFloat(minAltNEl.value) || defaultMinAlt;
-    const minAltE = parseFloat(minAltEEl.value) || defaultMinAlt;
-    const minAltS = parseFloat(minAltSEl.value) || defaultMinAlt;
-    const minAltW = parseFloat(minAltWEl.value) || defaultMinAlt;
+    const minAltN = ((v => isNaN(v) ? defaultMinAlt : v)(parseFloat(minAltNEl.value)));
+    const minAltE = ((v => isNaN(v) ? defaultMinAlt : v)(parseFloat(minAltEEl.value)));
+    const minAltS = ((v => isNaN(v) ? defaultMinAlt : v)(parseFloat(minAltSEl.value)));
+    const minAltW = ((v => isNaN(v) ? defaultMinAlt : v)(parseFloat(minAltWEl.value)));
     return Math.min(minAltN, minAltE, minAltS, minAltW);
 }
 
@@ -180,13 +180,18 @@ var alertsEnabled = localStorage.getItem('alertsEnabled') === 'true' || false;
 // Transit countdown tracking
 var nextTransit = null;
 var transitCountdownInterval = null;
-var target = getLocalStorageItem("target", "auto");
+var target = "auto"; // Always auto-detect sun and moon
 var autoGoInterval = null; // Auto-refresh interval
 var refreshTimerLabelInterval = null; // Countdown timer interval
 var softRefreshInterval = null; // For client-side position updates
 var remainingSeconds = 600; // Track remaining seconds for countdown (default 10 min)
 var lastFlightData = null; // Cache last flight response for soft refresh
-var lastFlightUpdateTime = 0; // Timestamp of last API call
+window.lastFlightUpdateTime = parseInt(sessionStorage.getItem('lastFlightUpdateTime') || '0', 10);
+// Restore cached flight data so the table is populated instantly on back-navigation
+try {
+    const _cached = sessionStorage.getItem('lastFlightData');
+    if (_cached) lastFlightData = JSON.parse(_cached);
+} catch(e) { lastFlightData = null; }
 var currentCheckInterval = 600; // Current adaptive interval in seconds (default 10 min to match cache TTL)
 displayTarget();
 
@@ -230,11 +235,11 @@ document.addEventListener('visibilitychange', function() {
  * Now also recalculates transit predictions with updated positions
  */
 async function softRefresh() {
-    if (!lastFlightData || !lastFlightUpdateTime) {
+    if (!lastFlightData || !window.lastFlightUpdateTime) {
         return; // No data to update
     }
 
-    const secondsElapsed = (Date.now() - lastFlightUpdateTime) / 1000;
+    const secondsElapsed = (Date.now() - window.lastFlightUpdateTime) / 1000;
     
     // Don't soft refresh if too much time has passed (data too stale)
     if (secondsElapsed > 300) {  // 5 minutes
@@ -302,8 +307,7 @@ async function softRefresh() {
         
         if (response.ok) {
             const recalcData = await response.json();
-            
-            // Update table with recalculated transit data
+            // Update table cells in-place — no scroll save/restore needed
             updateFlightTableFull(recalcData.flights);
             
             // Update map markers
@@ -374,9 +378,9 @@ function updateFlightTableFull(flights) {
         // Update all relevant cells by column index
         const cells = row.querySelectorAll('td');
         
-        // Column indexes (adjust if table structure changes)
-        // 0: Target, 1: ID, 2: Type, 3: Origin, 4: Dest, 5: Target Alt, 6: Plane Alt, 7: Alt Diff
-        // 8: Target Az, 9: Plane Az, 10: Az Diff, 11: Elev Change, 12: Aircraft Alt (ft), 13: Direction, 14: Distance, 15: Speed, 16: Time
+        // Column indexes (0: Target, 1: ID, 2: Type, 3: Origin, 4: Dest, 5: Target Alt, 6: Plane Alt,
+        // 7: Target Az, 8: Plane Az, 9: Alt Diff, 10: Az Diff, 11: Elev Change, 12: Aircraft Alt (ft),
+        // 13: Direction, 14: Distance, 15: Speed, 16: Time)
         
         if (flight.target_alt !== null && cells[5]) {
             cells[5].textContent = flight.target_alt.toFixed(1) + "º";
@@ -384,22 +388,30 @@ function updateFlightTableFull(flights) {
         if (flight.plane_alt !== null && cells[6]) {
             cells[6].textContent = flight.plane_alt.toFixed(1) + "º";
         }
-        if (flight.alt_diff !== null && cells[7]) {
-            cells[7].textContent = Math.round(flight.alt_diff) + "º";
+        if (flight.target_az !== null && cells[7]) {
+            cells[7].textContent = flight.target_az.toFixed(1) + "º";
         }
-        if (flight.target_az !== null && cells[8]) {
-            cells[8].textContent = flight.target_az.toFixed(1) + "º";
+        if (flight.plane_az !== null && cells[8]) {
+            cells[8].textContent = flight.plane_az.toFixed(1) + "º";
         }
-        if (flight.plane_az !== null && cells[9]) {
-            cells[9].textContent = flight.plane_az.toFixed(1) + "º";
+        if (flight.alt_diff !== null && cells[9]) {
+            cells[9].textContent = Math.round(flight.alt_diff) + "º";
+            cells[9].style.color = Math.abs(Math.round(flight.alt_diff)) >= 3 ? "#888" : "";
         }
         if (flight.az_diff !== null && cells[10]) {
             cells[10].textContent = Math.round(flight.az_diff) + "º";
+            cells[10].style.color = Math.abs(Math.round(flight.az_diff)) >= 3 ? "#888" : "";
         }
         if (flight.distance_nm !== null && cells[14]) {
             const km = (flight.distance_nm * 1.852).toFixed(1);
             const miles = (flight.distance_nm * 1.15078).toFixed(1);
-            cells[14].textContent = `${km}/${miles}`;
+            const spans = cells[14].querySelectorAll('span');
+            if (spans.length === 2) {
+                spans[0].textContent = km;
+                spans[1].textContent = miles;
+            } else {
+                cells[14].innerHTML = `<span style="display:inline-block;text-align:right;min-width:4ch">${km}</span>/<span style="display:inline-block;text-align:left;min-width:4ch">${miles}</span>`;
+            }
         }
         if (flight.time !== null && cells[16]) {
             cells[16].textContent = flight.time.toFixed(1);
@@ -612,13 +624,11 @@ function updateFlightRow(row, flight) {
         } else if (column === "distance_nm") {
             const km = (value * 1.852).toFixed(1);
             const miles = (value * 1.15078).toFixed(1);
-            cell.textContent = `${km}/${miles}`;
-        } else if (column === "direction") {
-            cell.textContent = Math.round(value) + "°";
+            cell.innerHTML = `<span style="display:inline-block;text-align:right;min-width:4ch">${km}</span>/<span style="display:inline-block;text-align:left;min-width:4ch">${miles}</span>`;
         } else if (column === "alt_diff" || column === "az_diff") {
             const roundedValue = Math.round(value);
             cell.textContent = roundedValue + "º";
-            cell.style.color = Math.abs(roundedValue) > 10 ? "#888" : "";
+            cell.style.color = Math.abs(roundedValue) >= 3 ? "#888" : "";
         } else if (column === "target_alt" || column === "target_az") {
             const numValue = value.toFixed(1);
             cell.textContent = numValue + "º";
@@ -832,10 +842,15 @@ function updateTransitCountdown() {
     const bgColor = isHigh ? '#dc3545' : '#fd7e14';  // red for HIGH, orange for MEDIUM
     const levelText = isHigh ? 'High' : 'Medium';
 
+    const targetName = nextTransit.flight && nextTransit.flight.target
+        ? nextTransit.flight.target.charAt(0).toUpperCase() + nextTransit.flight.target.slice(1)
+        : '';
+    const targetEmoji = nextTransit.flight && nextTransit.flight.target === 'sun' ? '☀️' : '🌙';
+
     countdownDiv.style.backgroundColor = bgColor;
     countdownDiv.style.color = 'white';
     countdownDiv.style.display = 'block';
-    countdownDiv.innerHTML = `${levelText} probability transit in ${timeStr}`;
+    countdownDiv.innerHTML = `${targetEmoji} ${targetName} — ${levelText} probability transit in ${timeStr}`;
 }
 
 function clearPosition() {
@@ -877,10 +892,10 @@ function go() {
 
     // Check if data is fresh (within cache TTL)
     const cacheValidSeconds = 600; // 10 minutes - matches backend cache
-    const secondsSinceUpdate = (Date.now() - lastFlightUpdateTime) / 1000;
+    const secondsSinceUpdate = (Date.now() - window.lastFlightUpdateTime) / 1000;
     
     // Always show warning if we have recent data
-    if (lastFlightUpdateTime > 0 && secondsSinceUpdate < cacheValidSeconds) {
+    if (window.lastFlightUpdateTime > 0 && secondsSinceUpdate < cacheValidSeconds) {
         const minutesRemaining = Math.ceil((cacheValidSeconds - secondsSinceUpdate) / 60);
         const secondsRemaining = Math.floor(cacheValidSeconds - secondsSinceUpdate);
         
@@ -916,7 +931,8 @@ function go() {
         mapContainer.style.display = 'block';
     }
 
-    // Fetch fresh data
+    // Fetch fresh data — mark this as a user-forced refresh so map clears breadcrumbs
+    window._pendingForceRefresh = true;
     fetchFlights();
 }
 
@@ -954,7 +970,22 @@ function refreshTimer() {
     updateLastUpdateDisplay();
 }
 
+var _fetchRequestSeq = 0; // Sequence counter to discard stale concurrent responses
+
+function showErrorBanner(msg) {
+    const banner = document.getElementById("errorBanner");
+    if (!banner) return;
+    banner.textContent = msg;
+    banner.style.display = "block";
+}
+
+function clearErrorBanner() {
+    const banner = document.getElementById("errorBanner");
+    if (banner) banner.style.display = "none";
+}
+
 function fetchFlights() {
+    const thisSeq = ++_fetchRequestSeq;
     let latitude = document.getElementById("latitude").value;
     let longitude = document.getElementById("longitude").value;
     let elevation = document.getElementById("elevation").value;
@@ -965,7 +996,6 @@ function fetchFlights() {
     const bodyTable = document.getElementById('flightData');
     let alertNoResults = document.getElementById("noResults");
     let alertTargetUnderHorizon = document.getElementById("targetUnderHorizon");
-    bodyTable.innerHTML = '';
     alertNoResults.innerHTML = '';
     alertTargetUnderHorizon = '';
 
@@ -1010,14 +1040,23 @@ function fetchFlights() {
         return response.json();
     })
     .then(data => {
-        // Record update time and cache data
-        window.lastFlightUpdateTime = Date.now();
-        lastFlightData = data;
-        updateLastUpdateDisplay();
+        // Discard stale responses from concurrent fetches; leave spinner running
+        // so it stays visible until the winning request finishes rendering.
+        if (thisSeq !== _fetchRequestSeq) {
+            console.log(`[fetchFlights] Discarding stale response (seq ${thisSeq} < ${_fetchRequestSeq})`);
+            return;
+        }
 
-        // Hide loading spinner
-        document.getElementById("loadingSpinner").style.display = "none";
-        document.getElementById("results").style.display = "block";
+        // Clear table here (inside async callback) to prevent duplicate rows from concurrent fetches
+        bodyTable.innerHTML = '';
+
+        // Record update time and cache data
+        clearErrorBanner();
+        window.lastFlightUpdateTime = Date.now();
+        sessionStorage.setItem('lastFlightUpdateTime', String(window.lastFlightUpdateTime));
+        lastFlightData = data;
+        try { sessionStorage.setItem('lastFlightData', JSON.stringify(data)); } catch(e) {}
+        updateLastUpdateDisplay();
 
         if(data.flights.length == 0) {
             alertNoResults.innerHTML = "No flights!"
@@ -1194,11 +1233,15 @@ function fetchFlights() {
         filteredFlights.forEach(item => {
             const row = document.createElement('tr');
 
-            // Store normalized flight ID and possibility level for cross-referencing
+            // Store normalized flight ID, possibility level, and transit time for cross-referencing
             const normalizedId = String(item.id).trim().toUpperCase();
             const possibilityLevel = item.is_possible_transit === 1 ? parseInt(item.possibility_level) : 0;
             row.setAttribute('data-flight-id', normalizedId);
             row.setAttribute('data-possibility', possibilityLevel);
+            // Store transit time for route/track conditional fetching
+            if (item.time !== null && item.time !== undefined) {
+                row.setAttribute('data-transit-time', item.time);
+            }
 
             // Click handler: normal click flashes, Cmd/Ctrl+click toggles tracking
             row.addEventListener('click', function(e) {
@@ -1277,7 +1320,7 @@ function fetchFlights() {
                     // Show distance in km/miles (converted from nautical miles)
                     const km = (value * 1.852).toFixed(1);
                     const miles = (value * 1.15078).toFixed(1);
-                    val.textContent = `${km}/${miles}`;
+                    val.innerHTML = `<span style="display:inline-block;text-align:right;min-width:4ch">${km}</span>/<span style="display:inline-block;text-align:left;min-width:4ch">${miles}</span>`;
                 } else if (column === "direction") {
                     // Convert true heading to magnetic heading
                     const trueHeading = value;
@@ -1287,9 +1330,9 @@ function fetchFlights() {
                 } else if (column === "alt_diff" || column === "az_diff") {
                     const roundedValue = Math.round(value);
                     val.textContent = roundedValue + "º";
-                    // Color code large angle differences
-                    if (Math.abs(roundedValue) > 10) {
-                        val.style.color = "#888"; // Gray for large differences
+                    // Black if within 3°, grey otherwise
+                    if (Math.abs(roundedValue) >= 3) {
+                        val.style.color = "#888";
                     }
                 } else if (column === "target_alt" || column === "target_az") {
                     // Always show target values, color code negative/invalid
@@ -1339,27 +1382,41 @@ function fetchFlights() {
         // renderTargetCoordinates(data.targetCoordinates); // Disabled - now using inline display above
         if (hasVeryPossibleTransits == true) soundAlert(transitDetails);
 
+        // Update cached flights to the filtered+deduped set so soft refresh uses the same list
+        lastFlightData = {...data, flights: filteredFlights};
+
         // Always update map visualization when data is fetched (use filtered flights)
         if(mapVisible) {
             const mapData = {...data, flights: filteredFlights};
-            updateMapVisualization(mapData, parseFloat(latitude), parseFloat(longitude), parseFloat(elevation));
+            const isForceRefresh = !!window._pendingForceRefresh;
+            window._pendingForceRefresh = false;
+            updateMapVisualization(mapData, parseFloat(latitude), parseFloat(longitude), parseFloat(elevation), isForceRefresh);
         }
 
         // Update altitude display - DISABLED: updateAltitudeOverlay in map.js handles this now
         // updateAltitudeDisplay(data.flights);
+
+        // Hide spinner only after all rendering is complete
+        document.getElementById("loadingSpinner").style.display = "none";
+        document.getElementById("results").style.display = "block";
     })
     .catch(error => {
         // Hide loading spinner on error
         document.getElementById("loadingSpinner").style.display = "none";
         document.getElementById("results").style.display = "block";
         
-        let errorMsg = error.message || "Unknown error";
+        const errorMsg = error.message || error.toString() || "Unknown error";
+        const stack = error.stack ? `\n\n${error.stack}` : "";
+        let displayMsg;
         if (errorMsg.includes("AEROAPI") || errorMsg.includes("API key")) {
-            alert("⚠️ FlightAware API key not configured.\n\nPlease set AEROAPI_API_KEY in your .env file.\nSee SETUP.md for instructions.");
+            displayMsg = "⚠️ FlightAware API key not configured.\n\nPlease set AEROAPI_API_KEY in your .env file.\nSee SETUP.md for instructions.";
+        } else if (errorMsg.includes("Failed to fetch") || errorMsg.includes("ERR_EMPTY_RESPONSE") || errorMsg === "") {
+            displayMsg = "⚠️ Server not responding (ERR_EMPTY_RESPONSE)\n\nThe Flask server may have crashed. Check the terminal running app.py for the Python traceback.";
         } else {
-            alert(`Error getting flight data:\n${errorMsg}\n\nCheck console for details.`);
+            displayMsg = `⚠️ Error getting flight data:\n${errorMsg}${stack}`;
         }
-        console.error("Error:", error);
+        showErrorBanner(displayMsg);
+        console.error("Fetch error:", error);
     });
 }
 
@@ -1428,7 +1485,7 @@ function updateAltitudeDisplay(flights) {
         });
 
         // Add click handler to flash aircraft on map
-        const normalizedId = flight.id.replace(/[^a-zA-Z0-9]/g, '_');
+        const normalizedId = String(flight.id).trim().toUpperCase();
         line.addEventListener('click', () => {
             if (typeof flashAircraftMarker === 'function') {
                 flashAircraftMarker(normalizedId);
@@ -1441,15 +1498,7 @@ function updateAltitudeDisplay(flights) {
 }
 
 function toggleTarget() {
-    if(target == "moon") target = "sun";
-    else if(target == "sun") target = "auto";
-    else target = "moon";
-
-    document.getElementById("targetCoordinates").innerHTML = "";
-    document.getElementById("trackingStatus").innerHTML = "";
-    displayTarget();
-
-    resetResultsTable();
+    // Target is always "auto" — no toggle needed
 }
 
 function renderTargetCoordinates(coordinates) {
@@ -1474,8 +1523,7 @@ function renderTargetCoordinates(coordinates) {
 }
 
 function displayTarget() {
-    // Target icon removed from UI - automatic tracking now
-    localStorage.setItem("target", target);
+    localStorage.setItem("target", "auto");
 }
 
 function resetResultsTable() {
@@ -1636,7 +1684,7 @@ function initializeAutoRefresh() {
     
     // Check cache age
     const cacheValidSeconds = 600; // 10 minutes
-    const secondsSinceUpdate = (Date.now() - lastFlightUpdateTime) / 1000;
+    const secondsSinceUpdate = (Date.now() - window.lastFlightUpdateTime) / 1000;
     
     // Start intervals regardless of cache state
     currentCheckInterval = appConfig.autoRefreshIntervalMinutes * 60;
@@ -1655,7 +1703,7 @@ function initializeAutoRefresh() {
     console.log('[Init] Soft refresh started (15s interval)');
     
     // Decide whether to fetch immediately
-    if (lastFlightUpdateTime === 0) {
+    if (window.lastFlightUpdateTime === 0) {
         // No cache - fetch immediately
         console.log('[Init] No cache found - fetching initial data');
         goFetch();
@@ -1670,6 +1718,11 @@ function initializeAutoRefresh() {
         
         // Adjust countdown timer to match cache expiry
         remainingSeconds = remainingCacheTime;
+
+        // Restore table from cached flight data (e.g. after back-navigation from telescope)
+        if (lastFlightData && lastFlightData.flights) {
+            updateFlightTableFull(lastFlightData.flights);
+        }
     }
 }
 
@@ -1768,5 +1821,30 @@ function initPauseWhenHidden() {
 }
 
 // Update telescope status every 2 seconds
-updateTelescopeStatus();
-setInterval(updateTelescopeStatus, 2000);
+var _telescopeStatusInterval = null;
+function startTelescopeStatusPolling() {
+    updateTelescopeStatus();
+    _telescopeStatusInterval = setInterval(updateTelescopeStatus, 2000);
+}
+startTelescopeStatusPolling();
+
+// bfcache support: pause all intervals on pagehide so there are no in-flight
+// requests blocking restoration. Restart on pageshow if restored from cache.
+window.addEventListener('pagehide', () => {
+    clearInterval(autoGoInterval);
+    clearInterval(softRefreshInterval);
+    clearInterval(refreshTimerLabelInterval);
+    clearInterval(_telescopeStatusInterval);
+    _telescopeStatusInterval = null;
+});
+
+window.addEventListener('pageshow', (e) => {
+    if (e.persisted) {
+        // Page was restored from bfcache — restart polling/timers,
+        // but do NOT re-render or re-fetch (data is already in memory).
+        startTelescopeStatusPolling();
+        autoGoInterval = setInterval(goFetch, currentCheckInterval * 1000);
+        softRefreshInterval = setInterval(softRefresh, 15000);
+        refreshTimerLabelInterval = setInterval(refreshTimer, 1000);
+    }
+});

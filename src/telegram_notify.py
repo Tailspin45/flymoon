@@ -32,9 +32,11 @@ async def send_telegram_notification(flight_data: List[dict], target: str) -> bo
             PossibilityLevel.HIGH.value,
         ):
             eta_min = flight.get('time', 0)
-            diff_sum = flight.get("alt_diff", 0) + flight.get("az_diff", 0)
+            diff_sum = (flight.get("alt_diff") or 0) + (flight.get("az_diff") or 0)
+            flight_target = flight.get("target", target or "")
+            emoji = TARGET_TO_EMOJI.get(flight_target, "🌙")
             possible_transits.append(
-                f"• {flight.get('id', 'Unknown')} in {eta_min} min\n"
+                f"• {emoji} {flight_target.capitalize() if flight_target else ''} — {flight.get('id', 'Unknown')} in {eta_min} min\n"
                 f"  {flight.get('origin', '?')}->{flight.get('destination', '?')}\n"
                 f"  ∑△ {diff_sum:.2f}°"
             )
@@ -44,9 +46,8 @@ async def send_telegram_notification(flight_data: List[dict], target: str) -> bo
         return False
 
     # Build message
-    emoji = TARGET_TO_EMOJI.get(target, "")
     transit_txt = "transit" if len(possible_transits) == 1 else "transits"
-    title = f"{emoji} {len(possible_transits)} possible {transit_txt}"
+    title = f"🔭 {len(possible_transits)} possible {transit_txt}"
 
     message = f"<b>{title}</b>\n\n" + "\n\n".join(possible_transits[:5])  # Max 5
 

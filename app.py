@@ -38,7 +38,7 @@ from zoneinfo import ZoneInfo
 
 import requests
 from dotenv import load_dotenv
-from flask import Flask, jsonify, render_template, request
+from flask import Flask, jsonify, redirect, render_template, request
 from tzlocal import get_localzone_name
 
 from src.constants import POSSIBLE_TRANSITS_LOGFILENAME, ASTRO_EPHEMERIS, get_aeroapi_key
@@ -169,16 +169,21 @@ def get_all_flights():
     try:
         start_time = time.time()
 
-        latitude = float(request.args["latitude"])
-        longitude = float(request.args["longitude"])
-        elevation = float(request.args["elevation"])
+        _lat_raw = request.args.get("latitude")
+        _lon_raw = request.args.get("longitude")
+        if _lat_raw is None or _lon_raw is None:
+            logger.warning("[Flights] Missing or invalid coordinates")
+            return jsonify({"error": "Missing required parameter: 'latitude' and 'longitude'"}), 400
+        latitude = float(_lat_raw)
+        longitude = float(_lon_raw)
+        elevation = float(request.args.get("elevation") or 0)
         min_altitude = float(request.args.get("min_altitude", 15))
         alt_threshold = float(request.args.get("alt_threshold", 5.0))
         az_threshold = float(request.args.get("az_threshold", 10.0))
-        
+
         logger.debug(f"Parameter types: min_altitude={type(min_altitude)}, alt_threshold={type(alt_threshold)}, az_threshold={type(az_threshold)}")
         
-        has_send_notification = request.args["send-notification"] == "true"
+        has_send_notification = request.args.get("send-notification") == "true"
 
         # Check for custom bounding box from user
         custom_bbox = None
@@ -276,13 +281,16 @@ def get_all_flights():
             try:
                 # Send Telegram notification for medium/high probability transits
                 # Notification will include which target (sun/moon) each transit is for
-                asyncio.run(send_telegram_notification(data["flights"], "sun/moon"))
+                asyncio.run(send_telegram_notification(data["flights"], None))
             except Exception as e:
                 logger.error(f"Error while trying to send Telegram notification. Details:\n{str(e)}")
 
         # Schedule automatic recordings for high-probability transits
         transit_recorder = get_transit_recorder()
         if transit_recorder:
+            # Cleanup any stale timers from previous cycles
+            transit_recorder.cleanup_stale_timers()
+            
             for flight in data["flights"]:
                 # Only record HIGH probability transits (green rows)
                 if flight.get("possibility_level") == PossibilityLevel.HIGH.value:
@@ -358,9 +366,14 @@ def recalculate_transits_endpoint():
         data = request.get_json()
         
         flights = data.get("flights", [])
-        latitude = float(data["latitude"])
-        longitude = float(data["longitude"])
-        elevation = float(data["elevation"])
+        _lat_raw = data.get("latitude")
+        _lon_raw = data.get("longitude")
+        if _lat_raw is None or _lon_raw is None:
+            logger.warning("[Recalculate] Missing or invalid coordinates")
+            return jsonify({"flights": [], "targetCoordinates": {}}), 200
+        latitude = float(_lat_raw)
+        longitude = float(_lon_raw)
+        elevation = float(data.get("elevation", 0))
         target = data.get("target", "auto")
         min_altitude = float(data.get("min_altitude", 15.0))
         alt_threshold = float(data.get("alt_threshold", 
@@ -470,9 +483,9 @@ def get_flight_track(fa_flight_id):
 
 
 @app.route("/telescope")
-def telescope():
-    """Display the telescope control page."""
-    return render_template("telescope.html")
+def telescope_page():
+    """Redirect legacy telescope URL to the main SPA."""
+    return redirect("/")
 
 
 # Register telescope control routes

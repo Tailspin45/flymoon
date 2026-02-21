@@ -10,8 +10,10 @@
     <link rel="stylesheet" href="{{ url_for('static', filename='main.css') }}?v=1770230886">
     <!-- Leaflet CSS (self-hosted for security) -->
     <link rel="stylesheet" href="{{ url_for('static', filename='leaflet.css') }}" />
+    <link rel="stylesheet" href="{{ url_for('static', filename='telescope.css') }}">
 </head>
 <body>
+<div id="mapView">
     <div class="header-row">
         <img src="{{ url_for('static', filename='images/logo.svg') }}" alt="Flymoon Transit Tracker" class="logo" />
         <div style="flex: 1; text-align: center;">
@@ -20,10 +22,10 @@
             <div id="celestialPositions" style="font-size: 0.85em; color: #ddd; margin-top: 2px;"></div>
         </div>
         <div style="display: flex; gap: 8px;">
-            <a href="/telescope" class="btn-sm" title="Control Telescope" style="position: relative;">
+            <button class="btn-sm" onclick="showPanel('telescope')" title="Control Telescope" style="position: relative;">
                 🔭 Telescope
                 <span id="telescopeStatusLight" style="position: absolute; top: 2px; right: 2px; width: 8px; height: 8px; border-radius: 50%; background-color: #999;" title="Telescope disconnected"></span>
-            </a>
+            </button>
         </div>
         <!-- Quadrant Min Altitude Control -->
         <div class="quadrant-circle">
@@ -37,7 +39,7 @@
             <input type="number" id="minAltE" class="quadrant-input quadrant-input-e" placeholder="30" min="0" max="90" title="East Min Altitude (°)">
             <input type="number" id="minAltS" class="quadrant-input quadrant-input-s" placeholder="30" min="0" max="90" title="South Min Altitude (°)">
             <input type="number" id="minAltW" class="quadrant-input quadrant-input-w" placeholder="30" min="0" max="90" title="West Min Altitude (°)">
-            <div class="quadrant-center" onclick="resetQuadrantValues()" title="Click to reset all to 0">Min Alt (°)</div>
+            <div class="quadrant-center" onclick="resetQuadrantValues()" title="Click to reset all to 0">Min Angle</div>
         </div>
     </div>
 
@@ -129,10 +131,11 @@
             <span style="margin-left: 10px; color: #32CD32;">◆ High (≤1°)</span>
             <span style="margin-left: 10px; color: #FF8C00;">◆ Medium (≤2°)</span>
             <span style="margin-left: 10px; color: #808080;">◆ Low (≤3°)</span>
-            <span style="margin-left: 10px;"><span style="display: inline-block; width: 16px; height: 12px; border: 2px dashed red; vertical-align: middle;"></span> Bounding box</span>
             <span style="margin-left: 10px;"><span style="display: inline-block; width: 20px; height: 4px; background: #FF4500; vertical-align: middle;"></span> Sun azimuth</span>
             <span style="margin-left: 10px;"><span style="display: inline-block; width: 20px; height: 4px; background: #4169E1; vertical-align: middle;"></span> Moon azimuth</span>
-            <span style="margin-left: 10px;"><span style="display: inline-block; width: 20px; height: 3px; background: repeating-linear-gradient(90deg, #000 0, #000 10px, transparent 10px, transparent 15px); vertical-align: middle;"></span> Track</span>
+            <span style="margin-left: 10px;"><span style="display: inline-block; width: 20px; height: 3px; background: repeating-linear-gradient(90deg, #4169E1 0, #4169E1 10px, transparent 10px, transparent 20px); vertical-align: middle;"></span> Planned route</span>
+            <span style="margin-left: 10px;"><span style="display: inline-block; width: 20px; height: 3px; background: repeating-linear-gradient(90deg, #000 0, #000 10px, transparent 10px, transparent 15px); vertical-align: middle;"></span> ADS-B track</span>
+            <span style="margin-left: 10px;"><span style="display: inline-block; width: 6px; height: 6px; background: #888; border-radius: 50%; vertical-align: middle;"></span> Ghost trail</span>
         </div>
     </div>
 
@@ -147,13 +150,13 @@
                     <th style="max-width: 60px; overflow: hidden; text-overflow: ellipsis;">dest</th>
                     <th>target<br>angle</th>
                     <th>plane<br>angle</th>
-                    <th>△angle</th>
                     <th>target<br>az</th>
                     <th>plane<br>az</th>
+                    <th>△angle</th>
                     <th>△az</th>
                     <th>elev</th>
                     <th>GPS alt<br>(ft)</th>
-                    <th>hdg (M)</th>
+                    <th>Hdg (T)</th>
                     <th>dist<br>(km/miles)</th>
                     <th>speed<br>(mph)</th>
                 </tr>
@@ -164,6 +167,7 @@
     </div>
     <h3 class="alert" id="noResults"></h3>
     <h3 class="alert" id="targetUnderHorizon"></h3>
+    <div id="errorBanner" style="display:none; background:#ffebee; border:1px solid #f44336; border-radius:6px; padding:12px 16px; margin:10px 0; color:#b71c1c; font-family:monospace; font-size:13px; white-space:pre-wrap; word-break:break-word;"></div>
 
     <footer class="attribution-footer">
         <p><i>Created with deep appreciation for the idea and initial design by David Betancourt Montellano</i></p>
@@ -172,25 +176,279 @@
 
     <audio id="alertSound" src="{{ url_for('static', filename='sounds/tissman-alert1-maximum-distortion.mp3') }}" preload="auto">
     </audio>
+</div><!-- #mapView -->
+
+<div id="telescopeView" style="display:none">
+    <!-- Eclipse Outlook/Watch/Warning banner -->
+    <div id="eclipseBanner" class="eclipse-banner" style="display:none">
+        <span id="eclipseBannerIcon"></span>
+        <span id="eclipseBannerText"></span>
+        <button class="eclipse-banner-dismiss" onclick="dismissEclipseBanner()" title="Dismiss">✕</button>
+    </div>
+    <!-- Target mismatch warning: scope is on Sun but a lunar transit is coming (or vice versa) -->
+    <div id="mismatchBanner" style="display:none; background:#7a3a00; color:#ffe0a0; padding:8px 14px; align-items:center; gap:10px; font-size:0.92em; border-bottom:1px solid #b85c00;">
+        <span id="mismatchText" style="flex:1"></span>
+        <button id="mismatchSwitchBtn" style="background:#c06000; color:#fff; border:none; border-radius:4px; padding:4px 10px; cursor:pointer; white-space:nowrap;"></button>
+        <button onclick="dismissMismatchBanner()" style="background:none; border:none; color:#ffe0a0; cursor:pointer; font-size:1.1em; padding:0 4px;">✕</button>
+    </div>
+    <div class="header-row">
+        <img src="{{ url_for('static', filename='images/logo.svg') }}" alt="Flymoon Transit Tracker" class="logo" />
+        <div style="flex: 1; text-align: center;">
+            <div style="font-size: 1.2em;">🔭 Seestar Control</div>
+        </div>
+        <button class="btn-sm" onclick="showPanel('map')">← Map</button>
+    </div>
+
+    <div class="telescope-container">
+        <!-- Status Message Area -->
+        <div id="statusMessage" class="status-message"></div>
+
+        <!-- Main Layout: Sidebars + Preview + Filmstrip -->
+        <div class="telescope-layout">
+
+            <!-- Left Sidebar: Transits -->
+            <div class="sidebar sidebar-left">
+                <!-- Transit Auto-Capture Settings -->
+                <div class="sidebar-panel">
+                    <h3>🚨 Transit Auto-Capture</h3>
+                    <div class="setting-item">
+                        <label class="toggle-label">
+                            <input type="checkbox" id="autoCaptureToggle" checked>
+                            <span class="toggle-slider"></span>
+                            <span class="toggle-text">Auto-Record Transits</span>
+                        </label>
+                    </div>
+                    <div class="setting-info">
+                        Automatically stop any recording and capture transits when detected within 15 seconds.
+                    </div>
+                </div>
+
+                <!-- Transit Notifications -->
+                <div class="sidebar-panel" id="transitPanel">
+                    <!-- Eclipse watch/warning/active card — shown when eclipse is imminent/active -->
+                    <div id="eclipseCard" style="display:none"></div>
+                    <h3>✈️ Upcoming Transits</h3>
+                    <div id="transitList" class="transit-list">
+                        <p class="empty-state">No transits detected</p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Center: Live Preview -->
+            <div class="preview-area">
+                <div class="preview-header">
+                    <h2><span id="previewTitleIcon">⚫</span> Live Preview</h2>
+                    <div class="preview-status" id="previewStatus">
+                        <span class="status-dot" id="previewStatusDot"></span>
+                        <span id="previewStatusText">Preview Inactive</span>
+                    </div>
+                </div>
+                <div class="preview-wrapper">
+                    <!-- Zoom Slider -->
+                    <div class="zoom-slider">
+                        <button class="zoom-btn" onclick="zoomIn()" title="Zoom In">+</button>
+                        <input type="range" id="zoomSlider" min="50" max="300" value="100" step="1" orient="vertical" oninput="setZoom(this.value)">
+                        <span id="zoomPercent" class="zoom-percent">100%</span>
+                        <button class="zoom-btn" onclick="zoomOut()" title="Zoom Out">−</button>
+                        <button class="zoom-btn" onclick="zoomFit()" title="Fit to Window">⊡</button>
+                    </div>
+                    <div class="preview-container" id="previewContainer">
+                        <img id="previewImage" src="" alt="Live Preview" style="display: none;">
+                        <div class="preview-placeholder" id="previewPlaceholder">
+                            <div class="placeholder-icon">📹</div>
+                            <div class="placeholder-text">Connect telescope to view live stream</div>
+                        </div>
+                        <!-- Transit Capture Overlay -->
+                        <div id="transitOverlay" class="transit-overlay" style="display: none;">
+                            <div class="transit-overlay-content">
+                                <div class="transit-overlay-icon">🎯</div>
+                                <div class="transit-overlay-text">TRANSIT CAPTURE IN PROGRESS</div>
+                                <div id="transitOverlayInfo" class="transit-overlay-info"></div>
+                            </div>
+                        </div>
+                        <!-- Simulation overlays (hidden until sim active) -->
+                        <div id="simBadge" style="display:none; position:absolute; top:8px; left:8px; background:rgba(255,200,0,0.85); color:#000; font-weight:bold; font-size:0.75em; padding:2px 7px; border-radius:4px; letter-spacing:1px; pointer-events:none; z-index:20;">SIM</div>
+                        <div id="simCountdownOverlay" style="display:none; position:absolute; bottom:12px; left:50%; transform:translateX(-50%); background:rgba(0,0,0,0.65); color:#fff; font-size:1.4em; font-weight:bold; padding:4px 18px; border-radius:8px; pointer-events:none; z-index:20; white-space:nowrap;"></div>
+                        <div id="simRecOverlay" style="display:none; position:absolute; top:8px; right:8px; color:#f00; font-weight:bold; font-size:0.85em; pointer-events:none; z-index:20;">● REC</div>
+                        <div id="simFlash" style="display:none; position:absolute; inset:0; background:#fff; pointer-events:none; z-index:25;"></div>
+                        <div id="simPlane" style="display:none; position:absolute; pointer-events:none; z-index:22; transition:none;">
+                            <img src="/static/images/sim_plane.png" width="95" height="80" alt="">
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Right Sidebar: Controls -->
+            <div class="sidebar sidebar-right">
+
+                <!-- Connection Panel -->
+                <div class="sidebar-panel sidebar-panel-compact">
+                    <h3>🔌 Connection</h3>
+                    <div class="status-indicator">
+                        <span class="status-dot" id="statusDot"></span>
+                        <span id="connectionStatus">Disconnected</span>
+                    </div>
+                    <div class="button-grid-2x2">
+                        <button id="connectBtn" class="btn btn-primary" onclick="connect()">Connect</button>
+                        <button id="disconnectBtn" class="btn btn-secondary" onclick="disconnect()" disabled>Disconnect</button>
+                        <button id="simulateBtn" class="btn btn-info" onclick="toggleSimulation()">Simulate</button>
+                        <button id="simEclipseBtn" class="btn btn-eclipse" onclick="toggleSimEclipse()" title="Simulate a full eclipse alert sequence (Watch → Warning → Active → Cleared)">🌑 Sim Eclipse</button>
+                    </div>
+                    <!-- Eclipse sim controls — shown only while sim eclipse is running -->
+                    <div id="simEclipseControls" style="display:none; margin-top:8px">
+                        <select id="simEclipseType" class="sim-eclipse-select">
+                            <option value="lunar_total">🌙 Total Lunar</option>
+                            <option value="lunar_partial">🌙 Partial Lunar</option>
+                            <option value="solar_partial">☀️ Partial Solar</option>
+                            <option value="solar_total">☀️ Total Solar</option>
+                            <option value="solar_annular">☀️ Annular Solar</option>
+                        </select>
+                        <label class="sim-eclipse-check">
+                            <input type="checkbox" id="simEclipseOutlook" onchange="toggleSimEclipseOutlook(this.checked)">
+                            Show Outlook Banner
+                        </label>
+                        <button id="simFireTransitBtn" class="btn btn-sm btn-transit-fire" onclick="fireSimTransitDuringEclipse()" style="display:none" title="Inject an aircraft transit during the eclipse to demo recording extension + ✈️ marker">✈️ Fire Transit</button>
+                    </div>
+                </div>
+
+                <!-- Target Selection Panel -->
+                <div class="sidebar-panel">
+                    <h3>🎯 Target</h3>
+                    <div class="target-compact target-button" id="sunStatus" onclick="switchToSun()">
+                        <span class="target-icon">☀️</span>
+                        <div class="target-info">
+                            <div class="target-name">Sun</div>
+                            <div class="target-coords" id="sunCoords">--</div>
+                        </div>
+                        <span class="visibility-badge" id="sunBadge">--</span>
+                    </div>
+                    <div class="target-compact target-button" id="moonStatus" onclick="switchToMoon()">
+                        <span class="target-icon">🌙</span>
+                        <div class="target-info">
+                            <div class="target-name">Moon</div>
+                            <div class="target-coords" id="moonCoords">--</div>
+                        </div>
+                        <span class="visibility-badge" id="moonBadge">--</span>
+                    </div>
+                    <div id="targetWarning" class="warning-box" style="display: none;"></div>
+                </div>
+
+                <!-- Capture Controls Panel -->
+                <div class="sidebar-panel">
+                    <h3>📸 Capture</h3>
+
+                    <!-- Photo Capture -->
+                    <div class="capture-compact">
+                        <div class="capture-header-compact">
+                            <span>📷 Photo</span>
+                        </div>
+                        <div class="button-group">
+                            <button id="capturePhotoBtn" class="btn btn-primary btn-compact" onclick="capturePhoto()" disabled>📷 Capture</button>
+                        </div>
+                    </div>
+
+                    <!-- Video Recording -->
+                    <div class="capture-compact">
+                        <div class="capture-header-compact">
+                            <span>📹 Video</span>
+                        </div>
+                        <div class="input-row">
+                            <input type="number" id="videoDuration" value="30" min="1" max="3600" step="1" class="input-compact" placeholder="Duration (s)">
+                            <input type="number" id="frameInterval" value="0" min="0" max="60" step="0.1" class="input-compact" placeholder="Interval" title="0 = normal, >0 = timelapse">
+                        </div>
+                        <div class="recording-status-compact" id="recordingStatus">
+                            <span class="status-dot" id="recordingDot"></span>
+                            <span id="recordingText">Ready</span>
+                            <span id="recordingTimer"></span>
+                        </div>
+                        <div class="button-group">
+                            <button id="startRecordingBtn" class="btn btn-primary btn-compact" onclick="startRecording()" disabled>⏺️ Record</button>
+                            <button id="stopRecordingBtn" class="btn btn-danger btn-compact" onclick="stopRecording()" disabled style="display: none;">⏹️ Stop</button>
+                        </div>
+                    </div>
+                </div>
+
+            </div>
+        </div>
+
+        <!-- Bottom Filmstrip -->
+        <div class="filmstrip">
+            <div class="filmstrip-header">
+                <span class="filmstrip-title">📁 Captured Files (<span id="fileCount">0</span>)</span>
+                <div class="filmstrip-controls">
+                    <button id="refreshFilesBtn" class="btn-icon" onclick="refreshFiles()" disabled title="Refresh">🔄</button>
+                    <button id="expandFilesBtn" class="btn-icon" onclick="toggleFilesModal()" disabled title="Show all files">⛶</button>
+                </div>
+            </div>
+            <div id="filmstripList" class="filmstrip-list">
+                <p class="empty-state">No files captured yet</p>
+            </div>
+        </div>
+
+        <!-- Full Files Modal -->
+        <div id="filesModal" class="modal" style="display: none;">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h2>📁 All Captured Files</h2>
+                    <button class="modal-close" onclick="toggleFilesModal()">✕</button>
+                </div>
+                <div id="filesGrid" class="files-grid-modal">
+                    <p class="empty-state">No files</p>
+                </div>
+            </div>
+        </div>
+
+        <!-- File Viewer Lightbox -->
+        <div id="fileViewer" class="modal" style="display: none;" onclick="closeFileViewer()">
+            <div class="modal-content" style="max-width: 95vw; max-height: 95vh; background: #111; padding: 0; overflow: hidden;" onclick="event.stopPropagation()">
+                <div class="modal-header" style="background: #222; padding: 8px 12px;">
+                    <span id="fileViewerName" style="color: #eee; font-size: 0.9em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;"></span>
+                    <button class="modal-close" onclick="closeFileViewer()">✕</button>
+                </div>
+                <div id="fileViewerBody" style="display: flex; align-items: center; justify-content: center; min-height: 200px;">
+                </div>
+            </div>
+        </div>
+    </div>
+</div><!-- #telescopeView -->
 
     <!-- Leaflet JS and plugins (self-hosted for security) -->
     <script src="{{ url_for('static', filename='leaflet.js') }}"
         crossorigin=""></script>
     <!-- Leaflet Editable plugin for bounding box editing -->
     <script src="{{ url_for('static', filename='leaflet-editable.js') }}"></script>
-    <script src="{{ url_for('static', filename='map.js') }}?v=1770230596" charset="utf-8"></script>
-    <script src="{{ url_for('static', filename='app.js') }}?v=1770237941" charset="utf-8"></script>
+    <script src="{{ url_for('static', filename='telescope.js') }}?v=1771610000" charset="utf-8"></script>
+    <script src="{{ url_for('static', filename='map.js') }}?v=1771600000" charset="utf-8"></script>
+    <script src="{{ url_for('static', filename='app.js') }}?v=1771610000" charset="utf-8"></script>
 
     <script>
+        function showPanel(name) {
+            document.getElementById('mapView').style.display        = (name === 'map')       ? '' : 'none';
+            document.getElementById('telescopeView').style.display  = (name === 'telescope') ? '' : 'none';
+            if (name === 'telescope' && typeof initTelescope    === 'function') initTelescope();
+            if (name === 'map'       && typeof destroyTelescope === 'function') destroyTelescope();
+        }
+
         loadPosition();
 
         // Auto-show results and map if position is saved
         window.addEventListener('DOMContentLoaded', function() {
             const savedLat = localStorage.getItem("latitude");
+            const savedLon = localStorage.getItem("longitude");
             if (savedLat && savedLat !== "" && savedLat !== "null") {
-                // Position is saved, auto-fetch and show results
+                // Show map immediately so it loads tiles while waiting for flight data
+                const mapContainer = document.getElementById("mapContainer");
+                if (mapContainer) mapContainer.style.display = 'block';
+                mapVisible = true;
+                const lat = parseFloat(savedLat);
+                const lon = parseFloat(savedLon || "0");
+                if (!isNaN(lat) && !isNaN(lon) && typeof initializeMap === 'function') {
+                    initializeMap(lat, lon);
+                }
+
+                // Fetch flight data shortly after
                 setTimeout(() => {
-                    go();  // This will toggle results on and fetch data
+                    go();
                 }, 100);
             }
         });

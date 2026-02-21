@@ -75,10 +75,18 @@ class SeestarClient:
         method: str,
         params: Any = None,
         expect_response: bool = True,
-        timeout_override: Optional[int] = None
+        timeout_override: Optional[int] = None,
+        quiet: bool = False,
     ) -> Optional[Dict[str, Any]]:
         """
         Send JSON-RPC command to Seestar.
+
+        Parameters
+        ----------
+        quiet : bool
+            If True, demote timeout/socket errors to DEBUG level instead of
+            WARNING/ERROR.  Used by the heartbeat loop to avoid log spam when
+            the telescope is unreachable.
 
         Parameters
         ----------
@@ -174,28 +182,79 @@ class SeestarClient:
 
             except socket.timeout:
                 # Socket timeout - command took too long, but connection may still be alive
-                logger.warning(f"Command timeout: {method}")
+                if quiet:
+                    logger.debug(f"Command timeout: {method}")
+                else:
+                    logger.warning(f"Command timeout: {method}")
                 raise RuntimeError("timed out")
 
             except socket.error as e:
                 # Actual socket error - connection is broken
-                logger.error(f"Socket error: {e}")
+                if quiet:
+                    logger.debug(f"Socket error: {e}")
+                else:
+                    logger.error(f"Socket error: {e}")
                 self._connected = False
                 raise RuntimeError(f"Communication failed: {e}")
 
+    def _reconnect(self) -> bool:
+        """Attempt to re-establish the TCP connection without starting a new heartbeat thread.
+        Called from within the heartbeat thread after a drop is detected."""
+        try:
+            if self.socket:
+                try:
+                    self.socket.close()
+                except Exception:
+                    pass
+                self.socket = None
+            self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            self.socket.settimeout(self.timeout)
+            self.socket.connect((self.host, self.port))
+            self._connected = True
+            logger.info("Reconnected to Seestar")
+            return True
+        except socket.error as e:
+            logger.debug(f"Reconnect attempt failed: {e}")
+            if self.socket:
+                try:
+                    self.socket.close()
+                except Exception:
+                    pass
+                self.socket = None
+            return False
+
     def _heartbeat_loop(self):
-        """Background thread that sends periodic heartbeat messages."""
+        """Background thread: sends periodic keepalive pings and auto-reconnects on drop."""
+        RECONNECT_INTERVAL = 10  # seconds between reconnect attempts
+        reconnect_wait = 0
+
         while self._heartbeat_running:
+            # Auto-reconnect when connection has dropped
+            if not self._connected:
+                reconnect_wait += 1
+                if reconnect_wait >= RECONNECT_INTERVAL:
+                    reconnect_wait = 0
+                    logger.info("Heartbeat: connection lost — attempting reconnect...")
+                    self._reconnect()  # sets _connected = True on success
+                time.sleep(1)
+                continue
+
+            reconnect_wait = 0  # reset backoff once connected
+
             try:
-                # Send heartbeat command and read response to prevent buffer buildup
-                # Use scope_get_equ_coord as a simple status check
-                self._send_command("scope_get_equ_coord", expect_response=True)
+                # Use scope_get_equ_coord as a lightweight keepalive ping.
+                # quiet=True suppresses WARNING/ERROR log spam.
+                self._send_command("scope_get_equ_coord", expect_response=True, quiet=True)
             except Exception as e:
-                # Use debug level to avoid spamming logs when telescope is disconnected
-                logger.debug(f"Heartbeat failed: {e}")
-                # If heartbeat fails, mark as disconnected
-                if "broken pipe" in str(e).lower() or "connection" in str(e).lower():
+                err = str(e).lower()
+                # Only mark disconnected on real socket errors, not command timeouts.
+                # A timeout means the telescope is busy, not that the TCP link is broken.
+                if any(kw in err for kw in ("broken pipe", "connection reset", "connection refused",
+                                             "communication failed")):
+                    logger.debug(f"Heartbeat: socket error, marking disconnected: {e}")
                     self._connected = False
+                else:
+                    logger.debug(f"Heartbeat ping timed out (telescope busy): {e}")
 
             # Sleep in small intervals to allow quick shutdown
             for _ in range(self.heartbeat_interval):
@@ -702,14 +761,21 @@ class TransitRecorder:
         -----
         Aircraft transits are typically 0.5-2 seconds long. The total recording
         duration will be: pre_buffer + transit_duration + post_buffer
+        
+        Duplicate detection: if a recording for the same flight_id is already
+        scheduled, this call is ignored to prevent timer accumulation.
         """
         try:
-            # Cancel existing timer for this flight if any (prevents memory leak)
+            # Duplicate detection: skip if already scheduled for this flight
             if flight_id in self._scheduled_recordings:
-                old_timer = self._scheduled_recordings[flight_id]
-                old_timer.cancel()
-                logger.debug(f"Cancelled previous timer for {flight_id}")
-
+                existing_timer = self._scheduled_recordings[flight_id]
+                if existing_timer.is_alive():
+                    logger.debug(f"Recording already scheduled for {flight_id}, skipping duplicate")
+                    return True  # Already scheduled, return success
+                else:
+                    # Timer finished or cancelled, remove stale entry
+                    del self._scheduled_recordings[flight_id]
+            
             # Calculate timing
             start_delay = max(0, eta_seconds - self.pre_buffer)
             total_duration = self.pre_buffer + transit_duration_estimate + self.post_buffer
@@ -730,10 +796,24 @@ class TransitRecorder:
         except Exception as e:
             logger.error(f"Failed to schedule transit recording: {e}")
             return False
+    
+    def cleanup_stale_timers(self):
+        """Remove completed or cancelled timers from the scheduled recordings dict."""
+        stale_keys = [
+            fid for fid, timer in self._scheduled_recordings.items()
+            if not timer.is_alive()
+        ]
+        for fid in stale_keys:
+            del self._scheduled_recordings[fid]
+        if stale_keys:
+            logger.debug(f"Cleaned up {len(stale_keys)} stale timer(s)")
 
     def _start_recording(self, flight_id: str, duration: float):
         """Internal method to start recording and schedule stop."""
         try:
+            # OpenSky last-mile refinement: get fresh position right before recording
+            self._opensky_refine(flight_id)
+            
             logger.info(f"Starting recording for transit {flight_id}")
             self.client.start_recording()
 
@@ -744,6 +824,29 @@ class TransitRecorder:
 
         except Exception as e:
             logger.error(f"Failed to start recording for {flight_id}: {e}")
+    
+    def _opensky_refine(self, flight_id: str):
+        """Query OpenSky for latest position before recording (last-mile refinement)."""
+        try:
+            from src.opensky_client import get_opensky_client
+            
+            client = get_opensky_client()
+            # Try to get position by callsign (flight_id is typically the callsign)
+            position = client.get_aircraft_position(flight_id)
+            
+            if position:
+                lat, lon, alt_m, heading, speed_ms = position
+                alt_ft = alt_m * 3.28084 if alt_m else 0
+                speed_kts = speed_ms * 1.94384 if speed_ms else 0
+                logger.info(
+                    f"[OpenSky Refinement] {flight_id}: "
+                    f"({lat:.4f}, {lon:.4f}) alt={alt_ft:.0f}ft hdg={heading:.0f}° spd={speed_kts:.0f}kts"
+                )
+            else:
+                logger.debug(f"[OpenSky Refinement] {flight_id}: not found in OpenSky data")
+        except Exception as e:
+            # OpenSky refinement is best-effort, don't fail recording if it errors
+            logger.debug(f"[OpenSky Refinement] Error for {flight_id}: {e}")
 
     def _stop_recording(self, flight_id: str):
         """Internal method to stop recording."""

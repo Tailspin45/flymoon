@@ -6,7 +6,7 @@ This prevents redundant API calls when users refresh multiple times in quick suc
 """
 
 import time
-from typing import Optional, Dict, List
+from typing import Any, Dict, List, Optional
 from src import logger
 
 
@@ -29,15 +29,11 @@ class FlightDataCache:
         self._cache: Dict[str, dict] = {}
         self._stats = {"hits": 0, "misses": 0, "evictions": 0}
 
-    def _make_key(self, bbox: tuple, target: Optional[str] = None) -> str:
-        """Generate cache key from bounding box and optional target."""
-        key = f"{bbox[0]:.4f},{bbox[1]:.4f},{bbox[2]:.4f},{bbox[3]:.4f}"
-        if target:
-            key += f":{target}"
-        return key
+    def _make_key(self, bbox: tuple) -> str:
+        """Generate cache key from bounding box."""
+        return f"{bbox[0]:.4f},{bbox[1]:.4f},{bbox[2]:.4f},{bbox[3]:.4f}"
 
-    def get(self, lat_ll: float, lon_ll: float, lat_ur: float, lon_ur: float, 
-            target: Optional[str] = None) -> Optional[List[dict]]:
+    def get(self, lat_ll: float, lon_ll: float, lat_ur: float, lon_ur: float) -> Optional[Any]:
         """
         Retrieve cached flight data if still valid.
 
@@ -47,15 +43,13 @@ class FlightDataCache:
             Lower-left corner of bounding box
         lat_ur, lon_ur : float
             Upper-right corner of bounding box
-        target : str, optional
-            Target celestial object (sun/moon)
 
         Returns
         -------
-        List[dict] or None
-            Cached flight data if valid, None if cache miss
+        dict or None
+            Cached raw FlightAware API response if valid, None if cache miss
         """
-        key = self._make_key((lat_ll, lon_ll, lat_ur, lon_ur), target)
+        key = self._make_key((lat_ll, lon_ll, lat_ur, lon_ur))
         
         if key not in self._cache:
             self._stats["misses"] += 1
@@ -90,7 +84,7 @@ class FlightDataCache:
             logger.debug(f"Cleaned up {len(expired_keys)} expired cache entries")
 
     def set(self, lat_ll: float, lon_ll: float, lat_ur: float, lon_ur: float,
-            data: List[dict], target: Optional[str] = None) -> None:
+            data: Any) -> None:
         """
         Store flight data in cache.
 
@@ -100,16 +94,14 @@ class FlightDataCache:
             Lower-left corner of bounding box
         lat_ur, lon_ur : float
             Upper-right corner of bounding box
-        data : List[dict]
-            Flight data to cache
-        target : str, optional
-            Target celestial object (sun/moon)
+        data : Any
+            Raw FlightAware API response to cache
         """
         # Cleanup expired entries periodically to prevent memory leak
         if len(self._cache) >= self.MAX_CACHE_SIZE:
             self._cleanup_expired()
 
-        key = self._make_key((lat_ll, lon_ll, lat_ur, lon_ur), target)
+        key = self._make_key((lat_ll, lon_ll, lat_ur, lon_ur))
         self._cache[key] = {
             "data": data,
             "timestamp": time.time()

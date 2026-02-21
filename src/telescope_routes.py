@@ -112,19 +112,6 @@ class MockSeestarClient:
         """Check if recording."""
         return self._recording
 
-    def start_solar_mode(self) -> bool:
-        """Simulate starting solar viewing mode."""
-        if not self._connected:
-            raise RuntimeError("Cannot start solar mode: not connected")
-        logger.info("[Mock] Started solar viewing mode")
-        return True
-
-    def start_lunar_mode(self) -> bool:
-        """Simulate starting lunar viewing mode."""
-        if not self._connected:
-            raise RuntimeError("Cannot start lunar mode: not connected")
-        logger.info("[Mock] Started lunar viewing mode")
-        return True
 
     def capture_photo(self, exposure_time: float = 1.0) -> dict:
         """Simulate photo capture."""
@@ -339,6 +326,18 @@ def get_telescope_status():
     """GET /telescope/status - Get current telescope status."""
     logger.debug("[Telescope] GET /telescope/status")
 
+    def _get_eclipse_data():
+        """Return upcoming eclipse dict or None (never raises)."""
+        try:
+            from src.eclipse_monitor import get_eclipse_monitor
+            lat  = float(os.getenv("OBSERVER_LATITUDE",  "0"))
+            lon  = float(os.getenv("OBSERVER_LONGITUDE", "0"))
+            elev = float(os.getenv("OBSERVER_ELEVATION", "0"))
+            return get_eclipse_monitor().get_upcoming_eclipse(lat, lon, elev)
+        except Exception as ex:
+            logger.warning(f"[Telescope] Eclipse check failed: {ex}")
+            return None
+
     try:
         client = get_telescope_client()
 
@@ -349,12 +348,14 @@ def get_telescope_status():
                 "enabled": is_enabled(),
                 "mock_mode": is_mock_mode(),
                 "host": os.getenv("SEESTAR_HOST") if not is_mock_mode() else "mock.telescope",
-                "port": int(os.getenv("SEESTAR_PORT", "4700"))
+                "port": int(os.getenv("SEESTAR_PORT", "4700")),
+                "eclipse": _get_eclipse_data(),
             }), 200
 
         status = client.get_status()
         status["enabled"] = is_enabled()
         status["mock_mode"] = is_mock_mode()
+        status["eclipse"] = _get_eclipse_data()
 
         # Add recording duration if recording
         if _recording_state["active"] and _recording_state["start_time"]:
@@ -371,7 +372,8 @@ def get_telescope_status():
             "connected": False,
             "recording": False,
             "enabled": is_enabled(),
-            "error": str(e)
+            "error": str(e),
+            "eclipse": None,
         }), 200
 
 

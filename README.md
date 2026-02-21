@@ -221,10 +221,16 @@ The algorithm assumes a 1° target size (0.5° for Sun/Moon diameter + 0.5° mar
 - Actual transit duration is typically 0.5-2 seconds
 
 ### Data Sources
-- **Flight Data**: FlightAware AeroAPI
+- **Flight Data**: FlightAware AeroAPI (primary), OpenSky Network (last-mile refinement)
 - **Celestial Calculations**: Skyfield with JPL ephemeris (de421.bsp)
 - **Map Tiles**: OpenStreetMap
 - **Map Library**: Leaflet 1.9.4 (self-hosted for security)
+
+### V3 Architecture Highlights
+- **Single-fetch-per-cycle**: Sun and Moon evaluations share the same cached flight data, reducing API calls by 50%
+- **OpenSky last-mile**: When a transit candidate is <60s from predicted transit, OpenSky provides fresh position data without consuming FlightAware credits
+- **Duplicate-schedule guards**: Prevents timer accumulation when the same flight is detected across multiple polling cycles
+- **Unified timestamp handling**: Consistent `time` format (minutes) across backend, monitor, and frontend
 
 ## 📊 Requirements
 

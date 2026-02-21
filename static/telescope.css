@@ -280,39 +280,40 @@
 /* Transit Overlay */
 .transit-overlay {
     position: absolute;
-    top: 0;
+    bottom: 0;
     left: 0;
     right: 0;
-    bottom: 0;
-    background: rgba(0, 0, 0, 0.85);
+    background: rgba(180, 0, 0, 0.82);
     display: flex;
     align-items: center;
     justify-content: center;
+    gap: 10px;
+    padding: 6px 12px;
     z-index: 1000;
-    backdrop-filter: blur(10px);
 }
 
 .transit-overlay-content {
-    text-align: center;
-    animation: pulse-glow 2s infinite;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    animation: pulse-glow 1.5s infinite;
 }
 
 .transit-overlay-icon {
-    font-size: 5em;
-    margin-bottom: 16px;
+    font-size: 1.2em;
 }
 
 .transit-overlay-text {
-    font-size: 1.8em;
+    font-size: 0.9em;
     font-weight: 700;
-    color: #ff4444;
-    letter-spacing: 2px;
-    margin-bottom: 12px;
+    color: #fff;
+    letter-spacing: 1px;
 }
 
 .transit-overlay-info {
-    font-size: 1.2em;
-    color: #039c9c;
+    font-size: 0.85em;
+    color: #ffd;
+    opacity: 0.9;
 }
 
 @keyframes pulse-glow {
@@ -387,86 +388,55 @@
     gap: 8px;
 }
 
-.transit-item {
-    background: rgba(255, 100, 100, 0.1);
-    border: 1px solid rgba(255, 100, 100, 0.3);
-    border-radius: 6px;
-    padding: 12px;
-    animation: transit-pulse 3s infinite;
+/* Transit alert card */
+.transit-alert {
+    border-radius: 8px;
+    padding: 12px 14px;
+    border-left: 4px solid #888;
+    background: rgba(255,255,255,0.05);
 }
+.transit-alert.high   { border-left-color: #ff4444; background: rgba(255,50,50,0.1); }
+.transit-alert.medium { border-left-color: #ff8c00; background: rgba(255,140,0,0.08); }
+.transit-alert.low    { border-left-color: #888;    background: rgba(150,150,150,0.06); }
 
-.transit-item.high {
-    background: rgba(255, 50, 50, 0.15);
-    border-color: rgba(255, 50, 50, 0.5);
-}
-
-.transit-item.medium {
-    background: rgba(255, 140, 0, 0.1);
-    border-color: rgba(255, 140, 0, 0.3);
+.transit-alert.state-recording,
+.transit-alert.state-transit {
+    animation: transit-pulse 1s infinite;
 }
 
 @keyframes transit-pulse {
     0%, 100% { opacity: 1; }
-    50% { opacity: 0.8; }
+    50% { opacity: 0.7; }
 }
 
-.transit-header {
+.ta-header {
     display: flex;
-    align-items: center;
     justify-content: space-between;
-    margin-bottom: 8px;
+    align-items: center;
+    margin-bottom: 2px;
 }
+.ta-flight { font-weight: 700; color: #fff; font-size: 0.95em; }
+.ta-prob   { font-size: 0.78em; color: #aaa; text-transform: uppercase; letter-spacing: 0.5px; }
+.ta-target { font-size: 0.8em; color: #999; margin-bottom: 8px; }
 
-.transit-flight {
-    font-weight: 600;
-    color: #fff;
-    font-size: 0.95em;
+/* Big countdown number */
+.tc-big {
+    font-size: 2.2em;
+    font-weight: 800;
+    color: #ffcc00;
+    text-align: center;
+    line-height: 1;
+    margin: 6px 0 4px;
+    letter-spacing: -1px;
 }
+.tc-big.tc-red { color: #ff4444; }
+.tc-big.tc-dim { color: #888; }
 
-.transit-countdown {
-    font-size: 1.1em;
-    font-weight: 700;
-    color: #ff4444;
-}
-
-.transit-info {
-    font-size: 0.85em;
-    color: #aaa;
-    margin-bottom: 8px;
-}
-
-.transit-actions {
-    display: flex;
-    gap: 6px;
-}
-
-.btn-transit {
-    flex: 1;
-    padding: 6px 10px;
-    font-size: 0.85em;
-    border: none;
-    border-radius: 4px;
-    cursor: pointer;
-    font-weight: 600;
-    transition: all 0.2s;
-}
-
-.btn-transit.primary {
-    background: #039c9c;
-    color: white;
-}
-
-.btn-transit.primary:hover {
-    background: #027a7a;
-}
-
-.btn-transit.dismiss {
-    background: rgba(255, 255, 255, 0.1);
-    color: #888;
-}
-
-.btn-transit.dismiss:hover {
-    background: rgba(255, 255, 255, 0.15);
+.ta-state {
+    font-size: 0.82em;
+    text-align: center;
+    color: #bbb;
+    margin-top: 2px;
 }
 
 /* Compact Controls */
@@ -510,6 +480,13 @@
 
 .button-group {
     display: flex;
+    gap: 6px;
+}
+
+/* 2×2 connection button grid */
+.button-grid-2x2 {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
     gap: 6px;
 }
 
@@ -1053,3 +1030,184 @@
         flex-wrap: wrap;
     }
 }
+
+/* ═══════════════════════════════════════════════════════════════
+   ECLIPSE ALERT SYSTEM
+   Levels: outlook (yellow) → watch (amber) → warning (red pulse)
+           → active (red solid) → cleared (green fade)
+   Solar:  ☀️  orange/gold theme modifier (.eclipse-solar)
+   Lunar:  🌙  blue/silver theme modifier (.eclipse-lunar)
+   ═══════════════════════════════════════════════════════════════ */
+
+/* ── Outlook banner (full-width, top of page) ─────────────────── */
+.eclipse-banner {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 8px 16px;
+    font-size: 0.9em;
+    font-weight: 600;
+    letter-spacing: 0.02em;
+    position: relative;
+    z-index: 200;
+}
+.eclipse-banner.eclipse-solar  { background: #7a4500; color: #ffd580; border-bottom: 2px solid #f90; }
+.eclipse-banner.eclipse-lunar  { background: #0d2545; color: #a8caff; border-bottom: 2px solid #4a90e2; }
+.eclipse-banner-dismiss {
+    margin-left: auto;
+    background: transparent;
+    border: none;
+    color: inherit;
+    opacity: 0.6;
+    cursor: pointer;
+    font-size: 1.1em;
+    line-height: 1;
+    padding: 2px 6px;
+    border-radius: 4px;
+    transition: opacity 0.2s;
+}
+.eclipse-banner-dismiss:hover { opacity: 1; background: rgba(255,255,255,0.15); }
+
+/* ── Eclipse card (inside transit sidebar panel) ──────────────── */
+.eclipse-card {
+    border-radius: 8px;
+    padding: 12px 14px;
+    margin-bottom: 12px;
+    border: 2px solid transparent;
+    transition: background 0.4s, border-color 0.4s;
+}
+
+/* Outlook: shown in banner only, not as card */
+
+/* Watch */
+.eclipse-card.watch {
+    background: rgba(180, 100, 0, 0.18);
+    border-color: #b46400;
+}
+.eclipse-card.watch .ec-label { color: #f5a623; }
+
+/* Warning */
+.eclipse-card.warning {
+    background: rgba(200, 30, 30, 0.2);
+    border-color: #c81e1e;
+    animation: eclipseWarnPulse 1.2s ease-in-out infinite;
+}
+@keyframes eclipseWarnPulse {
+    0%, 100% { box-shadow: 0 0 0 0 rgba(200, 30, 30, 0.0); }
+    50%       { box-shadow: 0 0 0 6px rgba(200, 30, 30, 0.35); }
+}
+.eclipse-card.warning .ec-label { color: #ff6060; }
+
+/* Active */
+.eclipse-card.active {
+    background: rgba(180, 20, 20, 0.25);
+    border-color: #e02020;
+}
+.eclipse-card.active .ec-label { color: #ff8080; }
+
+/* Cleared */
+.eclipse-card.cleared {
+    background: rgba(0, 140, 60, 0.18);
+    border-color: #00a040;
+    animation: eclipseClearedFade 30s forwards;
+}
+@keyframes eclipseClearedFade { 0% { opacity: 1; } 80% { opacity: 1; } 100% { opacity: 0; } }
+.eclipse-card.cleared .ec-label { color: #40d080; }
+
+/* Solar vs Lunar tint modifiers on the card */
+.eclipse-card.eclipse-solar { border-left: 4px solid #f90; }
+.eclipse-card.eclipse-lunar { border-left: 4px solid #4a90e2; }
+
+/* Card internals */
+.ec-header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 6px;
+}
+.ec-icon  { font-size: 1.4em; }
+.ec-label {
+    font-size: 0.75em;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+}
+.ec-type {
+    font-size: 0.95em;
+    font-weight: 600;
+    color: #ddd;
+    margin-bottom: 4px;
+}
+.ec-countdown {
+    font-size: 2em;
+    font-weight: 800;
+    font-variant-numeric: tabular-nums;
+    line-height: 1.1;
+    color: #fff;
+    margin: 4px 0;
+}
+.ec-phase {
+    font-size: 0.8em;
+    font-style: italic;
+    color: #aaa;
+    margin-top: 2px;
+}
+.ec-contacts {
+    font-size: 0.75em;
+    color: #888;
+    margin-top: 6px;
+    line-height: 1.6;
+}
+.ec-contacts span { color: #bbb; }
+
+/* ── Eclipse simulator controls ──────────────────────────────────── */
+.btn-eclipse {
+    background: linear-gradient(135deg, #1a1a4e 0%, #2d1b6e 100%);
+    color: #c8a8ff;
+    border: 1px solid #5a3a9e;
+}
+.btn-eclipse:hover { background: linear-gradient(135deg, #2a2a6e 0%, #3d2b8e 100%); }
+.btn-eclipse.active {
+    background: linear-gradient(135deg, #4a2a8e 0%, #7a3a9e 100%);
+    color: #fff;
+    border-color: #9a6aee;
+    animation: eclipseBtnPulse 2s ease-in-out infinite;
+}
+@keyframes eclipseBtnPulse {
+    0%,100% { box-shadow: 0 0 0 0 rgba(154,106,238,0); }
+    50%      { box-shadow: 0 0 0 5px rgba(154,106,238,0.4); }
+}
+
+#simEclipseControls {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+    padding: 6px 0 2px;
+}
+.sim-eclipse-select {
+    background: #1e1e2e;
+    color: #c8a8ff;
+    border: 1px solid #5a3a9e;
+    border-radius: 5px;
+    padding: 4px 8px;
+    font-size: 0.82em;
+    cursor: pointer;
+}
+.sim-eclipse-check {
+    font-size: 0.82em;
+    color: #aaa;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    white-space: nowrap;
+}
+.btn-transit-fire {
+    background: #2a3a1a;
+    color: #8edd6a;
+    border: 1px solid #4a7a2a;
+    font-size: 0.78em;
+    padding: 3px 8px;
+}
+.btn-transit-fire:hover { background: #3a5a2a; }

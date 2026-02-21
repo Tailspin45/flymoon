@@ -1,6 +1,6 @@
 import os
 from datetime import datetime, timedelta
-from typing import List, Tuple
+from typing import Any, Dict, List, Tuple
 from zoneinfo import ZoneInfo
 
 import numpy as np
@@ -58,7 +58,7 @@ def get_thresholds(altitude: float) -> Tuple[float, float]:
 
 
 def get_possibility_level(
-    altitude: float, alt_diff: float, az_diff: float, eta: float = None
+    altitude: float, alt_diff: float, az_diff: float
 ) -> str:
     """
     Determine transit possibility level based on angular separation.
@@ -130,6 +130,8 @@ def check_transit(
     closest_approach = None  # Track closest approach even if threshold not met
     no_decreasing_count = 0
     update_response = False
+    _pts_per_min = NUM_SECONDS_PER_MIN // INTERVAL_IN_SECS
+    _no_decrease_limit = 3 * _pts_per_min  # bail after 3 min of increasing diff
 
     for idx, minute in enumerate(window_time):
         # Get future position of plane
@@ -144,17 +146,19 @@ def check_transit(
         future_time = ref_datetime + timedelta(minutes=int(minute))
 
         # Convert future position of plane to alt-azimuthal coordinates
+        # Support both 'elevation' (internal) and 'aircraft_elevation' (API response) field names
+        flight_elevation = flight.get("elevation") or flight.get("aircraft_elevation", 0)
         future_alt, future_az = geographic_to_altaz(
             future_lat,
             future_lon,
-            flight["elevation"],
+            flight_elevation,
             earth_ref,
             my_position,
             future_time,
         )
 
-        if idx > 0 and idx % 60 == 0:
-            # Update target position every 60 data points (1 min)
+        if idx > 0 and idx % _pts_per_min == 0:
+            # Update target position every 1 minute of data points
             target.update_position(future_time)
 
         alt_diff = abs(future_alt - target.altitude.degrees)
@@ -173,7 +177,8 @@ def check_transit(
                 "plane_az": round(float(future_az), 2),
             }
 
-        if no_decreasing_count >= 180:
+        # Early exit: if diff has been consistently increasing for ~3 min, skip rest
+        if no_decreasing_count >= _no_decrease_limit:
             logger.info(f"diff is increasing, stop checking, min={round(minute, 2)}")
             break
 
@@ -199,15 +204,15 @@ def check_transit(
 
             if update_response:
                 response = {
-                    "id": flight["name"],
+                    "id": flight.get("name") or flight.get("id", ""),
                     "fa_flight_id": flight.get("fa_flight_id", ""),
-                    "origin": flight["origin"],
-                    "destination": flight["destination"],
+                    "origin": flight.get("origin", ""),
+                    "destination": flight.get("destination", ""),
                     "latitude": flight["latitude"],
                     "longitude": flight["longitude"],
-                    "aircraft_elevation": flight["elevation"],
+                    "aircraft_elevation": flight.get("elevation") or flight.get("aircraft_elevation", 0),
                     "aircraft_type": flight.get("aircraft_type", "N/A"),
-                    "speed": flight["speed"],
+                    "speed": flight.get("speed", 0),
                     "alt_diff": round(float(alt_diff), 3),
                     "az_diff": round(float(az_diff), 3),
                     "time": round(float(minute), 3),
@@ -217,12 +222,13 @@ def check_transit(
                     "plane_az": round(float(future_az), 2),
                     "is_possible_transit": 1,
                     "possibility_level": get_possibility_level(
-                        target.altitude.degrees, alt_diff, az_diff, minute
+                        target.altitude.degrees, alt_diff, az_diff
                     ),
                     "elevation_change": CHANGE_ELEVATION.get(
-                        flight["elevation_change"], None
+                        flight.get("elevation_change"), None
                     ),
-                    "direction": flight["direction"],
+                    "direction": flight.get("direction", 0),
+                    "waypoints": flight.get("waypoints", []),
                 }
         update_response = False
 
@@ -231,19 +237,20 @@ def check_transit(
 
     # Return closest approach data even if threshold not met
     result = {
-        "id": flight["name"],
+        "id": flight.get("name") or flight.get("id", ""),
         "fa_flight_id": flight.get("fa_flight_id", ""),
-        "origin": flight["origin"],
-        "destination": flight["destination"],
+        "origin": flight.get("origin", ""),
+        "destination": flight.get("destination", ""),
         "latitude": flight["latitude"],
         "longitude": flight["longitude"],
-        "aircraft_elevation": flight["elevation"],
+        "aircraft_elevation": flight.get("elevation") or flight.get("aircraft_elevation", 0),
         "aircraft_type": flight.get("aircraft_type", "N/A"),
-        "speed": flight["speed"],
+        "speed": flight.get("speed", 0),
         "is_possible_transit": 0,
         "possibility_level": PossibilityLevel.UNLIKELY.value,
-        "elevation_change": CHANGE_ELEVATION.get(flight["elevation_change"], None),
-        "direction": flight["direction"],
+        "elevation_change": CHANGE_ELEVATION.get(flight.get("elevation_change"), None),
+        "direction": flight.get("direction", 0),
+        "waypoints": flight.get("waypoints", []),
     }
     
     # Include closest approach data if we found any
@@ -272,9 +279,9 @@ def get_transits(
     alt_threshold: float = 5.0,
     az_threshold: float = 10.0,
     custom_bbox: dict = None,
-) -> List[dict]:
+) -> Dict[str, Any]:
     API_KEY = get_aeroapi_key()
-    
+
     # Ensure thresholds are floats (in case they're passed as strings from Flask)
     alt_threshold = float(alt_threshold)
     az_threshold = float(az_threshold)
@@ -322,14 +329,14 @@ def get_transits(
             raw_flight_data = load_existing_flight_data(TEST_DATA_PATH)
             logger.info("Loading existing flight data since is using TEST mode")
         else:
-            # Check cache first
+            # Check cache first - use bbox-only key so sun/moon share the same cached flight data
             cache = get_cache()
             cached_data = cache.get(
                 bbox.lat_lower_left,
                 bbox.long_lower_left,
                 bbox.lat_upper_right,
-                bbox.long_upper_right,
-                target_name
+                bbox.long_upper_right
+                # Note: no target_name - single fetch serves both sun and moon
             )
             
             if cached_data is not None:
@@ -337,14 +344,14 @@ def get_transits(
                 logger.info(f"Using cached flight data ({cache.get_stats()['hit_rate_percent']}% hit rate)")
             else:
                 raw_flight_data = get_flight_data(bbox, API_URL, API_KEY)
-                # Cache the raw response
+                # Cache the raw response - bbox-only key
                 cache.set(
                     bbox.lat_lower_left,
                     bbox.long_lower_left,
                     bbox.lat_upper_right,
                     bbox.long_upper_right,
-                    raw_flight_data,
-                    target_name
+                    raw_flight_data
+                    # Note: no target_name - single fetch serves both sun and moon
                 )
 
         flight_data = list()
@@ -398,7 +405,7 @@ def recalculate_transits(
     target_name: str = "moon",
     alt_threshold: float = 5.0,
     az_threshold: float = 10.0,
-) -> List[dict]:
+) -> Dict[str, Any]:
     """
     Recalculate transit predictions for existing flights with updated positions.
     Does NOT call FlightAware API - uses provided flight data.

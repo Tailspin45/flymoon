@@ -11,7 +11,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from src.transit import calculate_angular_separation, get_possibility_level
+from src.transit import get_possibility_level, calculate_angular_separation
+import math
 
 
 def test_angular_separation_calculation():
@@ -81,17 +82,23 @@ def test_classification_thresholds():
     failed = 0
 
     for angular_sep, expected_level, expected_name, description in test_cases:
-        result = get_possibility_level(angular_sep)
+        # get_possibility_level takes (altitude, alt_diff, az_diff), returns string
+        # For threshold testing, we simulate by using alt_diff = angular_sep, az_diff = 0
+        result = get_possibility_level(45.0, angular_sep, 0.0)  # 45° altitude, angular_sep as alt_diff
 
-        if result == expected_level:
+        # Result is now a string like 'HIGH', 'MEDIUM', 'LOW', 'UNLIKELY'
+        result_name = result
+        level_map = {'HIGH': 3, 'MEDIUM': 2, 'LOW': 1, 'UNLIKELY': 0}
+        result_level = level_map.get(result_name, -1)
+        if result_level == expected_level:
             print(f"✓ PASS: {description}")
             print(f"  Angular separation: {angular_sep}°")
-            print(f"  Expected: {expected_name} ({expected_level}), Got: {expected_name} ({result})")
+            print(f"  Expected: {expected_name} ({expected_level}), Got: {result_name} ({result_level})")
             passed += 1
         else:
             print(f"✗ FAIL: {description}")
             print(f"  Angular separation: {angular_sep}°")
-            print(f"  Expected: {expected_name} ({expected_level}), Got: {result}")
+            print(f"  Expected: {expected_name} ({expected_level}), Got: {result_name} ({result_level})")
             failed += 1
         print()
 
@@ -121,19 +128,22 @@ def test_combined_scenarios():
 
     for alt_diff, az_diff, expected_class, expected_name, description in test_cases:
         angular_sep = calculate_angular_separation(alt_diff, az_diff)
-        result = get_possibility_level(angular_sep)
+        result = get_possibility_level(45.0, alt_diff, az_diff)
+        result_name = result
+        level_map = {'HIGH': 3, 'MEDIUM': 2, 'LOW': 1, 'UNLIKELY': 0}
+        result_level = level_map.get(result_name, -1)
 
-        if result == expected_class:
+        if result_level == expected_class:
             print(f"✓ PASS: {description}")
             print(f"  Input: alt_diff={alt_diff}°, az_diff={az_diff}°")
             print(f"  Angular separation: {angular_sep:.3f}°")
-            print(f"  Classification: {expected_name} ({result})")
+            print(f"  Classification: {result_name} ({result_level})")
             passed += 1
         else:
             print(f"✗ FAIL: {description}")
             print(f"  Input: alt_diff={alt_diff}°, az_diff={az_diff}°")
             print(f"  Angular separation: {angular_sep:.3f}°")
-            print(f"  Expected: {expected_name} ({expected_class}), Got: {result}")
+            print(f"  Expected: {expected_name} ({expected_class}), Got: {result_name} ({result_level})")
             failed += 1
         print()
 

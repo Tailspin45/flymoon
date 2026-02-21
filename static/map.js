@@ -17,12 +17,18 @@ let observerMarker = null;
 let boundingBoxLayer = null;
 let azimuthArrows = {};  // Store arrows by target name
 let aircraftMarkers = {};
+let aircraftLayer = null;   // LayerGroup for all aircraft icons — cleared atomically
+let headingArrowLayer = null; // LayerGroup for heading arrows
+let ghostLayer = null;      // LayerGroup for ghost dots (previous positions)
 let mapInitialized = false;
 let boundingBoxUserEdited = localStorage.getItem('boundingBoxUserEdited') === 'true';
 let aircraftRouteCache = {};  // Cache fetched routes/tracks
+let flightWaypointsMap = {};  // Waypoints from search data, keyed by normalised flight ID
 let currentRouteLayer = null;  // Currently displayed route/track
 let userInteractingWithMap = false;  // Prevent auto-zoom during user interaction
 let headingArrows = {};  // Store heading arrows for medium/high probability transits
+let ghostMarkers = {};  // Arrays of dots showing breadcrumb trail per flight (ghostMarkers[id] = [circleMarker, ...])
+let hardRefreshCount = 0;  // Counts auto hard refreshes; ghosts cleared every 3rd
 
 // Arrow colors for each target
 const ARROW_COLORS = {
@@ -155,6 +161,16 @@ function initializeMap(centerLat, centerLon) {
         attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
         maxZoom: 19
     }).addTo(map);
+
+    // LayerGroups for atomic clear/add cycles
+    aircraftLayer = L.layerGroup().addTo(map);
+    headingArrowLayer = L.layerGroup().addTo(map);
+
+    // Ghost/breadcrumb layer: use a custom pane with pointer-events:none so it
+    // never intercepts clicks on aircraft markers beneath it
+    map.createPane('ghostPane');
+    map.getPane('ghostPane').style.pointerEvents = 'none';
+    ghostLayer = L.layerGroup({ pane: 'ghostPane' }).addTo(map);
 
     mapInitialized = true;
 }
@@ -296,7 +312,7 @@ function updateAzimuthArrow(observerLat, observerLon, azimuth, altitude, targetN
 }
 
 /**
- * Add a heading arrow to show aircraft's magnetic heading direction
+ * Add a heading arrow to show aircraft's true heading direction
  * Only for medium/high probability transits
  */
 function addHeadingArrow(flight, flightId, color) {
@@ -304,22 +320,10 @@ function addHeadingArrow(flight, flightId, color) {
     
     const lat = flight.latitude;
     const lon = flight.longitude;
-    let heading = flight.direction;
+    // FlightAware heading is true heading (GPS-derived) - use directly on true-north map
+    const heading = flight.direction;
     
-    // Convert true heading to magnetic heading
-    if (typeof geomag !== 'undefined') {
-        try {
-            const geomagInfo = geomag.field(lat, lon);
-            const declination = geomagInfo.declination;
-            heading = heading - declination;
-            if (heading < 0) heading += 360;
-            if (heading >= 360) heading -= 360;
-        } catch (error) {
-            console.warn('Could not calculate magnetic declination for arrow:', error);
-        }
-    }
-    
-    // Calculate arrow endpoint (12km in heading direction - slightly shorter than sun/moon arrows at 15km)
+    // Calculate arrow endpoint (12km in heading direction)
     const distance = 12; // km
     const endPoint = calculateDestination(lat, lon, heading, distance);
     
@@ -334,24 +338,24 @@ function addHeadingArrow(flight, flightId, color) {
             lineJoin: 'round',
             className: 'heading-arrow'
         }
-    ).addTo(map);
+    ).addTo(headingArrowLayer);
     
     // Store for cleanup
     headingArrows[flightId] = arrowLine;
 }
 
 function updateSingleAircraftMarker(flight) {
-    if (!map) return;
+    if (!map || !aircraftLayer) return;
 
     const normalizedId = String(flight.id).trim().toUpperCase();
 
     // Remove existing marker and heading arrow for this flight
     if (aircraftMarkers[normalizedId]) {
-        map.removeLayer(aircraftMarkers[normalizedId]);
+        aircraftLayer.removeLayer(aircraftMarkers[normalizedId]);
         delete aircraftMarkers[normalizedId];
     }
     if (headingArrows[normalizedId]) {
-        map.removeLayer(headingArrows[normalizedId]);
+        headingArrowLayer.removeLayer(headingArrows[normalizedId]);
         delete headingArrows[normalizedId];
     }
 
@@ -364,16 +368,16 @@ function updateSingleAircraftMarker(flight) {
         else if (level === 3) color = COLORS.HIGH;
     }
 
-    // Use diamond for transit aircraft, airplane emoji for others
+    // Use diamond for transit aircraft, SVG airplane for others
     const isTransit = flight.is_possible_transit === 1;
-    const rotation = (flight.direction - 90);
+    const rotation = flight.direction; // SVG points north (up), rotate by true heading
 
     const aircraftIcon = L.divIcon({
         html: isTransit
             ? `<div style="font-size: 36px; color: ${color}; text-shadow: 0 0 3px black, 0 0 3px black, 0 0 8px ${color}, 1px 1px 0 black, -1px -1px 0 black, 1px -1px 0 black, -1px 1px 0 black; display: flex; align-items: center; justify-content: center; width: 36px; height: 36px; line-height: 1;">◆</div>`
-            : `<div style="transform: rotate(${rotation}deg); font-size: 20px;">✈️</div>`,
-        iconSize: [36, 36],
-        iconAnchor: [18, 18],
+            : `<div style="transform: rotate(${rotation}deg); width: 24px; height: 24px;"><svg xmlns="http://www.w3.org/2000/svg" viewBox="10 13 30 24" width="24" height="24" fill="#4a90d9"><rect x="23.5" y="14" width="3" height="22" rx="1.5"/><polygon points="25,14 23.5,18 26.5,18"/><polygon points="10,27 23.5,23 23.5,27 12,29"/><polygon points="40,27 26.5,23 26.5,27 38,29"/><polygon points="20,35 23.5,33 23.5,35"/><polygon points="30,35 26.5,33 26.5,35"/></svg></div>`,
+        iconSize: [24, 24],
+        iconAnchor: [12, 12],
         className: 'aircraft-icon'
     });
 
@@ -381,7 +385,7 @@ function updateSingleAircraftMarker(flight) {
     if (flight.latitude !== undefined && flight.latitude !== null &&
         flight.longitude !== undefined && flight.longitude !== null) {
         const marker = L.marker([flight.latitude, flight.longitude], { icon: aircraftIcon })
-            .addTo(map);
+            .addTo(aircraftLayer);
 
         marker.getElement()?.style.setProperty('filter', `drop-shadow(0 0 8px ${color}) drop-shadow(0 0 4px rgba(0,0,0,0.8))`);
         marker.flightId = normalizedId;
@@ -403,19 +407,74 @@ function updateSingleAircraftMarker(flight) {
     }
 }
 
-function updateAircraftMarkers(flights, observerLat, observerLon) {
-    if (!map) return;
+function updateAircraftMarkers(flights, observerLat, observerLon, isFullRefresh = false, isForceRefresh = false) {
+    if (!map || !aircraftLayer) return;
 
-    // Clear existing aircraft markers
-    Object.values(aircraftMarkers).forEach(marker => {
-        map.removeLayer(marker);
-    });
+    if (isFullRefresh) {
+        if (isForceRefresh) {
+            // Force refresh by user: clear all ghost dots and reset counter
+            ghostLayer.clearLayers();
+            ghostMarkers = {};
+            hardRefreshCount = 0;
+            // Clear track on explicit user force refresh
+            if (currentRouteLayer) {
+                map.removeLayer(currentRouteLayer);
+                currentRouteLayer = null;
+                userInteractingWithMap = false;
+            }
+        } else {
+            // Auto hard refresh: clear ghost dots every 3rd refresh
+            hardRefreshCount++;
+            if (hardRefreshCount % 3 === 0) {
+                ghostLayer.clearLayers();
+                ghostMarkers = {};
+            }
+            // Keep track if flight still in data
+            if (currentRouteLayer) {
+                const activeId = currentRouteLayer.flightId;
+                const stillPresent = flights.some(f => String(f.id).trim().toUpperCase() === activeId);
+                if (!stillPresent) {
+                    map.removeLayer(currentRouteLayer);
+                    currentRouteLayer = null;
+                    userInteractingWithMap = false;
+                }
+            }
+        }
+    } else {
+        // Soft refresh: add a new breadcrumb dot at current position for each aircraft
+        Object.entries(aircraftMarkers).forEach(([id, marker]) => {
+            const latlng = marker.getLatLng();
+            const dot = L.circleMarker(latlng, {
+                radius: 2,
+                color: '#888',
+                fillColor: '#888',
+                fillOpacity: 1,
+                weight: 0,
+                interactive: false,
+                pane: 'ghostPane'
+            }).addTo(ghostLayer);
+            if (!ghostMarkers[id]) ghostMarkers[id] = [];
+            ghostMarkers[id].push(dot);
+        });
+
+        // Remove ghost dots for aircraft no longer in the flight data
+        const activeIds = new Set(flights.map(f => String(f.id).trim().toUpperCase()));
+        Object.keys(ghostMarkers).forEach(id => {
+            if (!activeIds.has(id)) {
+                ghostMarkers[id].forEach(dot => ghostLayer.removeLayer(dot));
+                delete ghostMarkers[id];
+            }
+        });
+    }
+
+    // Atomically clear all aircraft markers and heading arrows
+    aircraftLayer.clearLayers();
+    headingArrowLayer.clearLayers();
     aircraftMarkers = {};
+    headingArrows = {};
 
     // Add new aircraft markers
     flights.forEach(flight => {
-        // Calculate current position (use flight data directly)
-        // For future position visualization, we'd need to add predicted coordinates
         const flightId = flight.id;
         
         // Determine color based on possibility level
@@ -427,35 +486,16 @@ function updateAircraftMarkers(flights, observerLat, observerLon) {
             else if (level === 3) color = COLORS.HIGH;
         }
 
-        // Use diamond for transit aircraft (NTDS style), airplane emoji for others
-        // Convert true heading to magnetic heading for proper visual alignment
+                // SVG airplane points north (up), rotate by true heading — works on all platforms
         const isTransit = flight.is_possible_transit === 1;
-        let headingForDisplay = flight.direction;
-        if (typeof geomag !== 'undefined') {
-            try {
-                const geomagInfo = geomag.field(flight.latitude, flight.longitude);
-                const declination = geomagInfo.declination;
-                headingForDisplay = flight.direction - declination;
-                if (headingForDisplay < 0) headingForDisplay += 360;
-                if (headingForDisplay >= 360) headingForDisplay -= 360;
-            } catch (error) {
-                console.warn('Could not calculate magnetic declination:', error);
-            }
-        }
-        // Airplane emoji points right (90°), so subtract 90 to align with compass heading
-        const rotation = (headingForDisplay - 90);
-
-        // Debug: Log heading and rotation for verification
-        if (!isTransit && flight.direction) {
-            console.log(`Aircraft ${flightId}: true=${flight.direction}°, magnetic=${Math.round(headingForDisplay)}°`);
-        }
+        const rotation = flight.direction;
 
         const aircraftIcon = L.divIcon({
             html: isTransit
                 ? `<div style="font-size: 36px; color: ${color}; text-shadow: 0 0 3px black, 0 0 3px black, 0 0 8px ${color}, 1px 1px 0 black, -1px -1px 0 black, 1px -1px 0 black, -1px 1px 0 black; display: flex; align-items: center; justify-content: center; width: 36px; height: 36px; line-height: 1;">◆</div>`
-                : `<div style="transform: rotate(${rotation}deg); font-size: 20px;">✈️</div>`,
-            iconSize: [36, 36],
-            iconAnchor: [18, 18],  // Center the icon on coordinates
+                : `<div style="transform: rotate(${rotation}deg); width: 24px; height: 24px;"><svg xmlns="http://www.w3.org/2000/svg" viewBox="10 13 30 24" width="24" height="24" fill="#4a90d9"><rect x="23.5" y="14" width="3" height="22" rx="1.5"/><polygon points="25,14 23.5,18 26.5,18"/><polygon points="10,27 23.5,23 23.5,27 12,29"/><polygon points="40,27 26.5,23 26.5,27 38,29"/><polygon points="20,35 23.5,33 23.5,35"/><polygon points="30,35 26.5,33 26.5,35"/></svg></div>`,
+            iconSize: [24, 24],
+            iconAnchor: [12, 12],  // Center the icon on coordinates
             className: 'aircraft-icon'
         });
 
@@ -463,7 +503,7 @@ function updateAircraftMarkers(flights, observerLat, observerLon) {
         if (flight.latitude !== undefined && flight.latitude !== null &&
             flight.longitude !== undefined && flight.longitude !== null) {
             const marker = L.marker([flight.latitude, flight.longitude], { icon: aircraftIcon })
-                .addTo(map);
+                .addTo(aircraftLayer);
 
             // Add strong shadow for visibility
             marker.getElement()?.style.setProperty('filter', `drop-shadow(0 0 8px ${color}) drop-shadow(0 0 4px rgba(0,0,0,0.8))`);
@@ -481,7 +521,11 @@ function updateAircraftMarkers(flights, observerLat, observerLon) {
             });
 
             aircraftMarkers[normalizedId] = marker;
-            
+            // Store waypoints from search data for route display
+            if (flight.waypoints && flight.waypoints.length >= 2) {
+                flightWaypointsMap[normalizedId] = flight.waypoints;
+            }
+
             // Add heading arrow for medium/high probability transits
             if (flight.is_possible_transit === 1) {
                 const level = parseInt(flight.possibility_level);
@@ -492,8 +536,9 @@ function updateAircraftMarkers(flights, observerLat, observerLon) {
         }
     });
 
-    // Fit map to show aircraft and observer
-    // Skip auto-zoom if user is interacting with map (viewing route/track)
+    // Fit map to show aircraft and observer — only on full refresh, not soft refresh
+    if (!isFullRefresh) return;
+
     if (Object.keys(aircraftMarkers).length > 0 && !userInteractingWithMap) {
         const aircraftBounds = L.latLngBounds(
             Object.values(aircraftMarkers).map(marker => marker.getLatLng())
@@ -509,11 +554,9 @@ function updateAircraftMarkers(flights, observerLat, observerLon) {
         );
         
         if (hasTransits) {
-            // Zoom in more for transits to fill about half the window
-            map.fitBounds(aircraftBounds, { padding: [30, 30], maxZoom: 15 });
+            map.fitBounds(aircraftBounds, { padding: [10, 10] });
         } else {
-            // Normal view - always fit all aircraft in window
-            map.fitBounds(aircraftBounds, { padding: [50, 50], maxZoom: 13 });
+            map.fitBounds(aircraftBounds, { padding: [10, 10] });
         }
     } else if (Object.keys(aircraftMarkers).length === 0) {
         // No aircraft - center on observer at reasonable zoom
@@ -628,17 +671,34 @@ function updateAltitudeOverlay(flights) {
 async function toggleFlightRouteTrack(faFlightId, flightId) {
     console.log('toggleFlightRouteTrack called:', { faFlightId, flightId });
     
-    if (!map || !faFlightId) {
-        console.log('Aborted: map or faFlightId missing', { map: !!map, faFlightId });
-        return;
-    }
+    if (!map) return;
 
-    // If already showing this flight's route, hide it
+    // If already showing this flight's route, hide it and restore breadcrumbs
     if (currentRouteLayer && currentRouteLayer.flightId === flightId) {
         console.log('Hiding current route layer for', flightId);
         map.removeLayer(currentRouteLayer);
         currentRouteLayer = null;
         userInteractingWithMap = false;  // Allow auto-zoom again
+        // Restore breadcrumb dots for this flight
+        if (ghostMarkers[flightId]) {
+            ghostMarkers[flightId].forEach(dot => ghostLayer.addLayer(dot));
+        }
+        return;
+    }
+
+    // Remove any previous route from a different flight and restore its breadcrumbs
+    if (currentRouteLayer) {
+        const prevId = currentRouteLayer.flightId;
+        map.removeLayer(currentRouteLayer);
+        currentRouteLayer = null;
+        if (prevId && ghostMarkers[prevId]) {
+            ghostMarkers[prevId].forEach(dot => ghostLayer.addLayer(dot));
+        }
+    }
+
+    // Need fa_flight_id to fetch route/track data
+    if (!faFlightId) {
+        console.log('No faFlightId — cannot show track for', flightId);
         return;
     }
 
@@ -646,9 +706,9 @@ async function toggleFlightRouteTrack(faFlightId, flightId) {
     userInteractingWithMap = true;
     console.log('User interacting with map, fetching route/track...');
 
-    // Remove previous route if showing different flight
-    if (currentRouteLayer) {
-        map.removeLayer(currentRouteLayer);
+    // Hide breadcrumb dots for this flight while track is shown
+    if (ghostMarkers[flightId]) {
+        ghostMarkers[flightId].forEach(dot => ghostLayer.removeLayer(dot));
     }
 
     // Check cache first
@@ -657,41 +717,22 @@ async function toggleFlightRouteTrack(faFlightId, flightId) {
         return;
     }
 
-    // Determine which data to fetch based on transit timing
-    const row = document.querySelector(`tr[data-flight-id="${flightId}"]`);
-    let transitTime = null;
-    if (row) {
-        const timeCell = row.querySelector('td:nth-child(17)'); // Time column
-        if (timeCell && timeCell.textContent) {
-            transitTime = parseFloat(timeCell.textContent);
-        }
-    }
-
-    // Conditional fetching: only get what's useful
+    // Fetch only the historical track; route comes from stored waypoints
     try {
-        let routeResponse = { error: 'Not requested' };
-        let trackResponse = { error: 'Not requested' };
-        
-        if (transitTime !== null && !isNaN(transitTime) && transitTime > 0) {
-            // Future transit - show planned route only
-            console.log(`Future transit (${transitTime.toFixed(1)} min), fetching route only`);
-            routeResponse = await fetch(`/flights/${faFlightId}/route`)
-                .then(r => r.json())
-                .catch(e => ({ error: e.message }));
-        } else {
-            // Past/current transit or unknown time - show actual track only
-            console.log('Past/current transit, fetching track only');
-            trackResponse = await fetch(`/flights/${faFlightId}/track`)
-                .then(r => r.json())
-                .catch(e => ({ error: e.message }));
-        }
+        console.log(`Fetching track for ${faFlightId}`);
+        const trackResponse = await fetch(`/flights/${faFlightId}/track`)
+            .then(r => r.json())
+            .catch(e => ({ error: e.message }));
 
-        // Cache the data
-        aircraftRouteCache[flightId] = { route: routeResponse, track: trackResponse };
-        displayRouteTrack(aircraftRouteCache[flightId], flightId);
+        const cached = {
+            waypoints: flightWaypointsMap[flightId] || [],
+            track: trackResponse
+        };
+        aircraftRouteCache[flightId] = cached;
+        displayRouteTrack(cached, flightId);
     } catch (error) {
-        console.error('Error fetching route/track:', error);
-        alert('Could not fetch route/track data. This may be because the aircraft is not currently transmitting data or API rate limits have been reached.');
+        console.error('Error fetching track:', error);
+        alert('Could not fetch track data. This may be because the aircraft is not currently transmitting data or API rate limits have been reached.');
     }
 }
 
@@ -702,38 +743,24 @@ function displayRouteTrack(data, flightId) {
 
     console.log('Route/Track data for', flightId, ':', data);
 
-    // Display route (blue dashed)
-    if (data.route && !data.route.error) {
-        console.log('Route data:', data.route);
-
-        // Check different possible response structures
-        const waypoints = data.route.waypoints || data.route.route_waypoints || [];
-
-        if (waypoints.length > 0) {
-            const routePoints = waypoints
-                .filter(pt => pt.latitude != null && pt.longitude != null)
-                .map(pt => [pt.latitude, pt.longitude]);
-
-            if (routePoints.length > 0) {
-                console.log('Drawing route with', routePoints.length, 'points');
-                const routeLine = L.polyline(routePoints, {
-                    color: '#4169E1',
-                    weight: 3,
-                    dashArray: '10, 10',
-                    opacity: 0.7
-                });
-                layerGroup.addLayer(routeLine);
-                routeLine.bindPopup('📍 Planned Route (' + routePoints.length + ' waypoints)');
-            } else {
-                console.log('Route has waypoints but no valid lat/lon coordinates');
-            }
-        } else {
-            console.log('No waypoints in route data. Route may not be available for this flight.');
+    // Display route (blue dashed) from flat [lat,lon,lat,lon,...] waypoints array
+    if (data.waypoints && data.waypoints.length >= 2) {
+        const flat = data.waypoints;
+        const routePoints = [];
+        for (let i = 0; i + 1 < flat.length; i += 2) {
+            routePoints.push([flat[i], flat[i + 1]]);
         }
-    } else if (data.route && data.route.error) {
-        console.log('Route error:', data.route.error);
-    } else {
-        console.log('No route data available');
+        if (routePoints.length > 0) {
+            console.log('Drawing route with', routePoints.length, 'waypoints');
+            const routeLine = L.polyline(routePoints, {
+                color: '#4169E1',
+                weight: 3,
+                dashArray: '10, 10',
+                opacity: 0.7
+            });
+            layerGroup.addLayer(routeLine);
+            routeLine.bindPopup('📍 Planned Route (' + routePoints.length + ' points)');
+        }
     }
 
     // Display track (green solid with dots)
@@ -850,7 +877,7 @@ function toggleMap() {
 }
 
 // Update map with all data from API response
-function updateMapVisualization(data, observerLat, observerLon, observerElev) {
+function updateMapVisualization(data, observerLat, observerLon, observerElev, isForceRefresh = false) {
     if (!map || !mapInitialized) {
         initializeMap(observerLat, observerLon);
     }
@@ -885,9 +912,9 @@ function updateMapVisualization(data, observerLat, observerLon, observerElev) {
         updateAzimuthArrow(observerLat, observerLon, data.targetCoordinates.azimuthal, data.targetCoordinates.altitude || 0, target);
     }
 
-    // Update aircraft markers
+    // Update aircraft markers (always call to clear stale markers even if empty)
+    updateAircraftMarkers(data.flights || [], observerLat, observerLon, true, isForceRefresh);
     if (data.flights && data.flights.length > 0) {
-        updateAircraftMarkers(data.flights, observerLat, observerLon);
         updateAltitudeOverlay(data.flights);
     }
 }
