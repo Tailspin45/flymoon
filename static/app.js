@@ -302,10 +302,8 @@ async function softRefresh() {
         
         if (response.ok) {
             const recalcData = await response.json();
-            const scrollY = window.scrollY;
-            // Update table with recalculated transit data
+            // Update table cells in-place — no scroll save/restore needed
             updateFlightTableFull(recalcData.flights);
-            window.scrollTo(0, scrollY);
             
             // Update map markers
             if (mapVisible && typeof updateAircraftMarkers === 'function') {
@@ -402,7 +400,13 @@ function updateFlightTableFull(flights) {
         if (flight.distance_nm !== null && cells[14]) {
             const km = (flight.distance_nm * 1.852).toFixed(1);
             const miles = (flight.distance_nm * 1.15078).toFixed(1);
-            cells[14].innerHTML = `<span style="display:inline-block;text-align:right;min-width:4ch">${km}</span>/<span style="display:inline-block;text-align:left;min-width:4ch">${miles}</span>`;
+            const spans = cells[14].querySelectorAll('span');
+            if (spans.length === 2) {
+                spans[0].textContent = km;
+                spans[1].textContent = miles;
+            } else {
+                cells[14].innerHTML = `<span style="display:inline-block;text-align:right;min-width:4ch">${km}</span>/<span style="display:inline-block;text-align:left;min-width:4ch">${miles}</span>`;
+            }
         }
         if (flight.time !== null && cells[16]) {
             cells[16].textContent = flight.time.toFixed(1);
