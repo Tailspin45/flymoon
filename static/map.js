@@ -176,10 +176,8 @@ function initializeMap(centerLat, centerLon) {
     };
     const savedLayer = localStorage.getItem('mapLayer') || 'Street';
     (tileLayers[savedLayer] || tileLayers['Street']).addTo(map);
-    layerControl = L.control.layers(tileLayers, {}, { position: 'topright' }).addTo(map);
-    map.on('baselayerchange', e => localStorage.setItem('mapLayer', e.name));
 
-    // SkyVector aviation charts deep-link control
+    // SkyVector aviation charts deep-link control (added first = sits above layer control)
     const SkyVectorControl = L.Control.extend({
         options: { position: 'topright' },
         onAdd() {
@@ -227,6 +225,8 @@ function initializeMap(centerLat, centerLon) {
         }
     });
     new SkyVectorControl().addTo(map);
+    layerControl = L.control.layers(tileLayers, {}, { position: 'topright' }).addTo(map);
+    map.on('baselayerchange', e => localStorage.setItem('mapLayer', e.name));
 
     // LayerGroups for atomic clear/add cycles
     aircraftLayer = L.layerGroup().addTo(map);
