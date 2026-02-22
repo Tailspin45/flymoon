@@ -1,0 +1,433 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Flymoon</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  html, body {
+    width: 720px; height: 480px;
+    overflow: hidden;
+    background: #000;
+    font-family: -apple-system, 'Segoe UI', sans-serif;
+    user-select: none;
+    -webkit-app-region: drag;
+  }
+
+  /* ── Deep-space background ── */
+  #scene {
+    position: absolute; inset: 0;
+    background: radial-gradient(ellipse at 38% 40%,
+      #0d1533 0%, #07102a 30%, #030810 65%, #000 100%);
+  }
+
+  /* ── Starfield ── */
+  #stars { position: absolute; inset: 0; }
+  .star {
+    position: absolute;
+    border-radius: 50%;
+    background: #fff;
+    animation: twinkle var(--dur, 3s) ease-in-out var(--delay, 0s) infinite alternate;
+  }
+  @keyframes twinkle {
+    0%   { opacity: var(--lo, 0.15); transform: scale(1); }
+    100% { opacity: var(--hi, 0.9);  transform: scale(1.4); }
+  }
+
+  /* ── Moon ── */
+  #moon {
+    position: absolute;
+    top: -30px; right: -20px;
+    width: 240px; height: 240px;
+    border-radius: 50%;
+    overflow: hidden;
+    /* Multi-layer: base tone + dark maria (Sea of Tranquility, etc.) */
+    background:
+      radial-gradient(ellipse 70px 55px at 55% 62%, rgba(40,45,52,0.55) 0%, transparent 100%),
+      radial-gradient(ellipse 45px 38px at 75% 40%, rgba(35,40,48,0.45) 0%, transparent 100%),
+      radial-gradient(ellipse 30px 25px at 35% 75%, rgba(30,35,42,0.40) 0%, transparent 100%),
+      radial-gradient(circle at 38% 35%, #eef2f7 0%, #d2dae4 18%, #a8b5c2 42%, #6e7f8e 68%, #3a4a55 100%);
+    box-shadow:
+      0 0 60px 18px rgba(160,196,255,0.18),
+      0 0 120px 40px rgba(100,150,220,0.10),
+      inset -22px -16px 50px rgba(0,0,0,0.60),
+      inset 10px 8px 24px rgba(255,255,255,0.10);
+    animation: moonGlow 8s ease-in-out infinite alternate;
+  }
+  @keyframes moonGlow {
+    0%   { box-shadow: 0 0 60px 18px rgba(160,196,255,0.18), 0 0 120px 40px rgba(100,150,220,0.10), inset -22px -16px 50px rgba(0,0,0,0.60), inset 10px 8px 24px rgba(255,255,255,0.10); }
+    100% { box-shadow: 0 0 80px 28px rgba(160,196,255,0.28), 0 0 160px 60px rgba(100,150,220,0.16), inset -22px -16px 50px rgba(0,0,0,0.60), inset 10px 8px 24px rgba(255,255,255,0.10); }
+  }
+
+  /* ── Craters ──
+     Light source is top-left (~38% 35%).
+     Each crater: dark bowl + bright highlight arc on the upper-left rim.
+     Classes: .cr-sm .cr-md .cr-lg control base scale.
+     --rx/--ry: ellipse radii ratio for foreshortening at edges.
+  */
+  .crater {
+    position: absolute;
+    border-radius: 50%;
+    /* Bowl: dark center fading to match surface */
+    background: radial-gradient(circle at 50% 55%,
+      rgba(0,0,0,0.38) 0%,
+      rgba(0,0,0,0.22) 40%,
+      rgba(0,0,0,0.05) 70%,
+      transparent 100%);
+    /* Rim: inset shadow on shadow-side; subtle bright on light-side */
+    box-shadow:
+      inset 1.5px  1.5px 3px rgba(255,255,255,0.18),
+      inset -2px  -2px  4px rgba(0,0,0,0.50);
+  }
+  /* Large craters get a visible ejecta rim ring */
+  .crater-lg::after {
+    content: '';
+    position: absolute;
+    inset: -3px;
+    border-radius: 50%;
+    border: 2px solid transparent;
+    border-top-color:    rgba(255,255,255,0.14);
+    border-left-color:   rgba(255,255,255,0.10);
+    border-bottom-color: rgba(0,0,0,0.20);
+    border-right-color:  rgba(0,0,0,0.15);
+  }
+  /* Central peak for the largest craters */
+  .crater-peak::before {
+    content: '';
+    position: absolute;
+    width: 20%; height: 20%;
+    top: 42%; left: 42%;
+    border-radius: 50%;
+    background: radial-gradient(circle, rgba(255,255,255,0.22), transparent 80%);
+  }
+
+  /* ── Sun ── */
+  #sun-wrap {
+    position: absolute;
+    bottom: 60px; left: -30px;
+    width: 160px; height: 160px;
+    display: flex; align-items: center; justify-content: center;
+  }
+  #sun-corona {
+    position: absolute;
+    width: 160px; height: 160px;
+    border-radius: 50%;
+    background: radial-gradient(circle, rgba(255,200,60,0.22) 0%, rgba(255,120,0,0.10) 45%, transparent 72%);
+    animation: coronaPulse 5s ease-in-out infinite alternate, coronaSpin 40s linear infinite;
+  }
+  #sun-corona::before, #sun-corona::after {
+    content: '';
+    position: absolute; inset: 0;
+    border-radius: 50%;
+    background: inherit;
+  }
+  #sun-rays {
+    position: absolute;
+    width: 160px; height: 160px;
+    animation: coronaSpin 20s linear infinite;
+  }
+  #sun-rays::before {
+    content: '';
+    position: absolute; inset: 10px;
+    border-radius: 50%;
+    background:
+      repeating-conic-gradient(
+        from 0deg,
+        rgba(255,180,30,0.18) 0deg 6deg,
+        transparent 6deg 18deg
+      );
+    animation: coronaSpin 30s linear infinite reverse;
+  }
+  #sun-disk {
+    position: relative;
+    width: 80px; height: 80px;
+    border-radius: 50%;
+    background: radial-gradient(circle at 40% 38%, #fff8c0 0%, #ffe060 28%, #ff9a00 60%, #d45000 100%);
+    box-shadow:
+      0 0 28px 10px rgba(255,160,0,0.55),
+      0 0 70px 28px rgba(255,100,0,0.28),
+      0 0 140px 55px rgba(255,60,0,0.12);
+    animation: sunPulse 5s ease-in-out infinite alternate;
+  }
+  @keyframes coronaPulse {
+    0%   { opacity: 0.7; transform: scale(1.0); }
+    100% { opacity: 1.0; transform: scale(1.18); }
+  }
+  @keyframes coronaSpin {
+    from { transform: rotate(0deg); }
+    to   { transform: rotate(360deg); }
+  }
+  @keyframes sunPulse {
+    0%   { box-shadow: 0 0 28px 10px rgba(255,160,0,0.55), 0 0 70px 28px rgba(255,100,0,0.28), 0 0 140px 55px rgba(255,60,0,0.12); }
+    100% { box-shadow: 0 0 38px 16px rgba(255,180,0,0.70), 0 0 90px 40px rgba(255,120,0,0.38), 0 0 180px 70px rgba(255,80,0,0.18); }
+  }
+
+  /* ── Aircraft path ── */
+  #aircraft-wrap {
+    position: absolute;
+    top: 0; left: 0;
+    width: 100%; height: 100%;
+    pointer-events: none;
+    animation: fly 30s linear infinite;
+    animation-delay: -8s;
+  }
+  #aircraft-group {
+    position: absolute;
+    top: 140px; left: 0;
+    transform: translateX(-120px);
+  }
+  @keyframes fly {
+    0%   { transform: translate(-140px, 0px); }
+    100% { transform: translate(860px, -130px); }
+  }
+  #exhaust {
+    position: absolute;
+    top: 50%; left: -4px;
+    transform: translateY(-50%) rotate(180deg);
+    width: 55px; height: 3px;
+    background: linear-gradient(to right, transparent, rgba(180,210,255,0.55), rgba(220,230,255,0.15));
+    border-radius: 3px;
+    filter: blur(1.5px);
+  }
+  #exhaust::after {
+    content: '';
+    position: absolute;
+    top: -1px; left: 10px;
+    width: 30px; height: 5px;
+    background: linear-gradient(to right, transparent, rgba(160,200,255,0.3));
+    border-radius: 3px;
+    filter: blur(2px);
+  }
+
+  /* ── Branding ── */
+  #brand {
+    position: absolute;
+    top: 50%; left: 50%;
+    transform: translate(-50%, -52%);
+    text-align: center;
+    z-index: 10;
+  }
+  #brand-title {
+    font-size: 4em;
+    font-weight: 800;
+    letter-spacing: 0.18em;
+    background: linear-gradient(135deg, #ffffff 0%, #c8d8f0 40%, #a0c4ff 100%);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+    text-shadow: none;
+    filter: drop-shadow(0 0 18px rgba(100,170,255,0.45));
+    line-height: 1;
+  }
+  #brand-sub {
+    margin-top: 10px;
+    font-size: 0.95em;
+    font-weight: 300;
+    letter-spacing: 0.28em;
+    color: #6890b8;
+    text-transform: uppercase;
+  }
+  #brand-version {
+    margin-top: 8px;
+    font-size: 0.72em;
+    letter-spacing: 0.12em;
+    color: #444;
+  }
+
+  /* ── Loading bar ── */
+  #loader {
+    position: absolute;
+    bottom: 0; left: 0; right: 0;
+    padding: 0 40px 28px;
+    z-index: 10;
+  }
+  #splashStatus {
+    font-size: 0.72em;
+    color: #4a6080;
+    letter-spacing: 0.06em;
+    margin-bottom: 8px;
+    text-align: left;
+  }
+  #progress-track {
+    width: 100%;
+    height: 2px;
+    background: rgba(255,255,255,0.07);
+    border-radius: 2px;
+    overflow: hidden;
+    box-shadow: 0 0 6px rgba(74,158,255,0.15);
+  }
+  #progressFill {
+    height: 100%;
+    width: 0%;
+    background: linear-gradient(90deg, #1a5fc4, #4a9eff, #80c4ff);
+    border-radius: 2px;
+    box-shadow: 0 0 10px rgba(74,158,255,0.8), 0 0 20px rgba(74,158,255,0.4);
+    transition: width 0.5s ease;
+  }
+
+  /* ── Nebula overlay for depth ── */
+  #nebula {
+    position: absolute; inset: 0;
+    background:
+      radial-gradient(ellipse at 75% 20%, rgba(60,30,100,0.14) 0%, transparent 50%),
+      radial-gradient(ellipse at 15% 75%, rgba(0,40,80,0.18) 0%, transparent 45%);
+    pointer-events: none;
+  }
+</style>
+</head>
+<body>
+<div id="scene">
+  <div id="stars"></div>
+  <div id="nebula"></div>
+
+  <!-- Moon — 28 craters, distributed across visible face (clipped by overflow:hidden) -->
+  <div id="moon">
+    <!-- Large feature craters with central peaks -->
+    <div class="crater crater-lg crater-peak" style="width:44px;height:40px;top:42px;left:56px;"></div>
+    <div class="crater crater-lg crater-peak" style="width:36px;height:32px;top:118px;left:44px;"></div>
+    <div class="crater crater-lg" style="width:30px;height:28px;top:158px;left:90px;"></div>
+    <!-- Medium craters -->
+    <div class="crater" style="width:22px;height:20px;top:28px;left:102px;"></div>
+    <div class="crater" style="width:20px;height:18px;top:82px;left:130px;"></div>
+    <div class="crater" style="width:18px;height:16px;top:66px;left:82px;"></div>
+    <div class="crater" style="width:17px;height:16px;top:105px;left:160px;"></div>
+    <div class="crater" style="width:16px;height:15px;top:172px;left:60px;"></div>
+    <div class="crater" style="width:20px;height:18px;top:190px;left:118px;"></div>
+    <div class="crater" style="width:15px;height:14px;top:52px;left:148px;"></div>
+    <div class="crater" style="width:18px;height:16px;top:140px;left:148px;"></div>
+    <div class="crater" style="width:16px;height:14px;top:32px;left:76px;"></div>
+    <div class="crater" style="width:14px;height:12px;top:200px;left:80px;"></div>
+    <!-- Small craters — scattered texture -->
+    <div class="crater" style="width:10px;height:9px;top:58px;left:118px;"></div>
+    <div class="crater" style="width:9px;height:8px;top:96px;left:56px;"></div>
+    <div class="crater" style="width:8px;height:7px;top:130px;left:100px;"></div>
+    <div class="crater" style="width:11px;height:10px;top:74px;left:170px;"></div>
+    <div class="crater" style="width:8px;height:8px;top:152px;left:132px;"></div>
+    <div class="crater" style="width:9px;height:8px;top:42px;left:170px;"></div>
+    <div class="crater" style="width:7px;height:6px;top:178px;left:150px;"></div>
+    <div class="crater" style="width:10px;height:9px;top:110px;left:120px;"></div>
+    <div class="crater" style="width:7px;height:6px;top:88px;left:105px;"></div>
+    <div class="crater" style="width:6px;height:5px;top:166px;left:102px;"></div>
+    <!-- Micro craters — fine texture -->
+    <div class="crater" style="width:5px;height:4px;top:36px;left:128px;"></div>
+    <div class="crater" style="width:5px;height:4px;top:62px;left:95px;"></div>
+    <div class="crater" style="width:4px;height:4px;top:116px;left:80px;"></div>
+    <div class="crater" style="width:5px;height:4px;top:144px;left:170px;"></div>
+    <div class="crater" style="width:4px;height:3px;top:186px;left:142px;"></div>
+  </div>
+
+  <!-- Sun -->
+  <div id="sun-wrap">
+    <div id="sun-corona"></div>
+    <div id="sun-rays"></div>
+    <div id="sun-disk"></div>
+  </div>
+
+  <!-- Aircraft -->
+  <div id="aircraft-wrap">
+    <div id="aircraft-group">
+      <div id="exhaust"></div>
+      <svg width="72" height="28" viewBox="0 0 72 28" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <!-- fuselage -->
+        <path d="M8 14 Q28 14 58 14 Q66 14 70 12 Q66 10 58 10 Q28 10 8 14Z" fill="rgba(200,215,235,0.92)"/>
+        <!-- nose -->
+        <path d="M58 10 Q70 11 72 12 Q70 13 58 14Z" fill="rgba(220,230,245,0.95)"/>
+        <!-- tail fin vertical -->
+        <path d="M10 14 Q12 8 18 7 Q16 10 14 14Z" fill="rgba(190,205,225,0.88)"/>
+        <!-- tail fin horizontal left -->
+        <path d="M10 14 Q14 14 18 18 Q14 17 10 15Z" fill="rgba(190,205,225,0.85)"/>
+        <!-- main wing -->
+        <path d="M30 10 Q42 4 50 4 Q46 8 42 10Z" fill="rgba(200,215,235,0.88)"/>
+        <path d="M30 14 Q42 20 50 21 Q46 17 42 14Z" fill="rgba(185,200,220,0.84)"/>
+        <!-- engine pod -->
+        <ellipse cx="38" cy="10" rx="6" ry="2.5" fill="rgba(160,180,200,0.80)"/>
+        <ellipse cx="38" cy="18" rx="6" ry="2.5" fill="rgba(155,175,195,0.78)"/>
+        <!-- window strip -->
+        <rect x="44" y="11.5" width="14" height="1.5" rx="0.8" fill="rgba(160,210,255,0.45)"/>
+      </svg>
+    </div>
+  </div>
+
+  <!-- Branding -->
+  <div id="brand">
+    <div id="brand-title">🔭 FLYMOON</div>
+    <div id="brand-sub">Aircraft Transit Monitor</div>
+    <div id="brand-version">v1.0</div>
+  </div>
+
+  <!-- Progress -->
+  <div id="loader">
+    <div id="splashStatus">Initialising…</div>
+    <div id="progress-track">
+      <div id="progressFill"></div>
+    </div>
+  </div>
+</div>
+
+<script>
+(function () {
+  'use strict';
+
+  // ── Expose API ──────────────────────────────────────────────────────────
+  window.splashReady = true;
+
+  window.setSplashStatus = function (msg, progress) {
+    var el = document.getElementById('splashStatus');
+    if (el) el.textContent = msg;
+    var bar = document.getElementById('progressFill');
+    if (bar) bar.style.width = (progress || 0) + '%';
+  };
+
+  // ── Starfield ──────────────────────────────────────────────────────────
+  var container = document.getElementById('stars');
+  var W = 720, H = 480;
+  var starCount = 220;
+
+  for (var i = 0; i < starCount; i++) {
+    var s = document.createElement('div');
+    s.className = 'star';
+
+    var x = Math.random() * W;
+    var y = Math.random() * H;
+    var size = Math.random() < 0.12 ? (Math.random() * 1.8 + 1.4)
+             : Math.random() < 0.40 ? (Math.random() * 0.8 + 0.8)
+             : (Math.random() * 0.5 + 0.3);
+
+    var dur   = (Math.random() * 4 + 2).toFixed(1) + 's';
+    var delay = (Math.random() * 6).toFixed(2) + 's';
+    var lo    = (Math.random() * 0.12 + 0.04).toFixed(2);
+    var hi    = (Math.random() * 0.55 + 0.35).toFixed(2);
+
+    // Keep stars away from the moon area (top-right quadrant, approximate)
+    if (x > 480 && y < 200) {
+      var angle = Math.random() * Math.PI * 2;
+      x = Math.random() * 480;
+      y = Math.random() * 480;
+    }
+
+    s.style.cssText = [
+      'left:' + x.toFixed(1) + 'px',
+      'top:' + y.toFixed(1) + 'px',
+      'width:' + size.toFixed(1) + 'px',
+      'height:' + size.toFixed(1) + 'px',
+      '--dur:' + dur,
+      '--delay:' + delay,
+      '--lo:' + lo,
+      '--hi:' + hi,
+      'opacity:' + lo,
+    ].join(';');
+
+    // Subtle colour tint for a few stars
+    if (Math.random() < 0.08) s.style.background = '#c8d8ff';
+    else if (Math.random() < 0.06) s.style.background = '#ffd8b0';
+
+    container.appendChild(s);
+  }
+
+
+})();
+</script>
+</body>
+</html>

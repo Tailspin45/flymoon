@@ -18,6 +18,7 @@ let flaskProcess  = null;
 let flaskPort     = null;
 let mainWindow    = null;
 let wizardWindow  = null;
+let splashWindow  = null;
 
 // ─── Utilities ──────────────────────────────────────────────────────────────
 
@@ -154,6 +155,39 @@ function createMainWindow() {
     mainWindow.on('closed', () => { mainWindow = null; });
 }
 
+function createSplashWindow() {
+    splashWindow = new BrowserWindow({
+        width:  720,
+        height: 480,
+        resizable: false,
+        frame: false,
+        transparent: false,
+        center: true,
+        alwaysOnTop: true,
+        skipTaskbar: true,
+        webPreferences: {
+            contextIsolation: true,
+            nodeIntegration: false,
+        },
+    });
+    splashWindow.loadFile(path.join(__dirname, 'splash.html'));
+    splashWindow.on('closed', () => { splashWindow = null; });
+}
+
+function setSplashProgress(msg, pct) {
+    if (!splashWindow || splashWindow.isDestroyed()) return;
+    const safe = msg.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+    splashWindow.webContents.executeJavaScript(
+        `window.setSplashStatus && window.setSplashStatus('${safe}', ${pct});`
+    ).catch(() => {});
+}
+
+function sendWizardProgress(msg, pct) {
+    if (wizardWindow && !wizardWindow.isDestroyed()) {
+        wizardWindow.webContents.send('launch-progress', { msg, pct });
+    }
+}
+
 function createWizardWindow() {
     wizardWindow = new BrowserWindow({
         width:  720,
@@ -223,10 +257,33 @@ ipcMain.handle('save-config', async (_e, cfg) => {
 
 ipcMain.handle('wizard-complete', async (_e, cfg) => {
     saveConfig(cfg);
-    if (wizardWindow) { wizardWindow.close(); wizardWindow = null; }
     if (!mainWindow) {
-        await startFlask(cfg);
-        createMainWindow();
+        try {
+            sendWizardProgress('Starting server…', 20);
+            await startFlask(cfg);
+            sendWizardProgress('Connecting to services…', 65);
+            await new Promise(r => setTimeout(r, 300));
+            sendWizardProgress('Almost ready…', 95);
+            await new Promise(r => setTimeout(r, 300));
+            sendWizardProgress('Ready!', 100);
+            await new Promise(r => setTimeout(r, 600));
+            if (wizardWindow && !wizardWindow.isDestroyed()) {
+                wizardWindow.close();
+                wizardWindow = null;
+            }
+            createMainWindow();
+        } catch (err) {
+            if (wizardWindow && !wizardWindow.isDestroyed()) {
+                wizardWindow.close();
+                wizardWindow = null;
+            }
+            dialog.showErrorBox('Startup Error', `Failed to start Flymoon server:\n\n${err.message}`);
+        }
+    } else {
+        if (wizardWindow && !wizardWindow.isDestroyed()) {
+            wizardWindow.close();
+            wizardWindow = null;
+        }
     }
     return { ok: true };
 });
@@ -238,15 +295,46 @@ ipcMain.handle('get-resources-path', () => RESOURCES);
 // ─── App Lifecycle ─────────────────────────────────────────────────────────────
 
 app.whenReady().then(async () => {
+    // Always show the splash screen first
+    createSplashWindow();
+
+    // Wait for splash page to finish loading before proceeding
+    await new Promise(resolve => {
+        if (splashWindow && !splashWindow.isDestroyed()) {
+            splashWindow.webContents.once('did-finish-load', resolve);
+        } else {
+            resolve();
+        }
+    });
+
+    const splashStart = Date.now();
+    const MIN_SPLASH_MS = 2500;
+
+    const closeSplash = async () => {
+        const elapsed = Date.now() - splashStart;
+        const remaining = MIN_SPLASH_MS - elapsed;
+        if (remaining > 0) await new Promise(r => setTimeout(r, remaining));
+        if (splashWindow && !splashWindow.isDestroyed()) {
+            splashWindow.close();
+        }
+    };
+
     const cfg = loadConfig();
     if (!cfg || !cfg.aeroapi_key) {
-        // First run: show setup wizard
+        // No config — wait minimum time then open wizard
+        await closeSplash();
         createWizardWindow();
     } else {
         try {
+            setSplashProgress('Starting Flymoon server…', 20);
             await startFlask(cfg);
+            setSplashProgress('Connecting to flight data…', 65);
+            await new Promise(r => setTimeout(r, 300));
+            setSplashProgress('Ready.', 100);
+            await closeSplash();
             createMainWindow();
         } catch (err) {
+            if (splashWindow && !splashWindow.isDestroyed()) splashWindow.close();
             dialog.showErrorBox('Startup Error', `Failed to start Flymoon server:\n\n${err.message}`);
             app.quit();
         }

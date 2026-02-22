@@ -171,6 +171,8 @@ class ConfigWizard:
             self._setup_observer_location()
             self._setup_bounding_box()
             self._setup_optional_settings()
+            self._setup_telegram()
+            self._setup_seestar()
         except KeyboardInterrupt:
             print("\n\nSetup cancelled.")
             return False
@@ -340,6 +342,79 @@ class ConfigWizard:
                     print("  Saved!")
             else:
                 print("  Skipped. Weather filtering will be disabled.")
+
+    def _setup_telegram(self):
+        """Setup Telegram notifications."""
+        print("\n" + "-" * 40)
+        print("STEP 5: Telegram Notifications (optional)")
+        print("-" * 40)
+        print("\nTelegram lets Flymoon alert your phone when a transit is imminent.")
+        print("This is especially useful for the headless monitor (transit_capture.py).")
+
+        current_token = os.getenv("TELEGRAM_BOT_TOKEN")
+        current_chat  = os.getenv("TELEGRAM_CHAT_ID")
+
+        if current_token and current_chat:
+            print(f"\n  Current bot token: {current_token[:10]}...")
+            print(f"  Current chat ID:   {current_chat}")
+            if not self._prompt_yes_no("  Change Telegram settings?", default=False):
+                return
+
+        if not self._prompt_yes_no("\n  Set up Telegram notifications?", default=True):
+            print("  Skipped. You can add Telegram later by editing .env")
+            return
+
+        print("\n  HOW TO GET YOUR BOT TOKEN:")
+        print("  1. Open Telegram and search for @BotFather")
+        print("  2. Send: /newbot")
+        print("  3. Follow the prompts — copy the token it gives you")
+        print("  URL: https://t.me/botfather\n")
+
+        token = self._prompt("  Paste your Bot Token here")
+        set_key(self.config_file, "TELEGRAM_BOT_TOKEN", token)
+
+        print("\n  HOW TO GET YOUR CHAT ID:")
+        print("  1. Send any message to your new bot in Telegram")
+        print(f"  2. Open this URL in a browser:")
+        print(f"     https://api.telegram.org/bot{token}/getUpdates")
+        print('  3. Find the "id" field inside the "chat" object — that\'s your Chat ID\n')
+
+        chat_id = self._prompt("  Paste your Chat ID here")
+        set_key(self.config_file, "TELEGRAM_CHAT_ID", chat_id)
+        print("  Telegram saved! ✅")
+
+    def _setup_seestar(self):
+        """Setup Seestar telescope integration."""
+        print("\n" + "-" * 40)
+        print("STEP 6: Seestar Telescope (optional)")
+        print("-" * 40)
+        print("\nIf you have a Seestar S50 on your local network, Flymoon can")
+        print("automatically start recording the moment a transit is detected.")
+
+        current_enabled = os.getenv("ENABLE_SEESTAR", "false").lower() == "true"
+        current_host    = os.getenv("SEESTAR_HOST", "192.168.1.100")
+        current_port    = os.getenv("SEESTAR_PORT", "4700")
+
+        if current_enabled:
+            print(f"\n  Currently enabled — host: {current_host}:{current_port}")
+            if not self._prompt_yes_no("  Change Seestar settings?", default=False):
+                return
+
+        if not self._prompt_yes_no("\n  Enable Seestar auto-capture?", default=False):
+            set_key(self.config_file, "ENABLE_SEESTAR", "false")
+            print("  Skipped. Enable later by setting ENABLE_SEESTAR=true in .env")
+            return
+
+        print("\n  Make sure your Seestar is on the same Wi-Fi network.")
+        print("  Find its IP in the Seestar app under Device Info.\n")
+
+        host = self._prompt("  Seestar IP address", default=current_host)
+        port = self._prompt("  Seestar port", default=current_port)
+
+        set_key(self.config_file, "ENABLE_SEESTAR", "true")
+        set_key(self.config_file, "SEESTAR_HOST", host)
+        set_key(self.config_file, "SEESTAR_PORT", port)
+        print("  Seestar saved! ✅")
     
     def get_status_report(self):
         """Get human-readable status report."""
