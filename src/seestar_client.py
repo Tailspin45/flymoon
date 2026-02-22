@@ -142,6 +142,9 @@ class SeestarClient:
                     
                     # Use timeout override if provided, otherwise use instance timeout
                     cmd_timeout = timeout_override if timeout_override is not None else self.timeout
+                    # Also adjust socket recv timeout to match so it doesn't fire early
+                    if timeout_override is not None:
+                        self.socket.settimeout(timeout_override)
 
                     while time.time() - start_time < cmd_timeout:
                         # Receive data in chunks
@@ -196,6 +199,11 @@ class SeestarClient:
                     logger.error(f"Socket error: {e}")
                 self._connected = False
                 raise RuntimeError(f"Communication failed: {e}")
+
+            finally:
+                # Always restore the default socket timeout after command
+                if self.socket:
+                    self.socket.settimeout(self.timeout)
 
     def _reconnect(self) -> bool:
         """Attempt to re-establish the TCP connection without starting a new heartbeat thread.
@@ -401,10 +409,9 @@ class SeestarClient:
             return True
 
         try:
-            # Start video recording with start_record_avi
-            # raw=False gives us processed MP4 video
+            # Start video recording - fire-and-forget: Seestar acks via event, not RPC response
             params = {"raw": False}
-            _ = self._send_command("start_record_avi", params=params)
+            _ = self._send_command("start_record_avi", params=params, expect_response=False)
 
             self._recording = True
             self._recording_start_time = datetime.now()
@@ -447,8 +454,8 @@ class SeestarClient:
             if self._recording_start_time:
                 duration = (datetime.now() - self._recording_start_time).total_seconds()
 
-            # Stop video recording with stop_record_avi
-            _ = self._send_command("stop_record_avi")
+            # Stop video recording - fire-and-forget like start
+            _ = self._send_command("stop_record_avi", expect_response=False)
 
             logger.info(f"Stopped recording (duration: {duration:.1f}s)")
 
