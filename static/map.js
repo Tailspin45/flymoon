@@ -29,6 +29,7 @@ let userInteractingWithMap = false;  // Prevent auto-zoom during user interactio
 let headingArrows = {};  // Store heading arrows for medium/high probability transits
 let ghostMarkers = {};  // Arrays of dots showing breadcrumb trail per flight (ghostMarkers[id] = [circleMarker, ...])
 let hardRefreshCount = 0;  // Counts auto hard refreshes; ghosts cleared every 3rd
+let layerControl = null;  // Leaflet layer control (base + overlays)
 
 // Arrow colors for each target
 const ARROW_COLORS = {
@@ -174,8 +175,44 @@ function initializeMap(centerLat, centerLon) {
     };
     const savedLayer = localStorage.getItem('mapLayer') || 'Street';
     (tileLayers[savedLayer] || tileLayers['Street']).addTo(map);
-    L.control.layers(tileLayers, {}, { position: 'topright' }).addTo(map);
+    layerControl = L.control.layers(tileLayers, {}, { position: 'topright' }).addTo(map);
     map.on('baselayerchange', e => localStorage.setItem('mapLayer', e.name));
+
+    // SkyVector aviation charts deep-link control
+    const SkyVectorControl = L.Control.extend({
+        options: { position: 'topright' },
+        onAdd() {
+            const btn = L.DomUtil.create('div', 'leaflet-bar leaflet-control skyvector-control');
+            btn.innerHTML = `
+                <a href="#" title="Open in SkyVector" style="display:flex;align-items:center;gap:4px;padding:0 8px;font-size:12px;white-space:nowrap;text-decoration:none;color:#333;">
+                    ✈ SkyVector ▾
+                </a>
+                <div class="sv-menu" style="display:none;position:absolute;right:0;top:100%;background:#fff;border:1px solid #ccc;border-radius:4px;box-shadow:0 2px 6px rgba(0,0,0,.2);min-width:160px;z-index:1000;">
+                    <a data-chart="301" href="#" style="display:block;padding:7px 12px;font-size:12px;color:#333;text-decoration:none;">📋 IFR Low Altitude</a>
+                    <a data-chart="302" href="#" style="display:block;padding:7px 12px;font-size:12px;color:#333;text-decoration:none;">📋 IFR High Altitude</a>
+                    <a data-chart="304" href="#" style="display:block;padding:7px 12px;font-size:12px;color:#333;text-decoration:none;">📋 VFR Sectional</a>
+                </div>`;
+            btn.style.position = 'relative';
+            L.DomEvent.disableClickPropagation(btn);
+            const menu = btn.querySelector('.sv-menu');
+            btn.querySelector('a').addEventListener('click', e => {
+                e.preventDefault();
+                menu.style.display = menu.style.display === 'none' ? 'block' : 'none';
+            });
+            menu.querySelectorAll('a[data-chart]').forEach(a => {
+                a.addEventListener('click', e => {
+                    e.preventDefault();
+                    const c = map.getCenter();
+                    const z = Math.min(Math.max(Math.round(map.getZoom() / 2), 1), 5);
+                    window.open(`https://skyvector.com/?ll=${c.lat.toFixed(4)},${c.lng.toFixed(4)}&chart=${a.dataset.chart}&zoom=${z}`, '_blank');
+                    menu.style.display = 'none';
+                });
+            });
+            document.addEventListener('click', () => { menu.style.display = 'none'; });
+            return btn;
+        }
+    });
+    new SkyVectorControl().addTo(map);
 
     // LayerGroups for atomic clear/add cycles
     aircraftLayer = L.layerGroup().addTo(map);
@@ -188,6 +225,27 @@ function initializeMap(centerLat, centerLon) {
     ghostLayer = L.layerGroup({ pane: 'ghostPane' }).addTo(map);
 
     mapInitialized = true;
+}
+
+/**
+ * Add OpenAIP aviation overlay (airspace, airports, navaids) to the layer control.
+ * Called after config loads — only runs if an API key is configured.
+ * Get a free key at https://www.openaip.net
+ */
+function addOpenAIPOverlay(apiKey) {
+    if (!apiKey || !layerControl || !map) return;
+    const overlay = L.tileLayer(
+        `https://1.api.tiles.openaip.net/api/data/openaip/{z}/{x}/{y}.png?apiKey=${apiKey}`,
+        {
+            attribution: '&copy; <a href="https://www.openaip.net">OpenAIP</a>',
+            maxZoom: 17,
+            opacity: 0.8,
+        }
+    );
+    layerControl.addOverlay(overlay, 'Aviation (OpenAIP)');
+    if (localStorage.getItem('mapOverlayAvia') === 'on') overlay.addTo(map);
+    map.on('overlayadd', e => { if (e.name === 'Aviation (OpenAIP)') localStorage.setItem('mapOverlayAvia', 'on'); });
+    map.on('overlayremove', e => { if (e.name === 'Aviation (OpenAIP)') localStorage.removeItem('mapOverlayAvia'); });
 }
 
 function updateObserverMarker(lat, lon, elevation) {

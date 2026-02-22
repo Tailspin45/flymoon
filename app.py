@@ -157,7 +157,8 @@ def get_config():
     return jsonify({
         "autoRefreshIntervalMinutes": int(os.getenv("AUTO_REFRESH_INTERVAL_MINUTES", 10)),
         "cacheEnabled": True,
-        "cacheTTLSeconds": 600
+        "cacheTTLSeconds": 600,
+        "openaipApiKey": os.getenv("OPENAIP_API_KEY", ""),
     })
 
 
