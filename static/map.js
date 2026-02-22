@@ -274,9 +274,10 @@ function addOpenAIPOverlay(apiKey) {
         }
     );
     layerControl.addOverlay(overlay, 'Aviation (OpenAIP)');
-    if (localStorage.getItem('mapOverlayAvia') === 'on') overlay.addTo(map);
-    map.on('overlayadd', e => { if (e.name === 'Aviation (OpenAIP)') localStorage.setItem('mapOverlayAvia', 'on'); });
-    map.on('overlayremove', e => { if (e.name === 'Aviation (OpenAIP)') localStorage.removeItem('mapOverlayAvia'); });
+    // Default ON; only off if user explicitly unchecked it
+    if (localStorage.getItem('mapOverlayAvia') !== 'off') overlay.addTo(map);
+    map.on('overlayadd', e => { if (e.name === 'Aviation (OpenAIP)') localStorage.removeItem('mapOverlayAvia'); });
+    map.on('overlayremove', e => { if (e.name === 'Aviation (OpenAIP)') localStorage.setItem('mapOverlayAvia', 'off'); });
 }
 
 function updateObserverMarker(lat, lon, elevation) {
