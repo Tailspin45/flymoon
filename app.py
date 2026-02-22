@@ -572,7 +572,7 @@ def transit_log():
         except OSError:
             continue
 
-    events = sorted(best.values(), key=lambda x: (x["date"], x["timestamp"]), reverse=True)
+    events = sorted(best.values(), key=lambda x: x["timestamp"] or x["date"], reverse=True)
     return jsonify(events)
 
 
