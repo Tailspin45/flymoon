@@ -252,7 +252,7 @@ function addOpenAIPOverlay(apiKey) {
         // the user knows the feature exists and how to enable it.
         layerControl.addOverlay(
             L.tileLayer('', { opacity: 0 }),
-            'Aviation (OpenAIP) — add key to .env'
+            'Aviation (OpenAIP) — <a href="https://www.openaip.net" target="_blank" onclick="event.stopPropagation()" style="color:#7ab8d4;">get free key</a>'
         );
         return;
     }
