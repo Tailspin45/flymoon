@@ -23,7 +23,6 @@ let splashWindow  = null;
 
 // ─── Window state persistence ────────────────────────────────────────────────
 const DEFAULT_WIDTH  = 1100;  // Minimum to show map + altitude panel comfortably
-const DEFAULT_HEIGHT = 820;
 
 function loadWindowState() {
     try {
@@ -43,11 +42,17 @@ function saveWindowState(win) {
 }
 
 function centerOnPrimaryDisplay(width, height) {
-    const { bounds } = screen.getPrimaryDisplay();
+    const { workArea } = screen.getPrimaryDisplay();
     return {
-        x: Math.round(bounds.x + (bounds.width  - width)  / 2),
-        y: Math.round(bounds.y + (bounds.height - height) / 2),
+        x: Math.round(workArea.x + (workArea.width  - width)  / 2),
+        y: Math.round(workArea.y + (workArea.height - height) / 2),
     };
+}
+
+function defaultHeight() {
+    // Fill available vertical space up to ~1200px (enough for 15 aircraft rows)
+    const { workArea } = screen.getPrimaryDisplay();
+    return Math.min(workArea.height, 1200);
 }
 
 // ─── Utilities ──────────────────────────────────────────────────────────────
@@ -161,12 +166,13 @@ async function startFlask(cfg) {
 // ─── Windows ─────────────────────────────────────────────────────────────────
 
 function createMainWindow() {
-    const saved = loadWindowState();
-    const pos   = saved || centerOnPrimaryDisplay(DEFAULT_WIDTH, DEFAULT_HEIGHT);
+    const saved  = loadWindowState();
+    const height = saved ? saved.height : defaultHeight();
+    const pos    = saved || centerOnPrimaryDisplay(DEFAULT_WIDTH, height);
 
     mainWindow = new BrowserWindow({
-        width:     saved ? saved.width  : DEFAULT_WIDTH,
-        height:    saved ? saved.height : DEFAULT_HEIGHT,
+        width:     saved ? saved.width : DEFAULT_WIDTH,
+        height,
         x:         pos.x,
         y:         pos.y,
         minWidth:  900,
