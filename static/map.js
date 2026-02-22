@@ -197,6 +197,7 @@ function initializeMap(centerLat, centerLon) {
             const menu = btn.querySelector('.sv-menu');
             btn.querySelector('a').addEventListener('click', e => {
                 e.preventDefault();
+                e.stopPropagation();
                 menu.style.display = menu.style.display === 'none' ? 'block' : 'none';
             });
             menu.querySelectorAll('a[data-chart]').forEach(a => {
