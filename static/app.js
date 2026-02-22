@@ -1166,10 +1166,10 @@ function fetchFlights() {
             alertNoResults.innerHTML = "Sun or moon is below the min angle you selected or weather is bad";
         }
 
-        // Save bounding box BEFORE filtering (so filter can use it)
-        if(data.boundingBox) {
+        // Use server bbox only if user hasn't set a custom one via savePosition()
+        if(data.boundingBox && !localStorage.getItem("boundingBox")) {
             window.lastBoundingBox = data.boundingBox;
-            console.log('Bounding box:', window.lastBoundingBox);
+            console.log('Bounding box (from server):', window.lastBoundingBox);
         }
 
         // Deduplicate flights by ID for display (keep highest possibility level)
