@@ -246,7 +246,16 @@ function initializeMap(centerLat, centerLon) {
  * Get a free key at https://www.openaip.net
  */
 function addOpenAIPOverlay(apiKey) {
-    if (!apiKey || !layerControl || !map) return;
+    if (!layerControl || !map) return;
+    if (!apiKey) {
+        // Always show the toggle; tiles will 401 without a key but at least
+        // the user knows the feature exists and how to enable it.
+        layerControl.addOverlay(
+            L.tileLayer('', { opacity: 0 }),
+            'Aviation (OpenAIP) — add key to .env'
+        );
+        return;
+    }
     const overlay = L.tileLayer(
         `https://{s}.api.tiles.openaip.net/api/data/openaip/{z}/{x}/{y}.png?apiKey=${apiKey}`,
         {
