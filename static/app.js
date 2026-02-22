@@ -757,10 +757,15 @@ function savePosition() {
     localStorage.setItem("minAltS", minAltS);
     localStorage.setItem("minAltW", minAltW);
 
-    // Save bounding box if user has edited it
-    if (window.lastBoundingBox) {
-        localStorage.setItem("boundingBox", JSON.stringify(window.lastBoundingBox));
-    }
+    // Reset bounding box to ±1.5° around new observer so search area follows the position
+    const newBbox = {
+        latLowerLeft:  Math.round((latitude - 1.5) * 10000) / 10000,
+        lonLowerLeft:  Math.round((longitude - 1.5) * 10000) / 10000,
+        latUpperRight: Math.round((latitude + 1.5) * 10000) / 10000,
+        lonUpperRight: Math.round((longitude + 1.5) * 10000) / 10000,
+    };
+    window.lastBoundingBox = newBbox;
+    localStorage.setItem("boundingBox", JSON.stringify(newBbox));
 
     // Pan map to new position immediately if map is open
     if (typeof updateObserverMarker === 'function' && map) {
