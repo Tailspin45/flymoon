@@ -191,17 +191,17 @@ function initializeMap(centerLat, centerLon) {
                     <div class="sv-menu-header">Open in SkyVector</div>
                     <a href="#" data-chart="301">
                         <span class="sv-icon">🗺</span>
-                        <span class="sv-label">IFR Low Altitude</span>
-                        <span class="sv-sub">≤FL180</span>
+                        <span class="sv-label">World Lo</span>
+                        <span class="sv-sub">IFR Low Altitude</span>
                     </a>
                     <a href="#" data-chart="302">
                         <span class="sv-icon">🗺</span>
-                        <span class="sv-label">IFR High Altitude</span>
-                        <span class="sv-sub">FL180+</span>
+                        <span class="sv-label">World Hi</span>
+                        <span class="sv-sub">IFR High Altitude</span>
                     </a>
-                    <a href="#" data-chart="304">
+                    <a href="#" data-chart="">
                         <span class="sv-icon">🗺</span>
-                        <span class="sv-label">VFR Sectional</span>
+                        <span class="sv-label">World VFR</span>
                         <span class="sv-sub">Visual flight</span>
                     </a>
                 </div>`;
@@ -216,7 +216,8 @@ function initializeMap(centerLat, centerLon) {
                     e.preventDefault();
                     const c = map.getCenter();
                     const z = Math.min(Math.max(Math.round(map.getZoom() / 2), 1), 5);
-                    window.open(`https://skyvector.com/?ll=${c.lat.toFixed(4)},${c.lng.toFixed(4)}&chart=${a.dataset.chart}&zoom=${z}`, '_blank');
+                    const chartParam = a.dataset.chart ? `&chart=${a.dataset.chart}` : '';
+                    window.open(`https://skyvector.com/?ll=${c.lat.toFixed(4)},${c.lng.toFixed(4)}${chartParam}&zoom=${z}`, '_blank');
                     menu.style.display = 'none';
                 });
             });
