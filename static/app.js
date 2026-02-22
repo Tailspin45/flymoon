@@ -762,7 +762,13 @@ function savePosition() {
         localStorage.setItem("boundingBox", JSON.stringify(window.lastBoundingBox));
     }
 
-    alert("Position saved in local storage!");
+    // Pan map to new position immediately if map is open
+    if (typeof updateObserverMarker === 'function' && map) {
+        updateObserverMarker(latitude, longitude, elevation);
+    }
+
+    alert("Position saved! Refreshing flights...");
+    fetchFlights();
 }
 
 function loadPosition() {
