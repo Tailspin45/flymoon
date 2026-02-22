@@ -343,6 +343,58 @@ class ConfigWizard:
             else:
                 print("  Skipped. Weather filtering will be disabled.")
 
+        # OpenSky Network
+        print("\nOpenSky Network credentials (optional)")
+        print("  Provides last-mile position refinement for higher accuracy.")
+        print("  Anonymous: 100 req/day  |  Registered (free): 400 req/day")
+        print("  Register free at: https://opensky-network.org/index.php?option=com_users&task=registration.register")
+
+        current_id = os.getenv("OPENSKY_CLIENT_ID", "")
+        current_sec = os.getenv("OPENSKY_CLIENT_SECRET", "")
+        has_opensky = bool(current_id and current_id != "your_opensky_client_id_here")
+        if has_opensky:
+            print(f"  Current client ID: {current_id[:10]}...")
+            if self._prompt_yes_no("  Change OpenSky credentials?", default=False):
+                cid = self._prompt("  OpenSky Client ID (OAuth2)", required=False)
+                csec = self._prompt("  OpenSky Client Secret (OAuth2)", required=False)
+                if cid:
+                    set_key(self.config_file, "OPENSKY_CLIENT_ID", cid)
+                    set_key(self.config_file, "OPENSKY_CLIENT_SECRET", csec or "")
+                    print("  Saved!")
+        else:
+            if self._prompt_yes_no("  Add OpenSky credentials?", default=False):
+                print("\n  Get OAuth2 credentials at: https://opensky-network.org/profile")
+                cid = self._prompt("  OpenSky Client ID", required=False)
+                csec = self._prompt("  OpenSky Client Secret", required=False)
+                if cid:
+                    set_key(self.config_file, "OPENSKY_CLIENT_ID", cid)
+                    set_key(self.config_file, "OPENSKY_CLIENT_SECRET", csec or "")
+                    print("  Saved!")
+            else:
+                print("  Skipped. Anonymous OpenSky access will be used (100 req/day).")
+
+        # OpenAIP aviation map overlay
+        print("\nOpenAIP API key (optional)")
+        print("  Adds an aviation overlay on the map (airspace, airports, navaids).")
+        print("  Register free at: https://www.openaip.net")
+
+        current_aip = os.getenv("OPENAIP_API_KEY", "")
+        if current_aip:
+            print(f"  Current: {current_aip[:8]}...")
+            if self._prompt_yes_no("  Change OpenAIP key?", default=False):
+                key = self._prompt("  Enter OpenAIP API key", required=False)
+                if key:
+                    set_key(self.config_file, "OPENAIP_API_KEY", key)
+                    print("  Saved!")
+        else:
+            if self._prompt_yes_no("  Add OpenAIP map overlay key?", default=False):
+                key = self._prompt("  Enter OpenAIP API key", required=False)
+                if key:
+                    set_key(self.config_file, "OPENAIP_API_KEY", key)
+                    print("  Saved!")
+            else:
+                print("  Skipped. Aviation overlay will not be shown on map.")
+
     def _setup_telegram(self):
         """Setup Telegram notifications."""
         print("\n" + "-" * 40)
