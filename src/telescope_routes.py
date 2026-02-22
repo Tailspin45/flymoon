@@ -1130,38 +1130,31 @@ def register_routes(app):
 
 
 def _auto_connect_background():
-    """Attempt to connect to Seestar in a background thread on startup.
+    """Attempt to connect to Seestar once in a background thread on startup.
 
-    Tries once immediately, then retries every 30s until connected.
-    Does not block Flask startup.
+    Does not retry — if the scope isn't reachable, the user can connect
+    manually from the telescope page.
     """
     def _worker():
-        attempt = 0
-        while True:
-            attempt += 1
-            client = get_telescope_client()
-            if not client:
-                logger.warning("[Telescope] Auto-connect: no client (check SEESTAR_HOST in .env)")
-                return
+        client = get_telescope_client()
+        if not client:
+            logger.warning("[Telescope] Auto-connect: no client (check SEESTAR_HOST in .env)")
+            return
 
-            if client.is_connected():
-                logger.info("[Telescope] Auto-connect: already connected")
-                return
+        if client.is_connected():
+            logger.info("[Telescope] Auto-connect: already connected")
+            return
 
-            try:
-                client.connect()
-                logger.info(
-                    f"[Telescope] Auto-connect: connected to "
-                    f"{client.host}:{client.port} (attempt {attempt})"
-                )
-                return
-            except Exception as e:
-                logger.warning(
-                    f"[Telescope] Auto-connect attempt {attempt} failed: {e} — "
-                    f"retrying in 30s"
-                )
-                import time
-                time.sleep(30)
+        try:
+            client.connect()
+            logger.info(
+                f"[Telescope] Auto-connect: connected to {client.host}:{client.port}"
+            )
+        except Exception as e:
+            logger.info(
+                f"[Telescope] Auto-connect: scope not reachable ({e}) — "
+                "connect manually from the telescope page"
+            )
 
     t = threading.Thread(target=_worker, name="seestar-auto-connect", daemon=True)
     t.start()
