@@ -47,7 +47,7 @@ from src.constants import POSSIBLE_TRANSITS_LOGFILENAME, ASTRO_EPHEMERIS, get_ae
 load_dotenv()
 
 from src import logger
-from src.astro import CelestialObject
+from src.astro import CelestialObject, get_rise_set_times
 from src.config_wizard import ConfigWizard
 from src.flight_data import save_possible_transits, sort_results
 from src.flight_cache import get_cache
@@ -253,6 +253,7 @@ def get_all_flights():
         data = {
             "flights": sort_results(all_flights),
             "targetCoordinates": target_coordinates,
+            "riseSetTimes": get_rise_set_times(latitude, longitude, elevation),
             "trackingTargets": tracking_targets,
             "nextCheckInterval": next_check_interval,  # Seconds until next check
             "weather": None,  # Weather functionality not implemented yet

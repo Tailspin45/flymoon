@@ -1152,6 +1152,28 @@ function fetchFlights() {
             }
         }
 
+        // LINE 4: Rise/set times
+        if(data.riseSetTimes) {
+            const r = data.riseSetTimes;
+            const riseSetParts = [];
+            if(r.sun_rise || r.sun_set) {
+                let s = "🌞";
+                if(r.sun_rise) s += ` ↑${r.sun_rise}`;
+                if(r.sun_set)  s += ` ↓${r.sun_set}`;
+                riseSetParts.push(s);
+            }
+            if(r.moon_rise || r.moon_set) {
+                let s = "🌙";
+                if(r.moon_rise) s += ` ↑${r.moon_rise}`;
+                if(r.moon_set)  s += ` ↓${r.moon_set}`;
+                riseSetParts.push(s);
+            }
+            const riseSetEl = document.getElementById("riseSetTimes");
+            if(riseSetEl && riseSetParts.length > 0) {
+                riseSetEl.innerHTML = riseSetParts.join("&nbsp;&nbsp;&nbsp;&nbsp;");
+            }
+        }
+
         // Check if any targets are trackable
         if(data.trackingTargets && data.trackingTargets.length === 0) {
             alertNoResults.innerHTML = "Sun or moon is below the min angle you selected or weather is bad";
