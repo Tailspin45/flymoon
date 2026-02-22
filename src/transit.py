@@ -230,6 +230,8 @@ def check_transit(
                     ),
                     "direction": flight.get("direction", 0),
                     "waypoints": flight.get("waypoints", []),
+                    "position_source": flight.get("position_source", "flightaware"),
+                    "position_age_s": flight.get("position_age_s"),
                 }
         update_response = False
 
@@ -252,6 +254,8 @@ def check_transit(
         "elevation_change": CHANGE_ELEVATION.get(flight.get("elevation_change"), None),
         "direction": flight.get("direction", 0),
         "waypoints": flight.get("waypoints", []),
+        "position_source": flight.get("position_source", "flightaware"),
+        "position_age_s": flight.get("position_age_s"),
     }
     
     # Include closest approach data if we found any

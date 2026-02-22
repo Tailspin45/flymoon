@@ -380,7 +380,7 @@ function updateFlightTableFull(flights) {
         
         // Column indexes (0: Target, 1: ID, 2: Type, 3: Origin, 4: Dest, 5: Target Alt, 6: Plane Alt,
         // 7: Target Az, 8: Plane Az, 9: Alt Diff, 10: Az Diff, 11: Elev Change, 12: Aircraft Alt (ft),
-        // 13: Direction, 14: Distance, 15: Speed, 16: Time)
+        // 13: Direction, 14: Distance, 15: Speed, 16: Src)
         
         if (flight.target_alt !== null && cells[5]) {
             cells[5].textContent = flight.target_alt.toFixed(1) + "º";
@@ -413,11 +413,8 @@ function updateFlightTableFull(flights) {
                 cells[14].innerHTML = `<span style="display:inline-block;text-align:right;min-width:4ch">${km}</span>/<span style="display:inline-block;text-align:left;min-width:4ch">${miles}</span>`;
             }
         }
-        if (flight.time !== null && cells[16]) {
-            cells[16].textContent = flight.time.toFixed(1);
-        }
-        // Update source badge (cell 17) if position_source changed (e.g. OS→ADS-B)
-        if (flight.position_source && cells[17]) {
+        // Update source badge (cell 16) if position_source changed (e.g. OS→ADS-B)
+        if (flight.position_source && cells[16]) {
             const srcMap = {
                 "opensky":     { label: "OS",    color: "#4caf50", title: "OpenSky (~10s latency)" },
                 "flightaware": { label: "FA",    color: "#888",    title: "FlightAware (60–300s latency)" },
@@ -426,7 +423,7 @@ function updateFlightTableFull(flights) {
             };
             const si = srcMap[flight.position_source] || { label: flight.position_source.toUpperCase(), color: "#888", title: flight.position_source };
             const age = flight.position_age_s != null ? ` (${flight.position_age_s}s)` : "";
-            const span = cells[17].querySelector("span");
+            const span = cells[16].querySelector("span");
             if (span) {
                 span.textContent = si.label;
                 span.style.background = si.color;
