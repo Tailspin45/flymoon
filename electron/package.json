@@ -1,0 +1,77 @@
+{
+  "name": "flymoon",
+  "version": "1.0.0",
+  "description": "Track aircraft transiting the Sun and Moon",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "build:mac": "electron-builder --mac",
+    "build:win": "electron-builder --win",
+    "build:linux": "electron-builder --linux",
+    "build:all": "electron-builder -mwl"
+  },
+  "build": {
+    "appId": "com.flymoon.app",
+    "productName": "Flymoon",
+    "copyright": "Copyright © 2025 Flymoon",
+    "directories": {
+      "buildResources": "assets",
+      "output": "../dist-electron"
+    },
+    "extraResources": [
+      { "from": "../static",    "to": "static" },
+      { "from": "../templates", "to": "templates" },
+      { "from": "../src",       "to": "src" },
+      { "from": "../app.py",    "to": "app.py" },
+      { "from": "../de421.bsp", "to": "de421.bsp" },
+      { "from": "../README.md", "to": "docs/README.md" },
+      { "from": "../SETUP.md",  "to": "docs/SETUP.md" },
+      { "from": "../QUICKSTART.md", "to": "docs/QUICKSTART.md" },
+      { "from": "../QUICK_REFERENCE.md", "to": "docs/QUICK_REFERENCE.md" },
+      { "from": "../docs/Flymoon-article.pdf",            "to": "docs/Flymoon-article.pdf" },
+      { "from": "../docs/transit_capture_position_paper.pdf", "to": "docs/transit_capture_position_paper.pdf" },
+      { "from": "../docs/TELESCOPE_GUIDE.md", "to": "docs/TELESCOPE_GUIDE.md" }
+    ],
+    "files": [
+      "main.js",
+      "preload.js",
+      "wizard.html",
+      "assets/**"
+    ],
+    "mac": {
+      "icon": "assets/icon.icns",
+      "target": [{ "target": "dmg", "arch": ["arm64", "x64"] }],
+      "category": "public.app-category.utilities",
+      "darkModeSupport": true
+    },
+    "dmg": {
+      "title": "Flymoon",
+      "background": "assets/dmg-background.png",
+      "contents": [
+        { "x": 130, "y": 220 },
+        { "x": 410, "y": 220, "type": "link", "path": "/Applications" }
+      ]
+    },
+    "win": {
+      "icon": "assets/icon.ico",
+      "target": [{ "target": "nsis", "arch": ["x64"] }]
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "installerIcon": "assets/icon.ico",
+      "installerHeaderIcon": "assets/icon.ico"
+    },
+    "linux": {
+      "icon": "assets/icon.png",
+      "target": [{ "target": "AppImage", "arch": ["x64"] }],
+      "category": "Science"
+    }
+  },
+  "devDependencies": {
+    "electron": "^28.0.0",
+    "electron-builder": "^24.0.0"
+  }
+}

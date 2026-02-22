@@ -30,7 +30,7 @@ MANIFEST
 #  Usually these files are written by a python script from a template
 #  before PyInstaller builds the exe, so as to inject date/other infos into it.
 *.manifest
-*.spec
+# *.spec  — flymoon.spec is intentionally tracked
 
 # Installer logs
 pip-log.txt
@@ -174,3 +174,13 @@ data/possible-transits/log-backup.txt
 exp.ipynb
 *.DS_Store
 static/simulations/
+
+# Electron build artifacts
+electron/node_modules/
+electron/assets/bin/
+dist-electron/
+flymoon-server
+flymoon-server.exe
+electron/assets/icon.icns
+electron/assets/icon.ico
+electron/assets/icon.png

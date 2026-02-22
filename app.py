@@ -597,19 +597,23 @@ if __name__ == "__main__":
         mode = "DEMO" if args.demo else "TEST"
         logger.info(f"🎭 Starting in {mode} mode - using mock data")
 
-    # Find available port in range 8000-8100
+    # Use PORT env var if set (e.g. by Electron), otherwise find a free port
     import socket
     port = None
-    for p in range(8000, 8101):
-        try:
-            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            sock.bind(('0.0.0.0', p))
-            sock.close()
-            port = p
-            break
-        except OSError:
-            continue
-    
+    env_port = os.getenv("PORT")
+    if env_port:
+        port = int(env_port)
+    else:
+        for p in range(8000, 8101):
+            try:
+                sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                sock.bind(('0.0.0.0', p))
+                sock.close()
+                port = p
+                break
+            except OSError:
+                continue
+
     if port is None:
         logger.error("❌ No available ports in range 8000-8100")
         print("❌ No available ports in range 8000-8100")
