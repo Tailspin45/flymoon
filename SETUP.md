@@ -219,7 +219,15 @@ Replace `192.168.1.100` with your actual Seestar IP address.
 
 ### OpenAIP Aviation Overlay (Optional)
 
-OpenAIP provides several REST JSON APIs for easy integration with your applications. To connect to the APIs, you must first [create an account on OpenAIP](https://www.openaip.net). From your user's profile page, you can then request an API client which contains an API key that you can use to access the public REST JSON APIs. Documentation for the available APIs can be found here: [REST API Documentation](https://docs.openaip.net).
+OpenAIP overlays airspace boundaries, VOR stations, and airports on the Flymoon map. Getting the key is slightly non-obvious — follow these exact steps:
+
+1. Go to **[https://www.openaip.net](https://www.openaip.net)** and create a free account
+2. Confirm your email and log in
+3. Click your **username / avatar** in the top-right corner → **Profile**
+4. Scroll down to the **"API Clients"** section (not "API Keys" — look for "API Clients")
+5. Click **"Add client"** or **"Request API client"**
+6. Give it a name (e.g. `flymoon`) and submit
+7. The client will appear with an **API key** — copy that value
 
 Once you have your key, add it to `.env`:
 

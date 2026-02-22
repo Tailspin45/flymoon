@@ -376,7 +376,13 @@ class ConfigWizard:
         # OpenAIP aviation map overlay
         print("\nOpenAIP API key (optional)")
         print("  Adds an aviation overlay on the map (airspace, airports, navaids).")
-        print("  Register free at: https://www.openaip.net")
+        print("  Getting the key is slightly non-obvious — follow these steps:")
+        print("    1. Go to https://www.openaip.net and create a free account")
+        print("    2. Confirm your email and log in")
+        print("    3. Click your username/avatar (top-right) → Profile")
+        print("    4. Scroll to the 'API Clients' section (not 'API Keys')")
+        print("    5. Click 'Add client', give it a name (e.g. 'flymoon'), submit")
+        print("    6. Copy the API key shown on the new client")
 
         current_aip = os.getenv("OPENAIP_API_KEY", "")
         if current_aip:

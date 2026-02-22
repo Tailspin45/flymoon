@@ -251,6 +251,32 @@ function initializeMap(centerLat, centerLon) {
  * Called after config loads — only runs if an API key is configured.
  * Get a free key at https://www.openaip.net
  */
+function showOpenAIPInstructions(e) {
+    e.preventDefault();
+    e.stopPropagation();
+    const existing = document.getElementById('openaip-modal');
+    if (existing) { existing.remove(); return; }
+    const modal = document.createElement('div');
+    modal.id = 'openaip-modal';
+    modal.innerHTML = `
+        <div id="openaip-modal-box">
+            <h3>✈ Get a Free OpenAIP Key</h3>
+            <ol>
+                <li>Go to <a href="https://www.openaip.net" target="_blank">openaip.net</a> and create a free account</li>
+                <li>Confirm your email and log in</li>
+                <li>Click your <strong>username/avatar</strong> (top-right) → <strong>Profile</strong></li>
+                <li>Scroll to the <strong>"API Clients"</strong> section <em>(not "API Keys")</em></li>
+                <li>Click <strong>"Add client"</strong>, give it a name (e.g. <code>flymoon</code>), submit</li>
+                <li>Copy the <strong>API key</strong> shown on the new client</li>
+                <li>Add it to your <code>.env</code> file:<br><code>OPENAIP_API_KEY=your_key_here</code></li>
+            </ol>
+            <p>Reload the page after saving — no server restart needed.</p>
+            <button onclick="document.getElementById('openaip-modal').remove()">Close</button>
+        </div>`;
+    modal.addEventListener('click', ev => { if (ev.target === modal) modal.remove(); });
+    document.body.appendChild(modal);
+}
+
 function addOpenAIPOverlay(apiKey) {
     // Queue if map/layerControl not ready yet (config often resolves before map init)
     if (!layerControl || !map) {
@@ -260,7 +286,7 @@ function addOpenAIPOverlay(apiKey) {
     if (!apiKey) {
         layerControl.addOverlay(
             L.tileLayer('', { opacity: 0 }),
-            'Aviation (OpenAIP) — <a href="https://www.openaip.net" target="_blank" onclick="event.stopPropagation()" style="color:#7ab8d4;">get free key</a>'
+            'Aviation (OpenAIP) — <a href="#" onclick="showOpenAIPInstructions(event)" style="color:#7ab8d4;">get free key</a>'
         );
         return;
     }
