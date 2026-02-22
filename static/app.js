@@ -1645,7 +1645,7 @@ function createNotification(transitDetails = []) {
         icon: '/static/images/favicon.ico',
         badge: '/static/images/favicon.ico',
         tag: 'flymoon-transit',
-        requireInteraction: true,  // Keep notification until user interacts
+        requireInteraction: false, // Auto-dismiss after 30 seconds
         silent: false  // Enable system sound (respects OS notification settings)
     });
     
