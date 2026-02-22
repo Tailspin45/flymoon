@@ -217,6 +217,19 @@ SEESTAR_POST_BUFFER=10  # Continue recording 10s after transit
 
 Replace `192.168.1.100` with your actual Seestar IP address.
 
+### OpenAIP Aviation Overlay (Optional)
+
+OpenAIP provides several REST JSON APIs for easy integration with your applications. To connect to the APIs, you must first [create an account on OpenAIP](https://www.openaip.net). From your user's profile page, you can then request an API client which contains an API key that you can use to access the public REST JSON APIs. Documentation for the available APIs can be found here: [REST API Documentation](https://docs.openaip.net).
+
+Once you have your key, add it to `.env`:
+
+```bash
+# OpenAIP aviation overlay (airspace, airports, navaids on the map)
+OPENAIP_API_KEY=your_openaip_api_key_here
+```
+
+This enables the **Aviation (OpenAIP)** toggle in the map's Layers control, which draws airspace class boundaries, VOR stations, and airports on top of any base map layer.
+
 ### Complete Example Configuration
 
 ```bash
@@ -239,6 +252,9 @@ SEESTAR_PORT=4700
 SEESTAR_TIMEOUT=10
 SEESTAR_PRE_BUFFER=10
 SEESTAR_POST_BUFFER=10
+
+# OpenAIP aviation overlay (optional)
+OPENAIP_API_KEY=your_openaip_api_key_here
 ```
 
 ---
