@@ -1,6 +1,6 @@
 'use strict';
 
-const { app, BrowserWindow, ipcMain, shell, dialog, Menu } = require('electron');
+const { app, BrowserWindow, ipcMain, shell, dialog, Menu, screen } = require('electron');
 const path   = require('path');
 const fs     = require('fs');
 const http   = require('http');
@@ -10,8 +10,9 @@ const { spawn, execFile } = require('child_process');
 // ─── Paths ──────────────────────────────────────────────────────────────────
 const IS_PACKAGED   = app.isPackaged;
 const USER_DATA     = app.getPath('userData');
-const CONFIG_FILE   = path.join(USER_DATA, 'config.json');
-const RESOURCES     = IS_PACKAGED ? process.resourcesPath : path.join(__dirname, '..');
+const CONFIG_FILE      = path.join(USER_DATA, 'config.json');
+const WIN_STATE_FILE   = path.join(USER_DATA, 'window-state.json');
+const RESOURCES        = IS_PACKAGED ? process.resourcesPath : path.join(__dirname, '..');
 
 // ─── Globals ────────────────────────────────────────────────────────────────
 let flaskProcess  = null;
@@ -19,6 +20,35 @@ let flaskPort     = null;
 let mainWindow    = null;
 let wizardWindow  = null;
 let splashWindow  = null;
+
+// ─── Window state persistence ────────────────────────────────────────────────
+const DEFAULT_WIDTH  = 1100;  // Minimum to show map + altitude panel comfortably
+const DEFAULT_HEIGHT = 820;
+
+function loadWindowState() {
+    try {
+        if (fs.existsSync(WIN_STATE_FILE)) {
+            return JSON.parse(fs.readFileSync(WIN_STATE_FILE, 'utf8'));
+        }
+    } catch (e) { /* ignore */ }
+    return null;
+}
+
+function saveWindowState(win) {
+    if (!win || win.isMinimized() || win.isMaximized()) return;
+    try {
+        const b = win.getBounds();
+        fs.writeFileSync(WIN_STATE_FILE, JSON.stringify(b));
+    } catch (e) { /* ignore */ }
+}
+
+function centerOnPrimaryDisplay(width, height) {
+    const { bounds } = screen.getPrimaryDisplay();
+    return {
+        x: Math.round(bounds.x + (bounds.width  - width)  / 2),
+        y: Math.round(bounds.y + (bounds.height - height) / 2),
+    };
+}
 
 // ─── Utilities ──────────────────────────────────────────────────────────────
 
@@ -131,9 +161,14 @@ async function startFlask(cfg) {
 // ─── Windows ─────────────────────────────────────────────────────────────────
 
 function createMainWindow() {
+    const saved = loadWindowState();
+    const pos   = saved || centerOnPrimaryDisplay(DEFAULT_WIDTH, DEFAULT_HEIGHT);
+
     mainWindow = new BrowserWindow({
-        width:  1400,
-        height: 900,
+        width:     saved ? saved.width  : DEFAULT_WIDTH,
+        height:    saved ? saved.height : DEFAULT_HEIGHT,
+        x:         pos.x,
+        y:         pos.y,
         minWidth:  900,
         minHeight: 600,
         title: 'Flymoon',
@@ -143,6 +178,11 @@ function createMainWindow() {
             nodeIntegration: false,
         },
     });
+
+    // Save bounds whenever the user moves or resizes
+    const persist = () => saveWindowState(mainWindow);
+    mainWindow.on('resize', persist);
+    mainWindow.on('move',   persist);
 
     mainWindow.loadURL(`http://127.0.0.1:${flaskPort}/`);
 
