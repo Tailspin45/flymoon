@@ -1,6 +1,7 @@
 from dataclasses import dataclass
 from datetime import datetime
-from math import asin, atan2, cos, degrees, radians, sin
+from math import asin, atan2, cos, degrees, radians, sin, sqrt
+from typing import List, Optional, Tuple
 
 from skyfield.api import wgs84
 
@@ -102,3 +103,83 @@ def geographic_to_altaz(
 
 def get_my_pos(lat, lon, elevation, base_ref):
     return base_ref + wgs84.latlon(lat, lon, elevation_m=elevation)
+
+
+def compute_track_velocity(
+    track_positions: List[dict],
+) -> Optional[Tuple[float, float]]:
+    """Derive true ground speed and heading from the last two track fixes.
+
+    Uses the most recent pair of positions from FlightAware track data to
+    compute the actual velocity vector, which captures recent turns and
+    speed changes that the reported groundspeed/heading may lag behind.
+
+    Parameters
+    ----------
+    track_positions : list of dict
+        Each dict must contain 'timestamp' (Unix seconds OR ISO-8601 string),
+        'latitude', and 'longitude' keys (FlightAware track format).
+        At least two entries required.
+
+    Returns
+    -------
+    (speed_kmh, heading_deg) tuple, or None if insufficient / invalid data.
+    """
+    if not track_positions or len(track_positions) < 2:
+        return None
+
+    def _to_unix(ts) -> Optional[float]:
+        """Convert timestamp to Unix seconds regardless of input format."""
+        if ts is None:
+            return None
+        try:
+            return float(ts)
+        except (TypeError, ValueError):
+            pass
+        try:
+            from datetime import datetime, timezone
+            s = str(ts).replace("Z", "+00:00")
+            return datetime.fromisoformat(s).timestamp()
+        except Exception:
+            return None
+
+    # Sort by timestamp ascending; take last two valid fixes
+    valid = []
+    for p in track_positions:
+        ts = _to_unix(p.get("timestamp"))
+        if ts is not None and p.get("latitude") is not None and p.get("longitude") is not None:
+            valid.append({**p, "_ts": ts})
+
+    if len(valid) < 2:
+        return None
+
+    valid_sorted = sorted(valid, key=lambda p: p["_ts"])
+    p1 = valid_sorted[-2]
+    p2 = valid_sorted[-1]
+
+    dt_s = p2["_ts"] - p1["_ts"]
+    if dt_s <= 0:
+        return None
+
+    lat1 = radians(float(p1["latitude"]))
+    lat2 = radians(float(p2["latitude"]))
+    lon1 = radians(float(p1["longitude"]))
+    lon2 = radians(float(p2["longitude"]))
+
+    dlat = lat2 - lat1
+    dlon = lon2 - lon1
+
+    # Haversine distance (km)
+    a = sin(dlat / 2) ** 2 + cos(lat1) * cos(lat2) * sin(dlon / 2) ** 2
+    dist_km = 2 * EARTH_RADIOUS * asin(sqrt(a))
+
+    speed_kmh = dist_km / (dt_s / 3600.0)
+
+    # Bearing (degrees, 0 = north, clockwise)
+    heading_rad = atan2(
+        sin(dlon) * cos(lat2),
+        cos(lat1) * sin(lat2) - sin(lat1) * cos(lat2) * cos(dlon),
+    )
+    heading_deg = (degrees(heading_rad) + 360) % 360
+
+    return speed_kmh, heading_deg

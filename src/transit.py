@@ -1,4 +1,5 @@
 import os
+import time as _time
 from datetime import datetime, timedelta
 from typing import Any, Dict, List, Tuple
 from zoneinfo import ZoneInfo
@@ -370,8 +371,40 @@ def get_transits(
         if filtered_count > 0:
             logger.debug(f"Bbox filter: {filtered_count} flights outside box")
 
-        # Process all flights - pre-filtering disabled as it was too aggressive
-        # and incorrectly compared angular altitude with linear elevation
+        # ── OpenSky position refresh (best-effort) ────────────────────────
+        # Overlays near-real-time ADS-B positions (~10s latency) onto the
+        # FlightAware data (~60–300s latency) for matching callsigns.
+        try:
+            from src.opensky import fetch_opensky_positions
+            opensky_data = fetch_opensky_positions(
+                bbox.lat_lower_left, bbox.long_lower_left,
+                bbox.lat_upper_right, bbox.long_upper_right,
+            )
+            refreshed = 0
+            for flight in flight_data:
+                os_pos = opensky_data.get(flight["name"])
+                if os_pos and not os_pos.get("on_ground"):
+                    flight["latitude"]  = os_pos["lat"]
+                    flight["longitude"] = os_pos["lon"]
+                    if os_pos.get("altitude_m") is not None:
+                        flight["elevation"] = os_pos["altitude_m"]
+                        flight["elevation_feet"] = int(os_pos["altitude_m"] * 3.28084)
+                    if os_pos.get("speed_kmh") is not None:
+                        flight["speed"] = os_pos["speed_kmh"]
+                    if os_pos.get("heading") is not None:
+                        flight["direction"] = os_pos["heading"]
+                    flight["position_source"]  = "opensky"
+                    flight["position_age_s"]   = round(_time.time() - os_pos["last_contact"], 1)
+                    refreshed += 1
+                else:
+                    flight.setdefault("position_source", "flightaware")
+            if opensky_data:
+                logger.info(f"OpenSky: refreshed {refreshed}/{len(flight_data)} positions")
+        except Exception as exc:
+            logger.warning(f"OpenSky refresh skipped: {exc}")
+            for flight in flight_data:
+                flight.setdefault("position_source", "flightaware")
+        # ─────────────────────────────────────────────────────────────────
         for flight in flight_data:
             celestial_obj.update_position(ref_datetime=ref_datetime)
 

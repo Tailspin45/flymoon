@@ -416,6 +416,23 @@ function updateFlightTableFull(flights) {
         if (flight.time !== null && cells[16]) {
             cells[16].textContent = flight.time.toFixed(1);
         }
+        // Update source badge (cell 17) if position_source changed (e.g. OS→ADS-B)
+        if (flight.position_source && cells[17]) {
+            const srcMap = {
+                "opensky":     { label: "OS",    color: "#4caf50", title: "OpenSky (~10s latency)" },
+                "flightaware": { label: "FA",    color: "#888",    title: "FlightAware (60–300s latency)" },
+                "track":       { label: "TRK",   color: "#2196f3", title: "Track-derived velocity" },
+                "adsb":        { label: "ADS-B", color: "#00e5ff", title: "Direct ADS-B (<5s latency)" },
+            };
+            const si = srcMap[flight.position_source] || { label: flight.position_source.toUpperCase(), color: "#888", title: flight.position_source };
+            const age = flight.position_age_s != null ? ` (${flight.position_age_s}s)` : "";
+            const span = cells[17].querySelector("span");
+            if (span) {
+                span.textContent = si.label;
+                span.style.background = si.color;
+                span.title = si.title + age;
+            }
+        }
         
         // Update row highlight based on new transit status
         if (flight.is_possible_transit === 1) {
@@ -1358,6 +1375,21 @@ function fetchFlights() {
 
                 row.appendChild(val);
             });
+
+            // Position source badge (appended after COLUMN_NAMES loop)
+            const srcCell = document.createElement("td");
+            const src = item["position_source"] || "fa";
+            const srcAge = item["position_age_s"];
+            const srcMap = {
+                "opensky":      { label: "OS",    color: "#4caf50", title: "OpenSky (~10s latency)" },
+                "flightaware":  { label: "FA",    color: "#888",    title: "FlightAware (60–300s latency)" },
+                "track":        { label: "TRK",   color: "#2196f3", title: "Track-derived velocity" },
+                "adsb":         { label: "ADS-B", color: "#00e5ff", title: "Direct ADS-B (<5s latency)" },
+            };
+            const srcInfo = srcMap[src] || { label: src.toUpperCase(), color: "#888", title: src };
+            const ageStr = srcAge != null ? ` (${srcAge}s)` : "";
+            srcCell.innerHTML = `<span style="font-size:0.7em;padding:1px 4px;border-radius:3px;background:${srcInfo.color};color:#fff;white-space:nowrap" title="${srcInfo.title}${ageStr}">${srcInfo.label}</span>`;
+            row.appendChild(srcCell);
 
             if(item["is_possible_transit"] == 1) {
                 const possibilityLevel = parseInt(item["possibility_level"]);

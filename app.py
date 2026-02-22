@@ -51,12 +51,16 @@ from src.astro import CelestialObject
 from src.config_wizard import ConfigWizard
 from src.flight_data import save_possible_transits, sort_results
 from src.flight_cache import get_cache
-from src.position import get_my_pos
+from src.position import get_my_pos, compute_track_velocity
 from src.telegram_notify import send_telegram_notification
 from src.transit import get_transits
 from src import telescope_routes
 from src.seestar_client import TransitRecorder
 from src.constants import PossibilityLevel
+
+# Module-level cache: {fa_flight_id: (speed_kmh, heading_deg)}
+# Populated when a user loads a flight's track; consumed by soft-refresh recalculation.
+_track_velocity_cache: dict = {}
 
 # Global test/demo mode flag
 test_mode = False
@@ -390,8 +394,22 @@ def recalculate_transits_endpoint():
         
         if not flights:
             return jsonify({"flights": [], "targetCoordinates": {}}), 200
-        
-        # Import here to avoid circular dependency
+
+        # Apply track-velocity overrides before recalculating.
+        # When a flight's track has been viewed, we have a measured velocity
+        # (speed + heading from last two ADS-B fixes) that's more accurate
+        # than the reported groundspeed/heading, especially during turns.
+        tv_applied = 0
+        for flight in flights:
+            fid = flight.get("fa_flight_id") or flight.get("id", "")
+            if fid and fid in _track_velocity_cache:
+                spd, hdg = _track_velocity_cache[fid]
+                flight["speed"]     = spd
+                flight["direction"] = hdg
+                flight.setdefault("position_source", "track")
+                tv_applied += 1
+        if tv_applied:
+            logger.info(f"Track velocity applied to {tv_applied} flights in recalculate")
         from src.transit import recalculate_transits
         from src.astro import CelestialObject
         from src.position import get_my_pos
@@ -481,7 +499,17 @@ def get_flight_track(fa_flight_id):
     try:
         response = requests.get(url=url, headers=headers, timeout=10)
         if response.status_code == 200:
-            return jsonify(response.json())
+            track_json = response.json()
+            # Compute track-based velocity and cache it for soft-refresh accuracy.
+            positions = track_json.get("positions") or track_json.get("track") or []
+            velocity = compute_track_velocity(positions)
+            if velocity:
+                _track_velocity_cache[fa_flight_id] = velocity
+                logger.info(
+                    f"Track velocity cached for {fa_flight_id}: "
+                    f"{velocity[0]:.0f} km/h  hdg {velocity[1]:.1f}°"
+                )
+            return jsonify(track_json)
         else:
             return jsonify({"error": f"API returned status {response.status_code}"}), response.status_code
     except Exception as e:
