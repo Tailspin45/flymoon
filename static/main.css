@@ -681,6 +681,41 @@ body {
     transform: translate(-50%, -50%);
 }
 
+/* ── Leaflet layer control — dark theme to match SkyVector button ────────── */
+.leaflet-control-layers {
+    background: #2c3e50 !important;
+    border: none !important;
+    border-radius: 4px !important;
+    box-shadow: 0 2px 8px rgba(0,0,0,.4) !important;
+    color: #e0e0e0 !important;
+}
+.leaflet-control-layers-toggle {
+    background-color: #2c3e50 !important;
+    border-radius: 4px !important;
+}
+.leaflet-control-layers-expanded {
+    padding: 8px 12px !important;
+    font-size: 12px !important;
+    min-width: 130px;
+}
+.leaflet-control-layers-expanded .leaflet-control-layers-base label,
+.leaflet-control-layers-expanded .leaflet-control-layers-overlays label {
+    color: #cdd8e0 !important;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 3px 0;
+    cursor: pointer;
+}
+.leaflet-control-layers-expanded .leaflet-control-layers-base label:hover,
+.leaflet-control-layers-expanded .leaflet-control-layers-overlays label:hover {
+    color: #fff !important;
+}
+.leaflet-control-layers-separator {
+    border-top-color: #3a4a5a !important;
+    margin: 4px 0 !important;
+}
+
 /* ── SkyVector aviation chart control ───────────────────────────────────── */
 .sv-control {
     position: relative;

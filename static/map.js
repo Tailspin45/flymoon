@@ -189,17 +189,17 @@ function initializeMap(centerLat, centerLon) {
                 </button>
                 <div class="sv-menu">
                     <div class="sv-menu-header">Open in SkyVector</div>
-                    <a href="#" data-chart="ENL">
+                    <a href="#" data-chart="301">
                         <span class="sv-icon">🗺</span>
                         <span class="sv-label">IFR Low Altitude</span>
                         <span class="sv-sub">≤FL180</span>
                     </a>
-                    <a href="#" data-chart="ENH">
+                    <a href="#" data-chart="302">
                         <span class="sv-icon">🗺</span>
                         <span class="sv-label">IFR High Altitude</span>
                         <span class="sv-sub">FL180+</span>
                     </a>
-                    <a href="#" data-chart="Sectional">
+                    <a href="#" data-chart="304">
                         <span class="sv-icon">🗺</span>
                         <span class="sv-label">VFR Sectional</span>
                         <span class="sv-sub">Visual flight</span>
