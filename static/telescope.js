@@ -306,8 +306,6 @@ async function switchToMoon() {
     }
 }
 
-let _mismatchDismissedFor = null; // "sun"|"moon" — which opposite target the user dismissed
-
 function checkTargetMismatch() {
     const banner = document.getElementById('mismatchBanner');
     const text   = document.getElementById('mismatchText');
