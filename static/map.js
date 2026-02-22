@@ -156,11 +156,26 @@ function initializeMap(centerLat, centerLon) {
         editable: true
     }).setView([centerLat, centerLon], 9);
 
-    // Add OpenStreetMap tiles
-    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-        attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
-        maxZoom: 19
-    }).addTo(map);
+    // Tile layers — no API keys required
+    const tileLayers = {
+        'Street': L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+            attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
+            maxZoom: 19
+        }),
+        'Satellite': L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
+            attribution: 'Tiles &copy; Esri &mdash; Source: Esri, Maxar, Earthstar Geographics',
+            maxZoom: 19
+        }),
+        'Dark': L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+            attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>',
+            subdomains: 'abcd',
+            maxZoom: 19
+        }),
+    };
+    const savedLayer = localStorage.getItem('mapLayer') || 'Street';
+    (tileLayers[savedLayer] || tileLayers['Street']).addTo(map);
+    L.control.layers(tileLayers, {}, { position: 'topright' }).addTo(map);
+    map.on('baselayerchange', e => localStorage.setItem('mapLayer', e.name));
 
     // LayerGroups for atomic clear/add cycles
     aircraftLayer = L.layerGroup().addTo(map);
