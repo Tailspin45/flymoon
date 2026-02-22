@@ -95,10 +95,20 @@ async def save_possible_transits(data: List[dict], dest_path: str) -> None:
             rows_to_write.append(row)
 
     if rows_to_write:
-        has_log_file = os.path.exists(dest_path)
         os.makedirs(os.path.dirname(dest_path), exist_ok=True)
+        # If file exists but has a different header (schema migration), start fresh
+        needs_header = True
+        if os.path.exists(dest_path):
+            with open(dest_path, "r", newline="") as f:
+                existing_header = f.readline().strip().split(",")
+            if existing_header == TRANSIT_LOG_FIELDS:
+                needs_header = False
+            else:
+                # Schema mismatch — rename old file and start fresh
+                import shutil
+                shutil.move(dest_path, dest_path.replace(".csv", "_old_schema.csv"))
         with open(dest_path, "a", newline="") as f:
             writer = csv.DictWriter(f, fieldnames=TRANSIT_LOG_FIELDS, extrasaction="ignore")
-            if not has_log_file:
+            if needs_header:
                 writer.writeheader()
             writer.writerows(rows_to_write)
