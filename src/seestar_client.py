@@ -408,6 +408,14 @@ class SeestarClient:
             logger.warning("Recording already in progress")
             return True
 
+        # Refuse to record if scope is not in solar/lunar viewing mode —
+        # recording in deep-sky or standby mode would capture nothing useful.
+        if self._viewing_mode not in ("sun", "moon"):
+            raise RuntimeError(
+                f"Cannot record: scope is in mode '{self._viewing_mode}' "
+                "(must be 'sun' or 'moon'). Point the scope at the target first."
+            )
+
         try:
             # Start video recording - fire-and-forget: Seestar acks via event, not RPC response
             params = {"raw": False}
@@ -835,19 +843,20 @@ class TransitRecorder:
     def _opensky_refine(self, flight_id: str):
         """Query OpenSky for latest position before recording (last-mile refinement)."""
         try:
-            from src.opensky_client import get_opensky_client
-            
-            client = get_opensky_client()
-            # Try to get position by callsign (flight_id is typically the callsign)
-            position = client.get_aircraft_position(flight_id)
-            
-            if position:
-                lat, lon, alt_m, heading, speed_ms = position
-                alt_ft = alt_m * 3.28084 if alt_m else 0
-                speed_kts = speed_ms * 1.94384 if speed_ms else 0
+            from src.opensky import fetch_opensky_positions
+            import os
+            bbox = {
+                "lamin": float(os.getenv("LAT_LOWER_LEFT", 0)),
+                "lomin": float(os.getenv("LONG_LOWER_LEFT", 0)),
+                "lamax": float(os.getenv("LAT_UPPER_RIGHT", 0)),
+                "lomax": float(os.getenv("LONG_UPPER_RIGHT", 0)),
+            }
+            positions = fetch_opensky_positions(**bbox)
+            if flight_id in positions:
+                pos = positions[flight_id]
                 logger.info(
                     f"[OpenSky Refinement] {flight_id}: "
-                    f"({lat:.4f}, {lon:.4f}) alt={alt_ft:.0f}ft hdg={heading:.0f}° spd={speed_kts:.0f}kts"
+                    f"({pos['lat']:.4f}, {pos['lon']:.4f}) alt={pos.get('altitude_m',0):.0f}m"
                 )
             else:
                 logger.debug(f"[OpenSky Refinement] {flight_id}: not found in OpenSky data")

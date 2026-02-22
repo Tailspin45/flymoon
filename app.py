@@ -306,7 +306,7 @@ def get_all_flights():
             for flight in data["flights"]:
                 # Only record HIGH probability transits (green rows)
                 if flight.get("possibility_level") == PossibilityLevel.HIGH.value:
-                    eta_seconds = flight.get("transit_eta_seconds", flight.get("time", 0) * 60)
+                    eta_seconds = flight.get("time", 0) * 60  # time field is minutes from now
                     flight_id = flight.get("ident", flight.get("id", "unknown"))
 
                     try:
