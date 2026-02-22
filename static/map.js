@@ -248,9 +248,10 @@ function initializeMap(centerLat, centerLon) {
 function addOpenAIPOverlay(apiKey) {
     if (!apiKey || !layerControl || !map) return;
     const overlay = L.tileLayer(
-        `https://1.api.tiles.openaip.net/api/data/openaip/{z}/{x}/{y}.png?apiKey=${apiKey}`,
+        `https://{s}.api.tiles.openaip.net/api/data/openaip/{z}/{x}/{y}.png?apiKey=${apiKey}`,
         {
             attribution: '&copy; <a href="https://www.openaip.net">OpenAIP</a>',
+            subdomains: 'abc',
             maxZoom: 17,
             opacity: 0.8,
         }
