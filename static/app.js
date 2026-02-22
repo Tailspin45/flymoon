@@ -1124,52 +1124,30 @@ function fetchFlights() {
 
         document.getElementById("trackingStatus").innerHTML = trackingParts.join("&nbsp;&nbsp;&nbsp;&nbsp;");
 
-        // LINE 2: Celestial positions with emoji (always show, even below horizon)
-        let positionParts = [];
-        
-        // Always show Sun position if coordinates available
-        if(data.targetCoordinates && data.targetCoordinates.sun) {
-            const sun = data.targetCoordinates.sun;
-            const altStr = sun.altitude.toFixed(1);
-            const azStr = sun.azimuthal.toFixed(1);
-            positionParts.push(`🌞 Alt: ${altStr}° Az: ${azStr}°`);
-        }
-        
-        // Always show Moon position if coordinates available
-        if(data.targetCoordinates && data.targetCoordinates.moon) {
-            const moon = data.targetCoordinates.moon;
-            const altStr = moon.altitude.toFixed(1);
-            const azStr = moon.azimuthal.toFixed(1);
-            positionParts.push(`🌙 Alt: ${altStr}° Az: ${azStr}°`);
-        }
-        
-        if(positionParts.length > 0) {
-            const celestialEl = document.getElementById("celestialPositions");
-            if(celestialEl) {
-                celestialEl.innerHTML = positionParts.join("&nbsp;&nbsp;&nbsp;&nbsp;");
+        // LINES 3+4: Celestial positions and rise/set times, per-target columns
+        const sunInfoEl  = document.getElementById("sunInfo");
+        const moonInfoEl = document.getElementById("moonInfo");
+        const coords = data.targetCoordinates || {};
+        const rst    = data.riseSetTimes || {};
+
+        if(sunInfoEl) {
+            let html = '';
+            if(coords.sun) {
+                html += `🌞 Alt: ${coords.sun.altitude.toFixed(1)}° Az: ${coords.sun.azimuthal.toFixed(1)}°`;
             }
+            const riseSet = [rst.sun_rise ? `↑${rst.sun_rise}` : '', rst.sun_set ? `↓${rst.sun_set}` : ''].filter(Boolean).join(' ');
+            if(riseSet) html += `<br><span style="color:#bbb;">${riseSet}</span>`;
+            sunInfoEl.innerHTML = html;
         }
 
-        // LINE 4: Rise/set times
-        if(data.riseSetTimes) {
-            const r = data.riseSetTimes;
-            const riseSetParts = [];
-            if(r.sun_rise || r.sun_set) {
-                let s = "🌞";
-                if(r.sun_rise) s += ` ↑${r.sun_rise}`;
-                if(r.sun_set)  s += ` ↓${r.sun_set}`;
-                riseSetParts.push(s);
+        if(moonInfoEl) {
+            let html = '';
+            if(coords.moon) {
+                html += `🌙 Alt: ${coords.moon.altitude.toFixed(1)}° Az: ${coords.moon.azimuthal.toFixed(1)}°`;
             }
-            if(r.moon_rise || r.moon_set) {
-                let s = "🌙";
-                if(r.moon_rise) s += ` ↑${r.moon_rise}`;
-                if(r.moon_set)  s += ` ↓${r.moon_set}`;
-                riseSetParts.push(s);
-            }
-            const riseSetEl = document.getElementById("riseSetTimes");
-            if(riseSetEl && riseSetParts.length > 0) {
-                riseSetEl.innerHTML = riseSetParts.join("&nbsp;&nbsp;&nbsp;&nbsp;");
-            }
+            const riseSet = [rst.moon_rise ? `↑${rst.moon_rise}` : '', rst.moon_set ? `↓${rst.moon_set}` : ''].filter(Boolean).join(' ');
+            if(riseSet) html += `<br><span style="color:#bbb;">${riseSet}</span>`;
+            moonInfoEl.innerHTML = html;
         }
 
         // Check if any targets are trackable

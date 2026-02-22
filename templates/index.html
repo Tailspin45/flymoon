@@ -19,9 +19,10 @@
         <div style="flex: 1; text-align: center;">
             <span id="trackingStatus" class="status-text"></span>
             <div id="lastUpdateStatus" style="font-size: 0.85em; color: #ccc; margin-top: 4px;"></div>
-            <div id="celestialPositions" style="font-size: 0.85em; color: #ddd; margin-top: 2px;"></div>
-            <div id="riseSetTimes" style="font-size: 0.85em; color: #ddd; margin-top: 2px;"></div>
-        </div>
+            <div id="celestialInfo" style="display:flex; gap:2em; justify-content:center; font-size:0.85em; color:#ddd; margin-top:2px;">
+                <div id="sunInfo" style="text-align:center;"></div>
+                <div id="moonInfo" style="text-align:center;"></div>
+            </div>        </div>
         <div style="display: flex; gap: 8px;">
             <button class="btn-sm" onclick="showPanel('telescope')" title="Control Telescope" style="position: relative;">
                 🔭 Telescope
@@ -169,7 +170,7 @@
                     <th>GPS alt<br>(ft)</th>
                     <th>Hdg (T)</th>
                     <th>dist<br>(km/miles)</th>
-                    <th>speed<br>(mph)</th>
+                    <th>Grnd Spd<br>(mph)</th>
                     <th title="Position data source: FA=FlightAware, OS=OpenSky, ADS-B=direct">src</th>
                 </tr>
             </thead>
