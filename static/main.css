@@ -190,6 +190,10 @@ body {
     margin: 4px;
 }
 
+.alert:empty {
+    display: none;
+}
+
 .possibleTransitHighlightHigh {
     background-color: rgb(0, 230, 118) !important;  /* Bright green for HIGH */
 }
