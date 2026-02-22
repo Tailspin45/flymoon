@@ -535,20 +535,32 @@ def transit_log():
     best = {}  # key: (fa_flight_id, target, date) → best row
     for filepath in files:
         date_str = filepath.split("log_")[1].replace(".csv", "")
+        # Normalize date_str to ISO for consistent sort: "20260222" → "2026-02-22"
+        iso_date = f"{date_str[:4]}-{date_str[4:6]}-{date_str[6:8]}" if len(date_str) == 8 else date_str
         try:
             with open(filepath, newline="") as fh:
                 for row in csv.DictReader(fh):
                     try:
                         alt = float(row.get("alt_diff") or 999)
                         az  = float(row.get("az_diff") or 999)
+                        # Fallback for old misaligned schema (waypoints commas broke CSV columns):
+                        # the real alt_diff/az_diff ended up in is_possible_transit/possibility_level
+                        if alt > 15 or az > 15:
+                            alt_fb = float(row.get("is_possible_transit") or 999)
+                            az_fb  = float(row.get("possibility_level") or 999)
+                            if alt_fb < 15 and az_fb < 15:
+                                alt, az = alt_fb, az_fb
+                            else:
+                                continue  # Can't recover this row
                         sep = math.sqrt(alt**2 + az**2)
                         fid = row.get("fa_flight_id") or row.get("id", "?")
                         target = row.get("target", "?")
                         key = (fid, target, date_str)
+                        ts = row.get("timestamp", "") or iso_date
                         if key not in best or sep < best[key]["sep"]:
                             best[key] = {
                                 "date": date_str,
-                                "timestamp": row.get("timestamp", ""),
+                                "timestamp": ts,
                                 "flight": row.get("id", "?"),
                                 "fa_flight_id": fid,
                                 "aircraft_type": row.get("aircraft_type", ""),
@@ -559,7 +571,7 @@ def transit_log():
                                 "az_diff": round(az, 3),
                                 "sep": round(sep, 3),
                                 "time": row.get("time", ""),
-                                "possibility_level": int(row.get("possibility_level") or 0),
+                                "possibility_level": int(float(row.get("possibility_level") or 0)),
                                 "target_alt": row.get("target_alt", ""),
                                 "plane_alt": row.get("plane_alt", ""),
                                 "target_az": row.get("target_az", ""),
@@ -572,7 +584,8 @@ def transit_log():
         except OSError:
             continue
 
-    events = sorted(best.values(), key=lambda x: x["timestamp"] or x["date"], reverse=True)
+    # Sort by full timestamp desc; iso_date fallback ensures consistent comparison
+    events = sorted(best.values(), key=lambda x: x["timestamp"], reverse=True)
     return jsonify(events)
 
 

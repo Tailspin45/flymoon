@@ -1,3 +1,4 @@
+import csv
 import json
 import os
 from datetime import datetime
@@ -8,6 +9,15 @@ import requests
 
 from src.position import AreaBoundingBox
 
+# Fixed log schema — stable across code changes; waypoints excluded (too large, not useful for analysis)
+TRANSIT_LOG_FIELDS = [
+    "timestamp", "id", "fa_flight_id", "origin", "destination",
+    "latitude", "longitude", "aircraft_elevation", "aircraft_elevation_feet",
+    "aircraft_type", "speed", "is_possible_transit", "possibility_level",
+    "elevation_change", "direction", "alt_diff", "az_diff", "time",
+    "target_alt", "plane_alt", "target_az", "plane_az", "target",
+    "distance_nm", "position_source", "scope_connected", "scope_mode",
+]
 
 def get_flight_data(
     area_bbox: AreaBoundingBox, url_: str, api_key: str = ""
@@ -76,19 +86,19 @@ def sort_results(data: List[dict]) -> List[dict]:
 
 async def save_possible_transits(data: List[dict], dest_path: str) -> None:
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    log_message = list()
+    rows_to_write = []
 
     for flight in data:
         if flight["is_possible_transit"] == 1:
-            line = f"{timestamp},"
-            line += ",".join(map(str, flight.values()))
-            log_message.append(line)
+            row = {f: flight.get(f, "") for f in TRANSIT_LOG_FIELDS}
+            row["timestamp"] = timestamp
+            rows_to_write.append(row)
 
-    if len(log_message) > 0:
+    if rows_to_write:
         has_log_file = os.path.exists(dest_path)
-        with open(dest_path, "a") as f:
+        os.makedirs(os.path.dirname(dest_path), exist_ok=True)
+        with open(dest_path, "a", newline="") as f:
+            writer = csv.DictWriter(f, fieldnames=TRANSIT_LOG_FIELDS, extrasaction="ignore")
             if not has_log_file:
-                headers = "timestamp," + ",".join(flight.keys())
-                f.write(headers + "\n")
-            f.write("\n".join(log_message))
-            f.write("\n")
+                writer.writeheader()
+            writer.writerows(rows_to_write)
