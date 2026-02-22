@@ -8,6 +8,7 @@ live preview, and file management.
 
 import os
 import subprocess
+import threading
 from datetime import datetime
 from typing import Optional, Dict, Any
 from flask import request, jsonify, Response
@@ -1122,6 +1123,48 @@ def register_routes(app):
                      get_simulate_status, methods=["GET"])
 
     logger.info("[Telescope] Routes registered")
+
+    # Auto-connect if ENABLE_SEESTAR=true
+    if is_enabled():
+        _auto_connect_background()
+
+
+def _auto_connect_background():
+    """Attempt to connect to Seestar in a background thread on startup.
+
+    Tries once immediately, then retries every 30s until connected.
+    Does not block Flask startup.
+    """
+    def _worker():
+        attempt = 0
+        while True:
+            attempt += 1
+            client = get_telescope_client()
+            if not client:
+                logger.warning("[Telescope] Auto-connect: no client (check SEESTAR_HOST in .env)")
+                return
+
+            if client.is_connected():
+                logger.info("[Telescope] Auto-connect: already connected")
+                return
+
+            try:
+                client.connect()
+                logger.info(
+                    f"[Telescope] Auto-connect: connected to "
+                    f"{client.host}:{client.port} (attempt {attempt})"
+                )
+                return
+            except Exception as e:
+                logger.warning(
+                    f"[Telescope] Auto-connect attempt {attempt} failed: {e} — "
+                    f"retrying in 30s"
+                )
+                import time
+                time.sleep(30)
+
+    t = threading.Thread(target=_worker, name="seestar-auto-connect", daemon=True)
+    t.start()
 
 
 def get_transit_status():
