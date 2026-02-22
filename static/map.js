@@ -30,6 +30,7 @@ let headingArrows = {};  // Store heading arrows for medium/high probability tra
 let ghostMarkers = {};  // Arrays of dots showing breadcrumb trail per flight (ghostMarkers[id] = [circleMarker, ...])
 let hardRefreshCount = 0;  // Counts auto hard refreshes; ghosts cleared every 3rd
 let layerControl = null;  // Leaflet layer control (base + overlays)
+let _pendingOpenAIPKey = null;  // Key stored if addOpenAIPOverlay called before map init
 
 // Arrow colors for each target
 const ARROW_COLORS = {
@@ -238,6 +239,11 @@ function initializeMap(centerLat, centerLon) {
     ghostLayer = L.layerGroup({ pane: 'ghostPane' }).addTo(map);
 
     mapInitialized = true;
+    // If addOpenAIPOverlay was called before map init, apply it now
+    if (_pendingOpenAIPKey !== null) {
+        addOpenAIPOverlay(_pendingOpenAIPKey);
+        _pendingOpenAIPKey = null;
+    }
 }
 
 /**
@@ -246,10 +252,12 @@ function initializeMap(centerLat, centerLon) {
  * Get a free key at https://www.openaip.net
  */
 function addOpenAIPOverlay(apiKey) {
-    if (!layerControl || !map) return;
+    // Queue if map/layerControl not ready yet (config often resolves before map init)
+    if (!layerControl || !map) {
+        _pendingOpenAIPKey = apiKey;
+        return;
+    }
     if (!apiKey) {
-        // Always show the toggle; tiles will 401 without a key but at least
-        // the user knows the feature exists and how to enable it.
         layerControl.addOverlay(
             L.tileLayer('', { opacity: 0 }),
             'Aviation (OpenAIP) — <a href="https://www.openaip.net" target="_blank" onclick="event.stopPropagation()" style="color:#7ab8d4;">get free key</a>'

@@ -154,6 +154,7 @@ def index():
 @app.route("/config")
 def get_config():
     """Return app configuration for client."""
+    load_dotenv(override=True)  # Always pick up latest .env without restarting
     return jsonify({
         "autoRefreshIntervalMinutes": int(os.getenv("AUTO_REFRESH_INTERVAL_MINUTES", 10)),
         "cacheEnabled": True,
