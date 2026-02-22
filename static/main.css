@@ -680,3 +680,75 @@ body {
     left: 32%;
     transform: translate(-50%, -50%);
 }
+
+/* ── SkyVector aviation chart control ───────────────────────────────────── */
+.sv-control {
+    position: relative;
+    font-family: inherit;
+}
+.sv-toggle {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    padding: 5px 10px;
+    background: #2c3e50;
+    color: #e0e0e0;
+    font-size: 12px;
+    font-weight: 600;
+    white-space: nowrap;
+    cursor: pointer;
+    border: none;
+    border-radius: 4px;
+    letter-spacing: 0.3px;
+}
+.sv-toggle:hover {
+    background: #34495e;
+}
+.sv-caret { font-size: 9px; opacity: 0.7; }
+.sv-menu {
+    display: none;
+    position: absolute;
+    right: 0;
+    top: calc(100% + 4px);
+    background: #1e2a35;
+    border: 1px solid #3a4a5a;
+    border-radius: 5px;
+    box-shadow: 0 4px 14px rgba(0,0,0,.45);
+    min-width: 180px;
+    z-index: 2000;
+    overflow: hidden;
+}
+.sv-menu-header {
+    padding: 6px 12px 4px;
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.8px;
+    text-transform: uppercase;
+    color: #7a9bb5;
+    border-bottom: 1px solid #2e3d4d;
+}
+.sv-menu a {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 12px;
+    font-size: 12px;
+    color: #cdd8e0;
+    text-decoration: none;
+    transition: background 0.12s;
+}
+.sv-menu a:hover {
+    background: #253545;
+    color: #fff;
+}
+.sv-menu a .sv-icon {
+    font-size: 14px;
+    width: 18px;
+    text-align: center;
+    opacity: 0.85;
+}
+.sv-menu a .sv-label { flex: 1; }
+.sv-menu a .sv-sub {
+    font-size: 10px;
+    color: #5a7a90;
+}

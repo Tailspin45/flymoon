@@ -182,25 +182,36 @@ function initializeMap(centerLat, centerLon) {
     const SkyVectorControl = L.Control.extend({
         options: { position: 'topright' },
         onAdd() {
-            const btn = L.DomUtil.create('div', 'leaflet-bar leaflet-control skyvector-control');
-            btn.innerHTML = `
-                <a href="#" title="Open in SkyVector" style="display:flex;align-items:center;gap:4px;padding:0 8px;font-size:12px;white-space:nowrap;text-decoration:none;color:#333;">
-                    ✈ SkyVector ▾
-                </a>
-                <div class="sv-menu" style="display:none;position:absolute;right:0;top:100%;background:#fff;border:1px solid #ccc;border-radius:4px;box-shadow:0 2px 6px rgba(0,0,0,.2);min-width:160px;z-index:1000;">
-                    <a data-chart="301" href="#" style="display:block;padding:7px 12px;font-size:12px;color:#333;text-decoration:none;">📋 IFR Low Altitude</a>
-                    <a data-chart="302" href="#" style="display:block;padding:7px 12px;font-size:12px;color:#333;text-decoration:none;">📋 IFR High Altitude</a>
-                    <a data-chart="304" href="#" style="display:block;padding:7px 12px;font-size:12px;color:#333;text-decoration:none;">📋 VFR Sectional</a>
+            const wrap = L.DomUtil.create('div', 'sv-control leaflet-control');
+            wrap.innerHTML = `
+                <button class="sv-toggle" title="Open current view in SkyVector">
+                    ✈ SkyVector <span class="sv-caret">▼</span>
+                </button>
+                <div class="sv-menu">
+                    <div class="sv-menu-header">Open in SkyVector</div>
+                    <a href="#" data-chart="301">
+                        <span class="sv-icon">🗺</span>
+                        <span class="sv-label">IFR Low Altitude</span>
+                        <span class="sv-sub">≤FL180</span>
+                    </a>
+                    <a href="#" data-chart="302">
+                        <span class="sv-icon">🗺</span>
+                        <span class="sv-label">IFR High Altitude</span>
+                        <span class="sv-sub">FL180+</span>
+                    </a>
+                    <a href="#" data-chart="304">
+                        <span class="sv-icon">🗺</span>
+                        <span class="sv-label">VFR Sectional</span>
+                        <span class="sv-sub">Visual flight</span>
+                    </a>
                 </div>`;
-            btn.style.position = 'relative';
-            L.DomEvent.disableClickPropagation(btn);
-            const menu = btn.querySelector('.sv-menu');
-            btn.querySelector('a').addEventListener('click', e => {
-                e.preventDefault();
+            L.DomEvent.disableClickPropagation(wrap);
+            const menu = wrap.querySelector('.sv-menu');
+            wrap.querySelector('.sv-toggle').addEventListener('click', e => {
                 e.stopPropagation();
-                menu.style.display = menu.style.display === 'none' ? 'block' : 'none';
+                menu.style.display = menu.style.display === 'block' ? 'none' : 'block';
             });
-            menu.querySelectorAll('a[data-chart]').forEach(a => {
+            wrap.querySelectorAll('a[data-chart]').forEach(a => {
                 a.addEventListener('click', e => {
                     e.preventDefault();
                     const c = map.getCenter();
@@ -210,7 +221,7 @@ function initializeMap(centerLat, centerLon) {
                 });
             });
             document.addEventListener('click', () => { menu.style.display = 'none'; });
-            return btn;
+            return wrap;
         }
     });
     new SkyVectorControl().addTo(map);
