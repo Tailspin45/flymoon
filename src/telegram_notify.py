@@ -11,6 +11,21 @@ from src import logger
 from src.constants import PossibilityLevel, TARGET_TO_EMOJI
 
 
+async def send_telegram_simple(message: str) -> bool:
+    """Send a plain-text Telegram message (for system alerts like scope offline)."""
+    bot_token = os.getenv("TELEGRAM_BOT_TOKEN")
+    chat_id = os.getenv("TELEGRAM_CHAT_ID")
+    if not bot_token or not chat_id:
+        return False
+    try:
+        bot = Bot(token=bot_token)
+        await bot.send_message(chat_id=chat_id, text=message, parse_mode='HTML')
+        return True
+    except Exception as e:
+        logger.error(f"Telegram alert failed: {e}")
+        return False
+
+
 async def send_telegram_notification(flight_data: List[dict], target: str) -> bool:
     """
     Send Telegram notification for medium/high probability transits.

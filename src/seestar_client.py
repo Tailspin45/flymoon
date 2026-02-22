@@ -260,7 +260,11 @@ class SeestarClient:
                 if any(kw in err for kw in ("broken pipe", "connection reset", "connection refused",
                                              "communication failed")):
                     logger.debug(f"Heartbeat: socket error, marking disconnected: {e}")
-                    self._connected = False
+                    if self._connected:  # only alert on transition connected→disconnected
+                        self._connected = False
+                        self._notify_scope_offline()
+                    else:
+                        self._connected = False
                 else:
                     logger.debug(f"Heartbeat ping timed out (telescope busy): {e}")
 
@@ -269,6 +273,22 @@ class SeestarClient:
                 if not self._heartbeat_running:
                     break
                 time.sleep(1)
+
+    def _notify_scope_offline(self):
+        """Fire-and-forget Telegram alert when scope drops off the network."""
+        def _send():
+            import asyncio
+            try:
+                from src.telegram_notify import send_telegram_simple
+                asyncio.run(send_telegram_simple(
+                    "⚠️ <b>Seestar scope went offline!</b>\n"
+                    "The telescope connection was lost. "
+                    "Any pending transit recordings will not be captured."
+                ))
+            except Exception as e:
+                logger.debug(f"Scope-offline Telegram alert failed: {e}")
+        t = threading.Thread(target=_send, daemon=True)
+        t.start()
 
     def connect(self) -> bool:
         """
