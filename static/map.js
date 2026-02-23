@@ -346,6 +346,8 @@ function showOpenAIPInstructions(e) {
     document.body.appendChild(modal);
 }
 
+let openAIPLayer = null;  // Keep reference so resize handler can restore it
+
 function addOpenAIPOverlay(apiKey) {
     if (!layerControl || !map) return;  // should not happen — called from initializeMap
     if (!apiKey) {
@@ -355,20 +357,29 @@ function addOpenAIPOverlay(apiKey) {
         );
         return;
     }
-    const overlay = L.tileLayer(
+    // Use overlayPane (z-index 400) instead of tilePane (z-index 200) so OpenAIP
+    // always renders above base map tiles and is not buried during resize re-renders.
+    openAIPLayer = L.tileLayer(
         `https://api.tiles.openaip.net/api/data/openaip/{z}/{x}/{y}.png?apiKey=${apiKey}`,
         {
             attribution: '&copy; <a href="https://www.openaip.net">OpenAIP</a>',
             maxZoom: 17,
             opacity: 0.8,
+            pane: 'overlayPane',
         }
     );
     // Always ON at launch — remove any stale 'off' flag from a previous session
     localStorage.removeItem('mapOverlayAvia');
-    overlay.addTo(map);
-    layerControl.addOverlay(overlay, 'Aviation (OpenAIP)');
+    openAIPLayer.addTo(map);
+    layerControl.addOverlay(openAIPLayer, 'Aviation (OpenAIP)');
     map.on('overlayadd',    e => { if (e.name === 'Aviation (OpenAIP)') localStorage.removeItem('mapOverlayAvia'); });
     map.on('overlayremove', e => { if (e.name === 'Aviation (OpenAIP)') localStorage.setItem('mapOverlayAvia', 'off'); });
+    // Safety net: restore layer if Leaflet drops it during a resize
+    map.on('resize', () => {
+        if (openAIPLayer && !map.hasLayer(openAIPLayer)) {
+            openAIPLayer.addTo(map);
+        }
+    });
 }
 
 function updateObserverMarker(lat, lon, elevation) {
