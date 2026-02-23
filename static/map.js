@@ -364,8 +364,6 @@ function addOpenAIPOverlay(apiKey) {
             maxZoom: 17,
             opacity: 0.8,
             zIndex: 200,
-            keepBuffer: 4,       // pre-load extra tiles around viewport
-            updateWhenIdle: false, // load tiles continuously, not just on idle
         }
     );
     // Retry tiles that fail to load (network blip, rate limit, etc.)
@@ -375,12 +373,6 @@ function addOpenAIPOverlay(apiKey) {
         if (tile._aipRetries < 3) {
             tile._aipRetries++;
             setTimeout(() => { tile.src = tile.src; }, 1500 * tile._aipRetries);
-        }
-    });
-    // After every zoom, force a clean tile reload so no tiles are left orphaned
-    map.on('zoomend', () => {
-        if (openAIPLayer && map.hasLayer(openAIPLayer)) {
-            openAIPLayer.redraw();
         }
     });
     // Safety net: restore layer if Leaflet drops it during a resize
