@@ -7,7 +7,7 @@
     <!-- favicon -->
     <link rel="icon" type="image/x-icon" href="{{ url_for('static', filename='images/favicon.ico') }}">
     <!-- CSS -->
-    <link rel="stylesheet" href="{{ url_for('static', filename='main.css') }}?v=1771882995">
+    <link rel="stylesheet" href="{{ url_for('static', filename='main.css') }}?v=1771883165">
     <!-- Leaflet CSS (self-hosted for security) -->
     <link rel="stylesheet" href="{{ url_for('static', filename='leaflet.css') }}" />
     <link rel="stylesheet" href="{{ url_for('static', filename='telescope.css') }}">
@@ -40,13 +40,13 @@
                 <label class="quadrant-label quadrant-label-s" title="South quadrant minimum altitude">S</label>
                 <label class="quadrant-label quadrant-label-w" title="West quadrant minimum altitude">W</label>
                 <!-- Inputs inside quadrants -->
-                <input type="number" id="minAltN" class="quadrant-input quadrant-input-n" placeholder="30" min="0" max="90" title="Minimum altitude (°) the Sun/Moon must be above your northern horizon before flights are queried">
-                <input type="number" id="minAltE" class="quadrant-input quadrant-input-e" placeholder="30" min="0" max="90" title="Minimum altitude (°) the Sun/Moon must be above your eastern horizon before flights are queried">
-                <input type="number" id="minAltS" class="quadrant-input quadrant-input-s" placeholder="30" min="0" max="90" title="Minimum altitude (°) the Sun/Moon must be above your southern horizon before flights are queried">
-                <input type="number" id="minAltW" class="quadrant-input quadrant-input-w" placeholder="30" min="0" max="90" title="Minimum altitude (°) the Sun/Moon must be above your western horizon before flights are queried">
+                <input type="number" id="minAltN" class="quadrant-input quadrant-input-n" placeholder="30" min="0" max="90" title="Min altitude (°) for the north quadrant — set to your lowest clear line-of-sight above obstructions (trees, buildings) in that direction">
+                <input type="number" id="minAltE" class="quadrant-input quadrant-input-e" placeholder="30" min="0" max="90" title="Min altitude (°) for the east quadrant — set to your lowest clear line-of-sight above obstructions in that direction">
+                <input type="number" id="minAltS" class="quadrant-input quadrant-input-s" placeholder="30" min="0" max="90" title="Min altitude (°) for the south quadrant — set to your lowest clear line-of-sight above obstructions in that direction">
+                <input type="number" id="minAltW" class="quadrant-input quadrant-input-w" placeholder="30" min="0" max="90" title="Min altitude (°) for the west quadrant — set to your lowest clear line-of-sight above obstructions in that direction">
                 <div class="quadrant-center" onclick="resetQuadrantValues()" title="Click to reset all quadrant minimum altitudes to 0°">Min Angle</div>
             </div>
-            <button class="btn-help" onclick="showInfo('min-angle')" title="Learn about min-angle cost controls" style="align-self:center;">ℹ️</button>
+            <button class="btn-help" onclick="showInfo('min-angle')" title="Learn about quadrant min-angle obstruction masking" style="align-self:center;">ℹ️</button>
         </div>
     </div>
 
@@ -475,9 +475,9 @@
     <script src="{{ url_for('static', filename='leaflet-heat.js') }}"></script>
     <!-- OpenAIP key injected server-side to avoid async timing issues -->
     <script>window.OPENAIP_API_KEY = "{{ openaip_api_key|e }}";</script>
-    <script src="{{ url_for('static', filename='telescope.js') }}?v=1771882995" charset="utf-8"></script>
-    <script src="{{ url_for('static', filename='map.js') }}?v=1771882995" charset="utf-8"></script>
-    <script src="{{ url_for('static', filename='app.js') }}?v=1771882995" charset="utf-8"></script>
+    <script src="{{ url_for('static', filename='telescope.js') }}?v=1771883165" charset="utf-8"></script>
+    <script src="{{ url_for('static', filename='map.js') }}?v=1771883165" charset="utf-8"></script>
+    <script src="{{ url_for('static', filename='app.js') }}?v=1771883165" charset="utf-8"></script>
 
     <script>
         function showPanel(name) {
