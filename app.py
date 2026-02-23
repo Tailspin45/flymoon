@@ -38,7 +38,7 @@ from zoneinfo import ZoneInfo
 
 import requests
 from dotenv import load_dotenv
-from flask import Flask, jsonify, redirect, render_template, request
+from flask import Flask, jsonify, redirect, render_template, request, Response
 from tzlocal import get_localzone_name
 
 from src.constants import POSSIBLE_TRANSITS_LOGFILENAME, ASTRO_EPHEMERIS, get_aeroapi_key
@@ -167,6 +167,27 @@ def get_config():
         "cacheTTLSeconds": 600,
         "openaipApiKey": os.getenv("OPENAIP_API_KEY", ""),
     })
+
+
+@app.route("/tiles/openaip/<int:z>/<int:x>/<int:y>.png")
+def proxy_openaip_tile(z, x, y):
+    """Proxy OpenAIP tiles through Flask to avoid browser extension blocking.
+
+    Browser extensions (ad blockers, privacy tools) often block direct requests to
+    third-party tile servers or URLs containing 'apiKey'. Proxying through localhost
+    bypasses this entirely.
+    """
+    api_key = os.getenv("OPENAIP_API_KEY", "")
+    if not api_key:
+        return Response(status=404)
+    url = f"https://api.tiles.openaip.net/api/data/openaip/{z}/{x}/{y}.png?apiKey={api_key}"
+    try:
+        resp = requests.get(url, timeout=10)
+        return Response(resp.content, status=resp.status_code,
+                        content_type=resp.headers.get("Content-Type", "image/png"),
+                        headers={"Cache-Control": "public, max-age=3600"})
+    except Exception:
+        return Response(status=502)
 
 
 @app.route("/cache/stats")

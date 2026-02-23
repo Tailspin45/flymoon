@@ -312,7 +312,6 @@ function initializeMap(centerLat, centerLon) {
 
     mapInitialized = true;
     // Add OpenAIP overlay now that layerControl exists — key was injected server-side
-    console.log('[OpenAIP] initializeMap complete, calling addOpenAIPOverlay…');
     addOpenAIPOverlay(window.OPENAIP_API_KEY || '');
 }
 
@@ -347,15 +346,10 @@ function showOpenAIPInstructions(e) {
     document.body.appendChild(modal);
 }
 
-let openAIPLayer = null;  // Keep reference for layer control toggle
+let openAIPLayer = null;
 
 function addOpenAIPOverlay(apiKey) {
-    console.log('[OpenAIP] addOpenAIPOverlay called, key=' + (apiKey ? apiKey.slice(0,8)+'…' : 'EMPTY') +
-                ', map=' + !!map + ', layerControl=' + !!layerControl);
-    if (!layerControl || !map) {
-        console.error('[OpenAIP] ABORT — map or layerControl not ready');
-        return;
-    }
+    if (!layerControl || !map) return;
     if (!apiKey) {
         layerControl.addOverlay(
             L.tileLayer('', { opacity: 0 }),
@@ -363,54 +357,19 @@ function addOpenAIPOverlay(apiKey) {
         );
         return;
     }
-
-    const url = 'https://api.tiles.openaip.net/api/data/openaip/{z}/{x}/{y}.png?apiKey=' + apiKey;
-    console.log('[OpenAIP] Creating tile layer with URL:', url.replace(apiKey, apiKey.slice(0,8)+'…'));
-
-    openAIPLayer = L.tileLayer(url, {
+    // Proxy tiles through Flask to avoid browser extension blocking (ad blockers,
+    // privacy tools often block direct requests to third-party tile servers).
+    openAIPLayer = L.tileLayer('/tiles/openaip/{z}/{x}/{y}.png', {
         attribution: '&copy; <a href="https://www.openaip.net">OpenAIP</a>',
         maxZoom: 17,
         opacity: 0.7,
         zIndex: 650,
     });
-
-    // Debug: log tile load success/failure
-    let _tileLoaded = 0, _tileError = 0;
-    openAIPLayer.on('tileload', () => {
-        _tileLoaded++;
-        if (_tileLoaded <= 3) console.log('[OpenAIP] tile loaded (' + _tileLoaded + ' total)');
-    });
-    openAIPLayer.on('tileerror', (evt) => {
-        _tileError++;
-        console.error('[OpenAIP] tile ERROR (' + _tileError + ' total)', evt.coords, evt.tile?.src?.slice(0,80));
-    });
-    openAIPLayer.on('loading', () => console.log('[OpenAIP] tiles loading…'));
-    openAIPLayer.on('load', () => console.log('[OpenAIP] ALL tiles loaded (' + _tileLoaded + ' ok, ' + _tileError + ' err)'));
-
     localStorage.removeItem('mapOverlayAvia');
     openAIPLayer.addTo(map);
-    console.log('[OpenAIP] addTo(map) done, hasLayer=' + map.hasLayer(openAIPLayer));
-
     layerControl.addOverlay(openAIPLayer, 'Aviation (OpenAIP)');
-    console.log('[OpenAIP] registered in layerControl');
-
-    map.on('overlayadd',    e => { if (e.name === 'Aviation (OpenAIP)') { console.log('[OpenAIP] overlay ADD event'); localStorage.removeItem('mapOverlayAvia'); }});
-    map.on('overlayremove', e => { if (e.name === 'Aviation (OpenAIP)') { console.log('[OpenAIP] overlay REMOVE event'); localStorage.setItem('mapOverlayAvia', 'off'); }});
-
-    // Periodic health check (runs 3 times, then stops)
-    let _checks = 0;
-    const _healthCheck = setInterval(() => {
-        _checks++;
-        const onMap = map.hasLayer(openAIPLayer);
-        const container = openAIPLayer.getContainer ? openAIPLayer.getContainer() : null;
-        const visible = container ? getComputedStyle(container).display !== 'none' && getComputedStyle(container).visibility !== 'hidden' : 'N/A';
-        const opacity = container ? getComputedStyle(container).opacity : 'N/A';
-        const zIdx = container ? getComputedStyle(container).zIndex : 'N/A';
-        const imgs = container ? container.querySelectorAll('img').length : 0;
-        console.log('[OpenAIP] health #' + _checks + ': onMap=' + onMap + ', visible=' + visible +
-                    ', opacity=' + opacity + ', zIndex=' + zIdx + ', imgs=' + imgs);
-        if (_checks >= 5) clearInterval(_healthCheck);
-    }, 3000);
+    map.on('overlayadd',    e => { if (e.name === 'Aviation (OpenAIP)') localStorage.removeItem('mapOverlayAvia'); });
+    map.on('overlayremove', e => { if (e.name === 'Aviation (OpenAIP)') localStorage.setItem('mapOverlayAvia', 'off'); });
 }
 
 function updateObserverMarker(lat, lon, elevation) {
