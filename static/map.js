@@ -32,6 +32,79 @@ let hardRefreshCount = 0;  // Counts auto hard refreshes; ghosts cleared every 3
 let layerControl = null;  // Leaflet layer control (base + overlays)
 let _pendingOpenAIPKey = null;  // Key stored if addOpenAIPOverlay called before map init
 
+// ── Heatmap state ──────────────────────────────────────────────────────────────
+let heatLayer = null;
+let heatmapVisible = false;
+const HEATMAP_STORAGE_KEY = 'flymoonHeatPoints';
+const HEATMAP_MAX_POINTS  = 2000; // cap localStorage size
+// Accumulated [lat, lon, intensity] points (loaded from localStorage on first use)
+let _heatPoints = null;
+
+function _loadHeatPoints() {
+    if (_heatPoints !== null) return _heatPoints;
+    try {
+        const raw = localStorage.getItem(HEATMAP_STORAGE_KEY);
+        _heatPoints = raw ? JSON.parse(raw) : [];
+    } catch(e) {
+        _heatPoints = [];
+    }
+    return _heatPoints;
+}
+
+function _saveHeatPoints() {
+    try {
+        localStorage.setItem(HEATMAP_STORAGE_KEY, JSON.stringify(_heatPoints));
+    } catch(e) { /* storage full — ignore */ }
+}
+
+/** Add current flight positions to the accumulated heatmap dataset. */
+function updateHeatmapData(flights) {
+    const pts = _loadHeatPoints();
+    flights.forEach(f => {
+        if (f.latitude != null && f.longitude != null) {
+            pts.push([f.latitude, f.longitude, 1]);
+        }
+    });
+    // Keep only the most recent HEATMAP_MAX_POINTS entries
+    if (pts.length > HEATMAP_MAX_POINTS) {
+        pts.splice(0, pts.length - HEATMAP_MAX_POINTS);
+    }
+    _heatPoints = pts;
+    _saveHeatPoints();
+    if (heatLayer) heatLayer.setLatLngs(pts);
+}
+
+/** Toggle the heatmap layer on/off. */
+function toggleHeatmap() {
+    if (!map) return;
+    heatmapVisible = !heatmapVisible;
+
+    const btn = document.getElementById('heatmapToggle');
+    if (heatmapVisible) {
+        const pts = _loadHeatPoints();
+        heatLayer = L.heatLayer(pts, {
+            radius: 18,
+            blur: 20,
+            maxZoom: 12,
+            gradient: { 0.2: 'blue', 0.5: 'lime', 0.8: 'orange', 1.0: 'red' }
+        }).addTo(map);
+        if (btn) { btn.style.opacity = '1'; btn.title = 'Hide traffic heatmap'; }
+    } else {
+        if (heatLayer) { map.removeLayer(heatLayer); heatLayer = null; }
+        if (btn) { btn.style.opacity = '0.45'; btn.title = 'Show traffic density heatmap'; }
+    }
+}
+
+/** Clear all accumulated heatmap data and remove the layer. */
+function clearHeatmap() {
+    _heatPoints = [];
+    localStorage.removeItem(HEATMAP_STORAGE_KEY);
+    if (heatLayer) { map.removeLayer(heatLayer); heatLayer = null; }
+    heatmapVisible = false;
+    const btn = document.getElementById('heatmapToggle');
+    if (btn) { btn.style.opacity = '0.45'; btn.title = 'Show traffic density heatmap'; }
+}
+
 // Arrow colors for each target
 const ARROW_COLORS = {
     sun: '#FF4500',   // Orange-red
@@ -1077,5 +1150,10 @@ function updateMapVisualization(data, observerLat, observerLon, observerElev, is
     updateAircraftMarkers(data.flights || [], observerLat, observerLon, true, isForceRefresh);
     if (data.flights && data.flights.length > 0) {
         updateAltitudeOverlay(data.flights);
+    }
+
+    // Accumulate flight positions into the traffic heatmap dataset on every refresh
+    if (data.flights && data.flights.length > 0) {
+        updateHeatmapData(data.flights);
     }
 }

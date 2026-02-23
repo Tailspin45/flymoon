@@ -59,6 +59,7 @@
         <button id="goBtn" class="btn-primary" onclick="go();" title="Force immediate API refresh (not recommended - wastes quota)">⟳ Force Refresh</button>
         <button id="sunToggle" class="btn-sm" onclick="toggleTarget('sun')" title="Sun tracking ON (click to disable)">☀️ Sun</button>
         <button id="moonToggle" class="btn-sm" onclick="toggleTarget('moon')" title="Moon tracking ON (click to disable)">🌙 Moon</button>
+        <button id="heatmapToggle" class="btn-sm" onclick="toggleHeatmap()" title="Show traffic density heatmap (accumulates across refreshes)">🔥 Heatmap</button>
         <span class="separator">|</span>
         <div class="control-group">
             <input type="number" id="latitude" placeholder="Lat" autocomplete="on" title="Latitude">
@@ -444,6 +445,8 @@
         crossorigin=""></script>
     <!-- Leaflet Editable plugin for bounding box editing -->
     <script src="{{ url_for('static', filename='leaflet-editable.js') }}"></script>
+    <!-- Leaflet.heat for traffic density heatmap -->
+    <script src="{{ url_for('static', filename='leaflet-heat.js') }}"></script>
     <script src="{{ url_for('static', filename='telescope.js') }}?v=1771610000" charset="utf-8"></script>
     <script src="{{ url_for('static', filename='map.js') }}?v=1771600000" charset="utf-8"></script>
     <script src="{{ url_for('static', filename='app.js') }}?v=1771610000" charset="utf-8"></script>
