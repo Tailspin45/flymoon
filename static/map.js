@@ -371,8 +371,9 @@ function addOpenAIPOverlay(apiKey) {
             opacity: 0.8,
         }
     );
-    // Add to map BEFORE registering with layerControl so Leaflet marks the checkbox checked
-    if (localStorage.getItem('mapOverlayAvia') !== 'off') overlay.addTo(map);
+    // Always ON at launch — remove any stale 'off' flag from a previous session
+    localStorage.removeItem('mapOverlayAvia');
+    overlay.addTo(map);
     layerControl.addOverlay(overlay, 'Aviation (OpenAIP)');
     map.on('overlayadd',    e => { if (e.name === 'Aviation (OpenAIP)') localStorage.removeItem('mapOverlayAvia'); });
     map.on('overlayremove', e => { if (e.name === 'Aviation (OpenAIP)') localStorage.setItem('mapOverlayAvia', 'off'); });

@@ -514,6 +514,72 @@ if (document.readyState === 'loading') {
     initUIControls();
 }
 
+// ─── Custom tooltip system ────────────────────────────────────────────────────
+// Intercepts all native `title` attributes and replaces them with a styled,
+// immediately-visible dark tooltip that matches the app theme.
+(function initCustomTooltips() {
+    const tip = document.createElement('div');
+    tip.id = 'flymoonTooltip';
+    tip.style.cssText = [
+        'position:fixed',
+        'background:#1e2a3a',
+        'color:#e8edf2',
+        'border:1px solid #4a6280',
+        'border-radius:5px',
+        'padding:7px 11px',
+        'font-size:0.8em',
+        'max-width:320px',
+        'pointer-events:none',
+        'z-index:99999',
+        'display:none',
+        'line-height:1.45',
+        'box-shadow:0 3px 10px rgba(0,0,0,0.65)',
+        'white-space:pre-wrap',
+        'word-wrap:break-word',
+    ].join(';');
+    document.body.appendChild(tip);
+
+    let activeEl = null;
+
+    document.addEventListener('mouseover', function(e) {
+        let el = e.target;
+        while (el && el !== document.body) {
+            if (el.hasAttribute && el.hasAttribute('title') && el.getAttribute('title')) {
+                const text = el.getAttribute('title');
+                activeEl = el;
+                el.dataset.tipBak = text;
+                el.removeAttribute('title');   // suppress native tooltip
+                tip.textContent = text;
+                tip.style.display = 'block';
+                return;
+            }
+            el = el.parentNode;
+        }
+    });
+
+    document.addEventListener('mousemove', function(e) {
+        if (tip.style.display === 'none') return;
+        const pad = 14;
+        let x = e.clientX + pad;
+        let y = e.clientY + pad + 4;
+        const w = tip.offsetWidth  || 280;
+        const h = tip.offsetHeight || 40;
+        if (x + w + 10 > window.innerWidth)  x = e.clientX - w - pad;
+        if (y + h + 10 > window.innerHeight) y = e.clientY - h - pad;
+        tip.style.left = Math.max(4, x) + 'px';
+        tip.style.top  = Math.max(4, y) + 'px';
+    });
+
+    document.addEventListener('mouseout', function(e) {
+        if (activeEl && activeEl.dataset.tipBak !== undefined) {
+            activeEl.setAttribute('title', activeEl.dataset.tipBak);
+            delete activeEl.dataset.tipBak;
+            activeEl = null;
+        }
+        tip.style.display = 'none';
+    });
+})();
+
 // Reset all quadrant min altitude values to 0
 function resetQuadrantValues() {
     const quadrantIds = ['minAltN', 'minAltE', 'minAltS', 'minAltW'];
