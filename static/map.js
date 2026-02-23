@@ -357,15 +357,14 @@ function addOpenAIPOverlay(apiKey) {
         );
         return;
     }
-    // Use overlayPane (z-index 400) instead of tilePane (z-index 200) so OpenAIP
-    // always renders above base map tiles and is not buried during resize re-renders.
+    // Stay in tilePane for correct zoom animation; high zIndex keeps us above base tiles.
     openAIPLayer = L.tileLayer(
         `https://api.tiles.openaip.net/api/data/openaip/{z}/{x}/{y}.png?apiKey=${apiKey}`,
         {
             attribution: '&copy; <a href="https://www.openaip.net">OpenAIP</a>',
             maxZoom: 17,
             opacity: 0.8,
-            pane: 'overlayPane',
+            zIndex: 200,
         }
     );
     // Always ON at launch — remove any stale 'off' flag from a previous session
