@@ -154,7 +154,7 @@ def calculate_adaptive_interval(flights: list) -> int:
 
 @app.route("/")
 def index():
-    return render_template("index.html")
+    return render_template("index.html", openaip_api_key=os.getenv("OPENAIP_API_KEY", ""))
 
 
 @app.route("/config")

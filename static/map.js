@@ -30,7 +30,6 @@ let headingArrows = {};  // Store heading arrows for medium/high probability tra
 let ghostMarkers = {};  // Arrays of dots showing breadcrumb trail per flight (ghostMarkers[id] = [circleMarker, ...])
 let hardRefreshCount = 0;  // Counts auto hard refreshes; ghosts cleared every 3rd
 let layerControl = null;  // Leaflet layer control (base + overlays)
-let _pendingOpenAIPKey = null;  // Key stored if addOpenAIPOverlay called before map init
 
 // ── Heatmap state ──────────────────────────────────────────────────────────────
 let heatLayer = null;
@@ -312,11 +311,8 @@ function initializeMap(centerLat, centerLon) {
     ghostLayer = L.layerGroup({ pane: 'ghostPane' }).addTo(map);
 
     mapInitialized = true;
-    // If addOpenAIPOverlay was called before map init, apply it now
-    if (_pendingOpenAIPKey !== null) {
-        addOpenAIPOverlay(_pendingOpenAIPKey);
-        _pendingOpenAIPKey = null;
-    }
+    // Add OpenAIP overlay now that layerControl exists — key was injected server-side
+    addOpenAIPOverlay(window.OPENAIP_API_KEY || '');
 }
 
 /**
@@ -351,11 +347,7 @@ function showOpenAIPInstructions(e) {
 }
 
 function addOpenAIPOverlay(apiKey) {
-    // Queue if map/layerControl not ready yet (config often resolves before map init)
-    if (!layerControl || !map) {
-        _pendingOpenAIPKey = apiKey;
-        return;
-    }
+    if (!layerControl || !map) return;  // should not happen — called from initializeMap
     if (!apiKey) {
         layerControl.addOverlay(
             L.tileLayer('', { opacity: 0 }),

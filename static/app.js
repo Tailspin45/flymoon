@@ -211,7 +211,6 @@ fetch('/config')
     .then(config => {
         appConfig = config;
         console.log('Loaded config:', appConfig);
-        addOpenAIPOverlay(config.openaipApiKey || '');
     })
     .catch(error => {
         console.error('Error loading config:', error);
