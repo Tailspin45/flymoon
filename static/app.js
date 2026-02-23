@@ -1025,6 +1025,116 @@ function showCostModal(newValue, inputElement) {
     document.getElementById('costModal').style.display = 'flex';
 }
 
+// ─── Help / Info modal ────────────────────────────────────────────────────────
+
+const HELP_CONTENT = {
+    'min-angle': {
+        title: 'Quadrant Min Angle Dial',
+        body: `<p>Sets the <strong>minimum altitude</strong> (degrees above your horizon) the Sun or Moon must reach before Flymoon queries the FlightAware API for flights.</p>
+<p>The dial has four sectors — <strong>N / E / S / W</strong> — matching the compass direction the Sun/Moon occupies. When the target is below your threshold in that sector, no API call is made, saving your monthly quota.</p>
+<p><strong>Example:</strong> Set South to 20° — the Sun will only trigger flight queries when it is more than 20° above your southern horizon.</p>
+<p><strong>Cost impact:</strong> Higher angles = fewer daily API calls. The default 15° is a sensible balance. At ≤5° you will see a cost warning because the Sun/Moon barely clears the horizon and transits become geometrically improbable.</p>
+<p><strong>Click the centre label</strong> to reset all quadrants to 0°.</p>`
+    },
+    'force-refresh': {
+        title: '⟳ Force Refresh',
+        body: `<p>Triggers an immediate FlightAware API call, bypassing the 10-minute server-side cache.</p>
+<p><strong>Cost context:</strong> FlightAware bills per query against a $5/month credit (~4,300–5,000 bounding-box calls). Auto-refresh runs every 10 minutes (≈144 calls/day, ≈4,320/month) which stays just within budget.</p>
+<p>Between API refreshes, aircraft positions are <em>interpolated</em> every 15 seconds using the last known speed and heading — no extra cost. You rarely need to force a refresh.</p>
+<p>The button warns you if the cache is still fresh so you can decide whether to proceed.</p>`
+    },
+    'sun-moon-toggle': {
+        title: '☀️ Sun / 🌙 Moon Toggles',
+        body: `<p>Enable or disable transit tracking for each target independently.</p>
+<p>When a target is <strong>disabled</strong>:</p>
+<ul>
+<li>The server skips all transit calculations for it (no CPU cost)</li>
+<li>Its azimuth arrow is removed from the map</li>
+<li>No transit alerts are generated for it</li>
+<li>The FlightAware bounding-box query still runs once (shared between targets)</li>
+</ul>
+<p>If <strong>both targets are disabled</strong> and one of them is actually above your min-angle threshold, a periodic reminder warns you so you don't accidentally miss a transit.</p>
+<p>Toggle state persists across browser restarts.</p>`
+    },
+    'heatmap': {
+        title: '🔥 Traffic Density Heatmap',
+        body: `<p>An overlay that reveals which areas within your search bounding box see the most aircraft traffic, built up from every auto-refresh since you first enabled Flymoon.</p>
+<p><strong>Colour scale:</strong> blue (sparse) → lime → orange → <strong>red</strong> (dense corridors).</p>
+<p>The heatmap accumulates silently in the background — every refresh adds the current aircraft positions to a dataset saved in browser storage (capped at 2,000 points, oldest discarded first).</p>
+<p>After a few hours you will see the main flight corridors. Corridors passing close to the Sun/Moon azimuth line are your best targets to watch.</p>
+<p>Press 🗑 to wipe the dataset and start fresh (e.g. after moving to a new location).</p>`
+    },
+    'transit-levels': {
+        title: 'Transit Probability Levels',
+        body: `<p>Each aircraft is assigned a probability level based on its predicted angular separation from the Sun or Moon at the moment of closest approach:</p>
+<table style="width:100%;border-collapse:collapse;margin:10px 0;">
+<tr style="border-bottom:1px solid #444"><td style="padding:5px 8px">🟢 <strong>High</strong></td><td style="padding:5px 8px">≤1° in both altitude and azimuth. Predicted to cross within the Sun/Moon's disk. <em>Start recording!</em></td></tr>
+<tr style="border-bottom:1px solid #444"><td style="padding:5px 8px">🟠 <strong>Medium</strong></td><td style="padding:5px 8px">≤2° separation. Very close pass — may graze the limb or be captured in a wide field. Worth recording.</td></tr>
+<tr style="border-bottom:1px solid #444"><td style="padding:5px 8px">⚪ <strong>Low</strong></td><td style="padding:5px 8px">≤3° separation. Distant near-miss. Not a true transit but interesting to log.</td></tr>
+<tr><td style="padding:5px 8px">— <strong>Unlikely</strong></td><td style="padding:5px 8px">&gt;3° — shown in table but not highlighted.</td></tr>
+</table>
+<p>The Sun and Moon each subtend about <strong>0.5°</strong> of arc. An aircraft crossing within that cone produces a true silhouette transit lasting 0.5–2 seconds.</p>
+<p>Thresholds are configurable via <code>ALT_THRESHOLD</code> / <code>AZ_THRESHOLD</code> in the server <code>.env</code> file.</p>`
+    },
+    'table-columns': {
+        title: 'Results Table — Column Guide',
+        body: `<table style="width:100%;border-collapse:collapse;font-size:0.88em;">
+<tr><td style="padding:4px 8px;color:#7eb8f7;white-space:nowrap"><strong>target</strong></td><td style="padding:4px 8px">☀️ Sun or 🌙 Moon — which body this aircraft may transit</td></tr>
+<tr><td style="padding:4px 8px;color:#7eb8f7;white-space:nowrap"><strong>id</strong></td><td style="padding:4px 8px">ICAO flight callsign (e.g. UAL1234). Click to show route on map.</td></tr>
+<tr><td style="padding:4px 8px;color:#7eb8f7;white-space:nowrap"><strong>type</strong></td><td style="padding:4px 8px">Aircraft ICAO type code (B738 = Boeing 737-800, A320 = Airbus A320)</td></tr>
+<tr><td style="padding:4px 8px;color:#7eb8f7;white-space:nowrap"><strong>target angle</strong></td><td style="padding:4px 8px">Current altitude of the Sun/Moon above your horizon in degrees (0°=horizon, 90°=zenith)</td></tr>
+<tr><td style="padding:4px 8px;color:#7eb8f7;white-space:nowrap"><strong>plane angle</strong></td><td style="padding:4px 8px">Predicted altitude angle of the aircraft at closest approach to the target</td></tr>
+<tr><td style="padding:4px 8px;color:#7eb8f7;white-space:nowrap"><strong>target az</strong></td><td style="padding:4px 8px">Current azimuth of the Sun/Moon — degrees clockwise from true North</td></tr>
+<tr><td style="padding:4px 8px;color:#7eb8f7;white-space:nowrap"><strong>plane az</strong></td><td style="padding:4px 8px">Predicted azimuth of the aircraft at closest approach</td></tr>
+<tr><td style="padding:4px 8px;color:#7eb8f7;white-space:nowrap"><strong>△angle</strong></td><td style="padding:4px 8px">Altitude difference at closest approach. Smaller = better. 🟢 ≤1°, 🟠 ≤2°, ⚪ ≤3°</td></tr>
+<tr><td style="padding:4px 8px;color:#7eb8f7;white-space:nowrap"><strong>△az</strong></td><td style="padding:4px 8px">Azimuth difference at closest approach. Smaller = better.</td></tr>
+<tr><td style="padding:4px 8px;color:#7eb8f7;white-space:nowrap"><strong>elev</strong></td><td style="padding:4px 8px">Flight level in hundreds of feet (350 = FL350 = 35,000 ft)</td></tr>
+<tr><td style="padding:4px 8px;color:#7eb8f7;white-space:nowrap"><strong>GPS alt (ft)</strong></td><td style="padding:4px 8px">GPS altitude in feet above sea level from ADS-B transponder</td></tr>
+<tr><td style="padding:4px 8px;color:#7eb8f7;white-space:nowrap"><strong>Hdg (T)</strong></td><td style="padding:4px 8px">True heading — degrees clockwise from true North (not magnetic). Used to project the flight path forward.</td></tr>
+<tr><td style="padding:4px 8px;color:#7eb8f7;white-space:nowrap"><strong>dist</strong></td><td style="padding:4px 8px">Straight-line distance from your observer position to the aircraft</td></tr>
+<tr><td style="padding:4px 8px;color:#7eb8f7;white-space:nowrap"><strong>Grnd Spd</strong></td><td style="padding:4px 8px">Aircraft ground speed in mph (converted from knots)</td></tr>
+<tr><td style="padding:4px 8px;color:#7eb8f7;white-space:nowrap"><strong>src</strong></td><td style="padding:4px 8px">Data source: FA=FlightAware, OS=OpenSky, ADS-B=direct receiver</td></tr>
+</table>`
+    },
+    'alerts': {
+        title: '🔔 Alerts',
+        body: `<p>Controls audio alerts and browser notifications when a potential transit is detected.</p>
+<p>When <strong>enabled</strong> and a High or Medium probability transit is found:</p>
+<ul>
+<li>An audio chime plays</li>
+<li>A browser push notification appears (requires notification permission)</li>
+<li>A countdown banner shows at the top of the screen</li>
+</ul>
+<p>Alerts fire even when the tab is in the background, unless <em>Pause Hidden</em> is also checked.</p>
+<p>You can toggle alerts off temporarily (e.g. at night) without stopping the tracker.</p>`
+    },
+    'near-misses': {
+        title: '📋 Near-Miss Log',
+        body: `<p>A persistent log of every aircraft that came within the transit detection threshold of the Sun or Moon, sorted newest first.</p>
+<p>Each row records the <strong>closest angular approach</strong> for that flight:</p>
+<ul>
+<li><strong>Alt° / Az°</strong> — altitude and azimuth separation at closest approach</li>
+<li><strong>Sep°</strong> — total angular separation (red &lt;0.25° = inside the disk; orange &lt;0.5° = grazing limb)</li>
+<li><strong>ETA min</strong> — minutes to predicted closest approach at time of detection</li>
+<li><strong>Scope</strong> — whether the Seestar was connected and in which mode</li>
+</ul>
+<p>The log is stored on the server and survives restarts. Use it to review events after the fact and identify which flight corridors are transit-prone.</p>`
+    }
+};
+
+function showInfo(topic) {
+    const c = HELP_CONTENT[topic];
+    if (!c) return;
+    document.getElementById('infoModalTitle').textContent = c.title;
+    document.getElementById('infoModalBody').innerHTML = c.body;
+    const modal = document.getElementById('infoModal');
+    modal.style.display = 'flex';
+}
+
+function closeInfoModal() {
+    document.getElementById('infoModal').style.display = 'none';
+}
+
 function dismissCostModal(keep) {
     document.getElementById('costModal').style.display = 'none';
     if (!keep && _pendingCostInput) {

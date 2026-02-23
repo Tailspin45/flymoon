@@ -28,21 +28,25 @@
                 🔭 Telescope
                 <span id="telescopeStatusLight" style="position: absolute; top: 2px; right: 2px; width: 8px; height: 8px; border-radius: 50%; background-color: #999;" title="Telescope disconnected"></span>
             </button>
-            <button class="btn-sm" onclick="toggleNearMissLog()" title="Near-miss history">📋 Near Misses</button>
+            <button class="btn-sm" onclick="toggleNearMissLog()" title="View history of all aircraft that came within the transit detection threshold of the Sun or Moon">📋 Near Misses</button>
+            <button class="btn-help" onclick="showInfo('near-misses')" title="Learn about the near-miss log">ℹ️</button>
         </div>
         <!-- Quadrant Min Altitude Control -->
-        <div class="quadrant-circle">
-            <!-- Labels outside circle -->
-            <label class="quadrant-label quadrant-label-n">N</label>
-            <label class="quadrant-label quadrant-label-e">E</label>
-            <label class="quadrant-label quadrant-label-s">S</label>
-            <label class="quadrant-label quadrant-label-w">W</label>
-            <!-- Inputs inside quadrants -->
-            <input type="number" id="minAltN" class="quadrant-input quadrant-input-n" placeholder="30" min="0" max="90" title="North Min Altitude (°)">
-            <input type="number" id="minAltE" class="quadrant-input quadrant-input-e" placeholder="30" min="0" max="90" title="East Min Altitude (°)">
-            <input type="number" id="minAltS" class="quadrant-input quadrant-input-s" placeholder="30" min="0" max="90" title="South Min Altitude (°)">
-            <input type="number" id="minAltW" class="quadrant-input quadrant-input-w" placeholder="30" min="0" max="90" title="West Min Altitude (°)">
-            <div class="quadrant-center" onclick="resetQuadrantValues()" title="Click to reset all to 0">Min Angle</div>
+        <div style="display:flex; align-items:center; gap:4px;">
+            <div class="quadrant-circle">
+                <!-- Labels outside circle -->
+                <label class="quadrant-label quadrant-label-n" title="North quadrant minimum altitude">N</label>
+                <label class="quadrant-label quadrant-label-e" title="East quadrant minimum altitude">E</label>
+                <label class="quadrant-label quadrant-label-s" title="South quadrant minimum altitude">S</label>
+                <label class="quadrant-label quadrant-label-w" title="West quadrant minimum altitude">W</label>
+                <!-- Inputs inside quadrants -->
+                <input type="number" id="minAltN" class="quadrant-input quadrant-input-n" placeholder="30" min="0" max="90" title="Minimum altitude (°) the Sun/Moon must be above your northern horizon before flights are queried">
+                <input type="number" id="minAltE" class="quadrant-input quadrant-input-e" placeholder="30" min="0" max="90" title="Minimum altitude (°) the Sun/Moon must be above your eastern horizon before flights are queried">
+                <input type="number" id="minAltS" class="quadrant-input quadrant-input-s" placeholder="30" min="0" max="90" title="Minimum altitude (°) the Sun/Moon must be above your southern horizon before flights are queried">
+                <input type="number" id="minAltW" class="quadrant-input quadrant-input-w" placeholder="30" min="0" max="90" title="Minimum altitude (°) the Sun/Moon must be above your western horizon before flights are queried">
+                <div class="quadrant-center" onclick="resetQuadrantValues()" title="Click to reset all quadrant minimum altitudes to 0°">Min Angle</div>
+            </div>
+            <button class="btn-help" onclick="showInfo('min-angle')" title="Learn about min-angle cost controls" style="align-self:center;">ℹ️</button>
         </div>
     </div>
 
@@ -56,45 +60,49 @@
     </div>
 
     <div class="controls-row">
-        <button id="goBtn" class="btn-primary" onclick="go();" title="Force immediate API refresh (not recommended - wastes quota)">⟳ Force Refresh</button>
-        <button id="sunToggle" class="btn-sm" onclick="toggleTarget('sun')" title="Sun tracking ON (click to disable)">☀️ Sun</button>
-        <button id="moonToggle" class="btn-sm" onclick="toggleTarget('moon')" title="Moon tracking ON (click to disable)">🌙 Moon</button>
-        <button id="heatmapToggle" class="btn-sm" onclick="toggleHeatmap()" title="Show traffic density heatmap (accumulates across refreshes)">🔥 Heatmap</button>
-        <button id="heatmapClear" class="btn-sm" onclick="clearHeatmap()" title="Clear all accumulated heatmap data" style="opacity:0.6; font-size:0.75em;">🗑</button>
+        <button id="goBtn" class="btn-primary" onclick="go();" title="Force an immediate FlightAware API call — bypasses the 10-minute cache. Use sparingly; each call counts against your $5/month quota.">⟳ Force Refresh</button>
+        <button class="btn-help" onclick="showInfo('force-refresh')" title="Learn more about API cost and caching">ℹ️</button>
+        <button id="sunToggle" class="btn-sm" onclick="toggleTarget('sun')" title="Sun tracking ON — click to disable. When off, transit checks and azimuth arrow for the Sun are skipped.">☀️ Sun</button>
+        <button id="moonToggle" class="btn-sm" onclick="toggleTarget('moon')" title="Moon tracking ON — click to disable. When off, transit checks and azimuth arrow for the Moon are skipped.">🌙 Moon</button>
+        <button class="btn-help" onclick="showInfo('sun-moon-toggle')" title="Learn about Sun/Moon toggles">ℹ️</button>
+        <button id="heatmapToggle" class="btn-sm" onclick="toggleHeatmap()" title="Show traffic density heatmap — accumulates aircraft positions across all refreshes to reveal flight corridors.">🔥 Heatmap</button>
+        <button id="heatmapClear" class="btn-sm" onclick="clearHeatmap()" title="Clear all accumulated heatmap data from browser storage" style="opacity:0.6; font-size:0.75em;">🗑</button>
+        <button class="btn-help" onclick="showInfo('heatmap')" title="Learn about the heatmap">ℹ️</button>
         <span class="separator">|</span>
         <div class="control-group">
-            <input type="number" id="latitude" placeholder="Lat" autocomplete="on" title="Latitude">
+            <input type="number" id="latitude" placeholder="Lat" autocomplete="on" title="Your observing location latitude in decimal degrees (e.g. 14.05 for 14°05′N). Positive = North, negative = South.">
             <div class="control-label">Observer Lat</div>
         </div>
         <div class="control-group">
-            <input type="number" id="longitude" placeholder="Lon" autocomplete="on" title="Longitude">
+            <input type="number" id="longitude" placeholder="Lon" autocomplete="on" title="Your observing location longitude in decimal degrees (e.g. -99.1 for 99°W). Positive = East, negative = West.">
             <div class="control-label">Observer Lon</div>
         </div>
         <div class="control-group">
-            <input type="number" id="elevation" placeholder="Elev" autocomplete="on" title="Elevation (m)">
+            <input type="number" id="elevation" placeholder="Elev" autocomplete="on" title="Observer elevation above sea level in metres (used for precise Sun/Moon altitude calculations). 1 ft = 0.305 m.">
             <div class="control-label">Elevation (m)</div>
         </div>
         <span class="separator">|</span>
         <div class="control-group">
-            <button class="btn-sm" onclick="savePosition()" title="Save position">💾</button>
+            <button class="btn-sm" onclick="savePosition()" title="Save observer position to browser storage and regenerate the ±1.5° search bounding box centred on this location.">💾</button>
             <div class="control-label">Save</div>
         </div>
         <div class="control-group">
-            <button class="btn-sm btn-lg-icon" onclick="clearPosition()" title="Clear">✕</button>
+            <button class="btn-sm btn-lg-icon" onclick="clearPosition()" title="⚠️ Clears ALL saved settings from browser storage — position, bounding box, heatmap data, and min-altitude values. Cannot be undone.">✕</button>
             <div class="control-label">Clear</div>
         </div>
         <span class="separator">|</span>
         <div class="control-group">
-            <button class="btn-sm" onclick="toggleMap()" title="Toggle map">🗺️</button>
+            <button class="btn-sm" onclick="toggleMap()" title="Show or hide the interactive flight map.">🗺️</button>
             <div class="control-label">Map</div>
         </div>
         <div class="control-group">
-            <button class="btn-sm" onclick="toggleAlerts()" title="Enable/disable alerts">🔔</button>
+            <button class="btn-sm" onclick="toggleAlerts()" title="Enable or disable audio alerts and browser notifications when a High or Medium transit probability is detected.">🔔</button>
             <div class="control-label">Alerts</div>
         </div>
+        <button class="btn-help" onclick="showInfo('alerts')" title="Learn about alerts">ℹ️</button>
         <span class="separator">|</span>
         <div style="display: inline-block; text-align: center;">
-            <input type="checkbox" id="pauseWhenHidden" onchange="togglePauseWhenHidden()" title="Pause auto-refresh when page is hidden" style="width: 18px; height: 18px; cursor: pointer;">
+            <input type="checkbox" id="pauseWhenHidden" onchange="togglePauseWhenHidden()" title="When checked, auto-refresh pauses while this browser tab is in the background — saves API quota if you leave the tab open overnight." style="width: 18px; height: 18px; cursor: pointer;">
             <div style="font-size: 0.7em; color: #aaa; margin-top: -2px;">Pause Hidden</div>
         </div>
     </div>
@@ -159,23 +167,29 @@
         <table id="resultsTable">
             <thead>
                 <tr>
-                    <th>target</th>
-                    <th>id</th>
-                    <th>type</th>
-                    <th style="max-width: 60px; overflow: hidden; text-overflow: ellipsis;">origin</th>
-                    <th style="max-width: 60px; overflow: hidden; text-overflow: ellipsis;">dest</th>
-                    <th>target<br>angle</th>
-                    <th>plane<br>angle</th>
-                    <th>target<br>az</th>
-                    <th>plane<br>az</th>
-                    <th>△angle</th>
-                    <th>△az</th>
-                    <th>elev</th>
-                    <th>GPS alt<br>(ft)</th>
-                    <th>Hdg (T)</th>
-                    <th>dist<br>(km/miles)</th>
-                    <th>Grnd Spd<br>(mph)</th>
-                    <th title="Position data source: FA=FlightAware, OS=OpenSky, ADS-B=direct">src</th>
+                    <th colspan="17" style="text-align:right; padding:2px 6px; background:transparent; border:none;">
+                        <button class="btn-help" onclick="showInfo('table-columns')" title="Explain all column headings" style="font-size:0.8em;">ℹ️ Column guide</button>
+                        <button class="btn-help" onclick="showInfo('transit-levels')" title="Explain High/Medium/Low transit probability" style="font-size:0.8em; margin-left:4px;">🟢 Probability guide</button>
+                    </th>
+                </tr>
+                <tr>
+                    <th title="☀️ Sun or 🌙 Moon — which celestial body this aircraft may transit">target</th>
+                    <th title="ICAO flight identifier / callsign">id</th>
+                    <th title="Aircraft ICAO type code (e.g. B738 = Boeing 737-800, A320 = Airbus A320)">type</th>
+                    <th style="max-width: 60px; overflow: hidden; text-overflow: ellipsis;" title="Departure city">origin</th>
+                    <th style="max-width: 60px; overflow: hidden; text-overflow: ellipsis;" title="Destination city">dest</th>
+                    <th title="Current altitude of the Sun/Moon above your horizon (degrees above 0° horizon)">target<br>angle</th>
+                    <th title="Predicted altitude angle of the aircraft at its closest approach to the target (degrees)">plane<br>angle</th>
+                    <th title="Current azimuth of the Sun/Moon — degrees clockwise from true North">target<br>az</th>
+                    <th title="Predicted azimuth of the aircraft at closest approach — degrees clockwise from true North">plane<br>az</th>
+                    <th title="Altitude separation between aircraft and target at closest approach — smaller means higher transit chance. High ≤1°, Medium ≤2°, Low ≤3°">△angle</th>
+                    <th title="Azimuth separation between aircraft and target at closest approach — smaller means higher transit chance. High ≤1°, Medium ≤2°, Low ≤3°">△az</th>
+                    <th title="Flight level in hundreds of feet (e.g. 350 = FL350 = 35,000 ft). Affects angular size calculation.">elev</th>
+                    <th title="GPS altitude in feet above sea level (as reported by ADS-B transponder)">GPS alt<br>(ft)</th>
+                    <th title="True heading — degrees clockwise from true North (not magnetic). Used to project the flight path.">Hdg (T)</th>
+                    <th title="Straight-line distance from your observer position to the aircraft right now">dist<br>(km/miles)</th>
+                    <th title="Aircraft ground speed in miles per hour (converted from knots)">Grnd Spd<br>(mph)</th>
+                    <th title="Position data source: FA=FlightAware API, OS=OpenSky Network, ADS-B=direct receiver">src</th>
                 </tr>
             </thead>
             <tbody id="flightData">
@@ -194,6 +208,17 @@
     <audio id="alertSound" src="{{ url_for('static', filename='sounds/tissman-alert1-maximum-distortion.mp3') }}" preload="auto">
     </audio>
 </div><!-- #mapView -->
+
+<!-- Info / Help modal -->
+<div id="infoModal" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.8); z-index:9998; align-items:center; justify-content:center;">
+    <div style="background:#1a1a2e; border:1px solid #555; border-radius:10px; padding:24px; max-width:520px; width:90%; margin:0 auto; position:relative; top:8%; max-height:78vh; overflow-y:auto;">
+        <h3 id="infoModalTitle" style="color:#7eb8f7; margin-top:0;"></h3>
+        <div id="infoModalBody" style="color:#ddd; font-size:0.91em; line-height:1.6;"></div>
+        <div style="text-align:right; margin-top:18px;">
+            <button onclick="closeInfoModal()" class="btn-sm">Close</button>
+        </div>
+    </div>
+</div>
 
 <!-- Cost impact modal — shown when min altitude is set very low -->
 <div id="costModal" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.75); z-index:9999; align-items:center; justify-content:center;">
