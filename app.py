@@ -62,6 +62,12 @@ from src.constants import PossibilityLevel
 # Populated when a user loads a flight's track; consumed by soft-refresh recalculation.
 _track_velocity_cache: dict = {}
 
+# Server-side route/track response cache to avoid redundant FlightAware API calls.
+# {fa_flight_id: (timestamp, response_dict)}
+_route_response_cache: dict = {}
+_track_response_cache: dict = {}
+ROUTE_TRACK_CACHE_TTL = 3600  # 1 hour — a flight's historical track doesn't change much
+
 # Global test/demo mode flag
 test_mode = False
 
@@ -191,6 +197,10 @@ def get_all_flights():
         
         has_send_notification = request.args.get("send-notification") == "true"
 
+        # Targets disabled by the user in the UI (comma-separated: "sun", "moon", or "sun,moon")
+        _disabled_raw = request.args.get("disabled_targets", "")
+        disabled_targets = {t.strip().lower() for t in _disabled_raw.split(",") if t.strip()}
+
         # Check for custom bounding box from user
         custom_bbox = None
         if all(key in request.args for key in ["bbox_lat_ll", "bbox_lon_ll", "bbox_lat_ur", "bbox_lon_ur"]):
@@ -222,6 +232,11 @@ def get_all_flights():
             # Always save coordinates for display in header (even if below horizon)
             target_coordinates[target] = coords
             
+            # Skip if user has toggled this target off in the UI
+            if target in disabled_targets:
+                logger.info(f"{target.capitalize()} disabled by user toggle, skipping transit check")
+                continue
+
             # Only check transits if above minimum altitude
             if coords["altitude"] >= min_altitude:
                 tracking_targets.append(target)  # Add to tracking list
@@ -257,6 +272,7 @@ def get_all_flights():
             "targetCoordinates": target_coordinates,
             "riseSetTimes": get_rise_set_times(latitude, longitude, elevation),
             "trackingTargets": tracking_targets,
+            "disabledTargets": list(disabled_targets),
             "nextCheckInterval": next_check_interval,  # Seconds until next check
             "weather": None,  # Weather functionality not implemented yet
             "boundingBox": {
@@ -336,7 +352,13 @@ def get_all_flights():
 
 @app.route("/flights/<fa_flight_id>/route")
 def get_flight_route(fa_flight_id):
-    """Get the filed route for a specific flight."""
+    """Get the filed route for a specific flight. Response is cached for 1 hour."""
+    now = time.time()
+    cached = _route_response_cache.get(fa_flight_id)
+    if cached and (now - cached[0]) < ROUTE_TRACK_CACHE_TTL:
+        logger.info(f"Route cache HIT for {fa_flight_id}")
+        return jsonify(cached[1])
+
     API_KEY = get_aeroapi_key()
     url = f"https://aeroapi.flightaware.com/aeroapi/flights/{fa_flight_id}/route"
     headers = {"Accept": "application/json; charset=UTF-8", "x-apikey": API_KEY}
@@ -344,7 +366,9 @@ def get_flight_route(fa_flight_id):
     try:
         response = requests.get(url=url, headers=headers, timeout=10)
         if response.status_code == 200:
-            return jsonify(response.json())
+            data = response.json()
+            _route_response_cache[fa_flight_id] = (now, data)
+            return jsonify(data)
         else:
             return jsonify({"error": f"API returned status {response.status_code}"}), response.status_code
     except Exception as e:
@@ -494,7 +518,13 @@ def recalculate_transits_endpoint():
 
 @app.route("/flights/<fa_flight_id>/track")
 def get_flight_track(fa_flight_id):
-    """Get the historical track positions for a specific flight."""
+    """Get the historical track positions for a specific flight. Response is cached for 1 hour."""
+    now = time.time()
+    cached = _track_response_cache.get(fa_flight_id)
+    if cached and (now - cached[0]) < ROUTE_TRACK_CACHE_TTL:
+        logger.info(f"Track cache HIT for {fa_flight_id}")
+        return jsonify(cached[1])
+
     API_KEY = get_aeroapi_key()
     url = f"https://aeroapi.flightaware.com/aeroapi/flights/{fa_flight_id}/track"
     headers = {"Accept": "application/json; charset=UTF-8", "x-apikey": API_KEY}
@@ -512,6 +542,7 @@ def get_flight_track(fa_flight_id):
                     f"Track velocity cached for {fa_flight_id}: "
                     f"{velocity[0]:.0f} km/h  hdg {velocity[1]:.1f}°"
                 )
+            _track_response_cache[fa_flight_id] = (now, track_json)
             return jsonify(track_json)
         else:
             return jsonify({"error": f"API returned status {response.status_code}"}), response.status_code

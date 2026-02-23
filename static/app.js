@@ -177,6 +177,11 @@ function checkAndAlertFilterChange(flights, targetCoordinates) {
 }
 
 var alertsEnabled = localStorage.getItem('alertsEnabled') === 'true' || false;
+// Sun/Moon target enable/disable state (persisted across sessions)
+var sunEnabled  = localStorage.getItem('sunEnabled')  !== 'false'; // default true
+var moonEnabled = localStorage.getItem('moonEnabled') !== 'false'; // default true
+// Timeouts that clear azimuth arrows when a target sets
+var _arrowCleanupTimeouts = {};
 // Transit countdown tracking
 var nextTransit = null;
 var transitCountdownInterval = null;
@@ -469,6 +474,12 @@ function setupStickyQuadrantInputs() {
             input.addEventListener('change', function() {
                 const value = parseFloat(this.value);
                 if (!isNaN(value) && value !== lastSavedValue) {
+                    // Warn if value is below 5° (cost impact)
+                    if (value < 5) {
+                        showCostModal(value, this);
+                        // Don't save/refresh yet — wait for modal decision
+                        return;
+                    }
                     localStorage.setItem(id, value);
                     lastSavedValue = value;
                     console.log(`Saved ${id}: ${value}`);
@@ -492,11 +503,15 @@ function setupStickyQuadrantInputs() {
     });
 }
 
-// Initialize sticky inputs when DOM is ready
-if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', setupStickyQuadrantInputs);
-} else {
+// Initialize sticky inputs and toggle buttons when DOM is ready
+function initUIControls() {
     setupStickyQuadrantInputs();
+    updateToggleButtons();
+}
+if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', initUIControls);
+} else {
+    initUIControls();
 }
 
 // Reset all quadrant min altitude values to 0
@@ -757,19 +772,32 @@ function savePosition() {
     localStorage.setItem("minAltS", minAltS);
     localStorage.setItem("minAltW", minAltW);
 
-    // Reset bounding box to ±1.5° around new observer so search area follows the position
+    // Build a default ±1.5° bbox centred on the new observer position.
+    // Clear any previous user-dragged custom bbox so the fresh one takes effect.
     const newBbox = {
-        latLowerLeft:  Math.round((latitude - 1.5) * 10000) / 10000,
+        latLowerLeft:  Math.round((latitude  - 1.5) * 10000) / 10000,
         lonLowerLeft:  Math.round((longitude - 1.5) * 10000) / 10000,
-        latUpperRight: Math.round((latitude + 1.5) * 10000) / 10000,
+        latUpperRight: Math.round((latitude  + 1.5) * 10000) / 10000,
         lonUpperRight: Math.round((longitude + 1.5) * 10000) / 10000,
     };
     window.lastBoundingBox = newBbox;
+    // Write to both keys so map.js (customBoundingBox) and fetchFlights (boundingBox) agree
     localStorage.setItem("boundingBox", JSON.stringify(newBbox));
+    localStorage.setItem("customBoundingBox", JSON.stringify(newBbox));
+    localStorage.removeItem("boundingBoxUserEdited");
 
-    // Pan map to new position immediately if map is open
-    if (typeof updateObserverMarker === 'function' && map) {
+    // Immediately centre the map and redraw the bbox if the map is open
+    if (typeof map !== 'undefined' && map && mapInitialized) {
         updateObserverMarker(latitude, longitude, elevation);
+        map.setView([latitude, longitude], 9);
+        updateBoundingBox(newBbox.latLowerLeft, newBbox.lonLowerLeft,
+                          newBbox.latUpperRight, newBbox.lonUpperRight, true);
+    } else if (typeof initializeMap === 'function' && !mapInitialized) {
+        // Map not yet created — it will be centred correctly when it first opens
+        const mapContainer = document.getElementById("mapContainer");
+        if (mapContainer) mapContainer.style.display = 'block';
+        mapVisible = true;
+        initializeMap(latitude, longitude);
     }
 
     alert("Position saved! Refreshing flights...");
@@ -823,13 +851,50 @@ function loadPosition() {
         minAltWEl.value = (savedMinAltW !== null) ? savedMinAltW : (oldMinAlt || 30);
     }
 
-    // Load saved bounding box
+    // Load saved bounding box — but discard it if the observer is no longer inside it
+    // (handles stale bbox left over from a previous observer location)
     if (savedBoundingBox) {
         try {
-            window.lastBoundingBox = JSON.parse(savedBoundingBox);
-            console.log("Bounding box loaded from local storage:", window.lastBoundingBox);
+            const parsed = JSON.parse(savedBoundingBox);
+            const obsLat = parseFloat(savedLat);
+            const obsLon = parseFloat(savedLon);
+            const insideBox = !isNaN(obsLat) && !isNaN(obsLon)
+                && obsLat >= parsed.latLowerLeft  && obsLat <= parsed.latUpperRight
+                && obsLon >= parsed.lonLowerLeft  && obsLon <= parsed.lonUpperRight;
+            if (insideBox) {
+                window.lastBoundingBox = parsed;
+                console.log("Bounding box loaded from local storage:", window.lastBoundingBox);
+            } else {
+                // Stale bbox — regenerate a default ±1.5° box around the current observer
+                console.warn("Saved bbox does not contain observer — regenerating default bbox");
+                const newBbox = {
+                    latLowerLeft:  Math.round((obsLat - 1.5) * 10000) / 10000,
+                    lonLowerLeft:  Math.round((obsLon - 1.5) * 10000) / 10000,
+                    latUpperRight: Math.round((obsLat + 1.5) * 10000) / 10000,
+                    lonUpperRight: Math.round((obsLon + 1.5) * 10000) / 10000,
+                };
+                window.lastBoundingBox = newBbox;
+                localStorage.setItem("boundingBox", JSON.stringify(newBbox));
+                localStorage.setItem("customBoundingBox", JSON.stringify(newBbox));
+                localStorage.removeItem("boundingBoxUserEdited");
+            }
         } catch (e) {
             console.error("Error parsing saved bounding box:", e);
+        }
+    } else if (savedLat && savedLon) {
+        // No bbox saved at all — generate a default one around the observer
+        const obsLat = parseFloat(savedLat);
+        const obsLon = parseFloat(savedLon);
+        if (!isNaN(obsLat) && !isNaN(obsLon)) {
+            const newBbox = {
+                latLowerLeft:  Math.round((obsLat - 1.5) * 10000) / 10000,
+                lonLowerLeft:  Math.round((obsLon - 1.5) * 10000) / 10000,
+                latUpperRight: Math.round((obsLat + 1.5) * 10000) / 10000,
+                lonUpperRight: Math.round((obsLon + 1.5) * 10000) / 10000,
+            };
+            window.lastBoundingBox = newBbox;
+            localStorage.setItem("boundingBox", JSON.stringify(newBbox));
+            localStorage.setItem("customBoundingBox", JSON.stringify(newBbox));
         }
     }
 
@@ -896,6 +961,123 @@ function clearPosition() {
     if (minAltSEl) minAltSEl.value = "30";
     if (minAltWEl) minAltWEl.value = "30";
 }
+
+// ─── Sun / Moon target toggles ───────────────────────────────────────────────
+
+function toggleTarget(targetName) {
+    if (targetName === 'sun') {
+        sunEnabled = !sunEnabled;
+        localStorage.setItem('sunEnabled', sunEnabled);
+    } else if (targetName === 'moon') {
+        moonEnabled = !moonEnabled;
+        localStorage.setItem('moonEnabled', moonEnabled);
+    }
+    updateToggleButtons();
+
+    // Warn if both are off but at least one would be trackable
+    if (!sunEnabled && !moonEnabled) {
+        const minAlt = getMinAltitudeAllQuadrants();
+        const coords = lastFlightData && lastFlightData.targetCoordinates;
+        const sunAbove  = coords && coords.sun  && coords.sun.altitude  >= minAlt;
+        const moonAbove = coords && coords.moon && coords.moon.altitude >= minAlt;
+        if (sunAbove || moonAbove) {
+            const targets = [sunAbove ? 'Sun' : null, moonAbove ? 'Moon' : null].filter(Boolean).join(' and ');
+            setTimeout(() => alert(
+                `⚠️ Both targets are disabled!\n\n${targets} ${sunAbove && moonAbove ? 'are' : 'is'} currently above your minimum angle.\n\nYou may miss transits while both are off.`
+            ), 50);
+        }
+    }
+
+    if (resultsVisible) fetchFlights();
+}
+
+function updateToggleButtons() {
+    const sunBtn  = document.getElementById('sunToggle');
+    const moonBtn = document.getElementById('moonToggle');
+    if (sunBtn) {
+        sunBtn.style.opacity = sunEnabled ? '1' : '0.45';
+        sunBtn.style.textDecoration = sunEnabled ? '' : 'line-through';
+        sunBtn.title = sunEnabled ? 'Sun tracking ON (click to disable)' : 'Sun tracking OFF (click to enable)';
+    }
+    if (moonBtn) {
+        moonBtn.style.opacity = moonEnabled ? '1' : '0.45';
+        moonBtn.style.textDecoration = moonEnabled ? '' : 'line-through';
+        moonBtn.title = moonEnabled ? 'Moon tracking ON (click to disable)' : 'Moon tracking OFF (click to enable)';
+    }
+}
+
+// ─── Cost impact modal for low min-altitude settings ─────────────────────────
+
+function showCostModal(newValue, inputElement) {
+    _pendingCostInput = inputElement;
+    // Extra API-eligible hours per day: each degree below 15° adds ~4 min of transit-zone time
+    const extraMinPerDay = Math.max(0, (15 - newValue) * 4);
+    const extraCallsPerMonth = Math.round((extraMinPerDay / 10) * 30); // 1 call per 10 min
+    const content = document.getElementById('costModalContent');
+    content.innerHTML =
+        `<p>Setting min altitude to <strong>${newValue}°</strong> means the app will ` +
+        `make API calls for an extra ~${extraMinPerDay} minutes per day while the Sun or Moon ` +
+        `is at a low angle (${newValue}°–15°).</p>` +
+        `<p>That could add roughly <strong>~${extraCallsPerMonth} extra FlightAware API calls/month</strong> ` +
+        `compared to the default 15°, which may push usage above your $5 credit.</p>` +
+        `<p style="color:#aaa; font-size:0.9em;">Tip: Use the ☀️/🌙 toggle buttons to disable a target entirely ` +
+        `during hours you don't care about it — zero API calls while disabled.</p>`;
+    document.getElementById('costModal').style.display = 'flex';
+}
+
+function dismissCostModal(keep) {
+    document.getElementById('costModal').style.display = 'none';
+    if (!keep && _pendingCostInput) {
+        _pendingCostInput.value = '15';
+        localStorage.setItem(_pendingCostInput.id, '15');
+    }
+    _pendingCostInput = null;
+}
+
+// ─── Schedule azimuth arrow cleanup when a target sets ────────────────────────
+
+function scheduleAzimuthArrowCleanup(riseSetTimes) {
+    // Cancel any previously scheduled cleanups
+    Object.values(_arrowCleanupTimeouts).forEach(t => clearTimeout(t));
+    _arrowCleanupTimeouts = {};
+
+    const now = new Date();
+    ['sun', 'moon'].forEach(targetName => {
+        const setStr = riseSetTimes[targetName + '_set'];
+        if (!setStr) return;
+        const [hh, mm] = setStr.split(':').map(Number);
+        const setTime = new Date(now);
+        setTime.setHours(hh, mm, 30, 0); // 30s buffer after published set time
+        if (setTime <= now) setTime.setDate(setTime.getDate() + 1); // crossed midnight
+        const msUntil = setTime - now;
+        if (msUntil > 0 && msUntil < 86400000) {
+            _arrowCleanupTimeouts[targetName] = setTimeout(() => {
+                if (typeof clearAzimuthArrow === 'function') clearAzimuthArrow(targetName);
+            }, msUntil);
+            console.log(`[AzimuthCleanup] ${targetName} arrow will be removed in ${Math.round(msUntil/60000)} min (at ${setStr})`);
+        }
+    });
+}
+
+// Periodic "both targets off" reminder while within min-altitude parameters
+(function startBothOffReminder() {
+    setInterval(() => {
+        if (!sunEnabled && !moonEnabled && lastFlightData && lastFlightData.targetCoordinates) {
+            const minAlt = getMinAltitudeAllQuadrants();
+            const coords = lastFlightData.targetCoordinates;
+            const sunAbove  = coords.sun  && coords.sun.altitude  >= minAlt;
+            const moonAbove = coords.moon && coords.moon.altitude >= minAlt;
+            if ((sunAbove || moonAbove) && alertsEnabled) {
+                const targets = [sunAbove ? 'Sun' : null, moonAbove ? 'Moon' : null].filter(Boolean).join(' and ');
+                // Use a non-blocking notification if available, else log to console
+                console.warn(`[Flymoon] Both targets disabled but ${targets} is in range!`);
+                if (typeof showNotification === 'function') {
+                    showNotification(`⚠️ Both targets off — ${targets} is in range`, 'warning');
+                }
+            }
+        }
+    }, 60000); // check every minute
+})();
 
 function go() {
     // Manual refresh button - always show warning unless cache is expired
@@ -1042,6 +1224,14 @@ function fetchFlights() {
         + `&send-notification=true`
     );
 
+    // Pass any user-disabled targets so the server skips them (saves API calls)
+    const disabledTargets = [];
+    if (!sunEnabled)  disabledTargets.push('sun');
+    if (!moonEnabled) disabledTargets.push('moon');
+    if (disabledTargets.length > 0) {
+        endpoint_url += `&disabled_targets=${encodeURIComponent(disabledTargets.join(','))}`;
+    }
+
     // Add custom bounding box if user has edited it
     if (window.lastBoundingBox) {
         endpoint_url += `&bbox_lat_ll=${encodeURIComponent(window.lastBoundingBox.latLowerLeft)}`;
@@ -1114,18 +1304,22 @@ function fetchFlights() {
 
         // Always show Sun status
         if(data.targetCoordinates && data.targetCoordinates.sun) {
-            let isTracking = data.trackingTargets && data.trackingTargets.includes('sun');
-            let status = isTracking ? "Tracking" : "Not tracking";
-            let text = isTracking ? `<span style="color: #FFD700">Sun: ${status}</span>` : `Sun: ${status}`;
-            trackingParts.push(text);
+            const isDisabled = data.disabledTargets && data.disabledTargets.includes('sun');
+            const isTracking = !isDisabled && data.trackingTargets && data.trackingTargets.includes('sun');
+            const status = isDisabled ? '<span style="opacity:0.5">Sun: Off</span>'
+                         : isTracking ? `<span style="color: #FFD700">Sun: Tracking</span>`
+                         : 'Sun: Not tracking';
+            trackingParts.push(status);
         }
 
         // Always show Moon status
         if(data.targetCoordinates && data.targetCoordinates.moon) {
-            let isTracking = data.trackingTargets && data.trackingTargets.includes('moon');
-            let status = isTracking ? "Tracking" : "Not tracking";
-            let text = isTracking ? `<span style="color: #FFD700">Moon: ${status}</span>` : `Moon: ${status}`;
-            trackingParts.push(text);
+            const isDisabled = data.disabledTargets && data.disabledTargets.includes('moon');
+            const isTracking = !isDisabled && data.trackingTargets && data.trackingTargets.includes('moon');
+            const status = isDisabled ? '<span style="opacity:0.5">Moon: Off</span>'
+                         : isTracking ? `<span style="color: #FFD700">Moon: Tracking</span>`
+                         : 'Moon: Not tracking';
+            trackingParts.push(status);
         }
 
         // Weather (no color styling)
@@ -1160,6 +1354,9 @@ function fetchFlights() {
             if(riseSet) html += `<br><span style="color:#bbb;">${riseSet}</span>`;
             moonInfoEl.innerHTML = html;
         }
+
+        // Schedule arrow removal when each target sets (fixes stale arrow after moon/sun sets)
+        if (data.riseSetTimes) scheduleAzimuthArrowCleanup(data.riseSetTimes);
 
         // Check if any targets are trackable
         if(data.trackingTargets && data.trackingTargets.length === 0) {
@@ -1536,10 +1733,6 @@ function updateAltitudeDisplay(flights) {
         line.style.opacity = "0.9";
         barsContainer.appendChild(line);
     });
-}
-
-function toggleTarget() {
-    // Target is always "auto" — no toggle needed
 }
 
 function renderTargetCoordinates(coordinates) {

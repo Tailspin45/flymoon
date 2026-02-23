@@ -333,16 +333,28 @@ function updateObserverMarker(lat, lon, elevation) {
 function updateBoundingBox(latLowerLeft, lonLowerLeft, latUpperRight, lonUpperRight, fitToBox = true) {
     if (!map) return;
 
-    // Use saved custom bounding box if it exists (overrides server values)
+    // Use saved custom bounding box if it exists AND contains the observer
     const savedBox = localStorage.getItem('customBoundingBox');
     if (savedBox) {
         try {
             const customBox = JSON.parse(savedBox);
-            latLowerLeft = customBox.latLowerLeft;
-            lonLowerLeft = customBox.lonLowerLeft;
-            latUpperRight = customBox.latUpperRight;
-            lonUpperRight = customBox.lonUpperRight;
-            window.lastBoundingBox = customBox;
+            const obsLat = parseFloat(document.getElementById('latitude')?.value);
+            const obsLon = parseFloat(document.getElementById('longitude')?.value);
+            const insideBox = !isNaN(obsLat) && !isNaN(obsLon)
+                && obsLat >= customBox.latLowerLeft  && obsLat <= customBox.latUpperRight
+                && obsLon >= customBox.lonLowerLeft  && obsLon <= customBox.lonUpperRight;
+            if (insideBox) {
+                latLowerLeft  = customBox.latLowerLeft;
+                lonLowerLeft  = customBox.lonLowerLeft;
+                latUpperRight = customBox.latUpperRight;
+                lonUpperRight = customBox.lonUpperRight;
+                window.lastBoundingBox = customBox;
+            } else {
+                // Stale custom bbox — ignore it and use whatever was passed in (server default or new save)
+                console.warn('customBoundingBox does not contain observer — ignoring stale custom bbox');
+                localStorage.removeItem('customBoundingBox');
+                localStorage.removeItem('boundingBoxUserEdited');
+            }
         } catch (e) {
             console.error('Error parsing saved bounding box:', e);
         }
@@ -366,9 +378,16 @@ function updateBoundingBox(latLowerLeft, lonLowerLeft, latUpperRight, lonUpperRi
         dashArray: '5, 10'
     }).addTo(map).bindPopup('<b>Search Bounding Box</b><br>Drag corners to resize');
 
-    // Fit map to bounding box on initial load
+    // Fit map to bounding box only if the observer is inside it (avoids flying to a
+    // distant bbox when observer and search area are in different regions)
     if (fitToBox) {
-        map.fitBounds(bounds, { padding: [20, 20] });
+        const obsLat = parseFloat(document.getElementById('latitude')?.value) || 0;
+        const obsLon = parseFloat(document.getElementById('longitude')?.value) || 0;
+        const observerInBox = (obsLat && obsLon) ? bounds.contains([obsLat, obsLon]) : false;
+        if (observerInBox) {
+            map.fitBounds(bounds, { padding: [20, 20] });
+        }
+        // If observer is outside the box just draw the rectangle without changing the view
     }
 
     // Enable editing (draggable corners)
@@ -412,8 +431,21 @@ function clearAzimuthArrows() {
     azimuthArrows = {};
 }
 
+function clearAzimuthArrow(targetName) {
+    if (azimuthArrows[targetName]) {
+        map.removeLayer(azimuthArrows[targetName]);
+        delete azimuthArrows[targetName];
+    }
+}
+
 function updateAzimuthArrow(observerLat, observerLon, azimuth, altitude, targetName) {
     if (!map) return;
+
+    // Remove arrow if target is at or below the horizon
+    if (altitude <= 0) {
+        clearAzimuthArrow(targetName);
+        return;
+    }
 
     // Remove existing arrow for this target
     if (azimuthArrows[targetName]) {
@@ -667,27 +699,25 @@ function updateAircraftMarkers(flights, observerLat, observerLon, isFullRefresh 
         }
     });
 
-    // Fit map to show aircraft and observer — only on full refresh, not soft refresh
+    // Fit map to show aircraft — only on full refresh, not soft refresh.
+    // Only auto-fit if aircraft are near the observer (i.e., observer is inside or close to the
+    // aircraft bounds). Avoids zooming out to show a distant search area on misconfigured setups.
     if (!isFullRefresh) return;
 
     if (Object.keys(aircraftMarkers).length > 0 && !userInteractingWithMap) {
         const aircraftBounds = L.latLngBounds(
             Object.values(aircraftMarkers).map(marker => marker.getLatLng())
         );
-        
-        // Always include observer position to show context
-        aircraftBounds.extend([observerLat, observerLon]);
-        
-        // Check if there are any transits (medium or high probability)
-        const hasTransits = flights.some(f => 
-            f.is_possible_transit === 1 && 
-            (parseInt(f.possibility_level) === 2 || parseInt(f.possibility_level) === 3)
-        );
-        
-        if (hasTransits) {
+
+        // Only auto-fit if observer is already inside (or very close to) the aircraft bounds.
+        // If observer is far away, the bbox is probably misconfigured — stay centered on observer.
+        const padded = aircraftBounds.pad(0.5); // 50% padding to give "close to" leniency
+        if (padded.contains([observerLat, observerLon])) {
+            aircraftBounds.extend([observerLat, observerLon]);
             map.fitBounds(aircraftBounds, { padding: [10, 10] });
         } else {
-            map.fitBounds(aircraftBounds, { padding: [10, 10] });
+            // Aircraft are in a different region — just keep observer view
+            map.setView([observerLat, observerLon], map.getZoom() || 9);
         }
     } else if (Object.keys(aircraftMarkers).length === 0) {
         // No aircraft - center on observer at reasonable zoom
