@@ -1095,11 +1095,11 @@ function showCostModal(newValue, inputElement) {
 const HELP_CONTENT = {
     'min-angle': {
         title: 'Quadrant Min Angle Dial',
-        body: `<p>Sets the <strong>minimum altitude</strong> (degrees above your horizon) per compass quadrant. When the Sun or Moon is below the threshold in a given direction, transit tracking is skipped for that quadrant.</p>
-<p><strong>Primary purpose:</strong> Exclude directions where your telescope's view is blocked by obstructions — houses, trees, hills, etc. If a building blocks everything below 25° to the south, set the S quadrant to 25° so Flymoon doesn't alert you to transits you can't observe.</p>
+        body: `<p>Sets the <strong>minimum altitude</strong> (degrees above your horizon) per compass quadrant at which the Sun or Moon is worth tracking.</p>
+<p><strong>Primary purpose:</strong> Exclude directions where your telescope's view is blocked by obstructions — houses, trees, hills, etc. Aircraft in those directions are still tracked, but transit alerts are suppressed when the Sun or Moon is below your obstruction line because the telescope can't see it anyway.</p>
 <p>The dial has four sectors — <strong>N / E / S / W</strong> — matching the compass direction the Sun/Moon occupies.</p>
-<p><strong>Example:</strong> Set South to 25° if a roofline blocks your southern view below that angle.</p>
-<p><strong>Fringe benefit:</strong> Higher angles also reduce FlightAware API calls (and cost) since the system won't query flights when the target is behind an obstruction. At ≤5° you will see a cost warning because the Sun/Moon barely clears the horizon and transits become geometrically improbable.</p>
+<p><strong>Example:</strong> Set South to 25° if a roofline blocks your view below that angle. Aircraft still appear on the map, but a transit won't be flagged while the Sun is below 25° in the south — you couldn't observe it regardless.</p>
+<p><strong>Fringe benefit:</strong> Skipping transit calculations when the target is below the obstruction line also reduces FlightAware API calls slightly. At ≤5° you will see a cost warning because the Sun/Moon barely clears the horizon and transits become geometrically improbable.</p>
 <p><strong>Click the centre label</strong> to reset all quadrants to 0°.</p>`
     },
     'force-refresh': {
