@@ -346,7 +346,7 @@ function showOpenAIPInstructions(e) {
     document.body.appendChild(modal);
 }
 
-let openAIPLayer = null;  // Keep reference so resize handler can restore it
+let openAIPLayer = null;  // Keep reference so zoom/resize handlers can act on it
 
 function addOpenAIPOverlay(apiKey) {
     if (!layerControl || !map) return;  // should not happen — called from initializeMap
@@ -357,7 +357,6 @@ function addOpenAIPOverlay(apiKey) {
         );
         return;
     }
-    // Stay in tilePane for correct zoom animation; high zIndex keeps us above base tiles.
     openAIPLayer = L.tileLayer(
         `https://api.tiles.openaip.net/api/data/openaip/{z}/{x}/{y}.png?apiKey=${apiKey}`,
         {
@@ -365,20 +364,37 @@ function addOpenAIPOverlay(apiKey) {
             maxZoom: 17,
             opacity: 0.8,
             zIndex: 200,
+            keepBuffer: 4,       // pre-load extra tiles around viewport
+            updateWhenIdle: false, // load tiles continuously, not just on idle
         }
     );
-    // Always ON at launch — remove any stale 'off' flag from a previous session
-    localStorage.removeItem('mapOverlayAvia');
-    openAIPLayer.addTo(map);
-    layerControl.addOverlay(openAIPLayer, 'Aviation (OpenAIP)');
-    map.on('overlayadd',    e => { if (e.name === 'Aviation (OpenAIP)') localStorage.removeItem('mapOverlayAvia'); });
-    map.on('overlayremove', e => { if (e.name === 'Aviation (OpenAIP)') localStorage.setItem('mapOverlayAvia', 'off'); });
+    // Retry tiles that fail to load (network blip, rate limit, etc.)
+    openAIPLayer.on('tileerror', (evt) => {
+        const tile = evt.tile;
+        if (!tile._aipRetries) tile._aipRetries = 0;
+        if (tile._aipRetries < 3) {
+            tile._aipRetries++;
+            setTimeout(() => { tile.src = tile.src; }, 1500 * tile._aipRetries);
+        }
+    });
+    // After every zoom, force a clean tile reload so no tiles are left orphaned
+    map.on('zoomend', () => {
+        if (openAIPLayer && map.hasLayer(openAIPLayer)) {
+            openAIPLayer.redraw();
+        }
+    });
     // Safety net: restore layer if Leaflet drops it during a resize
     map.on('resize', () => {
         if (openAIPLayer && !map.hasLayer(openAIPLayer)) {
             openAIPLayer.addTo(map);
         }
     });
+    // Always ON at launch — remove any stale 'off' flag from a previous session
+    localStorage.removeItem('mapOverlayAvia');
+    openAIPLayer.addTo(map);
+    layerControl.addOverlay(openAIPLayer, 'Aviation (OpenAIP)');
+    map.on('overlayadd',    e => { if (e.name === 'Aviation (OpenAIP)') localStorage.removeItem('mapOverlayAvia'); });
+    map.on('overlayremove', e => { if (e.name === 'Aviation (OpenAIP)') localStorage.setItem('mapOverlayAvia', 'off'); });
 }
 
 function updateObserverMarker(lat, lon, elevation) {
