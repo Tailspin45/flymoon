@@ -75,6 +75,7 @@
         <button id="goBtn" class="btn-primary" onclick="go();" title="Force an immediate FlightAware API call — bypasses the 10-minute cache. Each call costs $0.02 (1 result set). Use sparingly; the $5/month credit covers only ~250 calls total.">⟳ Force Refresh</button>
         <button class="btn-help" onclick="showInfo('force-refresh')" title="Learn more about API cost and caching">ℹ️</button>
         <button id="dataSourceBtn" onclick="window.open('/cost-models','_blank')" title="Current data source mode — click to view cost analysis and change mode" style="font-size:0.75em; padding:3px 8px; border-radius:4px; border:1px solid #444; background:#1a1435; color:#a78bfa; cursor:pointer; white-space:nowrap;">⚡ Loading…</button>
+        <button id="tableViewToggle" onclick="toggleTableView()" title="Switch between Classic (FA columns) and Rich (OpenSky-enhanced) table views" style="font-size:0.75em; padding:3px 8px; border-radius:4px; border:1px solid #444; background:#1a2430; color:#7ab8d4; cursor:pointer; white-space:nowrap;">⊞ Rich View</button>
         <button id="sunToggle" class="btn-sm" onclick="toggleTarget('sun')" title="Sun tracking ON — click to disable. When off, transit checks and azimuth arrow for the Sun are skipped.">☀️ Sun</button>
         <button id="moonToggle" class="btn-sm" onclick="toggleTarget('moon')" title="Moon tracking ON — click to disable. When off, transit checks and azimuth arrow for the Moon are skipped.">🌙 Moon</button>
         <button class="btn-help" onclick="showInfo('sun-moon-toggle')" title="Learn about Sun/Moon toggles">ℹ️</button>
@@ -177,6 +178,7 @@
     </div>
 
     <div id="results">
+        <!-- ── Classic table (FA columns, 17 cols) ── -->
         <table id="resultsTable">
             <thead>
                 <tr>
@@ -206,6 +208,32 @@
                 </tr>
             </thead>
             <tbody id="flightData">
+            </tbody>
+        </table>
+
+        <!-- ── Rich table (OpenSky-enhanced, 10 cols) ── -->
+        <table id="resultsTableRich" style="display:none;">
+            <thead>
+                <tr>
+                    <th colspan="10" style="text-align:right; padding:2px 6px; background:transparent; border:none;">
+                        <button class="btn-help" onclick="showInfo('table-columns-rich')" title="Explain rich table columns" style="font-size:0.8em;">ℹ️ Column guide</button>
+                        <button class="btn-help" onclick="showInfo('transit-levels')" title="Explain High/Medium/Low transit probability" style="font-size:0.8em; margin-left:4px;">🟢 Probability guide</button>
+                    </th>
+                </tr>
+                <tr>
+                    <th title="Status — emergency squawk codes (7700/7600/7500), military, VFR, IDENT pressed, on ground. Silent when normal.">⚠</th>
+                    <th title="Transit probability and ETA to closest approach">transit</th>
+                    <th title="☀️ Sun or 🌙 Moon — which celestial body this aircraft may transit">☀️🌙</th>
+                    <th title="Callsign / flight ID and ICAO aircraft type code">aircraft</th>
+                    <th title="ADS-B emitter category — aircraft class (UAV, glider, rotorcraft, heavy, etc.)">category</th>
+                    <th title="Altitude (barometric or GPS) and vertical speed in feet per minute">alt / v/s</th>
+                    <th title="Angular separation between aircraft and target at closest approach: Δaltitude° and Δazimuth°">sky Δ</th>
+                    <th title="Magnetic heading and ground speed in knots">track</th>
+                    <th title="Departure → Destination (ICAO airport codes when available)">route</th>
+                    <th title="Position source (ADS-B / MLAT / FLARM / FA) and data age in seconds">src / age</th>
+                </tr>
+            </thead>
+            <tbody id="richFlightData">
             </tbody>
         </table>
     </div>

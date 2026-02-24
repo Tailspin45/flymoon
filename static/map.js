@@ -123,38 +123,37 @@ let selectedRowId = null;
 
 // Flash a table row by flight ID and keep it highlighted
 function flashTableRow(flightId) {
-    const row = document.querySelector(`tr[data-flight-id="${flightId}"]`);
-    if (row) {
-        // Toggle off if clicking the already-selected row
-        if (selectedRowId === flightId) {
-            row.classList.remove('selected-row');
-            selectedRowId = null;
-            return;
-        }
+    // Target all matching rows (classic + rich tables)
+    const rows = document.querySelectorAll(`tr[data-flight-id="${flightId}"]`);
+    if (!rows.length) return;
 
-        // Remove highlight from previously selected row
-        if (selectedRowId) {
-            const prevRow = document.querySelector(`tr[data-flight-id="${selectedRowId}"]`);
-            if (prevRow) {
-                prevRow.classList.remove('selected-row');
-            }
-        }
+    // Toggle off if clicking the already-selected row
+    if (selectedRowId === flightId) {
+        document.querySelectorAll(`tr[data-flight-id="${flightId}"]`).forEach(r => r.classList.remove('selected-row'));
+        selectedRowId = null;
+        return;
+    }
 
-        // Flash animation
+    // Remove highlight from previously selected row (both tables)
+    if (selectedRowId) {
+        document.querySelectorAll(`tr[data-flight-id="${selectedRowId}"]`).forEach(r => r.classList.remove('selected-row'));
+    }
+
+    rows.forEach(row => {
         row.classList.remove('flash-row');
         void row.offsetWidth; // Trigger reflow
         row.classList.add('flash-row');
-
-        // Add persistent highlight
         row.classList.add('selected-row');
-        selectedRowId = flightId;
+    });
+    selectedRowId = flightId;
 
-        // Scroll within table container, not the entire page
-        row.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'nearest' });
+    // Scroll the visible row into view
+    const visibleRow = Array.from(rows).find(r => r.closest('table') && r.closest('table').style.display !== 'none');
+    const scrollRow = visibleRow || rows[0];
+    scrollRow.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'nearest' });
 
-        // Also flash the altitude bar
-        flashAltitudeBar(flightId);
-    }
+    // Also flash the altitude bar
+    flashAltitudeBar(flightId);
 }
 
 // Flash an aircraft marker by flight ID

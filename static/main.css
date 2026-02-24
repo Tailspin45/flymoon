@@ -820,3 +820,31 @@ body {
     padding: 7px 18px; cursor: pointer; font-size: 13px;
 }
 #openaip-modal-box button:hover { background: #3a82c0; }
+
+/* ── Rich table row highlight ── */
+#resultsTableRich tbody tr.selected-row {
+    outline: 1px solid #4a90d9;
+    background-color: rgba(74,144,217,0.12) !important;
+}
+
+/* ── Squawk / status badges ── */
+.sq-badge {
+    font-size: 0.72em;
+    padding: 1px 5px;
+    border-radius: 3px;
+    font-weight: bold;
+    white-space: nowrap;
+    display: inline-block;
+}
+.sq-emrg  { background: #ff2020; color: #fff; }
+.sq-warn  { background: #ffa500; color: #000; }
+.sq-mil   { background: #3d6b99; color: #fff; }
+.sq-vfr   { background: #2e7d32; color: #fff; }
+.sq-ident { background: #7b1fa2; color: #fff; }
+.sq-gnd   { background: #555;    color: #ddd; }
+@keyframes sq-pulse {
+    0%, 100% { opacity: 1; }
+    50%       { opacity: 0.4; }
+}
+.sq-pulse { animation: sq-pulse 1.2s ease-in-out infinite; }
+.sq-emergency-row { animation: sq-pulse 2s ease-in-out infinite; }

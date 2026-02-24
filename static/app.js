@@ -288,6 +288,273 @@ function updateDataSourceButton() {
 
 document.addEventListener('DOMContentLoaded', updateDataSourceButton);
 
+// ─── Rich Table ───────────────────────────────────────────────────────────────
+
+const AIRCRAFT_CATEGORY = {
+    0:  { icon: '❓', label: '' },
+    1:  { icon: '✈️', label: '' },
+    2:  { icon: '🛩️', label: 'Light' },
+    3:  { icon: '✈️', label: 'Small' },
+    4:  { icon: '✈️', label: 'Large' },
+    5:  { icon: '✈️', label: 'HVL' },
+    6:  { icon: '✈️', label: 'Heavy' },
+    7:  { icon: '⚡', label: 'Hi-Perf' },
+    8:  { icon: '🚁', label: 'Rotor' },
+    9:  { icon: '⛵', label: 'Glider' },
+    10: { icon: '🎈', label: 'LTA' },
+    11: { icon: '🪂', label: 'Skydiver' },
+    12: { icon: '🛩️', label: 'Ultralight' },
+    13: { icon: '❓', label: '' },
+    14: { icon: '🛸', label: 'UAV' },
+    15: { icon: '🚀', label: 'Space' },
+    16: { icon: '🚨', label: 'Emrg Veh' },
+    17: { icon: '🚐', label: 'Svc Veh' },
+    18: { icon: '🎯', label: 'Obstacle' },
+    19: { icon: '🎯', label: 'Cluster' },
+    20: { icon: '⎯',  label: 'Line Obs' },
+};
+
+// Category row-tint CSS colours (null = no tint)
+const CATEGORY_TINT = {
+    9: 'rgba(160,130,220,0.10)',   // Glider
+    10: 'rgba(160,130,220,0.10)',  // LTA
+    11: 'rgba(30,100,220,0.12)',   // Skydiver
+    12: 'rgba(160,130,220,0.08)',  // Ultralight
+    14: 'rgba(255,180,0,0.10)',    // UAV
+    15: 'rgba(0,220,220,0.08)',    // Space
+    16: 'rgba(220,30,30,0.15)',    // Emergency vehicle
+};
+
+function buildSquawkBadges(squawk, spi, onGround) {
+    const parts = [];
+    if (squawk === '7700')
+        parts.push(`<span class="sq-badge sq-emrg sq-pulse" title="MAYDAY — aircraft in distress">🚨 MAYDAY</span>`);
+    else if (squawk === '7600')
+        parts.push(`<span class="sq-badge sq-warn" title="NORDO — lost radio contact">📻 NORDO</span>`);
+    else if (squawk === '7500')
+        parts.push(`<span class="sq-badge sq-emrg" title="HIJACK in progress">⚠️ HIJACK</span>`);
+    else if (squawk >= '4000' && squawk <= '4777')
+        parts.push(`<span class="sq-badge sq-mil" title="Military squawk ${squawk}">⚔️ MIL</span>`);
+    else if (squawk === '1200')
+        parts.push(`<span class="sq-badge sq-vfr" title="VFR flight — squawk 1200">VFR</span>`);
+    if (spi)
+        parts.push(`<span class="sq-badge sq-ident" title="Pilot has pressed IDENT button">💡 IDENT</span>`);
+    if (onGround)
+        parts.push(`<span class="sq-badge sq-gnd" title="Aircraft is on the ground">⬛ GND</span>`);
+    return parts.join(' ');
+}
+
+const COMPASS = ['N','NNE','NE','ENE','E','ESE','SE','SSE','S','SSW','SW','WSW','W','WNW','NW','NNW'];
+function headingWord(deg) {
+    return COMPASS[Math.round(((deg % 360) + 360) % 360 / 22.5) % 16];
+}
+
+function renderRichFlightRow(item, bodyTable) {
+    const row = document.createElement('tr');
+    const normalizedId = String(item.id).trim().toUpperCase();
+    const possibilityLevel = item.is_possible_transit === 1 ? parseInt(item.possibility_level) : 0;
+    row.setAttribute('data-flight-id', normalizedId);
+    row.setAttribute('data-possibility', possibilityLevel);
+    if (item.time != null) row.setAttribute('data-transit-time', item.time);
+
+    // Category tint
+    const catTint = CATEGORY_TINT[item.category];
+    if (catTint) row.style.backgroundColor = catTint;
+
+    // Emergency row styling
+    const sq = item.squawk || '';
+    if (sq === '7700' || sq === '7500') {
+        row.style.outline = '1px solid #ff2020';
+        row.classList.add('sq-emergency-row');
+    } else if (sq === '7600') {
+        row.style.outline = '1px solid #ffa500';
+    }
+
+    // Click handler — same behaviour as classic table
+    row.addEventListener('click', function(e) {
+        if (e.metaKey || e.ctrlKey) {
+            if (trackingFlightId === normalizedId) {
+                stopTracking();
+            } else {
+                if (possibilityLevel < MEDIUM_LEVEL) {
+                    alert('Track Mode requires medium or high probability transit.');
+                    return;
+                }
+                startTracking(normalizedId);
+            }
+        } else {
+            if (typeof flashAircraftMarker === 'function') flashAircraftMarker(normalizedId);
+            if (typeof flashTableRow === 'function') flashTableRow(normalizedId);
+            if (typeof toggleFlightRouteTrack === 'function') toggleFlightRouteTrack(item.fa_flight_id, normalizedId);
+        }
+    });
+
+    // Col 1 — Status badges
+    const statusCell = document.createElement('td');
+    statusCell.style.whiteSpace = 'nowrap';
+    statusCell.innerHTML = buildSquawkBadges(sq, item.spi, item.on_ground) || '<span style="color:#444">—</span>';
+    row.appendChild(statusCell);
+
+    // Col 2 — Transit
+    const transitCell = document.createElement('td');
+    transitCell.style.whiteSpace = 'nowrap';
+    if (possibilityLevel >= HIGH_LEVEL) {
+        const eta = item.transit_eta_seconds || (item.time * 60);
+        const min = Math.floor(eta / 60), sec = Math.floor(eta % 60);
+        transitCell.innerHTML = `<span style="color:#4caf50;font-weight:bold">🟢 T-${min}:${String(sec).padStart(2,'0')}</span>`;
+    } else if (possibilityLevel === MEDIUM_LEVEL) {
+        const eta = item.transit_eta_seconds || (item.time * 60);
+        const min = Math.floor(eta / 60), sec = Math.floor(eta % 60);
+        transitCell.innerHTML = `<span style="color:#ff9800;font-weight:bold">🟠 T-${min}:${String(sec).padStart(2,'0')}</span>`;
+    } else if (possibilityLevel === LOW_LEVEL) {
+        transitCell.innerHTML = `<span style="color:#888">⚪ Low</span>`;
+    } else {
+        transitCell.innerHTML = `<span style="color:#444">—</span>`;
+    }
+    row.appendChild(transitCell);
+
+    // Col 3 — Target
+    const tgtCell = document.createElement('td');
+    tgtCell.textContent = item.target === 'sun' ? '☀️' : item.target === 'moon' ? '🌙' : '';
+    row.appendChild(tgtCell);
+
+    // Col 4 — Aircraft (callsign + type)
+    const acCell = document.createElement('td');
+    const type = (item.aircraft_type && item.aircraft_type !== 'N/A') ? item.aircraft_type : '';
+    acCell.innerHTML = `<strong style="color:#e0e0e0">${item.id}</strong>${type ? `<br><span style="font-size:0.78em;color:#888">${type}</span>` : ''}`;
+    row.appendChild(acCell);
+
+    // Col 5 — Category
+    const catCell = document.createElement('td');
+    catCell.style.whiteSpace = 'nowrap';
+    const cat = AIRCRAFT_CATEGORY[item.category] || AIRCRAFT_CATEGORY[0];
+    catCell.innerHTML = item.category != null
+        ? `<span title="ADS-B category ${item.category}: ${cat.label||'Unknown'}">${cat.icon}${cat.label ? ` <span style="font-size:0.75em;color:#aaa">${cat.label}</span>` : ''}</span>`
+        : '<span style="color:#444">—</span>';
+    row.appendChild(catCell);
+
+    // Col 6 — Alt / V/S
+    const altCell = document.createElement('td');
+    altCell.style.whiteSpace = 'nowrap';
+    if (item.aircraft_elevation_feet != null) {
+        const ft = Math.round(item.aircraft_elevation_feet);
+        const altStr = ft > 18000 ? `FL${Math.round(ft/100)}` : ft.toLocaleString('en-US') + 'ft';
+        let vsStr = '';
+        if (item.vertical_rate != null) {
+            const fpm = Math.round(item.vertical_rate * 196.85);
+            if (fpm > 64) vsStr = ` <span style="color:#4caf50">▲ +${fpm.toLocaleString()}fpm</span>`;
+            else if (fpm < -64) vsStr = ` <span style="color:#f44336">▼ ${fpm.toLocaleString()}fpm</span>`;
+            else vsStr = ` <span style="color:#888">▶ level</span>`;
+        } else if (item.elevation_change === 'C') {
+            vsStr = ` <span style="color:#4caf50">▲</span>`;
+        } else if (item.elevation_change === 'D') {
+            vsStr = ` <span style="color:#f44336">▼</span>`;
+        }
+        altCell.innerHTML = altStr + vsStr;
+    } else {
+        altCell.innerHTML = '<span style="color:#444">—</span>';
+    }
+    row.appendChild(altCell);
+
+    // Col 7 — Sky Δ
+    const skyCell = document.createElement('td');
+    skyCell.style.whiteSpace = 'nowrap';
+    if (item.alt_diff != null && item.az_diff != null) {
+        const ad = Math.round(item.alt_diff), azd = Math.round(item.az_diff);
+        const c = (Math.abs(ad) < 1 && Math.abs(azd) < 1) ? '#4caf50' : (Math.abs(ad) < 2 && Math.abs(azd) < 2) ? '#ff9800' : '#888';
+        skyCell.innerHTML = `<span style="color:${c}">↕${ad}° ↔${azd}°</span>`;
+    } else {
+        skyCell.innerHTML = '<span style="color:#444">—</span>';
+    }
+    row.appendChild(skyCell);
+
+    // Col 8 — Track (heading + speed)
+    const trackCell = document.createElement('td');
+    trackCell.style.whiteSpace = 'nowrap';
+    if (item.direction != null && item.speed != null) {
+        const hdgWord = headingWord(item.direction);
+        const kts = Math.round(item.speed / 1.852);
+        trackCell.innerHTML = `${hdgWord} ${Math.round(item.direction)}° <span style="color:#aaa;font-size:0.85em">${kts}kt</span>`;
+    } else {
+        trackCell.innerHTML = '<span style="color:#444">—</span>';
+    }
+    row.appendChild(trackCell);
+
+    // Col 9 — Route
+    const routeCell = document.createElement('td');
+    routeCell.style.whiteSpace = 'nowrap';
+    const orig = item.origin || '', dest = item.destination || '';
+    if (orig && dest && orig !== 'N/D' && dest !== 'N/D') {
+        routeCell.innerHTML = `<span title="${orig} → ${dest}" style="font-family:monospace;font-size:0.88em">${orig} → ${dest}</span>`;
+    } else if (sq === '1200') {
+        routeCell.innerHTML = '<span style="color:#4caf50;font-size:0.85em">VFR local</span>';
+    } else if (orig) {
+        routeCell.innerHTML = `<span style="font-family:monospace;font-size:0.88em">${orig} →?</span>`;
+    } else {
+        routeCell.innerHTML = '<span style="color:#444">—</span>';
+    }
+    row.appendChild(routeCell);
+
+    // Col 10 — Src / Age
+    const srcCell = document.createElement('td');
+    srcCell.style.whiteSpace = 'nowrap';
+    const srcMap = {
+        'opensky':     { label: 'OS',    color: '#4caf50', title: 'OpenSky' },
+        'flightaware': { label: 'FA',    color: '#5b9bd5', title: 'FlightAware' },
+        'adsb':        { label: 'ADS-B', color: '#00e5ff', title: 'Direct ADS-B' },
+        'mlat':        { label: 'MLAT',  color: '#ffeb3b', title: 'Multilateration' },
+        'flarm':       { label: 'FLARM', color: '#66bb6a', title: 'FLARM' },
+        'track':       { label: 'TRK',   color: '#2196f3', title: 'Track-derived' },
+    };
+    const src = (item.position_source || 'flightaware').toLowerCase();
+    const si = srcMap[src] || { label: src.toUpperCase(), color: '#888', title: src };
+    const age = item.position_age_s;
+    let ageColor = '#4caf50';
+    if (age > 60) ageColor = '#f44336';
+    else if (age > 30) ageColor = '#ff9800';
+    else if (age > 5) ageColor = '#ffeb3b';
+    const ageStr = age != null ? ` <span style="color:${ageColor};font-size:0.8em">${age}s</span>` : '';
+    srcCell.innerHTML = `<span style="font-size:0.7em;padding:1px 4px;border-radius:3px;background:${si.color};color:#000" title="${si.title}">${si.label}</span>${ageStr}`;
+    row.appendChild(srcCell);
+
+    // Highlight transit rows
+    if (item.is_possible_transit === 1) {
+        highlightPossibleTransit(possibilityLevel, row);
+    }
+
+    bodyTable.appendChild(row);
+}
+
+// Table view toggle (classic ↔ rich)
+function getTableView() {
+    return localStorage.getItem('flymoonTableView') || 'rich';
+}
+
+function initTableView() {
+    const view = getTableView();
+    const classic = document.getElementById('resultsTable');
+    const rich = document.getElementById('resultsTableRich');
+    const btn = document.getElementById('tableViewToggle');
+    if (!classic || !rich) return;
+    if (view === 'rich') {
+        classic.style.display = 'none';
+        rich.style.display = '';
+        if (btn) { btn.textContent = '⊟ Classic View'; btn.style.color = '#7ab8d4'; }
+    } else {
+        classic.style.display = '';
+        rich.style.display = 'none';
+        if (btn) { btn.textContent = '⊞ Rich View'; btn.style.color = '#a78bfa'; }
+    }
+}
+
+function toggleTableView() {
+    const current = getTableView();
+    localStorage.setItem('flymoonTableView', current === 'rich' ? 'classic' : 'rich');
+    initTableView();
+}
+
+document.addEventListener('DOMContentLoaded', initTableView);
+
 // Page visibility detection - optionally pause polling when page is hidden
 document.addEventListener('visibilitychange', function() {
     const pauseWhenHidden = localStorage.getItem("pauseWhenHidden") !== "false"; // Default true
@@ -1229,6 +1496,23 @@ const HELP_CONTENT = {
 <p>The Sun and Moon each subtend about <strong>0.5°</strong> of arc. An aircraft crossing within that cone produces a true silhouette transit lasting 0.5–2 seconds.</p>
 <p>Thresholds are configurable via <code>ALT_THRESHOLD</code> / <code>AZ_THRESHOLD</code> in the server <code>.env</code> file.</p>`
     },
+    'table-columns-rich': {
+        title: 'Rich Table — Column Guide',
+        body: `<table style="width:100%;border-collapse:collapse;font-size:0.88em;">
+<tr><td style="padding:4px 8px;color:#7eb8f7;white-space:nowrap"><strong>⚠ Status</strong></td><td style="padding:4px 8px">Emergency squawk badges: 🚨 MAYDAY (7700), 📻 NORDO (7600), ⚠️ HIJACK (7500), ⚔️ MIL (4000-4777), VFR (1200). Also: 💡 IDENT (pilot pressed IDENT), ⬛ GND (on ground). Silent when normal.</td></tr>
+<tr><td style="padding:4px 8px;color:#7eb8f7;white-space:nowrap"><strong>transit</strong></td><td style="padding:4px 8px">🟢 HIGH / 🟠 MEDIUM / ⚪ LOW probability, with countdown to closest approach (T-mm:ss).</td></tr>
+<tr><td style="padding:4px 8px;color:#7eb8f7;white-space:nowrap"><strong>☀️🌙</strong></td><td style="padding:4px 8px">Which celestial body this aircraft may transit.</td></tr>
+<tr><td style="padding:4px 8px;color:#7eb8f7;white-space:nowrap"><strong>aircraft</strong></td><td style="padding:4px 8px">Callsign and ICAO type code (e.g. B738 = Boeing 737-800). Click to flash on map and show route.</td></tr>
+<tr><td style="padding:4px 8px;color:#7eb8f7;white-space:nowrap"><strong>category</strong></td><td style="padding:4px 8px">ADS-B emitter category from transponder: 🛩️ Light, ✈️ Large/Heavy, 🚁 Rotorcraft, ⛵ Glider, 🎈 LTA, 🪂 Skydiver, 🛸 UAV, ⚡ Hi-Perf, 🚀 Space. Row is tinted for unusual categories. Requires OpenSky or ADS-B source.</td></tr>
+<tr><td style="padding:4px 8px;color:#7eb8f7;white-space:nowrap"><strong>alt / v/s</strong></td><td style="padding:4px 8px">Altitude (FL350 above 18,000ft, otherwise feet). Vertical speed: ▲ climbing (green), ▼ descending (red), ▶ level (grey). V/S in ft/min from ADS-B vertical rate; ▲/▼ only from FlightAware elevation_change flag.</td></tr>
+<tr><td style="padding:4px 8px;color:#7eb8f7;white-space:nowrap"><strong>sky Δ</strong></td><td style="padding:4px 8px">Angular separation at closest approach: ↕ altitude diff, ↔ azimuth diff. Green ≤1°, orange ≤2°, grey ≥3°.</td></tr>
+<tr><td style="padding:4px 8px;color:#7eb8f7;white-space:nowrap"><strong>track</strong></td><td style="padding:4px 8px">Compass direction (NNW etc.), true heading in degrees, and ground speed in knots.</td></tr>
+<tr><td style="padding:4px 8px;color:#7eb8f7;white-space:nowrap"><strong>route</strong></td><td style="padding:4px 8px">Origin → Destination as city names (FlightAware) or ICAO codes (OpenSky FlightData). VFR label shown for squawk 1200.</td></tr>
+<tr><td style="padding:4px 8px;color:#7eb8f7;white-space:nowrap"><strong>src / age</strong></td><td style="padding:4px 8px">Position source badge (ADS-B / MLAT / FLARM / OS / FA) and data age in seconds. Age colour: green ≤5s, yellow ≤30s, orange ≤60s, red >60s.</td></tr>
+</table>
+<p style="margin-top:10px;font-size:0.82em;color:#aaa">Category, vertical rate, squawk, SPI, and on-ground fields require OpenSky Network or ADS-B Receiver mode. In FlightAware-only mode these columns show — gracefully.</p>
+<p style="font-size:0.82em;color:#aaa">Switch between Classic (17-column FA view) and Rich view with the <strong>⊞ Rich View</strong> / <strong>⊟ Classic View</strong> button in the toolbar. Preference is saved between sessions.</p>`
+    },
     'table-columns': {
         title: 'Results Table — Column Guide',
         body: `<table style="width:100%;border-collapse:collapse;font-size:0.88em;">
@@ -1879,6 +2163,10 @@ function fetchFlights() {
             }
 
             bodyTable.appendChild(row);
+
+            // Also render into rich table
+            const richBodyTable = document.getElementById('richFlightData');
+            if (richBodyTable) renderRichFlightRow(item, richBodyTable);
         });
 
         // renderTargetCoordinates(data.targetCoordinates); // Disabled - now using inline display above
@@ -2026,6 +2314,8 @@ function displayTarget() {
 
 function resetResultsTable() {
     document.getElementById("flightData").innerHTML = "";
+    const rich = document.getElementById("richFlightData");
+    if (rich) rich.innerHTML = "";
 }
 
 function soundAlert(transitDetails = []) {
