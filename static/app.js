@@ -1750,6 +1750,7 @@ function fetchFlights() {
     let transitDetails = []; // Collect high-priority transits for notification
 
     const bodyTable = document.getElementById('flightData');
+    const richBodyTable = document.getElementById('richFlightData');
     let alertNoResults = document.getElementById("noResults");
     let alertTargetUnderHorizon = document.getElementById("targetUnderHorizon");
     alertNoResults.innerHTML = '';
@@ -1813,6 +1814,7 @@ function fetchFlights() {
 
         // Clear table here (inside async callback) to prevent duplicate rows from concurrent fetches
         bodyTable.innerHTML = '';
+        if (richBodyTable) richBodyTable.innerHTML = '';
 
         // Record update time and cache data
         clearErrorBanner();
@@ -2001,6 +2003,10 @@ function fetchFlights() {
         // Check for medium/high transits and alert user about filter changes
         checkAndAlertFilterChange(filteredFlights, data.targetCoordinates);
 
+        // Build both tables off-DOM using DocumentFragment to avoid per-row reflow
+        const classicFrag = document.createDocumentFragment();
+        const richFrag = document.createDocumentFragment();
+
         filteredFlights.forEach(item => {
             const row = document.createElement('tr');
 
@@ -2162,12 +2168,15 @@ function fetchFlights() {
                 }
             }
 
-            bodyTable.appendChild(row);
+            classicFrag.appendChild(row);
 
-            // Also render into rich table
-            const richBodyTable = document.getElementById('richFlightData');
-            if (richBodyTable) renderRichFlightRow(item, richBodyTable);
+            // Also render into rich table fragment
+            renderRichFlightRow(item, richFrag);
         });
+
+        // Single DOM write for both tables — no per-row reflow
+        bodyTable.appendChild(classicFrag);
+        if (richBodyTable) richBodyTable.appendChild(richFrag);
 
         // renderTargetCoordinates(data.targetCoordinates); // Disabled - now using inline display above
         if (hasVeryPossibleTransits == true) soundAlert(transitDetails);
