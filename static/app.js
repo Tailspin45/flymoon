@@ -1793,8 +1793,12 @@ function fetchFlights() {
     document.getElementById("loadingSpinner").style.display = "block";
     document.getElementById("results").style.display = "none";
 
-    fetch(endpoint_url)
+    const fetchController = new AbortController();
+    const fetchTimeout = setTimeout(() => fetchController.abort(), 30000); // 30s hard timeout
+
+    fetch(endpoint_url, { signal: fetchController.signal })
     .then(response => {
+        clearTimeout(fetchTimeout);
         if (!response.ok) {
             return response.json().then(err => {
                 throw new Error(err.error || `Server error: ${response.status}`);
@@ -2200,6 +2204,7 @@ function fetchFlights() {
         document.getElementById("results").style.display = "block";
     })
     .catch(error => {
+        clearTimeout(fetchTimeout);
         // Hide loading spinner on error
         document.getElementById("loadingSpinner").style.display = "none";
         document.getElementById("results").style.display = "block";
@@ -2207,7 +2212,9 @@ function fetchFlights() {
         const errorMsg = error.message || error.toString() || "Unknown error";
         const stack = error.stack ? `\n\n${error.stack}` : "";
         let displayMsg;
-        if (errorMsg.includes("AEROAPI") || errorMsg.includes("API key")) {
+        if (error.name === 'AbortError') {
+            displayMsg = "⚠️ Request timed out after 30 seconds.\n\nThe server may be overloaded or the FlightAware API is slow. Try again in a moment.";
+        } else if (errorMsg.includes("AEROAPI") || errorMsg.includes("API key")) {
             displayMsg = "⚠️ FlightAware API key not configured.\n\nPlease set AEROAPI_API_KEY in your .env file.\nSee SETUP.md for instructions.";
         } else if (errorMsg.includes("Failed to fetch") || errorMsg.includes("ERR_EMPTY_RESPONSE") || errorMsg === "") {
             displayMsg = "⚠️ Server not responding (ERR_EMPTY_RESPONSE)\n\nThe Flask server may have crashed. Check the terminal running app.py for the Python traceback.";

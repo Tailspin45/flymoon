@@ -175,23 +175,58 @@ def get_config():
     })
 
 
+import threading as _threading
+
+# Server-side OpenAIP tile cache — avoids re-fetching the same tile from OpenAIP
+# on every page load. Each tile is stored for TILE_CACHE_TTL seconds (1 hour).
+_tile_cache: dict = {}
+_tile_cache_lock = _threading.Lock()
+TILE_CACHE_TTL = 3600  # seconds
+
+
+def _get_cached_tile(key):
+    with _tile_cache_lock:
+        entry = _tile_cache.get(key)
+        if entry and (time.time() - entry["ts"]) < TILE_CACHE_TTL:
+            return entry["data"], entry["ct"]
+    return None, None
+
+
+def _set_cached_tile(key, data, content_type):
+    with _tile_cache_lock:
+        _tile_cache[key] = {"data": data, "ct": content_type, "ts": time.time()}
+
+
 @app.route("/tiles/openaip/<int:z>/<int:x>/<int:y>.png")
 def proxy_openaip_tile(z, x, y):
     """Proxy OpenAIP tiles through Flask to avoid browser extension blocking.
 
-    Browser extensions (ad blockers, privacy tools) often block direct requests to
-    third-party tile servers or URLs containing 'apiKey'. Proxying through localhost
-    bypasses this entirely.
+    Server-side cache (1 hour TTL) prevents each tile from making a new
+    outbound request on every page load, eliminating thread saturation that
+    could delay /flights responses.
     """
     api_key = os.getenv("OPENAIP_API_KEY", "")
     if not api_key:
         return Response(status=404)
+
+    cache_key = f"{z}/{x}/{y}"
+    cached_data, cached_ct = _get_cached_tile(cache_key)
+    if cached_data is not None:
+        return Response(cached_data, status=200,
+                        content_type=cached_ct or "image/png",
+                        headers={"Cache-Control": "public, max-age=3600",
+                                 "X-Tile-Cache": "HIT"})
+
     url = f"https://api.tiles.openaip.net/api/data/openaip/{z}/{x}/{y}.png?apiKey={api_key}"
     try:
-        resp = requests.get(url, timeout=10)
+        resp = requests.get(url, timeout=5)
+        ct = resp.headers.get("Content-Type", "image/png")
+        if resp.status_code == 200:
+            _set_cached_tile(cache_key, resp.content, ct)
         return Response(resp.content, status=resp.status_code,
-                        content_type=resp.headers.get("Content-Type", "image/png"),
-                        headers={"Cache-Control": "public, max-age=3600"})
+                        content_type=ct,
+                        headers={"Cache-Control": "public, max-age=3600",
+                                 "X-Tile-Cache": "MISS"})
     except Exception:
         return Response(status=502)
 
