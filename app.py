@@ -349,33 +349,37 @@ def get_all_flights():
         elapsed_time = end_time - start_time
         logger.info(f"Elapsed time: {elapsed_time} seconds")
 
-        if not test_mode:
-            try:
-                date_ = date.today().strftime("%Y%m%d")
-                # Stamp scope status onto each flight dict before saving
-                tc = telescope_routes.get_telescope_client()
-                scope_connected = bool(tc and tc.is_connected())
-                scope_mode = (tc._viewing_mode if tc and hasattr(tc, '_viewing_mode') else None) or ""
-                for f in data["flights"]:
-                    f["scope_connected"] = scope_connected
-                    f["scope_mode"] = scope_mode
-                asyncio.run(
-                    save_possible_transits(
-                        data["flights"], POSSIBLE_TRANSITS_LOGFILENAME.format(date_=date_)
+        # Run file-save and Telegram notification in a background thread so they
+        # don't block the HTTP response.  Both are best-effort — failures are logged.
+        def _background_tasks(flights_snapshot, send_notif):
+            if not test_mode:
+                try:
+                    date_ = date.today().strftime("%Y%m%d")
+                    tc = telescope_routes.get_telescope_client()
+                    scope_connected = bool(tc and tc.is_connected())
+                    scope_mode = (tc._viewing_mode if tc and hasattr(tc, '_viewing_mode') else None) or ""
+                    for f in flights_snapshot:
+                        f["scope_connected"] = scope_connected
+                        f["scope_mode"] = scope_mode
+                    asyncio.run(
+                        save_possible_transits(
+                            flights_snapshot, POSSIBLE_TRANSITS_LOGFILENAME.format(date_=date_)
+                        )
                     )
-                )
-            except Exception as e:
-                logger.error(
-                    f"Error while trying to save possible transits. Details:\n{str(e)}"
-                )
+                except Exception as e:
+                    logger.error(f"Error saving possible transits: {e}")
+            if send_notif:
+                try:
+                    asyncio.run(send_telegram_notification(flights_snapshot, None))
+                except Exception as e:
+                    logger.error(f"Error sending Telegram notification: {e}")
 
-        if has_send_notification:
-            try:
-                # Send Telegram notification for medium/high probability transits
-                # Notification will include which target (sun/moon) each transit is for
-                asyncio.run(send_telegram_notification(data["flights"], None))
-            except Exception as e:
-                logger.error(f"Error while trying to send Telegram notification. Details:\n{str(e)}")
+        import threading as _t
+        _t.Thread(
+            target=_background_tasks,
+            args=(list(data["flights"]), has_send_notification),
+            daemon=True
+        ).start()
 
         # Schedule automatic recordings for high-probability transits
         transit_recorder = get_transit_recorder()

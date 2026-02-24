@@ -1794,7 +1794,7 @@ function fetchFlights() {
     document.getElementById("results").style.display = "none";
 
     const fetchController = new AbortController();
-    const fetchTimeout = setTimeout(() => fetchController.abort(), 30000); // 30s hard timeout
+    const fetchTimeout = setTimeout(() => fetchController.abort(), 55000); // 55s hard timeout
 
     fetch(endpoint_url, { signal: fetchController.signal })
     .then(response => {
