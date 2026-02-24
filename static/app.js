@@ -235,9 +235,9 @@ const DATA_SOURCES = {
     'hybrid': {
         icon: '⚡',
         label: 'Hybrid (OpenSky + FA)',
-        cost: '~$0.60–$3/month',
+        cost: 'Free (within $5 credit)',
         color: '#a78bfa',
-        note: 'OpenSky for positions + FlightAware only on HIGH-probability transits. Best balance.',
+        note: 'OpenSky for continuous positions; FlightAware only on HIGH-probability transits. Typically <250 FA calls/month — covered by the free $5 credit.',
     },
     'adsb-local': {
         icon: '📡',

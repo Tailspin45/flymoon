@@ -319,7 +319,7 @@
 </div>
 
 <div class="abstract">
-  <strong>Abstract.</strong> Amateur astronomers seeking to photograph aircraft transiting the solar or lunar disk require accurate, real-time aircraft position data to predict and prepare for sub-second transit events. This paper examines four data acquisition strategies — FlightAware AeroAPI exclusively, OpenSky Network exclusively, a hybrid model combining free positional data with selective paid enrichment, and a locally-deployed ADS-B receiver — with respect to operational cost, data fidelity, latency, and suitability for automated transit detection. We demonstrate that the exclusive use of FlightAware AeroAPI at typical polling intervals produces costs ranging from <strong>$14–$87/month</strong>, substantially exceeding the $5/month Personal tier credit, while the hybrid approach can reduce expenditure to approximately <strong>$0.60–$3/month</strong> without material degradation of transit detection capability.
+  <strong>Abstract.</strong> Amateur astronomers seeking to photograph aircraft transiting the solar or lunar disk require accurate, real-time aircraft position data to predict and prepare for sub-second transit events. This paper examines four data acquisition strategies — FlightAware AeroAPI exclusively, OpenSky Network exclusively, a hybrid model combining free positional data with selective paid enrichment, and a locally-deployed ADS-B receiver — with respect to operational cost, data fidelity, latency, and suitability for automated transit detection. We demonstrate that the exclusive use of FlightAware AeroAPI at typical polling intervals produces costs ranging from <strong>$14–$87/month</strong>, substantially exceeding the $5/month Personal tier credit, while the hybrid approach typically remains <strong>within the included $5/month free credit</strong> — effectively free — without material degradation of transit detection capability.
 </div>
 
 <h2>1. Introduction</h2>
@@ -426,7 +426,7 @@
   </div>
   <div class="source-card hybrid">
     <div class="source-card-title">⚡ Hybrid (OpenSky + FA)</div>
-    <div class="source-card-cost">~$0.60–$3/month</div>
+    <div class="source-card-cost">Free (within $5 credit)</div>
     <div class="source-card-desc">OpenSky for continuous position updates (free, 60s). FlightAware called once per unique flight only when HIGH-probability transit is detected. Cached for flight duration.</div>
   </div>
   <div class="source-card adsb">
@@ -476,12 +476,12 @@
   <tr><td><strong>Hardware required</strong></td>
     <td class="cell-yes">None</td><td class="cell-yes">None</td><td class="cell-yes">None</td><td class="cell-warn">RTL-SDR (~$30)</td></tr>
   <tr><td><strong>Ongoing monthly cost</strong></td>
-    <td class="cell-no">$14–$87</td><td class="cell-free">$0</td><td class="cell-yes">~$0.60–$3</td><td class="cell-yes">~$0–$0.60</td></tr>
+    <td class="cell-no">$14–$87</td><td class="cell-free">$0</td><td class="cell-yes">Free¹</td><td class="cell-yes">~$0–$0.60</td></tr>
   <tr><td><strong>Transit detection quality</strong></td>
     <td class="cell-warn">Limited by refresh rate</td><td class="cell-warn">Good (60s)</td><td class="cell-yes">Good (60s) + full metadata on alerts</td><td class="cell-yes">Excellent (&lt;5s)</td></tr>
 </table>
 </div>
-<div class="chart-title">Table 3. Feature matrix across all four data source strategies. ⚠ = available only at HIGH-probability transit detection events.</div>
+<div class="chart-title">Table 3. Feature matrix across all four data source strategies. ⚠ = available only at HIGH-probability transit detection events.<br><small>¹ Hybrid typically uses &lt;250 FlightAware result sets/month — within the included $5/month Personal tier credit.</small></div>
 
 <h2>5. The Hybrid Strategy in Detail</h2>
 
@@ -511,7 +511,7 @@
     <th>FA calls/month</th>
     <th>FA cost/month</th>
   </tr>
-  <tr><td>Quiet (poor geometry)</td><td>1</td><td>1</td><td>30</td><td class="scenario-good">$0.60</td></tr>
+  <tr><td>Quiet (poor geometry)</td><td>1</td><td>1</td><td>30</td><td class="scenario-good">$0.60 (free)</td></tr>
   <tr><td>Typical day</td><td>3</td><td>3</td><td>90</td><td class="scenario-good">$1.80</td></tr>
   <tr><td>Active (good geometry)</td><td>8</td><td>6</td><td>180</td><td class="scenario-good">$3.60</td></tr>
   <tr><td>Maximum realistic</td><td>15</td><td>10</td><td>300</td><td class="scenario-warn">$6.00</td></tr>
@@ -548,7 +548,7 @@
   <tr>
     <td><strong>Regular observer</strong><br><em>daily monitoring, budget-conscious</em></td>
     <td>Hybrid (OpenSky + FA on HIGH)</td>
-    <td class="scenario-good">$0.60–$3</td>
+    <td class="scenario-good">Free (within $5 credit)</td>
     <td>Flight type/airline shown only on HIGH alerts. All other data identical.</td>
   </tr>
   <tr>
@@ -570,7 +570,7 @@
 
 <p>The FlightAware AeroAPI Personal tier's result-set pricing model is poorly matched to the high-frequency polling requirements of automated transit detection. Running Flymoon 24/7 at a 10-minute interval costs approximately $86/month — 17 times the included $5 credit. Even the most aggressive cost reduction measures available within the FA-only model (60-minute intervals, active-hours masking) leave observers with either unacceptable positional staleness or marginal budget compliance.</p>
 
-<p>The hybrid strategy — using the free OpenSky Network API for continuous position data and reserving FlightAware calls for confirmed HIGH-probability transit events — reduces typical monthly costs to $0.60–$3 while preserving full flight metadata for the alerts that matter most. The selective FA enrichment cache ensures that each unique aircraft is queried at most once per flight, regardless of how many transit alerts it generates.</p>
+<p>The hybrid strategy — using the free OpenSky Network API for continuous position data and reserving FlightAware calls for confirmed HIGH-probability transit events — typically generates fewer than 250 FA calls per month, keeping costs within the included $5/month Personal tier credit and making Hybrid <strong>effectively free</strong>. Full flight metadata is preserved for the alerts that matter most. The selective FA enrichment cache ensures that each unique aircraft is queried at most once per flight, regardless of how many transit alerts it generates.</p>
 
 <p>For observers willing to invest in hardware, a local ADS-B receiver eliminates all ongoing position data costs entirely, provides sub-second update latency, and functions without internet connectivity — representing the optimal long-term solution for dedicated transit photographers.</p>
 
@@ -594,7 +594,7 @@
     </div>
     <div class="selector-option" data-mode="hybrid" onclick="selectMode('hybrid')">
       <div class="sel-name" style="color:var(--hybrid)">⚡ Hybrid (Recommended)</div>
-      <div class="sel-cost" style="color:var(--hybrid)">~$0.60–$3/month</div>
+      <div class="sel-cost" style="color:var(--hybrid)">Free (within $5 credit)</div>
       <div class="sel-desc">OpenSky for continuous positions + FlightAware enrichment only when HIGH-probability transit detected. Best balance of cost and data quality.</div>
     </div>
     <div class="selector-option" data-mode="adsb-local" onclick="selectMode('adsb-local')">
@@ -615,7 +615,7 @@
     const MODES = {
         'fa-only':      { label: 'FlightAware Only',       cost: '$14–$87/month',    color: '#3b82f6' },
         'opensky-only': { label: 'OpenSky Only',            cost: 'Free',             color: '#10b981' },
-        'hybrid':       { label: 'Hybrid (OpenSky + FA)',   cost: '~$0.60–$3/month',  color: '#a78bfa' },
+        'hybrid':       { label: 'Hybrid (OpenSky + FA)',   cost: 'Free (within $5 credit)',  color: '#a78bfa' },
         'adsb-local':   { label: 'ADS-B Receiver + FA',    cost: '~$0/month',         color: '#06b6d4' },
     };
 
