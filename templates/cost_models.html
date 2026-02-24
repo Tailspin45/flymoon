@@ -264,6 +264,43 @@
   }
   .back-link:hover { background: var(--border); text-decoration: none; }
 
+  /* ── Compact top selector bar ── */
+  .top-selector-bar {
+    position: sticky;
+    top: 0;
+    z-index: 100;
+    background: #0f0a1e;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 16px;
+    flex-wrap: wrap;
+  }
+  .top-selector-bar .tsb-label {
+    font-size: 0.72em;
+    color: var(--muted);
+    white-space: nowrap;
+    margin-right: 2px;
+  }
+  .tsb-btn {
+    font-size: 0.74em;
+    padding: 3px 10px;
+    border-radius: 4px;
+    border: 1px solid var(--border);
+    background: var(--bg2);
+    color: #aaa;
+    cursor: pointer;
+    white-space: nowrap;
+    transition: border-color 0.12s, color 0.12s, background 0.12s;
+  }
+  .tsb-btn:hover { border-color: var(--accent); color: #fff; }
+  .tsb-btn.tsb-active-fa     { border-color: var(--fa);     color: var(--fa);     background: #0a1628; }
+  .tsb-btn.tsb-active-os     { border-color: var(--os);     color: var(--os);     background: #0a2018; }
+  .tsb-btn.tsb-active-hybrid { border-color: var(--hybrid); color: var(--hybrid); background: #160e28; }
+  .tsb-btn.tsb-active-adsb   { border-color: var(--adsb);   color: var(--adsb);   background: #0a1e22; }
+  .tsb-saved { font-size: 0.72em; color: var(--green); display: none; margin-left: 4px; }
+
   /* ── Selector panel ── */
   .selector-panel {
     background: var(--bg2);
@@ -304,6 +341,15 @@
 </style>
 </head>
 <body>
+
+<div class="top-selector-bar" id="topSelectorBar">
+  <span class="tsb-label">Data source:</span>
+  <button class="tsb-btn" data-tsb="fa-only"      onclick="selectMode('fa-only')">☁️ FlightAware Only</button>
+  <button class="tsb-btn" data-tsb="opensky-only" onclick="selectMode('opensky-only')">🌐 OpenSky Only</button>
+  <button class="tsb-btn" data-tsb="hybrid"       onclick="selectMode('hybrid')">⚡ Hybrid</button>
+  <button class="tsb-btn" data-tsb="adsb-local"   onclick="selectMode('adsb-local')">📡 ADS-B Receiver</button>
+  <span class="tsb-saved" id="tsbSaved">✓ Saved</span>
+</div>
 
 <a class="back-link" href="/">← Back to Flymoon</a>
 
@@ -577,7 +623,7 @@
 <!-- ── Interactive Selector ── -->
 <h2>9. Select Your Data Source Mode</h2>
 
-<p>Your current selection is saved and remembered between sessions. A brief reminder banner will appear at startup confirming which mode is active.</p>
+<p>Use the compact selector bar at the top of this page to choose and save your preferred mode. Your selection persists between sessions and is shown in the startup banner when you return to the main map.</p>
 
 <div class="selector-panel">
   <h3>🔧 Data Source Configuration</h3>
@@ -626,17 +672,27 @@
     function selectMode(mode) {
         localStorage.setItem('flymoonDataSource', mode);
         renderSelection();
-        const saved = document.getElementById('selSaved');
-        saved.style.display = 'block';
-        setTimeout(() => { saved.style.display = 'none'; }, 3000);
+        // Flash "Saved" in both locations
+        [document.getElementById('selSaved'), document.getElementById('tsbSaved')].forEach(el => {
+            if (!el) return;
+            el.style.display = 'block';
+            setTimeout(() => { el.style.display = 'none'; }, 3000);
+        });
     }
     window.selectMode = selectMode;
 
     function renderSelection() {
         const current = getMode();
+        // Large cards (bottom)
         document.querySelectorAll('.selector-option').forEach(el => {
             const m = el.dataset.mode;
             el.className = 'selector-option' + (m === current ? ' active-' + m.replace('-only','').replace('-local','') : '');
+        });
+        // Compact top bar buttons
+        document.querySelectorAll('.tsb-btn').forEach(btn => {
+            const m = btn.dataset.tsb;
+            const suffix = m.replace('-only','').replace('-local','');
+            btn.className = 'tsb-btn' + (m === current ? ' tsb-active-' + suffix : '');
         });
     }
 
