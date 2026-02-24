@@ -1072,19 +1072,33 @@ function updateToggleButtons() {
 }
 
 // ─── Cost impact modal for low min-altitude settings ─────────────────────────
+// FA pricing: $0.02 per result set (1 result set = up to 15 flight records).
+// max_pages=1 in flight_data.py → 1 result set per bounding-box call = $0.02/call.
+// $5/month credit = 250 calls max (24/7 running).
+// With min-angle masking limiting active hours to ~8h/day, a 60-min interval
+// stays within budget (~$4.80/month). 10-min interval = ~$29/month.
 
 function showCostModal(newValue, inputElement) {
     _pendingCostInput = inputElement;
-    // Extra API-eligible hours per day: each degree below 15° adds ~4 min of transit-zone time
+    // FA charges $0.02 per result set; our bounding-box call returns 1 result set
+    const COST_PER_CALL = 0.02;
+    const MONTHLY_CREDIT = 5.0;
+    // Extra active minutes per day: each degree below 15° adds ~4 min when Sun/Moon
+    // would otherwise be below the threshold
     const extraMinPerDay = Math.max(0, (15 - newValue) * 4);
-    const extraCallsPerMonth = Math.round((extraMinPerDay / 10) * 30); // 1 call per 10 min
+    const extraCallsPerMonth = Math.round((extraMinPerDay / 10) * 30);
+    const extraCost = (extraCallsPerMonth * COST_PER_CALL).toFixed(2);
     const content = document.getElementById('costModalContent');
     content.innerHTML =
         `<p>Setting min altitude to <strong>${newValue}°</strong> means the app will ` +
-        `make API calls for an extra ~${extraMinPerDay} minutes per day while the Sun or Moon ` +
-        `is at a low angle (${newValue}°–15°).</p>` +
-        `<p>That could add roughly <strong>~${extraCallsPerMonth} extra FlightAware API calls/month</strong> ` +
-        `compared to the default 15°, which may push usage above your $5 credit.</p>` +
+        `check for aircraft for an extra ~${extraMinPerDay} minutes per day while the Sun or Moon ` +
+        `is at a very low angle (${newValue}°–15°) — near or below typical obstructions.</p>` +
+        `<p>That adds roughly <strong>~${extraCallsPerMonth} extra API calls/month</strong> ` +
+        `at <strong>$${COST_PER_CALL.toFixed(2)}/call</strong> = <strong>~$${extraCost}/month extra</strong>.</p>` +
+        `<p style="color:#ffcc88; font-size:0.9em;">⚠️ Context: FlightAware charges $${COST_PER_CALL.toFixed(2)} per result set ` +
+        `(up to 15 flights). The $${MONTHLY_CREDIT}/month credit covers only ~${Math.floor(MONTHLY_CREDIT/COST_PER_CALL)} calls total. ` +
+        `Running 24/7 at 10-min intervals costs ~$29/month — well over budget. ` +
+        `Use the min-angle settings and ☀️/🌙 toggles to limit active hours.</p>` +
         `<p style="color:#aaa; font-size:0.9em;">Tip: Use the ☀️/🌙 toggle buttons to disable a target entirely ` +
         `during hours you don't care about it — zero API calls while disabled.</p>`;
     document.getElementById('costModal').style.display = 'flex';
@@ -1105,8 +1119,9 @@ const HELP_CONTENT = {
     'force-refresh': {
         title: '⟳ Force Refresh',
         body: `<p>Triggers an immediate FlightAware API call, bypassing the 10-minute server-side cache.</p>
-<p><strong>Cost context:</strong> FlightAware bills per query against a $5/month credit (~4,300–5,000 bounding-box calls). Auto-refresh runs every 10 minutes (≈144 calls/day, ≈4,320/month) which stays just within budget.</p>
-<p>Between API refreshes, aircraft positions are <em>interpolated</em> every 15 seconds using the last known speed and heading — no extra cost. You rarely need to force a refresh.</p>
+<p><strong>Cost model:</strong> FlightAware charges <strong>$0.02 per result set</strong> (up to 15 flight records each). Our bounding-box search uses <code>max_pages=1</code>, so each call costs exactly <strong>$0.02</strong> regardless of how many aircraft are returned (up to 15).</p>
+<p>The Personal tier includes a <strong>$5/month credit = 250 calls</strong>. Running 24/7 at 10-min intervals uses 144 calls/day (~$2.88/day, ~$86/month) — far over budget. Realistically, with min-angle masking limiting active hours to ~8h/day, a 60-min interval costs ~$4.80/month and stays within budget.</p>
+<p>Between API refreshes, aircraft positions are <em>interpolated</em> every 15 seconds using last known speed and heading — no extra cost. You rarely need to force a refresh.</p>
 <p>The button warns you if the cache is still fresh so you can decide whether to proceed.</p>`
     },
     'sun-moon-toggle': {
@@ -1284,11 +1299,12 @@ function go() {
         const secondsRemaining = Math.floor(cacheValidSeconds - secondsSinceUpdate);
         
         const confirmed = confirm(
-            `⚠️ API Rate Limit Protection\n\n` +
+            `⚠️ Cache Still Fresh\n\n` +
             `Last update: ${secondsRemaining}s ago\n` +
             `Cache expires in: ${minutesRemaining} minute(s)\n\n` +
-            `Making a new API call now wastes your FlightAware quota.\n` +
-            `Aircraft positions are being updated automatically every 15 seconds.\n\n` +
+            `Each FlightAware API call costs $0.02 (1 result set).\n` +
+            `The $5/month credit covers only ~250 calls total.\n` +
+            `Aircraft positions are being interpolated automatically every 15 seconds.\n\n` +
             `Force a new API call anyway?`
         );
         

@@ -7,7 +7,7 @@
     <!-- favicon -->
     <link rel="icon" type="image/x-icon" href="{{ url_for('static', filename='images/favicon.ico') }}">
     <!-- CSS -->
-    <link rel="stylesheet" href="{{ url_for('static', filename='main.css') }}?v=1771883402">
+    <link rel="stylesheet" href="{{ url_for('static', filename='main.css') }}?v=1771957271">
     <!-- Leaflet CSS (self-hosted for security) -->
     <link rel="stylesheet" href="{{ url_for('static', filename='leaflet.css') }}" />
     <link rel="stylesheet" href="{{ url_for('static', filename='telescope.css') }}">
@@ -60,7 +60,7 @@
     </div>
 
     <div class="controls-row">
-        <button id="goBtn" class="btn-primary" onclick="go();" title="Force an immediate FlightAware API call — bypasses the 10-minute cache. Use sparingly; each call counts against your $5/month quota.">⟳ Force Refresh</button>
+        <button id="goBtn" class="btn-primary" onclick="go();" title="Force an immediate FlightAware API call — bypasses the 10-minute cache. Each call costs $0.02 (1 result set). Use sparingly; the $5/month credit covers only ~250 calls total.">⟳ Force Refresh</button>
         <button class="btn-help" onclick="showInfo('force-refresh')" title="Learn more about API cost and caching">ℹ️</button>
         <button id="sunToggle" class="btn-sm" onclick="toggleTarget('sun')" title="Sun tracking ON — click to disable. When off, transit checks and azimuth arrow for the Sun are skipped.">☀️ Sun</button>
         <button id="moonToggle" class="btn-sm" onclick="toggleTarget('moon')" title="Moon tracking ON — click to disable. When off, transit checks and azimuth arrow for the Moon are skipped.">🌙 Moon</button>
@@ -475,9 +475,9 @@
     <script src="{{ url_for('static', filename='leaflet-heat.js') }}"></script>
     <!-- OpenAIP key injected server-side to avoid async timing issues -->
     <script>window.OPENAIP_API_KEY = "{{ openaip_api_key|e }}";</script>
-    <script src="{{ url_for('static', filename='telescope.js') }}?v=1771883402" charset="utf-8"></script>
-    <script src="{{ url_for('static', filename='map.js') }}?v=1771883402" charset="utf-8"></script>
-    <script src="{{ url_for('static', filename='app.js') }}?v=1771883402" charset="utf-8"></script>
+    <script src="{{ url_for('static', filename='telescope.js') }}?v=1771957271" charset="utf-8"></script>
+    <script src="{{ url_for('static', filename='map.js') }}?v=1771957271" charset="utf-8"></script>
+    <script src="{{ url_for('static', filename='app.js') }}?v=1771957271" charset="utf-8"></script>
 
     <script>
         function showPanel(name) {
