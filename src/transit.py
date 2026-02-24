@@ -1,10 +1,11 @@
 import os
 import time as _time
 from datetime import datetime, timedelta
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 from zoneinfo import ZoneInfo
 
 import numpy as np
+import requests
 from skyfield.api import Topos
 from tzlocal import get_localzone_name
 
@@ -24,6 +25,88 @@ from src.constants import (
 )
 from src.flight_data import get_flight_data, load_existing_flight_data, parse_fligh_data
 from src.flight_cache import get_cache
+
+# ── FA enrichment cache ──────────────────────────────────────────────────────
+# Per-callsign metadata cache (aircraft type, airline, origin, destination).
+# Only populated for HIGH-probability transits — avoids per-refresh FA charges.
+_FA_ENRICHMENT_CACHE: Dict[str, dict] = {}
+_FA_ENRICHMENT_TTL: float = 7200.0  # 2 hours
+
+
+def _enrich_from_fa(callsign: str, api_key: str) -> dict:
+    """Fetch flight metadata from FlightAware for a single callsign.
+
+    Costs one FA result-set ($0.02).  Result is cached per-callsign for
+    FA_ENRICHMENT_TTL seconds so repeated HIGH-prob alerts incur no extra cost.
+    Returns {} silently on any error.
+    """
+    if not api_key:
+        return {}
+
+    now = _time.time()
+    cached = _FA_ENRICHMENT_CACHE.get(callsign)
+    if cached and (now - cached["ts"]) < _FA_ENRICHMENT_TTL:
+        logger.info(f"[FA-enrich] cache HIT for {callsign}")
+        return cached["data"]
+
+    url = f"https://aeroapi.flightaware.com/aeroapi/flights/{callsign}"
+    headers = {"Accept": "application/json; charset=UTF-8", "x-apikey": api_key}
+    try:
+        resp = requests.get(url, headers=headers, timeout=10)
+        if resp.status_code == 200:
+            flights = resp.json().get("flights", [])
+            if flights:
+                f = flights[0]
+                data = {
+                    "aircraft_type": f.get("aircraft_type") or "N/A",
+                    "fa_flight_id":  f.get("fa_flight_id") or "",
+                    "origin":        (f.get("origin") or {}).get("city") or "N/A",
+                    "destination":   (f.get("destination") or {}).get("city") or "N/D",
+                }
+                _FA_ENRICHMENT_CACHE[callsign] = {"data": data, "ts": now}
+                logger.info(f"[FA-enrich] fetched {callsign}: {data}")
+                return data
+        logger.warning(f"[FA-enrich] HTTP {resp.status_code} for {callsign}")
+    except Exception as exc:
+        logger.warning(f"[FA-enrich] exception for {callsign}: {exc}")
+    return {}
+
+
+def _parse_opensky_flight(callsign: str, os_data: dict) -> dict:
+    """Convert an OpenSky state-vector dict to the internal flight format."""
+    alt_m = os_data.get("altitude_m") or 0
+    vr = os_data.get("vertical_rate_ms") or 0
+
+    if vr > 0.5:
+        elev_change = "climbing"
+    elif vr < -0.5:
+        elev_change = "descending"
+    else:
+        elev_change = "level"
+
+    return {
+        "name":              callsign,
+        "aircraft_type":     "N/A",  # filled by FA enrichment on HIGH transit
+        "fa_flight_id":      "",
+        "origin":            "N/A",
+        "destination":       "N/A",
+        "latitude":          os_data["lat"],
+        "longitude":         os_data["lon"],
+        "direction":         os_data.get("heading") or 0,
+        "speed":             os_data.get("speed_kmh") or 0,
+        "elevation":         float(alt_m),
+        "elevation_feet":    int(alt_m * 3.28084),
+        "elevation_change":  elev_change,
+        "position_source":   "opensky",
+        "position_age_s":    (
+            round(_time.time() - os_data["last_contact"], 1)
+            if os_data.get("last_contact") else None
+        ),
+        "icao24":            os_data.get("icao24", ""),
+        "vertical_rate":     vr,
+        "squawk":            os_data.get("squawk"),
+        "on_ground":         os_data.get("on_ground", False),
+    }
 from src.position import (
     AreaBoundingBox,
     geographic_to_altaz,
@@ -284,6 +367,7 @@ def get_transits(
     alt_threshold: float = 5.0,
     az_threshold: float = 10.0,
     custom_bbox: dict = None,
+    data_source: str = "hybrid",
 ) -> Dict[str, Any]:
     API_KEY = get_aeroapi_key()
 
@@ -333,98 +417,104 @@ def get_transits(
         if test_mode:
             raw_flight_data = load_existing_flight_data(TEST_DATA_PATH)
             logger.info("Loading existing flight data since is using TEST mode")
-        else:
-            # Check cache first - use bbox-only key so sun/moon share the same cached flight data
+            flight_data = list()
+            filtered_count = 0
+            for flight in raw_flight_data["flights"]:
+                parsed = parse_fligh_data(flight)
+                lat, lon = parsed["latitude"], parsed["longitude"]
+                if (bbox.lat_lower_left <= lat <= bbox.lat_upper_right and
+                    bbox.long_lower_left <= lon <= bbox.long_upper_right):
+                    flight_data.append(parsed)
+                else:
+                    filtered_count += 1
+            if filtered_count > 0:
+                logger.debug(f"Bbox filter: {filtered_count} flights outside box")
+
+        elif data_source == "fa-only":
+            # ── FA-only mode: call FlightAware bbox search every refresh ──
+            # Expensive but provides full metadata for all aircraft.
+            logger.info("[Data] FA-only mode — calling FlightAware bbox API")
             cache = get_cache()
             cached_data = cache.get(
-                bbox.lat_lower_left,
-                bbox.long_lower_left,
-                bbox.lat_upper_right,
-                bbox.long_upper_right
-                # Note: no target_name - single fetch serves both sun and moon
-            )
-            
-            if cached_data is not None:
-                raw_flight_data = cached_data
-                logger.info(f"Using cached flight data ({cache.get_stats()['hit_rate_percent']}% hit rate)")
-            else:
-                raw_flight_data = get_flight_data(bbox, API_URL, API_KEY)
-                # Cache the raw response - bbox-only key
-                cache.set(
-                    bbox.lat_lower_left,
-                    bbox.long_lower_left,
-                    bbox.lat_upper_right,
-                    bbox.long_upper_right,
-                    raw_flight_data
-                    # Note: no target_name - single fetch serves both sun and moon
-                )
-
-        flight_data = list()
-
-        filtered_count = 0
-        for flight in raw_flight_data["flights"]:
-            parsed = parse_fligh_data(flight)
-            # Filter: only include flights whose current position is within the bounding box
-            lat, lon = parsed["latitude"], parsed["longitude"]
-            if (bbox.lat_lower_left <= lat <= bbox.lat_upper_right and
-                bbox.long_lower_left <= lon <= bbox.long_upper_right):
-                flight_data.append(parsed)
-            else:
-                filtered_count += 1
-
-        if filtered_count > 0:
-            logger.debug(f"Bbox filter: {filtered_count} flights outside box")
-
-        # ── OpenSky position refresh (best-effort) ────────────────────────
-        # Overlays near-real-time ADS-B positions (~10s latency) onto the
-        # FlightAware data (~60–300s latency) for matching callsigns.
-        try:
-            from src.opensky import fetch_opensky_positions
-            opensky_data = fetch_opensky_positions(
                 bbox.lat_lower_left, bbox.long_lower_left,
                 bbox.lat_upper_right, bbox.long_upper_right,
             )
-            refreshed = 0
-            for flight in flight_data:
-                os_pos = opensky_data.get(flight["name"])
-                if os_pos and not os_pos.get("on_ground"):
-                    flight["latitude"]  = os_pos["lat"]
-                    flight["longitude"] = os_pos["lon"]
-                    if os_pos.get("altitude_m") is not None:
-                        flight["elevation"] = os_pos["altitude_m"]
-                        flight["elevation_feet"] = int(os_pos["altitude_m"] * 3.28084)
-                    if os_pos.get("speed_kmh") is not None:
-                        flight["speed"] = os_pos["speed_kmh"]
-                    if os_pos.get("heading") is not None:
-                        flight["direction"] = os_pos["heading"]
-                    flight["position_source"]  = "opensky"
-                    flight["position_age_s"]   = round(_time.time() - os_pos["last_contact"], 1)
-                    refreshed += 1
+            if cached_data is not None:
+                raw_flight_data = cached_data
+                logger.info(f"Using cached FA data ({cache.get_stats()['hit_rate_percent']}% hit rate)")
+            else:
+                raw_flight_data = get_flight_data(bbox, API_URL, API_KEY)
+                cache.set(
+                    bbox.lat_lower_left, bbox.long_lower_left,
+                    bbox.lat_upper_right, bbox.long_upper_right,
+                    raw_flight_data,
+                )
+
+            flight_data = list()
+            filtered_count = 0
+            for flight in raw_flight_data["flights"]:
+                parsed = parse_fligh_data(flight)
+                lat, lon = parsed["latitude"], parsed["longitude"]
+                if (bbox.lat_lower_left <= lat <= bbox.lat_upper_right and
+                    bbox.long_lower_left <= lon <= bbox.long_upper_right):
+                    flight_data.append(parsed)
                 else:
-                    flight.setdefault("position_source", "flightaware")
-            if opensky_data:
-                logger.info(f"OpenSky: refreshed {refreshed}/{len(flight_data)} positions")
-        except Exception as exc:
-            logger.warning(f"OpenSky refresh skipped: {exc}")
-            for flight in flight_data:
-                flight.setdefault("position_source", "flightaware")
-        # ─────────────────────────────────────────────────────────────────
+                    filtered_count += 1
+            if filtered_count > 0:
+                logger.debug(f"Bbox filter (FA): {filtered_count} flights outside box")
+
+        else:
+            # ── Hybrid / OpenSky-only mode (default) ─────────────────────
+            # Use OpenSky Network for all position data (~60s cache, free).
+            # FA is only called on HIGH-probability transits for metadata.
+            logger.info(f"[Data] {data_source} mode — using OpenSky as primary source")
+            from src.opensky import fetch_opensky_positions
+            try:
+                opensky_data = fetch_opensky_positions(
+                    bbox.lat_lower_left, bbox.long_lower_left,
+                    bbox.lat_upper_right, bbox.long_upper_right,
+                )
+            except Exception as exc:
+                logger.warning(f"[OpenSky] fetch failed: {exc}; flight_data will be empty")
+                opensky_data = {}
+
+            flight_data = []
+            for callsign, os_pos in opensky_data.items():
+                if os_pos.get("on_ground"):
+                    continue  # skip ground traffic
+                flight_data.append(_parse_opensky_flight(callsign, os_pos))
+
+            logger.info(f"[OpenSky] {len(flight_data)} airborne aircraft in bbox")
+
+        # ── Transit detection ─────────────────────────────────────────────
         for flight in flight_data:
             celestial_obj.update_position(ref_datetime=ref_datetime)
 
-            data.append(
-                check_transit(
-                    flight,
-                    window_time,
-                    ref_datetime,
-                    MY_POSITION,
-                    celestial_obj,
-                    EARTH,
-                    alt_threshold,
-                    az_threshold,
-                )
+            result = check_transit(
+                flight,
+                window_time,
+                ref_datetime,
+                MY_POSITION,
+                celestial_obj,
+                EARTH,
+                alt_threshold,
+                az_threshold,
             )
 
+            # ── FA enrichment for HIGH transits (hybrid mode only) ────────
+            if (
+                data_source not in ("fa-only",)
+                and not test_mode
+                and result.get("possibility_level") == PossibilityLevel.HIGH.value
+                and API_KEY
+            ):
+                callsign = flight["name"]
+                enrichment = _enrich_from_fa(callsign, API_KEY)
+                if enrichment:
+                    result.update(enrichment)
+                    logger.info(f"[FA-enrich] enriched HIGH transit {callsign}")
+
+            data.append(result)
             logger.info(data[-1])
     else:
         logger.debug(

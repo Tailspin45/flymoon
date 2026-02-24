@@ -259,6 +259,9 @@ def get_all_flights():
         
         has_send_notification = request.args.get("send-notification") == "true"
 
+        # Data source mode: 'hybrid' (default), 'fa-only', 'opensky-only', 'adsb-local'
+        data_source = request.args.get("data_source", "hybrid")
+
         # Targets disabled by the user in the UI (comma-separated: "sun", "moon", or "sun,moon")
         _disabled_raw = request.args.get("disabled_targets", "")
         disabled_targets = {t.strip().lower() for t in _disabled_raw.split(",") if t.strip()}
@@ -303,7 +306,7 @@ def get_all_flights():
             if coords["altitude"] >= min_altitude:
                 tracking_targets.append(target)  # Add to tracking list
                 logger.info(f"Checking transits for {target} (altitude: {coords['altitude']:.1f}°, thresholds: alt={alt_threshold}°, az={az_threshold}°)")
-                data = get_transits(latitude, longitude, elevation, target, test_mode, alt_threshold, az_threshold, custom_bbox)
+                data = get_transits(latitude, longitude, elevation, target, test_mode, alt_threshold, az_threshold, custom_bbox, data_source)
                 
                 # Tag each flight with which target it's for
                 for flight in data["flights"]:

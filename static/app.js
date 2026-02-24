@@ -1771,6 +1771,7 @@ function fetchFlights() {
         + `&alt_threshold=${encodeURIComponent(altThreshold)}`
         + `&az_threshold=${encodeURIComponent(azThreshold)}`
         + `&send-notification=true`
+        + `&data_source=${encodeURIComponent(localStorage.getItem('flymoonDataSource') || 'hybrid')}`
     );
 
     // Pass any user-disabled targets so the server skips them (saves API calls)
