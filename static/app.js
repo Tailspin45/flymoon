@@ -445,9 +445,9 @@ function renderRichFlightRow(item, bodyTable) {
             if (fpm > 64) vsStr = ` <span style="color:#4caf50">▲ +${fpm.toLocaleString()}fpm</span>`;
             else if (fpm < -64) vsStr = ` <span style="color:#f44336">▼ ${fpm.toLocaleString()}fpm</span>`;
             else vsStr = ` <span style="color:#888">▶ level</span>`;
-        } else if (item.elevation_change === 'C') {
+        } else if (item.elevation_change === 'climbing') {
             vsStr = ` <span style="color:#4caf50">▲</span>`;
-        } else if (item.elevation_change === 'D') {
+        } else if (item.elevation_change === 'descending') {
             vsStr = ` <span style="color:#f44336">▼</span>`;
         }
         altCell.innerHTML = altStr + vsStr;
