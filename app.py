@@ -157,6 +157,12 @@ def index():
     return render_template("index.html", openaip_api_key=os.getenv("OPENAIP_API_KEY", ""))
 
 
+@app.route("/cost-models")
+def cost_models():
+    """Flight data acquisition cost-benefit analysis paper."""
+    return render_template("cost_models.html")
+
+
 @app.route("/config")
 def get_config():
     """Return app configuration for client."""

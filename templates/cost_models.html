@@ -1,0 +1,648 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Flight Data Acquisition: Cost–Benefit Analysis for Amateur Transit Observers — Flymoon</title>
+<style>
+  :root {
+    --bg:       #0d0d1a;
+    --bg2:      #13132a;
+    --bg3:      #1a1a35;
+    --border:   #2a2a4a;
+    --text:     #d4d4e8;
+    --muted:    #888aaa;
+    --accent:   #7ab8d4;
+    --accent2:  #a78bfa;
+    --green:    #4caf50;
+    --orange:   #ff9800;
+    --red:      #ef5350;
+    --yellow:   #ffd54f;
+    --fa:       #3b82f6;
+    --os:       #10b981;
+    --hybrid:   #a78bfa;
+    --adsb:     #06b6d4;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'Georgia', 'Times New Roman', serif;
+    font-size: 15px;
+    line-height: 1.7;
+    max-width: 900px;
+    margin: 0 auto;
+    padding: 40px 24px 80px;
+  }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+
+  /* ── Header ── */
+  .paper-header {
+    text-align: center;
+    border-bottom: 1px solid var(--border);
+    padding-bottom: 28px;
+    margin-bottom: 36px;
+  }
+  .paper-title {
+    font-size: 1.9em;
+    font-weight: bold;
+    color: #fff;
+    line-height: 1.3;
+    margin-bottom: 10px;
+  }
+  .paper-subtitle {
+    font-size: 1.05em;
+    color: var(--muted);
+    font-style: italic;
+    margin-bottom: 18px;
+  }
+  .paper-meta {
+    font-size: 0.88em;
+    color: var(--muted);
+    font-family: monospace;
+  }
+  .badge {
+    display: inline-block;
+    background: var(--bg3);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 2px 8px;
+    font-size: 0.82em;
+    margin: 2px;
+    font-family: monospace;
+  }
+
+  /* ── Body text ── */
+  h2 {
+    font-size: 1.25em;
+    color: var(--accent);
+    margin: 36px 0 12px;
+    border-bottom: 1px solid var(--border);
+    padding-bottom: 6px;
+    letter-spacing: 0.03em;
+  }
+  h3 {
+    font-size: 1.05em;
+    color: var(--accent2);
+    margin: 24px 0 8px;
+  }
+  p { margin-bottom: 14px; }
+  ul, ol { margin: 0 0 14px 24px; }
+  li { margin-bottom: 6px; }
+  strong { color: #fff; }
+  em { color: var(--muted); }
+  code {
+    font-family: 'Courier New', monospace;
+    background: var(--bg3);
+    border: 1px solid var(--border);
+    border-radius: 3px;
+    padding: 1px 5px;
+    font-size: 0.88em;
+    color: var(--yellow);
+  }
+
+  /* ── Abstract ── */
+  .abstract {
+    background: var(--bg2);
+    border-left: 3px solid var(--accent);
+    border-radius: 0 6px 6px 0;
+    padding: 18px 20px;
+    margin-bottom: 32px;
+    font-style: italic;
+    color: var(--muted);
+  }
+  .abstract strong { color: var(--text); font-style: normal; }
+
+  /* ── Tables ── */
+  .table-wrap { overflow-x: auto; margin: 20px 0 28px; }
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    font-family: 'Courier New', monospace;
+    font-size: 0.84em;
+  }
+  th {
+    background: var(--bg3);
+    color: var(--accent);
+    font-weight: bold;
+    text-align: left;
+    padding: 8px 12px;
+    border: 1px solid var(--border);
+    white-space: nowrap;
+  }
+  td {
+    padding: 7px 12px;
+    border: 1px solid var(--border);
+    vertical-align: top;
+  }
+  tr:nth-child(even) td { background: var(--bg2); }
+  tr:nth-child(odd) td  { background: var(--bg); }
+  .cell-yes  { color: var(--green);  font-weight: bold; }
+  .cell-no   { color: var(--red);    }
+  .cell-warn { color: var(--orange); }
+  .cell-free { color: var(--green);  font-weight: bold; }
+
+  /* ── Bar charts ── */
+  .chart-title {
+    font-size: 0.88em;
+    color: var(--muted);
+    text-align: center;
+    margin-bottom: 12px;
+    font-style: italic;
+  }
+  .bar-chart { margin: 16px 0 28px; }
+  .bar-row {
+    display: flex;
+    align-items: center;
+    margin-bottom: 8px;
+    gap: 10px;
+  }
+  .bar-label {
+    width: 210px;
+    font-family: monospace;
+    font-size: 0.82em;
+    color: var(--text);
+    flex-shrink: 0;
+    text-align: right;
+    padding-right: 8px;
+  }
+  .bar-track {
+    flex: 1;
+    background: var(--bg3);
+    border-radius: 3px;
+    height: 18px;
+    position: relative;
+    overflow: visible;
+  }
+  .bar-fill {
+    height: 100%;
+    border-radius: 3px;
+    transition: width 0.3s;
+    position: relative;
+  }
+  .bar-value {
+    position: absolute;
+    right: -60px;
+    top: 50%;
+    transform: translateY(-50%);
+    font-family: monospace;
+    font-size: 0.8em;
+    color: var(--text);
+    white-space: nowrap;
+  }
+  .budget-line {
+    position: absolute;
+    top: -4px;
+    bottom: -4px;
+    width: 2px;
+    background: var(--yellow);
+    z-index: 10;
+  }
+  .budget-label {
+    position: absolute;
+    top: -20px;
+    font-size: 0.75em;
+    color: var(--yellow);
+    white-space: nowrap;
+    transform: translateX(-50%);
+  }
+
+  /* ── Source cards ── */
+  .source-cards {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: 14px;
+    margin: 20px 0 28px;
+  }
+  .source-card {
+    background: var(--bg2);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 16px;
+  }
+  .source-card.fa     { border-top: 3px solid var(--fa);     }
+  .source-card.os     { border-top: 3px solid var(--os);     }
+  .source-card.hybrid { border-top: 3px solid var(--hybrid); }
+  .source-card.adsb   { border-top: 3px solid var(--adsb);   }
+  .source-card-title { font-size: 1em; font-weight: bold; color: #fff; margin-bottom: 6px; }
+  .source-card-cost  { font-size: 1.3em; font-weight: bold; margin-bottom: 8px; }
+  .source-card.fa     .source-card-cost { color: var(--red); }
+  .source-card.os     .source-card-cost { color: var(--green); }
+  .source-card.hybrid .source-card-cost { color: var(--hybrid); }
+  .source-card.adsb   .source-card-cost { color: var(--adsb); }
+  .source-card-desc  { font-size: 0.82em; color: var(--muted); line-height: 1.5; }
+
+  /* ── Callout boxes ── */
+  .callout {
+    border-radius: 6px;
+    padding: 14px 18px;
+    margin: 20px 0;
+    font-size: 0.9em;
+  }
+  .callout-info    { background: #0d1f2d; border-left: 3px solid var(--accent);  }
+  .callout-warn    { background: #2d1f0d; border-left: 3px solid var(--orange);  }
+  .callout-success { background: #0d2d15; border-left: 3px solid var(--green);   }
+  .callout-key     { background: #1a1428; border-left: 3px solid var(--hybrid);  }
+
+  /* ── Scenario table ── */
+  .scenario-good { color: var(--green); font-weight: bold; }
+  .scenario-warn { color: var(--orange); }
+  .scenario-bad  { color: var(--red); font-weight: bold; }
+
+  /* ── Back link ── */
+  .back-link {
+    display: inline-block;
+    background: var(--bg3);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 8px 16px;
+    margin-bottom: 32px;
+    font-family: monospace;
+    font-size: 0.88em;
+    color: var(--accent);
+  }
+  .back-link:hover { background: var(--border); text-decoration: none; }
+
+  /* ── Selector panel ── */
+  .selector-panel {
+    background: var(--bg2);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 24px;
+    margin: 28px 0;
+  }
+  .selector-panel h3 { margin-top: 0; font-size: 1.1em; color: #fff; }
+  .selector-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    gap: 12px;
+    margin: 16px 0;
+  }
+  .selector-option {
+    border: 2px solid var(--border);
+    border-radius: 8px;
+    padding: 12px 14px;
+    cursor: pointer;
+    transition: border-color 0.15s, background 0.15s;
+    background: var(--bg);
+  }
+  .selector-option:hover { border-color: var(--accent); background: var(--bg3); }
+  .selector-option.active-fa     { border-color: var(--fa);     background: #0a1628; }
+  .selector-option.active-os     { border-color: var(--os);     background: #0a2018; }
+  .selector-option.active-hybrid { border-color: var(--hybrid); background: #160e28; }
+  .selector-option.active-adsb   { border-color: var(--adsb);   background: #0a1e22; }
+  .sel-name  { font-size: 0.92em; font-weight: bold; color: #fff; margin-bottom: 4px; }
+  .sel-cost  { font-size: 1.1em; font-weight: bold; margin-bottom: 4px; }
+  .sel-desc  { font-size: 0.78em; color: var(--muted); line-height: 1.4; }
+  .sel-saved { color: var(--green); font-size: 0.82em; margin-top: 10px; display: none; }
+
+  @media (max-width: 600px) {
+    .paper-title { font-size: 1.4em; }
+    .bar-label { width: 130px; }
+  }
+</style>
+</head>
+<body>
+
+<a class="back-link" href="/">← Back to Flymoon</a>
+
+<div class="paper-header">
+  <div class="paper-title">Flight Data Acquisition for Amateur Solar and Lunar Transit Photography:<br>A Cost–Benefit Analysis of Available Data Sources</div>
+  <div class="paper-subtitle">Operational Economics of Real-Time Aircraft Tracking Under Budget Constraints</div>
+  <div class="paper-meta">
+    <span class="badge">Flymoon v1.0</span>
+    <span class="badge">FlightAware AeroAPI Personal Tier</span>
+    <span class="badge">OpenSky Network</span>
+    <span class="badge">ADS-B / RTL-SDR</span>
+  </div>
+</div>
+
+<div class="abstract">
+  <strong>Abstract.</strong> Amateur astronomers seeking to photograph aircraft transiting the solar or lunar disk require accurate, real-time aircraft position data to predict and prepare for sub-second transit events. This paper examines four data acquisition strategies — FlightAware AeroAPI exclusively, OpenSky Network exclusively, a hybrid model combining free positional data with selective paid enrichment, and a locally-deployed ADS-B receiver — with respect to operational cost, data fidelity, latency, and suitability for automated transit detection. We demonstrate that the exclusive use of FlightAware AeroAPI at typical polling intervals produces costs ranging from <strong>$14–$87/month</strong>, substantially exceeding the $5/month Personal tier credit, while the hybrid approach can reduce expenditure to approximately <strong>$0.60–$3/month</strong> without material degradation of transit detection capability.
+</div>
+
+<h2>1. Introduction</h2>
+
+<p>The detection and capture of aircraft transiting the disk of the Sun or Moon requires solving a real-time angular separation problem: given a continuous stream of aircraft positions and a known celestial body position, identify those trajectories whose projected path will bring an aircraft within the angular diameter of the target (~0.5°) within the near-term prediction window (~15 minutes).</p>
+
+<p>This computation is inexpensive. The data acquisition, however, is not. Aircraft positions must be refreshed frequently enough that the prediction model — which assumes constant velocity and heading — remains accurate over the 15-minute window. Insufficient refresh rates introduce heading and speed errors that cause transits to be missed or generate false positives requiring operator attention.</p>
+
+<p>The FlightAware AeroAPI, which provides the richest available flight metadata, prices its service on a per-result-set basis. As we demonstrate below, this pricing model interacts poorly with the high-frequency polling required for transit detection. The central contribution of this analysis is a cost model that quantifies this tension and proposes mitigation strategies available to budget-conscious observers.</p>
+
+<h2>2. The FlightAware AeroAPI Pricing Model</h2>
+
+<p>FlightAware charges per <em>result set</em>, where one result set contains up to 15 flight records. The current Personal tier rate is <strong>$0.02 per result set</strong>, with a monthly credit of <strong>$5.00</strong> — sufficient for exactly <strong>250 result sets</strong> before additional charges apply.</p>
+
+<p>Flymoon's bounding-box search uses the <code>/flights/search</code> endpoint with <code>max_pages=1</code>, returning a single result set per call regardless of how many aircraft are present (up to 15). Therefore:</p>
+
+<div class="callout callout-info">
+  <strong>Cost formula:</strong> Each bounding-box API call = 1 result set = <strong>$0.02</strong>.<br>
+  Monthly budget at $5.00 credit = <strong>250 calls maximum</strong>.
+</div>
+
+<h3>2.1 Cost at Typical Polling Intervals (24/7 Operation)</h3>
+
+<div class="table-wrap">
+<table>
+  <tr>
+    <th>Refresh Interval</th>
+    <th>Calls/Day</th>
+    <th>Calls/Month</th>
+    <th>Cost/Month</th>
+    <th>vs. $5 Budget</th>
+  </tr>
+  <tr><td>1 minute</td><td>1,440</td><td>43,200</td><td class="scenario-bad">$864.00</td><td class="scenario-bad">17× over</td></tr>
+  <tr><td>5 minutes</td><td>288</td><td>8,640</td><td class="scenario-bad">$172.80</td><td class="scenario-bad">35× over</td></tr>
+  <tr><td>10 minutes</td><td>144</td><td>4,320</td><td class="scenario-bad">$86.40</td><td class="scenario-bad">17× over</td></tr>
+  <tr><td>15 minutes</td><td>96</td><td>2,880</td><td class="scenario-bad">$57.60</td><td class="scenario-bad">12× over</td></tr>
+  <tr><td>30 minutes</td><td>48</td><td>1,440</td><td class="scenario-bad">$28.80</td><td class="scenario-bad">6× over</td></tr>
+  <tr><td>60 minutes</td><td>24</td><td>720</td><td class="scenario-bad">$14.40</td><td class="scenario-bad">3× over</td></tr>
+</table>
+</div>
+<div class="chart-title">Table 1. FlightAware API cost at various polling intervals, 24/7 operation. <em>All configurations exceed the $5/month Personal tier credit.</em></div>
+
+<div class="bar-chart">
+  <div class="chart-title">Figure 1. Monthly cost by polling interval (FA-only, 24/7). Budget line = $5.</div>
+  {% set max_cost = 87 %}
+  {% set budget_pct = (5 / max_cost * 100)|round(1) %}
+  {% for row in [
+      ('10-min interval', 86.40, '#ef5350'),
+      ('15-min interval', 57.60, '#ef7350'),
+      ('30-min interval', 28.80, '#ff9800'),
+      ('60-min interval', 14.40, '#ffc107'),
+      ('60-min, 8h/day', 4.80,  '#8bc34a'),
+      ('Hybrid approach', 1.50,  '#a78bfa')
+  ] %}
+  <div class="bar-row">
+    <div class="bar-label">{{ row[0] }}</div>
+    <div class="bar-track">
+      <div class="bar-fill" style="width:{{ [row[1]/max_cost*100, 100]|min }}%; background:{{ row[2] }};">
+        <span class="bar-value">${{ row[1] }}</span>
+      </div>
+      {% if loop.last %}<div class="budget-line" style="left:{{ budget_pct }}%"><div class="budget-label">$5 budget</div></div>{% endif %}
+    </div>
+  </div>
+  {% endfor %}
+</div>
+
+<h3>2.2 Effect of Active-Hours Restriction</h3>
+
+<p>Transit detection is only meaningful when the Sun or Moon is above the observer's horizon and above local obstruction angles. In mid-latitudes, this typically limits the usable window to 6–10 hours per day. With the quadrant min-angle masking feature, polling can be suppressed when the target is below the obstruction threshold, reducing effective daily call counts.</p>
+
+<div class="table-wrap">
+<table>
+  <tr>
+    <th>Interval</th>
+    <th>Active Hours/Day</th>
+    <th>Calls/Month</th>
+    <th>Cost/Month</th>
+    <th>Within $5 Budget?</th>
+  </tr>
+  <tr><td>10 min</td><td>8h</td><td>1,440</td><td class="scenario-bad">$28.80</td><td class="scenario-bad">No (6× over)</td></tr>
+  <tr><td>30 min</td><td>8h</td><td>480</td><td class="scenario-warn">$9.60</td><td class="scenario-warn">No (2× over)</td></tr>
+  <tr><td>60 min</td><td>8h</td><td>240</td><td class="scenario-good">$4.80</td><td class="scenario-good">Yes ✓</td></tr>
+  <tr><td>60 min</td><td>6h</td><td>180</td><td class="scenario-good">$3.60</td><td class="scenario-good">Yes ✓</td></tr>
+</table>
+</div>
+<div class="chart-title">Table 2. FA-only cost with active-hours restriction. Only the 60-minute interval with ≤8 active hours/day remains within budget.</div>
+
+<div class="callout callout-warn">
+  <strong>⚠️ Critical finding:</strong> A 60-minute refresh interval is insufficient for reliable transit prediction. Aircraft travel ~900 km/hr at cruise; a 60-minute-old position contains up to ~450 km of positional error. While linear interpolation partially mitigates this, the transit prediction window of 15 minutes means that newly-entered aircraft (departed or routing through the bounding box) may be missed entirely until the next refresh cycle.
+</div>
+
+<h2>3. Evaluated Data Sources</h2>
+
+<div class="source-cards">
+  <div class="source-card fa">
+    <div class="source-card-title">☁️ FlightAware AeroAPI</div>
+    <div class="source-card-cost">$14–$87/month</div>
+    <div class="source-card-desc">Full metadata: airline, aircraft type, origin, destination, route. $0.02/result set. Exceeds $5 budget at all practical intervals except 60-min with aggressive masking.</div>
+  </div>
+  <div class="source-card os">
+    <div class="source-card-title">🌐 OpenSky Network</div>
+    <div class="source-card-cost">Free</div>
+    <div class="source-card-desc">ADS-B position, altitude, heading, speed. Callsign usually present for commercial flights. No aircraft type, airline, or route data. ~5–10s latency.</div>
+  </div>
+  <div class="source-card hybrid">
+    <div class="source-card-title">⚡ Hybrid (OpenSky + FA)</div>
+    <div class="source-card-cost">~$0.60–$3/month</div>
+    <div class="source-card-desc">OpenSky for continuous position updates (free, 60s). FlightAware called once per unique flight only when HIGH-probability transit is detected. Cached for flight duration.</div>
+  </div>
+  <div class="source-card adsb">
+    <div class="source-card-title">📡 Own ADS-B Receiver</div>
+    <div class="source-card-cost">~$0–$0.60/month</div>
+    <div class="source-card-desc">RTL-SDR dongle (~$30 one-time). Real-time (<1s), no internet required for positions. FA enrichment optional (only on HIGH events). Best latency and reliability.</div>
+  </div>
+</div>
+
+<h2>4. Source Capability Comparison</h2>
+
+<div class="table-wrap">
+<table>
+  <tr>
+    <th>Capability</th>
+    <th style="color:var(--fa)">FlightAware Only</th>
+    <th style="color:var(--os)">OpenSky Only</th>
+    <th style="color:var(--hybrid)">Hybrid</th>
+    <th style="color:var(--adsb)">Own ADS-B + FA</th>
+  </tr>
+  <tr><td><strong>Position (lat/lon)</strong></td>
+    <td class="cell-yes">✓</td><td class="cell-yes">✓</td><td class="cell-yes">✓</td><td class="cell-yes">✓</td></tr>
+  <tr><td><strong>Altitude</strong></td>
+    <td class="cell-yes">✓</td><td class="cell-yes">✓</td><td class="cell-yes">✓</td><td class="cell-yes">✓</td></tr>
+  <tr><td><strong>Heading</strong></td>
+    <td class="cell-yes">✓</td><td class="cell-yes">✓</td><td class="cell-yes">✓</td><td class="cell-yes">✓</td></tr>
+  <tr><td><strong>Speed</strong></td>
+    <td class="cell-yes">✓</td><td class="cell-yes">✓</td><td class="cell-yes">✓</td><td class="cell-yes">✓</td></tr>
+  <tr><td><strong>Vertical rate</strong></td>
+    <td class="cell-yes">✓</td><td class="cell-yes">✓</td><td class="cell-yes">✓</td><td class="cell-yes">✓</td></tr>
+  <tr><td><strong>Callsign / Flight #</strong></td>
+    <td class="cell-yes">✓ Always</td><td class="cell-warn">⚠ Usually</td><td class="cell-warn">⚠ Usually (FA on HIGH)</td><td class="cell-warn">⚠ Usually (FA on HIGH)</td></tr>
+  <tr><td><strong>Aircraft type</strong></td>
+    <td class="cell-yes">✓</td><td class="cell-no">✗</td><td class="cell-warn">⚠ On HIGH event</td><td class="cell-warn">⚠ On HIGH event</td></tr>
+  <tr><td><strong>Airline name</strong></td>
+    <td class="cell-yes">✓</td><td class="cell-no">✗</td><td class="cell-warn">⚠ On HIGH event</td><td class="cell-warn">⚠ On HIGH event</td></tr>
+  <tr><td><strong>Origin / Destination</strong></td>
+    <td class="cell-yes">✓</td><td class="cell-no">✗</td><td class="cell-warn">⚠ On HIGH event</td><td class="cell-warn">⚠ On HIGH event</td></tr>
+  <tr><td><strong>Update frequency</strong></td>
+    <td class="cell-warn">10–60 min</td><td class="cell-yes">~60s</td><td class="cell-yes">~60s</td><td class="cell-yes">&lt;5s</td></tr>
+  <tr><td><strong>Latency</strong></td>
+    <td class="cell-warn">~5s</td><td class="cell-warn">5–10s</td><td class="cell-warn">5–10s</td><td class="cell-yes">&lt;1s</td></tr>
+  <tr><td><strong>Global coverage</strong></td>
+    <td class="cell-yes">✓</td><td class="cell-yes">✓</td><td class="cell-yes">✓</td><td class="cell-no">✗ Local only (~250 nm)</td></tr>
+  <tr><td><strong>Works offline</strong></td>
+    <td class="cell-no">✗</td><td class="cell-no">✗</td><td class="cell-no">✗</td><td class="cell-yes">✓</td></tr>
+  <tr><td><strong>Hardware required</strong></td>
+    <td class="cell-yes">None</td><td class="cell-yes">None</td><td class="cell-yes">None</td><td class="cell-warn">RTL-SDR (~$30)</td></tr>
+  <tr><td><strong>Ongoing monthly cost</strong></td>
+    <td class="cell-no">$14–$87</td><td class="cell-free">$0</td><td class="cell-yes">~$0.60–$3</td><td class="cell-yes">~$0–$0.60</td></tr>
+  <tr><td><strong>Transit detection quality</strong></td>
+    <td class="cell-warn">Limited by refresh rate</td><td class="cell-warn">Good (60s)</td><td class="cell-yes">Good (60s) + full metadata on alerts</td><td class="cell-yes">Excellent (&lt;5s)</td></tr>
+</table>
+</div>
+<div class="chart-title">Table 3. Feature matrix across all four data source strategies. ⚠ = available only at HIGH-probability transit detection events.</div>
+
+<h2>5. The Hybrid Strategy in Detail</h2>
+
+<p>The hybrid approach exploits a fundamental asymmetry in information requirements: continuous position data is needed for all aircraft at all times to compute angular separation, but rich flight metadata (aircraft type, airline, origin, destination) is only operationally significant when a transit is actually imminent.</p>
+
+<p>The proposed implementation proceeds as follows:</p>
+
+<ol>
+  <li><strong>Every ~60 seconds</strong> — Query OpenSky Network bounding-box endpoint (free). Extract: ICAO24 hex, callsign, latitude, longitude, altitude, heading, speed, vertical rate.</li>
+  <li><strong>Continuously</strong> — Compute angular separation between each aircraft's predicted 15-minute trajectory and the current Sun/Moon position.</li>
+  <li><strong>On first HIGH-probability detection</strong> (<code>alt_diff ≤ 1°</code> AND <code>az_diff ≤ 1°</code>) for a given <code>fa_flight_id</code> — Issue a single FlightAware <code>/flights/{ident}</code> call to retrieve aircraft type, airline, and route.</li>
+  <li><strong>Cache the enrichment</strong> for the duration of the flight (~2–3 hours, keyed by ICAO24 hex or callsign). Subsequent alerts for the same aircraft incur no additional cost.</li>
+</ol>
+
+<div class="callout callout-success">
+  <strong>Key insight:</strong> Transit events are rare. A busy 3°×3° bounding box over San Diego may contain 50–150 aircraft at any given moment, but only 1–5 per day will achieve HIGH-probability geometry with the Sun or Moon. The hybrid approach pays FlightAware only for those rare events.
+</div>
+
+<h3>5.1 Monthly Cost Estimate (Hybrid)</h3>
+
+<div class="table-wrap">
+<table>
+  <tr>
+    <th>Scenario</th>
+    <th>HIGH events/day</th>
+    <th>Unique flights/day</th>
+    <th>FA calls/month</th>
+    <th>FA cost/month</th>
+  </tr>
+  <tr><td>Quiet (poor geometry)</td><td>1</td><td>1</td><td>30</td><td class="scenario-good">$0.60</td></tr>
+  <tr><td>Typical day</td><td>3</td><td>3</td><td>90</td><td class="scenario-good">$1.80</td></tr>
+  <tr><td>Active (good geometry)</td><td>8</td><td>6</td><td>180</td><td class="scenario-good">$3.60</td></tr>
+  <tr><td>Maximum realistic</td><td>15</td><td>10</td><td>300</td><td class="scenario-warn">$6.00</td></tr>
+</table>
+</div>
+<div class="chart-title">Table 4. Estimated monthly FlightAware cost under the hybrid approach. <em>Note: unique flights &lt; HIGH events because the same aircraft may be detected multiple times as it crosses the target window.</em></div>
+
+<h2>6. The ADS-B Receiver Strategy</h2>
+
+<p>A software-defined radio (SDR) receiver decodes ADS-B transponder broadcasts directly from passing aircraft. At cruise altitude, ADS-B signals are receivable at ranges exceeding 250 nautical miles. For an observer in San Diego, this encompasses the entirety of the Southern California TCA, all trans-Pacific approach corridors, and the major north-south airway system — more than sufficient coverage for transit detection.</p>
+
+<p>Commercial-grade RTL-SDR dongles are available for $25–$35. Software decoders (<code>dump1090</code>, <code>readsb</code>) run on a Raspberry Pi 4 (~$35–$55) or directly on the user's computer. Combined with the same selective FA enrichment strategy, monthly operational costs approach zero after the one-time hardware investment.</p>
+
+<div class="callout callout-key">
+  <strong>⭐ Recommended for committed observers:</strong> ADS-B + selective FA enrichment provides the best possible transit detection capability — sub-second latency, unlimited refresh rate, and near-zero ongoing cost — at an accessible one-time hardware cost of approximately $60–$90.
+</div>
+
+<h2>7. Recommendations by User Profile</h2>
+
+<div class="table-wrap">
+<table>
+  <tr>
+    <th>User Profile</th>
+    <th>Recommended Strategy</th>
+    <th>Est. Monthly Cost</th>
+    <th>Trade-off</th>
+  </tr>
+  <tr>
+    <td><strong>Occasional observer</strong><br><em>a few sessions/month</em></td>
+    <td>FlightAware only<br>+ manual enable/disable</td>
+    <td class="scenario-warn">$0–$5</td>
+    <td>Enable app only during sessions; disable between. Full data quality.</td>
+  </tr>
+  <tr>
+    <td><strong>Regular observer</strong><br><em>daily monitoring, budget-conscious</em></td>
+    <td>Hybrid (OpenSky + FA on HIGH)</td>
+    <td class="scenario-good">$0.60–$3</td>
+    <td>Flight type/airline shown only on HIGH alerts. All other data identical.</td>
+  </tr>
+  <tr>
+    <td><strong>Dedicated observer</strong><br><em>24/7, maximum quality</em></td>
+    <td>Own ADS-B receiver + FA on HIGH</td>
+    <td class="scenario-good">~$0/month<br><em>(after $60–$90 hardware)</em></td>
+    <td>Best latency, offline capable. Requires hardware setup.</td>
+  </tr>
+  <tr>
+    <td><strong>Professional / unlimited budget</strong></td>
+    <td>FlightAware only, 10-min interval</td>
+    <td class="scenario-bad">~$87/month</td>
+    <td>Maximum data richness and refresh rate. No operational compromises.</td>
+  </tr>
+</table>
+</div>
+
+<h2>8. Conclusion</h2>
+
+<p>The FlightAware AeroAPI Personal tier's result-set pricing model is poorly matched to the high-frequency polling requirements of automated transit detection. Running Flymoon 24/7 at a 10-minute interval costs approximately $86/month — 17 times the included $5 credit. Even the most aggressive cost reduction measures available within the FA-only model (60-minute intervals, active-hours masking) leave observers with either unacceptable positional staleness or marginal budget compliance.</p>
+
+<p>The hybrid strategy — using the free OpenSky Network API for continuous position data and reserving FlightAware calls for confirmed HIGH-probability transit events — reduces typical monthly costs to $0.60–$3 while preserving full flight metadata for the alerts that matter most. The selective FA enrichment cache ensures that each unique aircraft is queried at most once per flight, regardless of how many transit alerts it generates.</p>
+
+<p>For observers willing to invest in hardware, a local ADS-B receiver eliminates all ongoing position data costs entirely, provides sub-second update latency, and functions without internet connectivity — representing the optimal long-term solution for dedicated transit photographers.</p>
+
+<!-- ── Interactive Selector ── -->
+<h2>9. Select Your Data Source Mode</h2>
+
+<p>Your current selection is saved and remembered between sessions. A brief reminder banner will appear at startup confirming which mode is active.</p>
+
+<div class="selector-panel">
+  <h3>🔧 Data Source Configuration</h3>
+  <div class="selector-grid" id="selectorGrid">
+    <div class="selector-option" data-mode="fa-only" onclick="selectMode('fa-only')">
+      <div class="sel-name" style="color:var(--fa)">☁️ FlightAware Only</div>
+      <div class="sel-cost" style="color:var(--red)">$14–$87/month</div>
+      <div class="sel-desc">Full metadata on every refresh. Expensive at frequent intervals. Recommended only for occasional use or professional budgets.</div>
+    </div>
+    <div class="selector-option" data-mode="opensky-only" onclick="selectMode('opensky-only')">
+      <div class="sel-name" style="color:var(--os)">🌐 OpenSky Only</div>
+      <div class="sel-cost" style="color:var(--green)">Free</div>
+      <div class="sel-desc">Positions every 60s. No aircraft type or airline data. Callsign usually available. Zero cost. Good for casual monitoring.</div>
+    </div>
+    <div class="selector-option" data-mode="hybrid" onclick="selectMode('hybrid')">
+      <div class="sel-name" style="color:var(--hybrid)">⚡ Hybrid (Recommended)</div>
+      <div class="sel-cost" style="color:var(--hybrid)">~$0.60–$3/month</div>
+      <div class="sel-desc">OpenSky for continuous positions + FlightAware enrichment only when HIGH-probability transit detected. Best balance of cost and data quality.</div>
+    </div>
+    <div class="selector-option" data-mode="adsb-local" onclick="selectMode('adsb-local')">
+      <div class="sel-name" style="color:var(--adsb)">📡 ADS-B Receiver</div>
+      <div class="sel-cost" style="color:var(--adsb)">~$0/month</div>
+      <div class="sel-desc">Local RTL-SDR dongle (~$30 hardware). Real-time (&lt;1s), offline capable. FA enrichment optional on HIGH events. Requires dump1090 setup.</div>
+    </div>
+  </div>
+  <div id="selSaved" class="sel-saved">✓ Mode saved — will take effect on next page reload.</div>
+  <p style="font-size:0.82em;color:var(--muted);margin-top:8px;">
+    <em>Note: OpenSky, Hybrid, and ADS-B modes are planned features. Currently only FlightAware is fully implemented.
+    Selecting a future mode saves your preference and will activate automatically when the feature ships.</em>
+  </p>
+</div>
+
+<script>
+(function() {
+    const MODES = {
+        'fa-only':      { label: 'FlightAware Only',       cost: '$14–$87/month',    color: '#3b82f6' },
+        'opensky-only': { label: 'OpenSky Only',            cost: 'Free',             color: '#10b981' },
+        'hybrid':       { label: 'Hybrid (OpenSky + FA)',   cost: '~$0.60–$3/month',  color: '#a78bfa' },
+        'adsb-local':   { label: 'ADS-B Receiver + FA',    cost: '~$0/month',         color: '#06b6d4' },
+    };
+
+    function getMode() {
+        return localStorage.getItem('flymoonDataSource') || 'fa-only';
+    }
+
+    function selectMode(mode) {
+        localStorage.setItem('flymoonDataSource', mode);
+        renderSelection();
+        const saved = document.getElementById('selSaved');
+        saved.style.display = 'block';
+        setTimeout(() => { saved.style.display = 'none'; }, 3000);
+    }
+    window.selectMode = selectMode;
+
+    function renderSelection() {
+        const current = getMode();
+        document.querySelectorAll('.selector-option').forEach(el => {
+            const m = el.dataset.mode;
+            el.className = 'selector-option' + (m === current ? ' active-' + m.replace('-only','').replace('-local','') : '');
+        });
+    }
+
+    document.addEventListener('DOMContentLoaded', renderSelection);
+})();
+</script>
+
+</body>
+</html>

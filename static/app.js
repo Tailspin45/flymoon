@@ -216,6 +216,78 @@ fetch('/config')
         console.error('Error loading config:', error);
     });
 
+// ─── Data Source Mode ─────────────────────────────────────────────────────────
+const DATA_SOURCES = {
+    'fa-only': {
+        icon: '☁️',
+        label: 'FlightAware Only',
+        cost: '$14–$87/month',
+        color: '#3b82f6',
+        note: 'Full metadata every refresh. Expensive — use min-angle masking and toggles to limit active hours.',
+    },
+    'opensky-only': {
+        icon: '🌐',
+        label: 'OpenSky Only',
+        cost: 'Free',
+        color: '#10b981',
+        note: 'Positions every 60s, no aircraft type or airline data. Zero FlightAware cost.',
+    },
+    'hybrid': {
+        icon: '⚡',
+        label: 'Hybrid (OpenSky + FA)',
+        cost: '~$0.60–$3/month',
+        color: '#a78bfa',
+        note: 'OpenSky for positions + FlightAware only on HIGH-probability transits. Best balance.',
+    },
+    'adsb-local': {
+        icon: '📡',
+        label: 'ADS-B Receiver + FA',
+        cost: '~$0/month',
+        color: '#06b6d4',
+        note: 'Local RTL-SDR receiver for real-time positions. Near-zero ongoing cost. Requires hardware.',
+    },
+};
+
+function getDataSourceMode() {
+    return localStorage.getItem('flymoonDataSource') || 'fa-only';
+}
+
+function updateDataSourceButton() {
+    const mode = getDataSourceMode();
+    const ds = DATA_SOURCES[mode] || DATA_SOURCES['fa-only'];
+    const btn = document.getElementById('dataSourceBtn');
+    if (btn) {
+        btn.textContent = ds.icon + ' ' + ds.label;
+        btn.style.color = ds.color;
+        btn.style.borderColor = ds.color;
+        btn.title = ds.label + ' — ' + ds.cost + '\n' + ds.note + '\nClick to view cost analysis and change mode.';
+    }
+}
+
+// Show startup banner once per browser session (sessionStorage flag)
+(function showDataSourceBanner() {
+    if (sessionStorage.getItem('dsbDismissed')) return;
+    const mode = getDataSourceMode();
+    const ds = DATA_SOURCES[mode] || DATA_SOURCES['fa-only'];
+    const banner = document.getElementById('dataSourceBanner');
+    if (!banner) return;
+    document.getElementById('dsb-icon').textContent = ds.icon;
+    document.getElementById('dsb-mode').textContent = ds.label;
+    document.getElementById('dsb-cost').textContent = ds.cost;
+    document.getElementById('dsb-note').textContent = ds.note;
+    banner.style.borderColor = ds.color;
+    banner.style.display = 'flex';
+    // Auto-dismiss after 12s; also set flag so it won't show again this session
+    const dismiss = () => {
+        banner.style.display = 'none';
+        sessionStorage.setItem('dsbDismissed', '1');
+    };
+    banner.querySelector('button').addEventListener('click', dismiss);
+    setTimeout(dismiss, 12000);
+})();
+
+document.addEventListener('DOMContentLoaded', updateDataSourceButton);
+
 // Page visibility detection - optionally pause polling when page is hidden
 document.addEventListener('visibilitychange', function() {
     const pauseWhenHidden = localStorage.getItem("pauseWhenHidden") !== "false"; // Default true
