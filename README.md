@@ -261,9 +261,28 @@ Contributions welcome! Please open an issue or pull request for:
 
 **Share Your Transits!** Post your transit photos in [this issue](https://github.com/dbetm/flymoon/issues/21)
 
-## 📝 Credits
+## 📝 Credits & Attribution
 
 Created with contributions from the Flymoon community. Special thanks to all contributors and transit photographers!
+
+### Open-Source Libraries & Services
+
+| Component | Project | License |
+|-----------|---------|---------|
+| Interactive map | [Leaflet 1.9.4](https://leafletjs.com) © 2010–2023 Vladimir Agafonkin | BSD 2-Clause |
+| Bounding-box drawing | [Leaflet.Editable](https://github.com/Leaflet/Leaflet.editable) © Yoann Aubineau | MIT |
+| Traffic heatmap | [Leaflet.heat](https://github.com/Leaflet/Leaflet.heat) © 2014 Vladimir Agafonkin | MIT |
+| Celestial calculations | [Skyfield 1.49](https://rhodesmill.org/skyfield/) © Brandon Rhodes | MIT |
+| Web framework | [Flask 3.0.3](https://flask.palletsprojects.com) © Pallets | BSD 3-Clause |
+| HTTP client | [Requests 2.32](https://requests.readthedocs.io) © Kenneth Reitz | Apache 2.0 |
+| Telegram alerts | [python-telegram-bot 21.0](https://python-telegram-bot.org) © Leandro Toledo | LGPLv3 |
+| Environment config | [python-dotenv 1.0](https://github.com/theskumar/python-dotenv) © Saurabh Kumar | BSD 3-Clause |
+| Timezone detection | [tzlocal 5.2](https://github.com/regebro/tzlocal) © Lennart Regebro | MIT |
+| JPL Ephemeris | [DE421](https://naif.jpl.nasa.gov/pub/naif/generic_kernels/spk/planets/) — NASA/JPL | Public Domain |
+| Aviation charts overlay | [OpenAIP](https://www.openaip.net) | CC BY-NC-SA 4.0 |
+| Free flight positions | [OpenSky Network](https://opensky-network.org) (planned hybrid mode) | [Terms of Use](https://opensky-network.org/about/terms-of-use) |
+
+See [ATTRIBUTION.md](ATTRIBUTION.md) for full license texts and acknowledgements.
 
 ## 📄 License
 
