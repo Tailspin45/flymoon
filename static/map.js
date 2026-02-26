@@ -1120,22 +1120,15 @@ function updateMapVisualization(data, observerLat, observerLon, observerElev, is
         );
     }
 
-    // Update azimuth arrows - one for each trackable target
+    // Update azimuth arrows — show for any target above the horizon,
+    // regardless of whether transit checking is active for that target.
     clearAzimuthArrows();
-    if (data.targetCoordinates && data.trackingTargets) {
-        console.log('Observer position for arrows:', observerLat, observerLon);
-        console.log('Observer marker position:', observerMarker ? observerMarker.getLatLng() : 'no marker');
-        // Show arrow for each target that is currently being tracked (above horizon)
-        data.trackingTargets.forEach(targetName => {
-            const coords = data.targetCoordinates[targetName];
-            if (coords && coords.azimuthal !== undefined && coords.altitude !== undefined) {
-                console.log(`Creating arrow for ${targetName} with azimuth ${coords.azimuthal}`);
+    if (data.targetCoordinates) {
+        Object.entries(data.targetCoordinates).forEach(([targetName, coords]) => {
+            if (coords && coords.azimuthal !== undefined && coords.altitude !== undefined && coords.altitude > 0) {
                 updateAzimuthArrow(observerLat, observerLon, coords.azimuthal, coords.altitude, targetName);
             }
         });
-    } else if (data.targetCoordinates && data.targetCoordinates.azimuthal !== undefined) {
-        // Single target mode (legacy)
-        updateAzimuthArrow(observerLat, observerLon, data.targetCoordinates.azimuthal, data.targetCoordinates.altitude || 0, target);
     }
 
     // Update aircraft markers (always call to clear stale markers even if empty)

@@ -341,7 +341,7 @@ def get_all_flights():
             }
         else:
             _best_alt = max((c.get("altitude", 0) for c in target_coordinates.values()), default=0)
-            _best_az  = next((c.get("azimuth", 0) for c in target_coordinates.values()
+            _best_az  = next((c.get("azimuthal", 0) for c in target_coordinates.values()
                               if c.get("altitude", 0) > 0), 0.0)
             _cb = transit_corridor_bbox(
                 obs_lat=latitude, obs_lon=longitude,
