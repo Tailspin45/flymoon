@@ -107,7 +107,7 @@ def _parse_opensky_flight(callsign: str, os_data: dict) -> dict:
         "elevation":         float(alt_m),
         "elevation_feet":    int(alt_m * 3.28084),
         "elevation_change":  elev_change,
-        "position_source":   "opensky",
+        "position_source":   os_data.get("position_source", "opensky"),
         "position_age_s":    (
             round(_time.time() - os_data["last_contact"], 1)
             if os_data.get("last_contact") else None
@@ -118,6 +118,7 @@ def _parse_opensky_flight(callsign: str, os_data: dict) -> dict:
         "spi":               os_data.get("spi", False),
         "on_ground":         os_data.get("on_ground", False),
         "category":          os_data.get("category"),
+        "origin_country":    os_data.get("origin_country"),
     }
 from src.position import (
     AreaBoundingBox,
@@ -361,14 +362,13 @@ def check_transit(
                     "squawk": flight.get("squawk"),
                     "on_ground": flight.get("on_ground", False),
                     "icao24": flight.get("icao24", ""),
+                    "origin_country": flight.get("origin_country"),
                     "direction": flight.get("direction", 0),
                     "waypoints": flight.get("waypoints", []),
                     "position_source": flight.get("position_source", "flightaware"),
                     "position_age_s": flight.get("position_age_s"),
                 }
         update_response = False
-
-    if response:
         return response
 
     # Return closest approach data even if threshold not met
@@ -393,6 +393,7 @@ def check_transit(
         "squawk": flight.get("squawk"),
         "on_ground": flight.get("on_ground", False),
         "icao24": flight.get("icao24", ""),
+        "origin_country": flight.get("origin_country"),
         "direction": flight.get("direction", 0),
         "waypoints": flight.get("waypoints", []),
         "position_source": flight.get("position_source", "flightaware"),
@@ -681,6 +682,7 @@ def get_transits(
                 "squawk":            f.get("squawk"),
                 "on_ground":         f.get("on_ground", False),
                 "icao24":            f.get("icao24", ""),
+                "origin_country":    f.get("origin_country"),
                 "waypoints":         f.get("waypoints", []),
                 "position_source":   f.get("position_source", "flightaware"),
                 "position_age_s":    f.get("position_age_s"),

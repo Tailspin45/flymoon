@@ -419,7 +419,9 @@ function renderRichFlightRow(item, bodyTable) {
     // Col 4 — Aircraft (callsign + type)
     const acCell = document.createElement('td');
     const type = (item.aircraft_type && item.aircraft_type !== 'N/A') ? item.aircraft_type : '';
-    acCell.innerHTML = `<strong style="color:#e0e0e0">${item.id}</strong>${type ? `<br><span style="font-size:0.78em;color:#888">${type}</span>` : ''}`;
+    const country = item.origin_country || '';
+    const acSub = [type, country].filter(Boolean).map(t => `<span style="font-size:0.78em;color:#888">${t}</span>`).join(' ');
+    acCell.innerHTML = `<strong style="color:#e0e0e0">${item.id}</strong>${acSub ? `<br>${acSub}` : ''}`;
     row.appendChild(acCell);
 
     // Col 5 — Category (text only, no emoji; blank for 0/1/13 = no useful info)
@@ -514,12 +516,13 @@ function renderRichFlightRow(item, bodyTable) {
     const srcCell = document.createElement('td');
     srcCell.style.whiteSpace = 'nowrap';
     const srcMap = {
-        'opensky':     { label: 'OS',    color: '#4caf50', title: 'OpenSky' },
-        'flightaware': { label: 'FA',    color: '#5b9bd5', title: 'FlightAware' },
-        'adsb':        { label: 'ADS-B', color: '#00e5ff', title: 'Direct ADS-B' },
-        'mlat':        { label: 'MLAT',  color: '#ffeb3b', title: 'Multilateration' },
-        'flarm':       { label: 'FLARM', color: '#66bb6a', title: 'FLARM' },
-        'track':       { label: 'TRK',   color: '#2196f3', title: 'Track-derived' },
+        'opensky':     { label: 'OS',      color: '#4caf50', title: 'OpenSky' },
+        'flightaware': { label: 'FA',      color: '#5b9bd5', title: 'FlightAware' },
+        'adsb':        { label: 'ADS-B',   color: '#00e5ff', title: 'Direct ADS-B' },
+        'mlat':        { label: 'MLAT',    color: '#ffeb3b', title: 'Multilateration' },
+        'flarm':       { label: 'FLARM',   color: '#66bb6a', title: 'FLARM' },
+        'asterix':     { label: 'ASTERIX', color: '#ce93d8', title: 'ASTERIX surveillance' },
+        'track':       { label: 'TRK',     color: '#2196f3', title: 'Track-derived' },
     };
     const src = (item.position_source || 'flightaware').toLowerCase();
     const si = srcMap[src] || { label: src.toUpperCase(), color: '#888', title: src };
@@ -792,10 +795,13 @@ function updateFlightTableFull(flights) {
         // Update source badge (cell 16) if position_source changed (e.g. OS→ADS-B)
         if (flight.position_source && cells[16]) {
             const srcMap = {
-                "opensky":     { label: "OS",    color: "#4caf50", title: "OpenSky (~10s latency)" },
-                "flightaware": { label: "FA",    color: "#888",    title: "FlightAware (60–300s latency)" },
-                "track":       { label: "TRK",   color: "#2196f3", title: "Track-derived velocity" },
-                "adsb":        { label: "ADS-B", color: "#00e5ff", title: "Direct ADS-B (<5s latency)" },
+                "opensky":     { label: "OS",      color: "#4caf50", title: "OpenSky (~10s latency)" },
+                "flightaware": { label: "FA",       color: "#888",    title: "FlightAware (60–300s latency)" },
+                "track":       { label: "TRK",      color: "#2196f3", title: "Track-derived velocity" },
+                "adsb":        { label: "ADS-B",    color: "#00e5ff", title: "Direct ADS-B (<5s latency)" },
+                "mlat":        { label: "MLAT",     color: "#ffeb3b", title: "Multilateration" },
+                "flarm":       { label: "FLARM",    color: "#66bb6a", title: "FLARM" },
+                "asterix":     { label: "ASTERIX",  color: "#ce93d8", title: "ASTERIX surveillance" },
             };
             const si = srcMap[flight.position_source] || { label: flight.position_source.toUpperCase(), color: "#888", title: flight.position_source };
             const age = flight.position_age_s != null ? ` (${flight.position_age_s}s)` : "";
@@ -2183,10 +2189,13 @@ function fetchFlights() {
             const src = item["position_source"] || "fa";
             const srcAge = item["position_age_s"];
             const srcMap = {
-                "opensky":      { label: "OS",    color: "#4caf50", title: "OpenSky (~10s latency)" },
-                "flightaware":  { label: "FA",    color: "#888",    title: "FlightAware (60–300s latency)" },
-                "track":        { label: "TRK",   color: "#2196f3", title: "Track-derived velocity" },
-                "adsb":         { label: "ADS-B", color: "#00e5ff", title: "Direct ADS-B (<5s latency)" },
+                "opensky":      { label: "OS",      color: "#4caf50", title: "OpenSky (~10s latency)" },
+                "flightaware":  { label: "FA",       color: "#888",    title: "FlightAware (60–300s latency)" },
+                "track":        { label: "TRK",      color: "#2196f3", title: "Track-derived velocity" },
+                "adsb":         { label: "ADS-B",    color: "#00e5ff", title: "Direct ADS-B (<5s latency)" },
+                "mlat":         { label: "MLAT",     color: "#ffeb3b", title: "Multilateration" },
+                "flarm":        { label: "FLARM",    color: "#66bb6a", title: "FLARM" },
+                "asterix":      { label: "ASTERIX",  color: "#ce93d8", title: "ASTERIX surveillance" },
             };
             const srcInfo = srcMap[src] || { label: src.toUpperCase(), color: "#888", title: src };
             const ageStr = srcAge != null ? ` (${srcAge}s)` : "";

@@ -45,6 +45,9 @@ REQUEST_TIMEOUT: int = 5
 _cache: Dict = {}           # {bbox_key: {"ts": float, "data": dict}}
 _backoff_until: float = 0   # epoch time until which OpenSky requests are paused
 
+# OpenSky position_source integer → source label string (index 16 in state vector)
+_POS_SOURCE: Dict[int, str] = {0: "adsb", 1: "asterix", 2: "mlat", 3: "flarm"}
+
 # OAuth2 token cache
 _token: Optional[str] = None
 _token_expires_at: float = 0
@@ -231,7 +234,11 @@ def fetch_opensky_positions(
             "squawk":           s[14] if len(s) > 14 else None,
             "spi":              bool(s[15]) if len(s) > 15 else False,
             "category":         int(s[17]) if len(s) > 17 and s[17] is not None else None,
-            "source":           "opensky",
+            "origin_country":   s[2] if len(s) > 2 else None,
+            "position_source":  _POS_SOURCE.get(
+                int(s[16]) if len(s) > 16 and s[16] is not None else -1,
+                "opensky"
+            ),
         }
 
     logger.info(f"OpenSky: {len(result)} aircraft in bbox (of {len(states)} states)")
