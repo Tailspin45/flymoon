@@ -422,12 +422,13 @@ function renderRichFlightRow(item, bodyTable) {
     acCell.innerHTML = `<strong style="color:#e0e0e0">${item.id}</strong>${type ? `<br><span style="font-size:0.78em;color:#888">${type}</span>` : ''}`;
     row.appendChild(acCell);
 
-    // Col 5 — Category
+    // Col 5 — Category (text only, no emoji; blank for 0/1/13 = no useful info)
     const catCell = document.createElement('td');
     catCell.style.whiteSpace = 'nowrap';
     const cat = AIRCRAFT_CATEGORY[item.category] || AIRCRAFT_CATEGORY[0];
-    catCell.innerHTML = item.category != null && item.category > 1
-        ? `<span title="${cat.desc || cat.label}">${cat.icon}${cat.label ? ` <span style="font-size:0.75em;color:#aaa">${cat.label}</span>` : ''}</span>`
+    const catBlank = item.category == null || item.category <= 1 || item.category === 13;
+    catCell.innerHTML = !catBlank
+        ? `<span title="${cat.desc}" style="font-size:0.85em;color:#ccc">${cat.label}</span>`
         : '<span style="color:#444">—</span>';
     row.appendChild(catCell);
 
