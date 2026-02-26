@@ -267,13 +267,17 @@ def generate_test_data(scenario_name="dual_tracking", custom_config=None):
 
     # Generate flights for Moon transits (if moon is visible)
     if moon_alt >= 15:
+        # Perpendicular heading so aircraft sweeps across the moon's disc as seen
+        # from the observer, keeping az_diff minimal at the closest approach point.
+        perp_moon = int((moon_az + 90) % 360)
+
         # MOON HIGH
         alt_ft = 35000
         lat, lon = position_at_azimuth(moon_az, moon_alt + HIGH_OFFSET, alt_ft)
         flights.append(generate_flight_data(
             "MOON_HIGH", "KLAX", "Los Angeles International",
             "KSAN", "San Diego International",
-            lat, lon, alt_ft, 450, random.randint(0, 360)
+            lat, lon, alt_ft, 450, perp_moon
         ))
 
         # MOON MEDIUM
@@ -282,7 +286,7 @@ def generate_test_data(scenario_name="dual_tracking", custom_config=None):
         flights.append(generate_flight_data(
             "MOON_MED", "KPHX", "Phoenix Sky Harbor",
             "KSAN", "San Diego International",
-            lat, lon, alt_ft, 460, random.randint(0, 360)
+            lat, lon, alt_ft, 460, perp_moon
         ))
 
         # MOON LOW
@@ -291,18 +295,22 @@ def generate_test_data(scenario_name="dual_tracking", custom_config=None):
         flights.append(generate_flight_data(
             "MOON_LOW", "KSFO", "San Francisco International",
             "KSAN", "San Diego International",
-            lat, lon, alt_ft, 480, random.randint(0, 360)
+            lat, lon, alt_ft, 480, perp_moon
         ))
 
     # Generate flights for Sun transits (if sun is visible)
     if sun_alt >= 15:
+        # Perpendicular heading so aircraft sweeps across the sun's disc as seen
+        # from the observer, keeping az_diff minimal at the closest approach point.
+        perp_sun = int((sun_az + 90) % 360)
+
         # SUN HIGH
         alt_ft = 34000
         lat, lon = position_at_azimuth(sun_az, sun_alt + HIGH_OFFSET, alt_ft)
         flights.append(generate_flight_data(
             "SUN_HIGH", "KLAS", "Las Vegas McCarran",
             "KSAN", "San Diego International",
-            lat, lon, alt_ft, 440, random.randint(0, 360)
+            lat, lon, alt_ft, 440, perp_sun
         ))
 
         # SUN MEDIUM
@@ -311,7 +319,7 @@ def generate_test_data(scenario_name="dual_tracking", custom_config=None):
         flights.append(generate_flight_data(
             "SUN_MED", "KDEN", "Denver International",
             "KSAN", "San Diego International",
-            lat, lon, alt_ft, 420, random.randint(0, 360)
+            lat, lon, alt_ft, 420, perp_sun
         ))
 
         # SUN LOW
@@ -320,7 +328,7 @@ def generate_test_data(scenario_name="dual_tracking", custom_config=None):
         flights.append(generate_flight_data(
             "SUN_LOW", "KOAK", "Oakland International",
             "KSAN", "San Diego International",
-            lat, lon, alt_ft, 470, random.randint(0, 360)
+            lat, lon, alt_ft, 470, perp_sun
         ))
 
     # NONE probability - far from both targets (>20° offset)

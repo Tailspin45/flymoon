@@ -65,17 +65,19 @@ WINDOW = list(np.arange(0, TOP_MINUTE, INTERVAL_IN_SECS / NUM_SECONDS_PER_MIN))
 section("1 — Classification thresholds (get_possibility_level)")
 # Verifies boundary conditions for all four probability levels.
 cases1 = [
-    (0.0,  0.0,  3, "Perfect alignment"),
-    (0.5,  0.5,  3, "0.71° diagonal — inside disk"),
-    (1.0,  1.0,  3, "Both exactly at HIGH boundary"),
-    (1.01, 1.01, 2, "Just outside HIGH"),
-    (2.0,  2.0,  2, "Both exactly at MEDIUM boundary"),
-    (2.01, 2.01, 1, "Just outside MEDIUM"),
-    (3.0,  3.0,  1, "Both exactly at LOW boundary"),
-    (3.01, 3.01, 0, "Just outside LOW"),
-    (10.0, 10.0, 0, "Far away"),
-    (0.5,  1.5,  2, "alt HIGH, az MEDIUM → MEDIUM (max wins)"),
-    (1.0,  3.0,  1, "alt HIGH, az LOW → LOW (az dominates)"),
+    # All at target_alt=45°; σ = sqrt(alt² + (az·cos45°)²).
+    # Thresholds: HIGH≤1.5°, MEDIUM≤2.5°, LOW≤3.0°, UNLIKELY>3.0°
+    (0.0,  0.0,  3, "Perfect alignment → σ=0°"),
+    (0.5,  0.5,  3, "σ≈0.86° → HIGH"),
+    (1.0,  1.0,  3, "σ≈1.22° → HIGH (cosine compresses az)"),
+    (1.01, 1.01, 3, "σ≈1.24° → still HIGH"),
+    (2.0,  2.0,  2, "σ≈2.45° → MEDIUM"),
+    (2.01, 2.01, 2, "σ≈2.46° → still MEDIUM"),
+    (3.0,  3.0,  0, "σ≈3.67° → UNLIKELY (cosine pushes over 3.0°)"),
+    (3.01, 3.01, 0, "Just outside LOW → UNLIKELY"),
+    (10.0, 10.0, 0, "Far away → UNLIKELY"),
+    (0.5,  1.5,  3, "σ≈1.17° → HIGH (az compressed by cos45°)"),
+    (1.0,  3.0,  2, "σ≈2.35° → MEDIUM (az compressed by cos45°)"),
 ]
 for alt, az, exp, desc in cases1:
     got = get_possibility_level(45.0, alt, az)
