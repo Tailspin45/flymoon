@@ -289,27 +289,27 @@ document.addEventListener('DOMContentLoaded', updateDataSourceButton);
 // ─── Rich Table ───────────────────────────────────────────────────────────────
 
 const AIRCRAFT_CATEGORY = {
-    0:  { icon: '❓', label: '' },
-    1:  { icon: '✈️', label: '' },
-    2:  { icon: '🛩️', label: 'Light' },
-    3:  { icon: '✈️', label: 'Small' },
-    4:  { icon: '✈️', label: 'Large' },
-    5:  { icon: '✈️', label: 'HVL' },
-    6:  { icon: '✈️', label: 'Heavy' },
-    7:  { icon: '⚡', label: 'Hi-Perf' },
-    8:  { icon: '🚁', label: 'Rotor' },
-    9:  { icon: '⛵', label: 'Glider' },
-    10: { icon: '🎈', label: 'LTA' },
-    11: { icon: '🪂', label: 'Skydiver' },
-    12: { icon: '🛩️', label: 'Ultralight' },
-    13: { icon: '❓', label: '' },
-    14: { icon: '🛸', label: 'UAV' },
-    15: { icon: '🚀', label: 'Space' },
-    16: { icon: '🚨', label: 'Emrg Veh' },
-    17: { icon: '🚐', label: 'Svc Veh' },
-    18: { icon: '🎯', label: 'Obstacle' },
-    19: { icon: '🎯', label: 'Cluster' },
-    20: { icon: '⎯',  label: 'Line Obs' },
+    0:  { icon: '❓', label: 'Unknown',       desc: 'No information at all' },
+    1:  { icon: '✈️', label: 'No Cat Info',   desc: 'No ADS-B emitter category information' },
+    2:  { icon: '🛩️', label: 'Light',         desc: 'Light (< 15,500 lbs)' },
+    3:  { icon: '✈️', label: 'Small',         desc: 'Small (15,500 – 75,000 lbs)' },
+    4:  { icon: '✈️', label: 'Large',         desc: 'Large (75,000 – 300,000 lbs)' },
+    5:  { icon: '✈️', label: 'Hi-Vortex',     desc: 'High Vortex Large (e.g. B-757)' },
+    6:  { icon: '✈️', label: 'Heavy',         desc: 'Heavy (> 300,000 lbs)' },
+    7:  { icon: '⚡', label: 'Hi-Perf',       desc: 'High Performance (> 5g, > 400 kts)' },
+    8:  { icon: '🚁', label: 'Rotorcraft',    desc: 'Rotorcraft' },
+    9:  { icon: '⛵', label: 'Glider',        desc: 'Glider / sailplane' },
+    10: { icon: '🎈', label: 'Lighter-Air',   desc: 'Lighter-than-air' },
+    11: { icon: '🪂', label: 'Skydiver',      desc: 'Parachutist / skydiver' },
+    12: { icon: '🛩️', label: 'Ultralight',    desc: 'Ultralight / hang-glider / paraglider' },
+    13: { icon: '❓', label: 'Reserved',      desc: 'Reserved' },
+    14: { icon: '🛸', label: 'UAV',           desc: 'Unmanned Aerial Vehicle' },
+    15: { icon: '🚀', label: 'Space',         desc: 'Space / trans-atmospheric vehicle' },
+    16: { icon: '🚨', label: 'Emergency Veh', desc: 'Surface Vehicle – Emergency' },
+    17: { icon: '🚐', label: 'Service Veh',   desc: 'Surface Vehicle – Service' },
+    18: { icon: '🎯', label: 'Obstacle',      desc: 'Point obstacle (incl. tethered balloons)' },
+    19: { icon: '🎯', label: 'Cluster Obs',   desc: 'Cluster obstacle' },
+    20: { icon: '⎯',  label: 'Line Obs',      desc: 'Line obstacle' },
 };
 
 // Category row-tint CSS colours (null = no tint)
@@ -427,7 +427,7 @@ function renderRichFlightRow(item, bodyTable) {
     catCell.style.whiteSpace = 'nowrap';
     const cat = AIRCRAFT_CATEGORY[item.category] || AIRCRAFT_CATEGORY[0];
     catCell.innerHTML = item.category != null
-        ? `<span title="ADS-B category ${item.category}: ${cat.label||'Unknown'}">${cat.icon}${cat.label ? ` <span style="font-size:0.75em;color:#aaa">${cat.label}</span>` : ''}</span>`
+        ? `<span title="${cat.desc || cat.label}">${cat.icon}${cat.label ? ` <span style="font-size:0.75em;color:#aaa">${cat.label}</span>` : ''}</span>`
         : '<span style="color:#444">—</span>';
     row.appendChild(catCell);
 
