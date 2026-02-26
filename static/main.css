@@ -830,6 +830,13 @@ body {
     overflow: hidden;
     text-overflow: ellipsis;
 }
+/* Right-align numeric columns: Alt(6), v/s(7), sky Δ(8), track(9), spd(10), src/age(12) */
+#resultsTableRich th:nth-child(n+6):nth-child(-n+10),
+#resultsTableRich td:nth-child(n+6):nth-child(-n+10),
+#resultsTableRich th:nth-child(12),
+#resultsTableRich td:nth-child(12) {
+    text-align: right;
+}
 
 /* ── Rich table row highlight ── */
 #resultsTableRich tbody tr.selected-row {

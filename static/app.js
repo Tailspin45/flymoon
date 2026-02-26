@@ -487,7 +487,7 @@ function renderRichFlightRow(item, bodyTable) {
     if (item.speed != null && item.speed > 0) {
         const kph = Math.round(item.speed);
         const mph = Math.round(item.speed * 0.621371);
-        spdCell.innerHTML = `${kph}<span style="color:#888;font-size:0.8em">kph</span>/<span style="color:#888;font-size:0.8em">mph</span>${mph}`;
+        spdCell.textContent = `${kph}/${mph}`;
     } else {
         spdCell.innerHTML = '<span style="color:#444">—</span>';
     }
