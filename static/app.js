@@ -2249,6 +2249,9 @@ function fetchFlights() {
         // Hide spinner only after all rendering is complete
         document.getElementById("loadingSpinner").style.display = "none";
         document.getElementById("results").style.display = "block";
+        // Collapse hero image after first data load
+        const hero = document.getElementById("heroImageWrap");
+        if (hero) hero.style.display = "none";
     })
     .catch(error => {
         clearTimeout(fetchTimeout);
