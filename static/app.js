@@ -2249,9 +2249,12 @@ function fetchFlights() {
         // Hide spinner only after all rendering is complete
         document.getElementById("loadingSpinner").style.display = "none";
         document.getElementById("results").style.display = "block";
-        // Collapse hero image after first data load
+        // Slide up hero image after first data load
         const hero = document.getElementById("heroImageWrap");
-        if (hero) hero.style.display = "none";
+        if (hero) {
+            hero.style.opacity = "0";
+            hero.style.maxHeight = "0";
+        }
     })
     .catch(error => {
         clearTimeout(fetchTimeout);

@@ -34,11 +34,11 @@
   <button onclick="dismissTelescopeBanner()" style="margin-left:auto; background:none; border:none; color:#888; cursor:pointer; font-size:1.2em;" title="Dismiss">✕</button>
 </div>
 <div id="mapView">
-    <!-- Hero image — visible on load, hidden after first flight fetch -->
-    <div id="heroImageWrap" style="text-align:center; padding:0; margin:0; line-height:0;">
+    <!-- Hero image — visible on load, slides up after first flight fetch -->
+    <div id="heroImageWrap" style="text-align:center; padding:0; margin:0; line-height:0; overflow:hidden; max-height:280px; transition: max-height 0.6s ease, opacity 0.5s ease; opacity:1;">
         <img src="{{ url_for('static', filename='images/flymoon-hero.jpg') }}"
              alt="Flymoon — Aircraft Transit Prediction"
-             style="width:100%; max-height:260px; object-fit:cover; object-position:center 30%; display:block;" />
+             style="width:100%; max-height:280px; object-fit:cover; object-position:center top; display:block;" />
     </div>
     <div class="header-row">
         <img src="{{ url_for('static', filename='images/logo.svg') }}" alt="Flymoon Transit Tracker" class="logo" />
