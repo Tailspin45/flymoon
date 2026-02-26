@@ -249,7 +249,7 @@ const DATA_SOURCES = {
 };
 
 function getDataSourceMode() {
-    return localStorage.getItem('flymoonDataSource') || 'fa-only';
+    return localStorage.getItem('flymoonDataSource') || 'hybrid';
 }
 
 function updateDataSourceButton() {
@@ -277,13 +277,11 @@ function updateDataSourceButton() {
     document.getElementById('dsb-note').textContent = ds.note;
     banner.style.borderColor = ds.color;
     banner.style.display = 'flex';
-    // Auto-dismiss after 12s; also set flag so it won't show again this session
     const dismiss = () => {
         banner.style.display = 'none';
         sessionStorage.setItem('dsbDismissed', '1');
     };
     banner.querySelector('button').addEventListener('click', dismiss);
-    setTimeout(dismiss, 12000);
 })();
 
 document.addEventListener('DOMContentLoaded', updateDataSourceButton);
@@ -619,7 +617,10 @@ async function softRefresh() {
         return updated;
     });
 
-    // Recalculate transit predictions with updated positions
+    // Recalculate transit predictions with updated positions.
+    // Only send flights that already have some transit potential — UNLIKELY
+    // flights just get position extrapolation on the client, no server round-trip.
+    const recalcFlights = updatedFlights.filter(f => f.is_possible_transit === 1);
     try {
         const latitude = parseFloat(document.getElementById("latitude").value);
         const longitude = parseFloat(document.getElementById("longitude").value);
@@ -635,12 +636,20 @@ async function softRefresh() {
             }
             return;
         }
+
+        if (recalcFlights.length === 0) {
+            // Nothing to recalculate — just update map positions
+            if (mapVisible && typeof updateAircraftMarkers === 'function') {
+                updateAircraftMarkers(updatedFlights, latitude, longitude);
+            }
+            return;
+        }
         
         const response = await fetch('/transits/recalculate', {
             method: 'POST',
             headers: {'Content-Type': 'application/json'},
             body: JSON.stringify({
-                flights: updatedFlights,
+                flights: recalcFlights,
                 latitude: latitude,
                 longitude: longitude,
                 elevation: elevation,
@@ -654,12 +663,18 @@ async function softRefresh() {
             // Update table cells in-place — no scroll save/restore needed
             updateFlightTableFull(recalcData.flights);
             
-            // Update map markers
+            // Merge recalculated transit candidates back into the full flight list
+            // so non-transit aircraft remain visible on the map with updated positions
+            const recalcById = {};
+            recalcData.flights.forEach(f => { recalcById[String(f.id).trim().toUpperCase()] = f; });
+            const mergedFlights = updatedFlights.map(f => recalcById[String(f.id).trim().toUpperCase()] || f);
+
+            // Update map markers (full set including non-transit for display)
             if (mapVisible && typeof updateAircraftMarkers === 'function') {
-                updateAircraftMarkers(recalcData.flights, latitude, longitude);
+                updateAircraftMarkers(mergedFlights, latitude, longitude);
             }
             
-            console.log(`Soft refresh: Updated ${updatedFlights.length} flights with transit recalculation (+${Math.floor(secondsElapsed)}s)`);
+            console.log(`Soft refresh: Recalculated ${recalcFlights.length}/${updatedFlights.length} transit-candidate flights (+${Math.floor(secondsElapsed)}s)`);
         } else {
             // Fallback to position-only update if recalculation fails
             updateFlightTable(updatedFlights);
@@ -789,6 +804,7 @@ function updateFlightTableFull(flights) {
 // State tracking for toggles
 var resultsVisible = false;
 var mapVisible = false;
+var _freshFetchThisSession = false; // true only after a successful API response this page load
 
 // Track mode state
 var trackingFlightId = null;
@@ -1649,8 +1665,8 @@ function go() {
     const cacheValidSeconds = 600; // 10 minutes - matches backend cache
     const secondsSinceUpdate = (Date.now() - window.lastFlightUpdateTime) / 1000;
     
-    // Always show warning if we have recent data
-    if (window.lastFlightUpdateTime > 0 && secondsSinceUpdate < cacheValidSeconds) {
+    // Only warn about cost if a fresh fetch has already succeeded this session (i.e. this is a re-refresh, not the initial load)
+    if (_freshFetchThisSession && window.lastFlightUpdateTime > 0 && secondsSinceUpdate < cacheValidSeconds) {
         const minutesRemaining = Math.ceil((cacheValidSeconds - secondsSinceUpdate) / 60);
         const secondsRemaining = Math.floor(cacheValidSeconds - secondsSinceUpdate);
         
@@ -1823,6 +1839,7 @@ function fetchFlights() {
 
         // Record update time and cache data
         clearErrorBanner();
+        _freshFetchThisSession = true;
         window.lastFlightUpdateTime = Date.now();
         sessionStorage.setItem('lastFlightUpdateTime', String(window.lastFlightUpdateTime));
         lastFlightData = data;
@@ -1943,32 +1960,10 @@ function fetchFlights() {
                 }
             }
         });
-        const uniqueFlights = Object.values(seenFlights);
-        console.log(`Dedupe: ${data.flights.length} flights -> ${uniqueFlights.length} unique`);
-        
-        // Filter flights to only show those within bounding box
-        const filteredFlights = window.lastBoundingBox ? uniqueFlights.filter(flight => {
-            if (!flight.latitude || !flight.longitude) return false;
-            const bbox = window.lastBoundingBox;
-            const inBounds = (
-                flight.latitude >= bbox.latLowerLeft &&
-                flight.latitude <= bbox.latUpperRight &&
-                flight.longitude >= bbox.lonLowerLeft &&
-                flight.longitude <= bbox.lonUpperRight
-            );
-            if (!inBounds) {
-                console.log(`❌ Filtering out ${flight.id} at (${flight.latitude.toFixed(2)}, ${flight.longitude.toFixed(2)}) - outside bbox [${bbox.latLowerLeft.toFixed(2)},${bbox.lonLowerLeft.toFixed(2)} to ${bbox.latUpperRight.toFixed(2)},${bbox.lonUpperRight.toFixed(2)}]`);
-            }
-            return inBounds;
-        }) : uniqueFlights;
-        
-        if (window.lastBoundingBox && filteredFlights.length < uniqueFlights.length) {
-            console.log(`🔍 Bbox filter: ${uniqueFlights.length} flights -> ${filteredFlights.length} in bounds`);
-        } else if (!window.lastBoundingBox) {
-            console.warn('⚠️ No bounding box set - showing all flights');
-        }
-        
-        // Debug: show final dedupe results
+        const filteredFlights = Object.values(seenFlights);
+        console.log(`Dedupe: ${data.flights.length} flights -> ${filteredFlights.length} unique`);
+
+        // Debug: show transit candidates
         filteredFlights.forEach(f => {
             if (f.is_possible_transit) {
                 console.log(`  ${f.id} (${f.target}): level=${f.possibility_level}, is_transit=${f.is_possible_transit}`);
@@ -2008,11 +2003,24 @@ function fetchFlights() {
         // Check for medium/high transits and alert user about filter changes
         checkAndAlertFilterChange(filteredFlights, data.targetCoordinates);
 
+        // Show all flights in the table on hard refresh.
+        // Transit candidates (LOW/MEDIUM/HIGH) get full detail; non-transit rows are static
+        // between refreshes (positions update on the map via soft refresh, not in the table).
+        const tableFlights = filteredFlights;
+        const unlikelyCount = filteredFlights.filter(f => f.is_possible_transit !== 1).length;
+        if (tableFlights.length === 0) {
+            alertNoResults.innerHTML = "No flights in area";
+        } else if (unlikelyCount > 0 && tableFlights.filter(f => f.is_possible_transit === 1).length === 0) {
+            alertNoResults.innerHTML = `${unlikelyCount} flight${unlikelyCount !== 1 ? 's' : ''} in area — none within transit range`;
+        } else if (unlikelyCount > 0) {
+            alertNoResults.innerHTML = `+${unlikelyCount} flight${unlikelyCount !== 1 ? 's' : ''} in area outside transit range`;
+        }
+
         // Build both tables off-DOM using DocumentFragment to avoid per-row reflow
         const classicFrag = document.createDocumentFragment();
         const richFrag = document.createDocumentFragment();
 
-        filteredFlights.forEach(item => {
+        tableFlights.forEach(item => {
             const row = document.createElement('tr');
 
             // Store normalized flight ID, possibility level, and transit time for cross-referencing
@@ -2080,12 +2088,13 @@ function fetchFlights() {
                     val.textContent = value === "N/A" ? "" : value;
                 } else if (column === "origin" || column === "destination") {
                     // Scrunch origin/destination with max-width and ellipsis
-                    val.textContent = value;
+                    const display = (value === "N/A" || value === "N/D") ? "" : value;
+                    val.textContent = display;
                     val.style.maxWidth = "60px";
                     val.style.overflow = "hidden";
                     val.style.textOverflow = "ellipsis";
                     val.style.whiteSpace = "nowrap";
-                    val.title = value;  // Show full name on hover
+                    val.title = display;
                 } else if (column === "speed") {
                     // Show speed in MPH (value is in km/h from backend)
                     val.textContent = Math.round(value / 1.60934);  // Convert km/h to MPH
@@ -2110,10 +2119,10 @@ function fetchFlights() {
                     val.textContent = Math.round(magHeading) + "°";
                     val.title = `True: ${Math.round(trueHeading)}°, Magnetic: ${Math.round(magHeading)}°`;
                 } else if (column === "alt_diff" || column === "az_diff") {
-                    const roundedValue = Math.round(value);
-                    val.textContent = roundedValue + "º";
-                    // Black if within 3°, grey otherwise
-                    if (Math.abs(roundedValue) >= 3) {
+                    const displayValue = value.toFixed(1);
+                    val.textContent = displayValue + "º";
+                    // Grey if >= 3°
+                    if (Math.abs(value) >= 3) {
                         val.style.color = "#888";
                     }
                 } else if (column === "target_alt" || column === "target_az") {
@@ -2132,8 +2141,10 @@ function fetchFlights() {
                         val.style.color = "#888"; // Gray for negative angles
                         val.style.fontStyle = "italic";
                     }
+                } else if (value === "N/A") {
+                    val.textContent = "";
                 } else if (value === "N/D") {
-                    val.textContent = value + " ⚠️";
+                    val.textContent = "";
                 } else {
                     val.textContent = value;
                 }

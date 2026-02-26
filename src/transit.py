@@ -1,6 +1,8 @@
 import os
 import time as _time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timedelta
+from math import cos, radians, sqrt
 from typing import Any, Dict, List, Optional, Tuple
 from zoneinfo import ZoneInfo
 
@@ -46,7 +48,10 @@ def _enrich_from_fa(callsign: str, api_key: str) -> dict:
     now = _time.time()
     cached = _FA_ENRICHMENT_CACHE.get(callsign)
     if cached and (now - cached["ts"]) < _FA_ENRICHMENT_TTL:
-        logger.info(f"[FA-enrich] cache HIT for {callsign}")
+        if cached["data"]:
+            logger.info(f"[FA-enrich] cache HIT for {callsign}")
+        else:
+            logger.debug(f"[FA-enrich] cached miss for {callsign} (VFR/untracked) — skipping FA call")
         return cached["data"]
 
     url = f"https://aeroapi.flightaware.com/aeroapi/flights/{callsign}"
@@ -66,7 +71,12 @@ def _enrich_from_fa(callsign: str, api_key: str) -> dict:
                 _FA_ENRICHMENT_CACHE[callsign] = {"data": data, "ts": now}
                 logger.info(f"[FA-enrich] fetched {callsign}: {data}")
                 return data
-        logger.warning(f"[FA-enrich] HTTP {resp.status_code} for {callsign}")
+            # VFR or untracked — no flight plan on file; cache the miss so we
+            # don't burn another FA result-set on the next transit detection.
+            _FA_ENRICHMENT_CACHE[callsign] = {"data": {}, "ts": now}
+            logger.debug(f"[FA-enrich] no flight records for {callsign} (VFR/untracked) — cached miss")
+        else:
+            logger.warning(f"[FA-enrich] HTTP {resp.status_code} for {callsign}")
     except Exception as exc:
         logger.warning(f"[FA-enrich] exception for {callsign}: {exc}")
     return {}
@@ -112,11 +122,14 @@ from src.position import (
     geographic_to_altaz,
     get_my_pos,
     predict_position,
+    transit_corridor_bbox,
 )
 
 EARTH = ASTRO_EPHEMERIS["earth"]
 
-area_bbox = AreaBoundingBox(
+# Fallback bbox from .env — used only when observer position is missing or
+# the user has explicitly configured a custom bbox in the UI.
+_fallback_bbox = AreaBoundingBox(
     lat_lower_left=float(os.getenv("LAT_LOWER_LEFT", "0")),
     long_lower_left=float(os.getenv("LONG_LOWER_LEFT", "0")),
     lat_upper_right=float(os.getenv("LAT_UPPER_RIGHT", "0")),
@@ -141,34 +154,53 @@ def get_thresholds(altitude: float) -> Tuple[float, float]:
     raise Exception("Given altitude is not valid!")
 
 
+def _angular_separation(alt_diff: float, az_diff: float, target_alt: float) -> float:
+    """Great-circle angular separation in alt-az space.
+
+    Near the zenith, azimuth differences are geometrically compressed
+    (all azimuths converge to a point), so a raw az_diff of 10° at
+    alt=88° is practically meaningless.  Multiplying by cos(alt) corrects
+    for this, giving the true on-sky angle between the two directions.
+
+    Parameters
+    ----------
+    alt_diff  : altitude difference in degrees
+    az_diff   : azimuth difference in degrees
+    target_alt: target altitude in degrees (used as the reference latitude)
+
+    Returns
+    -------
+    Angular separation in degrees.
+    """
+    return sqrt(alt_diff ** 2 + (az_diff * cos(radians(target_alt))) ** 2)
+
+
 def get_possibility_level(
     altitude: float, alt_diff: float, az_diff: float
 ) -> str:
     """
-    Determine transit possibility level based on angular separation.
-    
-    Assumes 1° target size for sun/moon (0.5° actual + 0.5° margin for near misses).
-    Thresholds:
-    - HIGH: ≤1° in both alt and az (direct transit very likely)
-    - MEDIUM: ≤2° in both alt and az (near miss, worth recording)
-    - LOW: ≤3° in both alt and az (possible distant transit)
-    - UNLIKELY: >3° separation
+    Determine transit possibility level based on true angular separation.
+
+    Uses great-circle separation in alt-az space so that azimuth tolerance
+    is automatically reduced near the zenith (where az differences are
+    geometrically meaningless).
+
+    Thresholds (on-sky degrees):
+    - HIGH:   ≤1.5° — direct transit very likely
+    - MEDIUM: ≤2.5° — near miss, worth recording
+    - LOW:    ≤3.0° — possible distant transit
+    - UNLIKELY: >3°
     """
-    possibility_level = PossibilityLevel.UNLIKELY
-    
-    # HIGH: Within 1° - direct transit very likely
-    if alt_diff <= 1.0 and az_diff <= 1.0:
-        possibility_level = PossibilityLevel.HIGH
-    
-    # MEDIUM: Within 2° - near miss worth recording
-    elif alt_diff <= 2.0 and az_diff <= 2.0:
-        possibility_level = PossibilityLevel.MEDIUM
-    
-    # LOW: Within 3° - possible distant transit
-    elif alt_diff <= 3.0 and az_diff <= 3.0:
-        possibility_level = PossibilityLevel.LOW
-    
-    return possibility_level.value
+    sep = _angular_separation(alt_diff, az_diff, altitude)
+
+    if sep <= 1.5:
+        return PossibilityLevel.HIGH.value
+    elif sep <= 2.5:
+        return PossibilityLevel.MEDIUM.value
+    elif sep <= 3.0:
+        return PossibilityLevel.LOW.value
+    return PossibilityLevel.UNLIKELY.value
+
 
 
 
@@ -181,6 +213,7 @@ def check_transit(
     earth_ref,
     alt_threshold: float = 5.0,
     az_threshold: float = 10.0,
+    target_positions: Optional[Dict[int, Tuple[float, float]]] = None,
 ) -> dict:
     """Given the data of a flight, compute a possible transit with the target.
 
@@ -241,12 +274,17 @@ def check_transit(
             future_time,
         )
 
-        if idx > 0 and idx % _pts_per_min == 0:
-            # Update target position every 1 minute of data points
-            target.update_position(future_time)
+        if target_positions is not None:
+            # Use precomputed target position for this minute step (no Skyfield call needed)
+            t_alt, t_az = target_positions[int(minute)]
+        else:
+            if idx > 0 and idx % _pts_per_min == 0:
+                # Update target position every 1 minute of data points
+                target.update_position(future_time)
+            t_alt, t_az = target.altitude.degrees, target.azimuthal.degrees
 
-        alt_diff = abs(future_alt - target.altitude.degrees)
-        az_diff = abs(future_az - target.azimuthal.degrees)
+        alt_diff = abs(future_alt - t_alt)
+        az_diff = abs(future_az - t_az)
         diff_combined = alt_diff + az_diff
 
         # Initialize closest_approach with first data point if not set
@@ -255,9 +293,9 @@ def check_transit(
                 "alt_diff": round(float(alt_diff), 3),
                 "az_diff": round(float(az_diff), 3),
                 "time": round(float(minute), 3),
-                "target_alt": round(float(target.altitude.degrees), 2),
+                "target_alt": round(float(t_alt), 2),
                 "plane_alt": round(float(future_alt), 2),
-                "target_az": round(float(target.azimuthal.degrees), 2),
+                "target_az": round(float(t_az), 2),
                 "plane_az": round(float(future_az), 2),
             }
 
@@ -275,16 +313,20 @@ def check_transit(
                 "alt_diff": round(float(alt_diff), 3),
                 "az_diff": round(float(az_diff), 3),
                 "time": round(float(minute), 3),
-                "target_alt": round(float(target.altitude.degrees), 2),
+                "target_alt": round(float(t_alt), 2),
                 "plane_alt": round(float(future_alt), 2),
-                "target_az": round(float(target.azimuthal.degrees), 2),
+                "target_az": round(float(t_az), 2),
                 "plane_az": round(float(future_az), 2),
             }
         else:
             no_decreasing_count += 1
 
-        # Use user-provided thresholds (already passed as parameters)
-        if future_alt > 0 and alt_diff < alt_threshold and az_diff < az_threshold:
+        # Use true angular separation (corrected for altitude) instead of two
+        # independent thresholds.  This avoids false negatives near zenith
+        # where azimuth differences are geometrically compressed.
+        sep = _angular_separation(alt_diff, az_diff, t_alt)
+        combined_threshold = max(alt_threshold, az_threshold)
+        if future_alt > 0 and sep < combined_threshold:
 
             if update_response:
                 response = {
@@ -300,13 +342,13 @@ def check_transit(
                     "alt_diff": round(float(alt_diff), 3),
                     "az_diff": round(float(az_diff), 3),
                     "time": round(float(minute), 3),
-                    "target_alt": round(float(target.altitude.degrees), 2),
+                    "target_alt": round(float(t_alt), 2),
                     "plane_alt": round(float(future_alt), 2),
-                    "target_az": round(float(target.azimuthal.degrees), 2),
+                    "target_az": round(float(t_az), 2),
                     "plane_az": round(float(future_az), 2),
                     "is_possible_transit": 1,
                     "possibility_level": get_possibility_level(
-                        target.altitude.degrees, alt_diff, az_diff
+                        t_alt, alt_diff, az_diff
                     ),
                     "elevation_change": CHANGE_ELEVATION.get(
                         flight.get("elevation_change"), None
@@ -402,7 +444,11 @@ def get_transits(
 
     data = list()
 
-    # Use custom bounding box if provided, otherwise use global default
+    # ── Select bounding box ───────────────────────────────────────────────────
+    # Priority: 1) user custom bbox from UI  2) dynamic transit corridor
+    #           3) .env fallback (legacy / zero-config)
+    t_alt = current_target_coordinates["altitude"]
+    t_az  = current_target_coordinates["azimuthal"]
     if custom_bbox:
         bbox = AreaBoundingBox(
             lat_lower_left=custom_bbox["lat_lower_left"],
@@ -410,8 +456,22 @@ def get_transits(
             lat_upper_right=custom_bbox["lat_upper_right"],
             long_upper_right=custom_bbox["lon_upper_right"],
         )
+        logger.info("[Bbox] Using user-supplied custom bbox")
+    elif t_alt > 0:
+        bbox = transit_corridor_bbox(
+            obs_lat=latitude,
+            obs_lon=longitude,
+            target_alt_deg=t_alt,
+            target_az_deg=t_az,
+        )
+        logger.info(
+            f"[Bbox] Dynamic corridor: "
+            f"({bbox.lat_lower_left:.2f},{bbox.long_lower_left:.2f}) → "
+            f"({bbox.lat_upper_right:.2f},{bbox.long_upper_right:.2f})"
+        )
     else:
-        bbox = area_bbox
+        bbox = _fallback_bbox
+        logger.info("[Bbox] Target below horizon — using .env fallback bbox")
 
     if current_target_coordinates["altitude"] > 0:
         if test_mode:
@@ -463,7 +523,22 @@ def get_transits(
             if filtered_count > 0:
                 logger.debug(f"Bbox filter (FA): {filtered_count} flights outside box")
 
-        else:
+        elif data_source == "adsb-local":
+            # ── ADS-B local receiver mode ─────────────────────────────────
+            adsb_url = os.getenv("ADSB_LOCAL_URL", "")
+            if not adsb_url:
+                logger.warning(
+                    "[ADS-B] data_source=adsb-local but ADSB_LOCAL_URL is not set in .env. "
+                    "Falling back to OpenSky. Set ADSB_LOCAL_URL=http://<receiver-ip>/data/aircraft.json "
+                    "to use a local RTL-SDR / dump1090 / tar1090 receiver."
+                )
+                data_source = "hybrid"  # fall through to OpenSky block below
+            else:
+                # TODO: implement local ADS-B JSON fetch from ADSB_LOCAL_URL
+                logger.warning(f"[ADS-B] Local receiver at {adsb_url} — not yet implemented; falling back to OpenSky")
+                data_source = "hybrid"
+
+        if data_source in ("hybrid", "opensky-only"):
             # ── Hybrid / OpenSky-only mode (default) ─────────────────────
             # Use OpenSky Network for all position data (~60s cache, free).
             # FA is only called on HIGH-probability transits for metadata.
@@ -486,10 +561,48 @@ def get_transits(
 
             logger.info(f"[OpenSky] {len(flight_data)} airborne aircraft in bbox")
 
-        # ── Transit detection ─────────────────────────────────────────────
-        for flight in flight_data:
-            celestial_obj.update_position(ref_datetime=ref_datetime)
+        # ── Coarse angular pre-filter ─────────────────────────────────────
+        # Discard aircraft that cannot possibly reach the target within the
+        # 15-minute window.  One cheap Skyfield call per aircraft replaces
+        # 180 full trajectory steps for aircraft that are clearly out of range.
+        # Uses the same angular-separation metric as check_transit().
+        _combined_threshold = max(alt_threshold, az_threshold)
+        _COARSE_SEP = max(_combined_threshold * 5, 30.0)  # generous margin
 
+        prefiltered = []
+        for f in flight_data:
+            try:
+                f_alt, f_az = geographic_to_altaz(
+                    f["latitude"], f["longitude"],
+                    f.get("elevation", 0) or 0,
+                    EARTH, MY_POSITION, ref_datetime,
+                )
+            except Exception:
+                prefiltered.append(f)  # keep on error
+                continue
+            sep = _angular_separation(abs(f_alt - t_alt), abs(f_az - t_az), t_alt)
+            if sep <= _COARSE_SEP:
+                prefiltered.append(f)
+
+        logger.info(
+            f"[Pre-filter] {len(prefiltered)}/{len(flight_data)} aircraft kept "
+            f"(coarse angular sep ≤{_COARSE_SEP:.0f}°)"
+        )
+        flight_data = prefiltered
+
+        # ── Precompute target positions for all minute steps ──────────────
+        # Avoids 50+ redundant Skyfield calls (one per flight per minute step).
+        target_positions: Dict[int, Tuple[float, float]] = {}
+        for step in range(int(window_time[-1]) + 1):
+            celestial_obj.update_position(ref_datetime + timedelta(minutes=step))
+            target_positions[step] = (
+                celestial_obj.altitude.degrees,
+                celestial_obj.azimuthal.degrees,
+            )
+        celestial_obj.update_position(ref_datetime=ref_datetime)  # restore t=0
+
+        # ── Transit detection (parallel across flights) ───────────────────
+        def _check_and_enrich(flight):
             result = check_transit(
                 flight,
                 window_time,
@@ -499,9 +612,8 @@ def get_transits(
                 EARTH,
                 alt_threshold,
                 az_threshold,
+                target_positions=target_positions,
             )
-
-            # ── FA enrichment for HIGH transits (hybrid mode only) ────────
             if (
                 data_source not in ("fa-only",)
                 and not test_mode
@@ -513,9 +625,15 @@ def get_transits(
                 if enrichment:
                     result.update(enrichment)
                     logger.info(f"[FA-enrich] enriched HIGH transit {callsign}")
+            return result
 
-            data.append(result)
-            logger.info(data[-1])
+        max_workers = min(8, len(flight_data)) if flight_data else 1
+        with ThreadPoolExecutor(max_workers=max_workers) as pool:
+            futures = {pool.submit(_check_and_enrich, f): f for f in flight_data}
+            for future in as_completed(futures):
+                result = future.result()
+                data.append(result)
+                logger.info(result)
     else:
         logger.debug(
             f"{target_name} target is under horizon, skipping checking for transits..."
@@ -576,20 +694,30 @@ def recalculate_transits(
     data = []
     
     if current_target_coordinates["altitude"] > 0:
-        for flight in flights:
-            celestial_obj.update_position(ref_datetime=ref_datetime)
-            
-            data.append(
-                check_transit(
-                    flight,
-                    window_time,
-                    ref_datetime,
-                    MY_POSITION,
-                    celestial_obj,
-                    EARTH,
-                    alt_threshold,
-                    az_threshold,
-                )
+        target_positions: Dict[int, Tuple[float, float]] = {}
+        for step in range(int(window_time[-1]) + 1):
+            celestial_obj.update_position(ref_datetime + timedelta(minutes=step))
+            target_positions[step] = (
+                celestial_obj.altitude.degrees,
+                celestial_obj.azimuthal.degrees,
             )
+        celestial_obj.update_position(ref_datetime=ref_datetime)
+
+        def _check(flight):
+            return check_transit(
+                flight,
+                window_time,
+                ref_datetime,
+                MY_POSITION,
+                celestial_obj,
+                EARTH,
+                alt_threshold,
+                az_threshold,
+                target_positions=target_positions,
+            )
+
+        max_workers = min(8, len(flights)) if flights else 1
+        with ThreadPoolExecutor(max_workers=max_workers) as pool:
+            data = list(pool.map(_check, flights))
     
     return {"flights": data, "targetCoordinates": current_target_coordinates}

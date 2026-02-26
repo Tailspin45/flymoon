@@ -97,9 +97,9 @@ python3 src/config_wizard.py --setup
    - Function: `check_transit()` → returns min separation time and angles
 
 5. **Probability Classification** (`src/transit.py:get_possibility_level()`)
-   - **HIGH** (🟢): ≤1° separation in both alt/az (direct transit very likely)
-   - **MEDIUM** (🟠): ≤2° separation (near miss, worth recording)
-   - **LOW** (⚪): ≤3° separation (possible distant transit)
+   - **HIGH** (🟢): ≤1.5° angular separation (direct transit very likely)
+   - **MEDIUM** (🟠): ≤2.5° angular separation (near miss, worth recording)
+   - **LOW** (⚪): ≤3.0° angular separation (possible distant transit)
    - **UNLIKELY**: >3° separation
 
 ### Flask Application Structure
@@ -223,7 +223,8 @@ logger.error("message")
 - **15-minute window** - Aircraft maintain constant velocity/heading (acceptable for short timeframes, accuracy degrades beyond 10 minutes)
 - **Transit brevity** - Aircraft transits last 0.5-2 seconds, automation is critical
 - **Pre-pointing required** - Telescope must already be tracking Sun/Moon before transit occurs
-- **1° target size** - Classification thresholds assume 0.5° for Sun/Moon + 0.5° margin
+- **Track prefetch** - HIGH-probability transits trigger automatic background FA track fetch to improve dead-reckoning velocity accuracy
+- **Angular separation** - Classification uses great-circle separation in alt-az space; azimuth differences are cosine-weighted by target altitude
 
 ### API Rate Limits
 

@@ -31,7 +31,7 @@ def get_flight_data(
         f"{area_bbox.lat_upper_right}+{area_bbox.long_upper_right}%22&max_pages=1"
     )
 
-    response = requests.get(url=url, headers=headers)
+    response = requests.get(url=url, headers=headers, timeout=15)
 
     if response.status_code == HTTPStatus.OK:
         return response.json()

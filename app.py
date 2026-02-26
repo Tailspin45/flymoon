@@ -51,7 +51,7 @@ from src.astro import CelestialObject, get_rise_set_times
 from src.config_wizard import ConfigWizard
 from src.flight_data import save_possible_transits, sort_results
 from src.flight_cache import get_cache
-from src.position import get_my_pos, compute_track_velocity
+from src.position import get_my_pos, compute_track_velocity, transit_corridor_bbox
 from src.telegram_notify import send_telegram_notification
 from src.transit import get_transits
 from src import telescope_routes
@@ -330,7 +330,31 @@ def get_all_flights():
         
         # Calculate adaptive refresh interval based on closest transit
         next_check_interval = calculate_adaptive_interval(all_flights)
-        
+
+        # Compute the bbox that was actually used (dynamic corridor or custom)
+        if custom_bbox:
+            _bbox_for_client = {
+                "latLowerLeft": custom_bbox["lat_lower_left"],
+                "lonLowerLeft": custom_bbox["lon_lower_left"],
+                "latUpperRight": custom_bbox["lat_upper_right"],
+                "lonUpperRight": custom_bbox["lon_upper_right"],
+            }
+        else:
+            _best_alt = max((c.get("altitude", 0) for c in target_coordinates.values()), default=0)
+            _best_az  = next((c.get("azimuth", 0) for c in target_coordinates.values()
+                              if c.get("altitude", 0) > 0), 0.0)
+            _cb = transit_corridor_bbox(
+                obs_lat=latitude, obs_lon=longitude,
+                target_alt_deg=max(_best_alt, 3.0),
+                target_az_deg=_best_az,
+            )
+            _bbox_for_client = {
+                "latLowerLeft": _cb.lat_lower_left,
+                "lonLowerLeft": _cb.long_lower_left,
+                "latUpperRight": _cb.lat_upper_right,
+                "lonUpperRight": _cb.long_upper_right,
+            }
+
         # Combine results
         data = {
             "flights": sort_results(all_flights),
@@ -340,12 +364,7 @@ def get_all_flights():
             "disabledTargets": list(disabled_targets),
             "nextCheckInterval": next_check_interval,  # Seconds until next check
             "weather": None,  # Weather functionality not implemented yet
-            "boundingBox": {
-                "latLowerLeft": custom_bbox["lat_lower_left"] if custom_bbox else float(os.getenv("LAT_LOWER_LEFT", "0")),
-                "lonLowerLeft": custom_bbox["lon_lower_left"] if custom_bbox else float(os.getenv("LONG_LOWER_LEFT", "0")),
-                "latUpperRight": custom_bbox["lat_upper_right"] if custom_bbox else float(os.getenv("LAT_UPPER_RIGHT", "0")),
-                "lonUpperRight": custom_bbox["lon_upper_right"] if custom_bbox else float(os.getenv("LONG_UPPER_RIGHT", "0")),
-            }
+            "boundingBox": _bbox_for_client,
         }
 
         end_time = time.time()
@@ -376,6 +395,43 @@ def get_all_flights():
                     asyncio.run(send_telegram_notification(flights_snapshot, None))
                 except Exception as e:
                     logger.error(f"Error sending Telegram notification: {e}")
+
+            # Pre-fetch track data for HIGH-probability transits so that track-derived
+            # velocity is available for soft-refresh dead-reckoning without a user click.
+            api_key = get_aeroapi_key()
+            if api_key:
+                now_ts = time.time()
+                for f in flights_snapshot:
+                    if f.get("possibility_level") != PossibilityLevel.HIGH.value:
+                        continue
+                    fid = f.get("fa_flight_id") or ""
+                    if not fid:
+                        continue
+                    # Skip if already cached
+                    cached = _track_response_cache.get(fid)
+                    if cached and (now_ts - cached[0]) < ROUTE_TRACK_CACHE_TTL:
+                        continue
+                    try:
+                        import requests as _req
+                        url = f"https://aeroapi.flightaware.com/aeroapi/flights/{fid}/track"
+                        headers = {"Accept": "application/json; charset=UTF-8", "x-apikey": api_key}
+                        resp = _req.get(url=url, headers=headers, timeout=10)
+                        if resp.status_code == 200:
+                            track_json = resp.json()
+                            from src.position import compute_track_velocity
+                            positions = track_json.get("positions") or track_json.get("track") or []
+                            velocity = compute_track_velocity(positions)
+                            if velocity:
+                                _track_velocity_cache[fid] = velocity
+                                logger.info(
+                                    f"[BG] Track velocity prefetched for {fid}: "
+                                    f"{velocity[0]:.0f} km/h  hdg {velocity[1]:.1f}°"
+                                )
+                            _track_response_cache[fid] = (now_ts, track_json)
+                        else:
+                            logger.warning(f"[BG] Track prefetch for {fid} returned {resp.status_code}")
+                    except Exception as e:
+                        logger.error(f"[BG] Track prefetch failed for {fid}: {e}")
 
         import threading as _t
         _t.Thread(
