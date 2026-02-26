@@ -217,9 +217,9 @@ def proxy_openaip_tile(z, x, y):
                         headers={"Cache-Control": "public, max-age=3600",
                                  "X-Tile-Cache": "HIT"})
 
-    url = f"https://api.tiles.openaip.net/api/data/openaip/{z}/{x}/{y}.png?apiKey={api_key}"
+    url = f"https://api.tiles.openaip.net/api/data/openaip/{z}/{x}/{y}.png"
     try:
-        resp = requests.get(url, timeout=5)
+        resp = requests.get(url, headers={"x-openaip-api-key": api_key}, timeout=5)
         ct = resp.headers.get("Content-Type", "image/png")
         if resp.status_code == 200:
             _set_cached_tile(cache_key, resp.content, ct)
@@ -469,10 +469,10 @@ def get_all_flights():
         return jsonify({"error": f"Missing required parameter: {e}"}), 400
     except ValueError as e:
         logger.error(f"Invalid parameter value: {e}", exc_info=True)
-        return jsonify({"error": f"Invalid parameter value: {e}"}), 400
+        return jsonify({"error": "Invalid parameter value"}), 400
     except Exception as e:
         logger.error(f"Error in /flights endpoint: {str(e)}", exc_info=True)
-        return jsonify({"error": f"Server error: {str(e)}"}), 500
+        return jsonify({"error": "Internal server error"}), 500
 
 
 @app.route("/flights/<fa_flight_id>/route")
@@ -498,7 +498,7 @@ def get_flight_route(fa_flight_id):
             return jsonify({"error": f"API returned status {response.status_code}"}), response.status_code
     except Exception as e:
         logger.error(f"Error fetching route for {fa_flight_id}: {str(e)}")
-        return jsonify({"error": str(e)}), 500
+        return jsonify({"error": "Failed to fetch route data"}), 500
 
 
 @app.route("/transits/recalculate", methods=["POST"])
@@ -635,10 +635,10 @@ def recalculate_transits_endpoint():
         return jsonify({"error": f"Missing required parameter: {e}"}), 400
     except ValueError as e:
         logger.error(f"Invalid parameter value: {e}")
-        return jsonify({"error": f"Invalid parameter value: {e}"}), 400
+        return jsonify({"error": "Invalid parameter value"}), 400
     except Exception as e:
         logger.error(f"Error in /transits/recalculate: {str(e)}", exc_info=True)
-        return jsonify({"error": f"Server error: {str(e)}"}), 500
+        return jsonify({"error": "Internal server error"}), 500
 
 
 @app.route("/flights/<fa_flight_id>/track")
@@ -673,7 +673,7 @@ def get_flight_track(fa_flight_id):
             return jsonify({"error": f"API returned status {response.status_code}"}), response.status_code
     except Exception as e:
         logger.error(f"Error fetching track for {fa_flight_id}: {str(e)}")
-        return jsonify({"error": str(e)}), 500
+        return jsonify({"error": "Failed to fetch track data"}), 500
 
 
 @app.route("/telescope")
