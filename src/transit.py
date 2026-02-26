@@ -85,14 +85,14 @@ def _enrich_from_fa(callsign: str, api_key: str) -> dict:
 def _parse_opensky_flight(callsign: str, os_data: dict) -> dict:
     """Convert an OpenSky state-vector dict to the internal flight format."""
     alt_m = os_data.get("altitude_m") or 0
-    vr = os_data.get("vertical_rate_ms") or 0
+    vr = os_data.get("vertical_rate_ms")  # preserve None when not reported
 
-    if vr > 0.5:
-        elev_change = "climbing"
-    elif vr < -0.5:
-        elev_change = "descending"
-    else:
-        elev_change = "level"
+    elev_change = "level"
+    if vr is not None:
+        if vr > 0.5:
+            elev_change = "climbing"
+        elif vr < -0.5:
+            elev_change = "descending"
 
     return {
         "name":              callsign,
@@ -351,8 +351,10 @@ def check_transit(
                         t_alt, alt_diff, az_diff
                     ),
                     "elevation_change": CHANGE_ELEVATION.get(
-                        flight.get("elevation_change"), None
+                        flight.get("elevation_change"),
+                        flight.get("elevation_change"),  # pass through OpenSky full words
                     ),
+                    "vertical_rate": flight.get("vertical_rate"),
                     "direction": flight.get("direction", 0),
                     "waypoints": flight.get("waypoints", []),
                     "position_source": flight.get("position_source", "flightaware"),
@@ -376,7 +378,11 @@ def check_transit(
         "speed": flight.get("speed", 0),
         "is_possible_transit": 0,
         "possibility_level": PossibilityLevel.UNLIKELY.value,
-        "elevation_change": CHANGE_ELEVATION.get(flight.get("elevation_change"), None),
+        "elevation_change": CHANGE_ELEVATION.get(
+            flight.get("elevation_change"),
+            flight.get("elevation_change"),  # pass through OpenSky full words
+        ),
+        "vertical_rate": flight.get("vertical_rate"),
         "direction": flight.get("direction", 0),
         "waypoints": flight.get("waypoints", []),
         "position_source": flight.get("position_source", "flightaware"),

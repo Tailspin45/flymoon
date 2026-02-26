@@ -481,8 +481,9 @@ function renderRichFlightRow(item, bodyTable) {
     // Col 9 — Route
     const routeCell = document.createElement('td');
     routeCell.style.whiteSpace = 'nowrap';
-    const orig = item.origin || '', dest = item.destination || '';
-    if (orig && dest && orig !== 'N/D' && dest !== 'N/D') {
+    const _clean = v => (v && v !== 'N/A' && v !== 'N/D') ? v : '';
+    const orig = _clean(item.origin), dest = _clean(item.destination);
+    if (orig && dest) {
         routeCell.innerHTML = `<span title="${orig} → ${dest}" style="font-family:monospace;font-size:0.88em">${orig} → ${dest}</span>`;
     } else if (sq === '1200') {
         routeCell.innerHTML = '<span style="color:#4caf50;font-size:0.85em">VFR local</span>';
