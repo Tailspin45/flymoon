@@ -824,6 +824,11 @@ body {
 /* ── Rich table ── */
 #resultsTableRich {
     width: 100%;
+    table-layout: fixed;
+}
+#resultsTableRich th, #resultsTableRich td {
+    overflow: hidden;
+    text-overflow: ellipsis;
 }
 
 /* ── Rich table row highlight ── */
