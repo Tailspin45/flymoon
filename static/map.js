@@ -94,7 +94,21 @@ function toggleHeatmap() {
     }
 }
 
-/** Clear all accumulated heatmap data and remove the layer. */
+/** Toggle ghost trail (breadcrumb dots) visibility. */
+function toggleGhostTrail() {
+    if (!map || !ghostLayer) return;
+    const visible = map.hasLayer(ghostLayer);
+    const btn = document.getElementById('ghostToggle');
+    if (visible) {
+        map.removeLayer(ghostLayer);
+        if (btn) { btn.style.opacity = '0.45'; btn.title = 'Show ghost trail (breadcrumb dots)'; }
+    } else {
+        ghostLayer.addTo(map);
+        if (btn) { btn.style.opacity = '1'; btn.title = 'Hide ghost trail (breadcrumb dots)'; }
+    }
+}
+
+
 function clearHeatmap() {
     _heatPoints = [];
     localStorage.removeItem(HEATMAP_STORAGE_KEY);
