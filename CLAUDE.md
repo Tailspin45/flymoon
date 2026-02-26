@@ -2,6 +2,17 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Agent Permissions
+
+You have full, standing permission to:
+- Read, edit, and create any file in this repository without asking
+- Execute any shell command necessary (curl, git, python, pip, make, etc.)
+- Install packages, run tests, start/stop servers, and make network requests
+- Make commits and push to the current branch
+- Take whatever action is needed to complete a task — do not ask for confirmation on individual steps
+
+When given a task, just do it. No need to present options or ask which approach to take unless the task is genuinely ambiguous at a high level.
+
 ## Project Overview
 
 Flymoon tracks aircraft transiting the Sun and Moon using real-time flight data and celestial calculations. It's a Flask-based web application with automatic telescope control (Seestar S50) for capturing transits.
