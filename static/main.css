@@ -837,11 +837,13 @@ body {
 #resultsTableRich td:nth-child(12) {
     text-align: right;
 }
-/* Center-align aircraft(4) and category(5) columns */
+/* Center-align aircraft(4), category(5), and route(11) columns */
 #resultsTableRich th:nth-child(4),
 #resultsTableRich td:nth-child(4),
 #resultsTableRich th:nth-child(5),
-#resultsTableRich td:nth-child(5) {
+#resultsTableRich td:nth-child(5),
+#resultsTableRich th:nth-child(11),
+#resultsTableRich td:nth-child(11) {
     text-align: center;
 }
 

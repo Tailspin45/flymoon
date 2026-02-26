@@ -557,7 +557,7 @@ def get_transits(
                 logger.warning(f"[ADS-B] Local receiver at {adsb_url} — not yet implemented; falling back to OpenSky")
                 data_source = "hybrid"
 
-        if data_source in ("hybrid", "opensky-only"):
+        if not test_mode and data_source in ("hybrid", "opensky-only"):
             # ── Hybrid / OpenSky-only mode (default) ─────────────────────
             # Use OpenSky Network for all position data (~60s cache, free).
             # FA is only called on HIGH-probability transits for metadata.

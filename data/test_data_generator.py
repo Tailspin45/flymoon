@@ -11,66 +11,89 @@ import json
 import argparse
 import math
 import random
+import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+
+# Allow imports from project root
+sys.path.insert(0, str(Path(__file__).parent.parent))
 
 
 # Observer position (from src/transit.py - must be INSIDE bounding box)
 # Bounding box: 32.0-33.5 lat, -118.0 to -117.0 lon
 OBSERVER_LAT = 33.11
 OBSERVER_LON = -117.31
+OBSERVER_ELEV = 100  # metres
 
-# Configurable test scenarios
-SCENARIOS = {
-    "dual_tracking": {
-        "description": "Both Moon and Sun visible with multiple transits",
-        "moon_altitude": 35,  # degrees
-        "moon_azimuth": 150,  # SSE
-        "sun_altitude": 30,
-        "sun_azimuth": 240,   # WSW - 90 degrees separated
-        "cloud_cover": 15,  # percent
-    },
-    "moon_only": {
-        "description": "Only Moon visible (daytime, Sun below horizon)",
-        "moon_altitude": 25,
-        "moon_azimuth": 180,
-        "sun_altitude": -10,
-        "sun_azimuth": 90,
-        "cloud_cover": 20,
-    },
-    "sun_only": {
-        "description": "Only Sun visible (daytime, Moon below horizon)",
-        "moon_altitude": -5,
-        "moon_azimuth": 270,
-        "sun_altitude": 50,
-        "sun_azimuth": 180,
-        "cloud_cover": 10,
-    },
-    "cloudy": {
-        "description": "Clear alignments but weather prevents tracking",
-        "moon_altitude": 45,
-        "moon_azimuth": 135,
-        "sun_altitude": 40,
-        "sun_azimuth": 225,
-        "cloud_cover": 85,  # Above threshold
-    },
-    "low_altitude": {
-        "description": "Targets below minimum altitude threshold",
-        "moon_altitude": 12,
-        "moon_azimuth": 160,
-        "sun_altitude": 8,
-        "sun_azimuth": 250,
-        "cloud_cover": 5,
-    },
-    "perfect": {
-        "description": "Perfect conditions with well-separated targets",
-        "moon_altitude": 40,
-        "moon_azimuth": 135,   # SE - well separated from sun
-        "sun_altitude": 35,
-        "sun_azimuth": 225,    # SW - 90 degrees from moon
-        "cloud_cover": 0,
-    },
-}
+
+def _get_real_sky_positions():
+    """Return current alt/az for Moon and Sun using Skyfield."""
+    from src.astro import CelestialObject
+    from src.position import get_my_pos
+    from src.constants import ASTRO_EPHEMERIS
+
+    earth = ASTRO_EPHEMERIS["earth"]
+    pos = get_my_pos(OBSERVER_LAT, OBSERVER_LON, OBSERVER_ELEV, earth)
+    now = datetime.now(timezone.utc)
+
+    moon_obj = CelestialObject(name="moon", observer_position=pos)
+    moon_obj.update_position(now)
+    sun_obj = CelestialObject(name="sun", observer_position=pos)
+    sun_obj.update_position(now)
+
+    return (
+        round(moon_obj.altitude.degrees, 1),
+        round(moon_obj.azimuthal.degrees, 1),
+        round(sun_obj.altitude.degrees, 1),
+        round(sun_obj.azimuthal.degrees, 1),
+    )
+
+
+def _build_scenario(description, cloud_cover, moon_alt, moon_az, sun_alt, sun_az):
+    return {
+        "description": description,
+        "moon_altitude": moon_alt,
+        "moon_azimuth": moon_az,
+        "sun_altitude": sun_alt,
+        "sun_azimuth": sun_az,
+        "cloud_cover": cloud_cover,
+    }
+
+
+def get_scenarios():
+    """Build scenarios using real current sky positions for 'dual_tracking'."""
+    moon_alt, moon_az, sun_alt, sun_az = _get_real_sky_positions()
+
+    return {
+        "dual_tracking": _build_scenario(
+            "Both Moon and Sun (real current sky positions)",
+            15, moon_alt, moon_az, sun_alt, sun_az,
+        ),
+        "moon_only": _build_scenario(
+            "Only Moon visible (daytime, Sun below horizon)",
+            20, moon_alt, moon_az, -10, 90,
+        ),
+        "sun_only": _build_scenario(
+            "Only Sun visible (daytime, Moon below horizon)",
+            10, -5, 270, sun_alt, sun_az,
+        ),
+        "cloudy": _build_scenario(
+            "Clear alignments but weather prevents tracking",
+            85, moon_alt, moon_az, sun_alt, sun_az,
+        ),
+        "low_altitude": _build_scenario(
+            "Targets below minimum altitude threshold",
+            5, 12, 160, 8, 250,
+        ),
+        "perfect": _build_scenario(
+            "Perfect conditions with well-separated targets",
+            0, moon_alt, moon_az, sun_alt, sun_az,
+        ),
+    }
+
+
+# Keep module-level SCENARIOS for --list-scenarios (populated lazily)
+SCENARIOS = None
 
 
 def azimuth_to_offset(azimuth_deg, distance_deg=0.5):
@@ -168,7 +191,7 @@ def generate_flight_data(
         "waypoints": [],
         "last_position": {
             "fa_flight_id": f"{flight_id}-{int(now.timestamp())}-schedule-test",
-            "altitude": altitude_ft,
+            "altitude": altitude_ft // 100,  # FA format: hundreds of feet
             "altitude_change": altitude_change,
             "groundspeed": groundspeed_knots,
             "heading": heading,
@@ -187,7 +210,8 @@ def generate_test_data(scenario_name="dual_tracking", custom_config=None):
     if custom_config:
         config = custom_config
     else:
-        config = SCENARIOS.get(scenario_name, SCENARIOS["dual_tracking"])
+        scenarios = get_scenarios()
+        config = scenarios.get(scenario_name, scenarios["dual_tracking"])
 
     moon_alt = config["moon_altitude"]
     moon_az = config.get("moon_azimuth", 180)
@@ -210,33 +234,31 @@ def generate_test_data(scenario_name="dual_tracking", custom_config=None):
 
     random.seed(42)  # Consistent test data
 
-    # Fixed offsets for consistent classification
-    # HIGH: both Δ < 1°, MEDIUM: both Δ 1-2°, LOW: both Δ 2-10°
-    HIGH_OFFSET = 0.2    # Produces Δ ~0.2-0.5°
-    MED_OFFSET = 1.0     # Produces Δ ~1-2°
-    LOW_OFFSET = 3.0     # Produces Δ ~2-10°
+    # Altitude-only offsets ensure predictable angular separation after cosine correction.
+    # Az offset is ~0, so sep ≈ alt_diff.
+    # HIGH: sep ≤ 1.5°  →  use alt_diff = 0.5°
+    # MEDIUM: 1.5° < sep ≤ 2.5°  →  use alt_diff = 2.0°
+    # LOW: 2.5° < sep ≤ 3.0°  →  use alt_diff = 2.8°
+    HIGH_OFFSET = 0.5
+    MED_OFFSET  = 2.0
+    LOW_OFFSET  = 2.8
 
     def position_at_azimuth(azimuth_deg, target_alt_angle, aircraft_alt_ft):
-        """Calculate lat/lon at specific azimuth and distance for target altitude angle.
+        """Calculate lat/lon at specific azimuth and altitude angle from the observer."""
+        observer_alt_ft = OBSERVER_ELEV * 3.28084
 
-        For altitude angle calculation:
-        altitude_angle ≈ arctan((aircraft_alt_ft - observer_alt_m*3.28) / horizontal_distance_ft)
-
-        So: horizontal_distance_ft = (aircraft_alt_ft - observer_alt_ft) / tan(altitude_angle)
-        """
-        observer_alt_ft = 100 * 3.28  # 100m to feet
-
-        # Calculate required horizontal distance for target altitude angle
-        alt_angle_rad = math.radians(target_alt_angle)
+        # Horizontal distance in feet from flat-earth altitude-angle formula
+        alt_angle_rad = math.radians(max(target_alt_angle, 1.0))
         horizontal_dist_ft = (aircraft_alt_ft - observer_alt_ft) / math.tan(alt_angle_rad)
 
-        # Convert feet to degrees (1 degree ≈ 364,000 feet at this latitude)
-        distance_deg = horizontal_dist_ft / 364000.0
+        # Convert to degrees of arc along Earth's surface
+        dist_km = horizontal_dist_ft * 0.0003048
+        dist_deg = dist_km / 111.32
 
-        # Position at the calculated distance along the azimuth
+        # Project along azimuth — longitude degrees must be scaled by cos(lat)
         az_rad = math.radians(azimuth_deg)
-        lat = OBSERVER_LAT + distance_deg * math.cos(az_rad)
-        lon = OBSERVER_LON + distance_deg * math.sin(az_rad)
+        lat = OBSERVER_LAT + dist_deg * math.cos(az_rad)
+        lon = OBSERVER_LON + dist_deg * math.sin(az_rad) / math.cos(math.radians(OBSERVER_LAT))
 
         # Clamp to bounding box
         lat = max(32.0, min(33.5, lat))
@@ -245,30 +267,27 @@ def generate_test_data(scenario_name="dual_tracking", custom_config=None):
 
     # Generate flights for Moon transits (if moon is visible)
     if moon_alt >= 15:
-        # MOON HIGH - fixed small offsets
-        target_alt_angle = moon_alt + HIGH_OFFSET
+        # MOON HIGH
         alt_ft = 35000
-        lat, lon = position_at_azimuth(moon_az + HIGH_OFFSET, target_alt_angle, alt_ft)
+        lat, lon = position_at_azimuth(moon_az, moon_alt + HIGH_OFFSET, alt_ft)
         flights.append(generate_flight_data(
             "MOON_HIGH", "KLAX", "Los Angeles International",
             "KSAN", "San Diego International",
             lat, lon, alt_ft, 450, random.randint(0, 360)
         ))
 
-        # MOON MEDIUM - fixed medium offsets
-        target_alt_angle = moon_alt - MED_OFFSET
+        # MOON MEDIUM
         alt_ft = 36000
-        lat, lon = position_at_azimuth(moon_az - MED_OFFSET, target_alt_angle, alt_ft)
+        lat, lon = position_at_azimuth(moon_az, moon_alt + MED_OFFSET, alt_ft)
         flights.append(generate_flight_data(
             "MOON_MED", "KPHX", "Phoenix Sky Harbor",
             "KSAN", "San Diego International",
             lat, lon, alt_ft, 460, random.randint(0, 360)
         ))
 
-        # MOON LOW - fixed large offsets
-        target_alt_angle = moon_alt + LOW_OFFSET
+        # MOON LOW
         alt_ft = 37000
-        lat, lon = position_at_azimuth(moon_az + LOW_OFFSET, target_alt_angle, alt_ft)
+        lat, lon = position_at_azimuth(moon_az, moon_alt + LOW_OFFSET, alt_ft)
         flights.append(generate_flight_data(
             "MOON_LOW", "KSFO", "San Francisco International",
             "KSAN", "San Diego International",
@@ -277,30 +296,27 @@ def generate_test_data(scenario_name="dual_tracking", custom_config=None):
 
     # Generate flights for Sun transits (if sun is visible)
     if sun_alt >= 15:
-        # SUN HIGH - fixed small offsets
-        target_alt_angle = sun_alt - HIGH_OFFSET
+        # SUN HIGH
         alt_ft = 34000
-        lat, lon = position_at_azimuth(sun_az - HIGH_OFFSET, target_alt_angle, alt_ft)
+        lat, lon = position_at_azimuth(sun_az, sun_alt + HIGH_OFFSET, alt_ft)
         flights.append(generate_flight_data(
             "SUN_HIGH", "KLAS", "Las Vegas McCarran",
             "KSAN", "San Diego International",
             lat, lon, alt_ft, 440, random.randint(0, 360)
         ))
 
-        # SUN MEDIUM - fixed medium offsets
-        target_alt_angle = sun_alt + MED_OFFSET
+        # SUN MEDIUM
         alt_ft = 33000
-        lat, lon = position_at_azimuth(sun_az + MED_OFFSET, target_alt_angle, alt_ft)
+        lat, lon = position_at_azimuth(sun_az, sun_alt + MED_OFFSET, alt_ft)
         flights.append(generate_flight_data(
             "SUN_MED", "KDEN", "Denver International",
             "KSAN", "San Diego International",
             lat, lon, alt_ft, 420, random.randint(0, 360)
         ))
 
-        # SUN LOW - fixed large offsets
-        target_alt_angle = sun_alt - LOW_OFFSET
+        # SUN LOW
         alt_ft = 36000
-        lat, lon = position_at_azimuth(sun_az - LOW_OFFSET, target_alt_angle, alt_ft)
+        lat, lon = position_at_azimuth(sun_az, sun_alt + LOW_OFFSET, alt_ft)
         flights.append(generate_flight_data(
             "SUN_LOW", "KOAK", "Oakland International",
             "KSAN", "San Diego International",
@@ -359,7 +375,7 @@ def main():
     parser = argparse.ArgumentParser(description="Generate test flight data")
     parser.add_argument(
         "--scenario",
-        choices=list(SCENARIOS.keys()),
+        choices=["dual_tracking", "moon_only", "sun_only", "cloudy", "low_altitude", "perfect"],
         default="dual_tracking",
         help="Pre-configured scenario",
     )
@@ -374,12 +390,13 @@ def main():
     args = parser.parse_args()
     
     if args.list_scenarios:
+        scenarios = get_scenarios()
         print("\nAvailable test scenarios:\n")
-        for name, config in SCENARIOS.items():
+        for name, config in scenarios.items():
             print(f"  {name:20s} - {config['description']}")
         print("\nUsage: python data/test_data_generator.py --scenario <name>")
         return
-    
+
     custom_config = None
     if args.custom:
         print("\n=== Custom Configuration ===")
