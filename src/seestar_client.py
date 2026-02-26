@@ -858,7 +858,7 @@ class TransitRecorder:
             stop_timer.start()
 
         except Exception as e:
-            logger.error(f"Failed to start recording for {flight_id}: {e}")
+            logger.warning(f"Skipped recording for {flight_id}: {e}")
     
     def _opensky_refine(self, flight_id: str):
         """Query OpenSky for latest position before recording (last-mile refinement)."""
