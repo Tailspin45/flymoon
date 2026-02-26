@@ -35,10 +35,10 @@
 </div>
 <div id="mapView">
     <!-- Hero image — visible on load, slides up after first flight fetch -->
-    <div id="heroImageWrap" style="text-align:center; padding:0; margin:0; line-height:0; overflow:hidden; max-height:280px; transition: max-height 0.6s ease, opacity 0.5s ease; opacity:1;">
-        <img src="{{ url_for('static', filename='images/flymoon-hero.jpg') }}"
-             alt="Flymoon — Aircraft Transit Prediction"
-             style="width:100%; max-height:280px; object-fit:cover; object-position:center 25%; display:block;" />
+    <div id="heroImageWrap" style="padding:0; margin:0; overflow:hidden; height:280px; max-height:280px; transition: max-height 0.6s ease, opacity 0.5s ease; opacity:1;
+         background-image:url('{{ url_for('static', filename='images/flymoon-hero.jpg') }}');
+         background-size:cover; background-position:center 20%; background-repeat:no-repeat;"
+         role="img" aria-label="Flymoon — Aircraft Transit Prediction">
     </div>
     <div class="header-row">
         <img src="{{ url_for('static', filename='images/logo.svg') }}" alt="Flymoon Transit Tracker" class="logo" />

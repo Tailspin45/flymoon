@@ -32,11 +32,9 @@ def get_flight_data(
     )
 
     response = requests.get(url=url, headers=headers, timeout=15)
-
     if response.status_code == HTTPStatus.OK:
         return response.json()
     else:
-        # If not successful, raise exception with the status code and response text
         raise Exception(f"Error: {response.status_code}, {response.text}")
 
 
