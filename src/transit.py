@@ -368,7 +368,9 @@ def check_transit(
                     "position_source": flight.get("position_source", "flightaware"),
                     "position_age_s": flight.get("position_age_s"),
                 }
-        update_response = False
+                update_response = False
+
+    if response:
         return response
 
     # Return closest approach data even if threshold not met
@@ -656,8 +658,9 @@ def get_transits(
             futures = {pool.submit(_check_and_enrich, f): f for f in flight_data}
             for future in as_completed(futures):
                 result = future.result()
-                data.append(result)
-                logger.info(result)
+                if result is not None:
+                    data.append(result)
+                    logger.info(result)
 
         # Add aircraft excluded by pre-filter as position-only rows (no transit analysis)
         for f in excluded:
