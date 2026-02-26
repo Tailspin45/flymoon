@@ -426,7 +426,7 @@ function renderRichFlightRow(item, bodyTable) {
     const catCell = document.createElement('td');
     catCell.style.whiteSpace = 'nowrap';
     const cat = AIRCRAFT_CATEGORY[item.category] || AIRCRAFT_CATEGORY[0];
-    catCell.innerHTML = item.category != null
+    catCell.innerHTML = item.category != null && item.category > 1
         ? `<span title="${cat.desc || cat.label}">${cat.icon}${cat.label ? ` <span style="font-size:0.75em;color:#aaa">${cat.label}</span>` : ''}</span>`
         : '<span style="color:#444">—</span>';
     row.appendChild(catCell);
@@ -436,7 +436,7 @@ function renderRichFlightRow(item, bodyTable) {
     altCell.style.whiteSpace = 'nowrap';
     if (item.aircraft_elevation_feet != null) {
         const ft = Math.round(item.aircraft_elevation_feet);
-        altCell.textContent = ft > 18000 ? `FL${Math.round(ft/100)}` : ft.toLocaleString('en-US') + 'ft';
+        altCell.textContent = ft > 18000 ? `FL${Math.round(ft/100)}` : ft.toLocaleString('en-US');
     } else {
         altCell.innerHTML = '<span style="color:#444">—</span>';
     }
@@ -471,23 +471,23 @@ function renderRichFlightRow(item, bodyTable) {
     }
     row.appendChild(skyCell);
 
-    // Col 9 — Track (heading)
+    // Col 9 — Track (heading degrees only)
     const trackCell = document.createElement('td');
     trackCell.style.whiteSpace = 'nowrap';
     if (item.direction != null) {
-        const hdgWord = headingWord(item.direction);
-        trackCell.textContent = `${hdgWord} ${Math.round(item.direction)}°`;
+        trackCell.textContent = `${Math.round(item.direction)}°`;
     } else {
         trackCell.innerHTML = '<span style="color:#444">—</span>';
     }
     row.appendChild(trackCell);
 
-    // Col 10 — Ground speed
+    // Col 10 — Ground speed (kph / mph)
     const spdCell = document.createElement('td');
     spdCell.style.whiteSpace = 'nowrap';
     if (item.speed != null && item.speed > 0) {
-        const kts = Math.round(item.speed / 1.852);
-        spdCell.textContent = `${kts}kt`;
+        const kph = Math.round(item.speed);
+        const mph = Math.round(item.speed * 0.621371);
+        spdCell.innerHTML = `${kph}<span style="color:#888;font-size:0.8em">kph</span>/<span style="color:#888;font-size:0.8em">mph</span>${mph}`;
     } else {
         spdCell.innerHTML = '<span style="color:#444">—</span>';
     }
@@ -1083,7 +1083,7 @@ function updateFlightRow(row, flight) {
             const altitude = Math.round(value);
             const altStr = altitude > 18000
                 ? `FL${Math.round(altitude / 100)}`
-                : altitude.toLocaleString('en-US') + 'ft';
+                : altitude.toLocaleString('en-US');
             let vsStr = '';
             if (flight.vertical_rate != null) {
                 const fpm = Math.round(flight.vertical_rate * 196.85);
