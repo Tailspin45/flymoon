@@ -601,6 +601,10 @@ def get_transits(
             if sep <= _COARSE_SEP:
                 prefiltered.append(f)
             else:
+                # Store current angular position so sky Δ can be shown in the table
+                f = dict(f)
+                f["_current_alt"] = f_alt
+                f["_current_az"] = f_az
                 excluded.append(f)
 
         logger.info(
@@ -680,9 +684,13 @@ def get_transits(
                 "waypoints":         f.get("waypoints", []),
                 "position_source":   f.get("position_source", "flightaware"),
                 "position_age_s":    f.get("position_age_s"),
-                "alt_diff": None, "az_diff": None, "time": None,
-                "target_alt": None, "plane_alt": None,
-                "target_az": None, "plane_az": None,
+                "alt_diff": round(f["_current_alt"] - t_alt, 2) if "_current_alt" in f else None,
+                "az_diff":  round(f["_current_az"]  - t_az,  2) if "_current_az"  in f else None,
+                "time": None,
+                "target_alt": round(t_alt, 2),
+                "plane_alt":  round(f["_current_alt"], 2) if "_current_alt" in f else None,
+                "target_az":  round(t_az, 2),
+                "plane_az":   round(f["_current_az"],  2) if "_current_az"  in f else None,
             })
     else:
         logger.debug(
