@@ -431,30 +431,35 @@ function renderRichFlightRow(item, bodyTable) {
         : '<span style="color:#444">—</span>';
     row.appendChild(catCell);
 
-    // Col 6 — Alt / V/S
+    // Col 6 — Altitude
     const altCell = document.createElement('td');
     altCell.style.whiteSpace = 'nowrap';
     if (item.aircraft_elevation_feet != null) {
         const ft = Math.round(item.aircraft_elevation_feet);
-        const altStr = ft > 18000 ? `FL${Math.round(ft/100)}` : ft.toLocaleString('en-US') + 'ft';
-        let vsStr = '';
-        if (item.vertical_rate != null) {
-            const fpm = Math.round(item.vertical_rate * 196.85);
-            if (fpm > 64) vsStr = ` <span style="color:#4caf50">▲ +${fpm.toLocaleString()}fpm</span>`;
-            else if (fpm < -64) vsStr = ` <span style="color:#f44336">▼ ${fpm.toLocaleString()}fpm</span>`;
-            else vsStr = ` <span style="color:#888">▶ level</span>`;
-        } else if (item.elevation_change === 'climbing') {
-            vsStr = ` <span style="color:#4caf50">▲</span>`;
-        } else if (item.elevation_change === 'descending') {
-            vsStr = ` <span style="color:#f44336">▼</span>`;
-        }
-        altCell.innerHTML = altStr + vsStr;
+        altCell.textContent = ft > 18000 ? `FL${Math.round(ft/100)}` : ft.toLocaleString('en-US') + 'ft';
     } else {
         altCell.innerHTML = '<span style="color:#444">—</span>';
     }
     row.appendChild(altCell);
 
-    // Col 7 — Sky Δ
+    // Col 7 — Vertical speed
+    const vsCell = document.createElement('td');
+    vsCell.style.whiteSpace = 'nowrap';
+    if (item.vertical_rate != null) {
+        const fpm = Math.round(item.vertical_rate * 196.85);
+        if (fpm > 64) vsCell.innerHTML = `<span style="color:#4caf50">▲ +${fpm.toLocaleString()}</span>`;
+        else if (fpm < -64) vsCell.innerHTML = `<span style="color:#f44336">▼ ${fpm.toLocaleString()}</span>`;
+        else vsCell.innerHTML = `<span style="color:#888">▶ level</span>`;
+    } else if (item.elevation_change === 'climbing') {
+        vsCell.innerHTML = `<span style="color:#4caf50">▲</span>`;
+    } else if (item.elevation_change === 'descending') {
+        vsCell.innerHTML = `<span style="color:#f44336">▼</span>`;
+    } else {
+        vsCell.innerHTML = '<span style="color:#444">—</span>';
+    }
+    row.appendChild(vsCell);
+
+    // Col 8 — Sky Δ
     const skyCell = document.createElement('td');
     skyCell.style.whiteSpace = 'nowrap';
     if (item.alt_diff != null && item.az_diff != null) {
@@ -466,19 +471,29 @@ function renderRichFlightRow(item, bodyTable) {
     }
     row.appendChild(skyCell);
 
-    // Col 8 — Track (heading + speed)
+    // Col 9 — Track (heading)
     const trackCell = document.createElement('td');
     trackCell.style.whiteSpace = 'nowrap';
-    if (item.direction != null && item.speed != null) {
+    if (item.direction != null) {
         const hdgWord = headingWord(item.direction);
-        const kts = Math.round(item.speed / 1.852);
-        trackCell.innerHTML = `${hdgWord} ${Math.round(item.direction)}° <span style="color:#aaa;font-size:0.85em">${kts}kt</span>`;
+        trackCell.textContent = `${hdgWord} ${Math.round(item.direction)}°`;
     } else {
         trackCell.innerHTML = '<span style="color:#444">—</span>';
     }
     row.appendChild(trackCell);
 
-    // Col 9 — Route
+    // Col 10 — Ground speed
+    const spdCell = document.createElement('td');
+    spdCell.style.whiteSpace = 'nowrap';
+    if (item.speed != null && item.speed > 0) {
+        const kts = Math.round(item.speed / 1.852);
+        spdCell.textContent = `${kts}kt`;
+    } else {
+        spdCell.innerHTML = '<span style="color:#444">—</span>';
+    }
+    row.appendChild(spdCell);
+
+    // Col 11 — Route
     const routeCell = document.createElement('td');
     routeCell.style.whiteSpace = 'nowrap';
     const _clean = v => (v && v !== 'N/A' && v !== 'N/D') ? v : '';
@@ -494,7 +509,7 @@ function renderRichFlightRow(item, bodyTable) {
     }
     row.appendChild(routeCell);
 
-    // Col 10 — Src / Age
+    // Col 12 — Src / Age
     const srcCell = document.createElement('td');
     srcCell.style.whiteSpace = 'nowrap';
     const srcMap = {

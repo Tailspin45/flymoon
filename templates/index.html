@@ -214,20 +214,22 @@
         <!-- ── Rich table (OpenSky-enhanced, 10 cols) ── -->
         <table id="resultsTableRich" style="display:none;">
             <colgroup>
-                <col style="width:5%">   <!-- status -->
-                <col style="width:9%">   <!-- transit -->
-                <col style="width:5%">   <!-- target -->
-                <col style="width:13%">  <!-- aircraft -->
-                <col style="width:14%">  <!-- category -->
-                <col style="width:10%">  <!-- alt v/s -->
-                <col style="width:9%">   <!-- sky Δ -->
-                <col style="width:10%">  <!-- track -->
-                <col style="width:17%">  <!-- route -->
-                <col style="width:8%">   <!-- src/age -->
+                <col style="width:4%">   <!-- status -->
+                <col style="width:8%">   <!-- transit -->
+                <col style="width:4%">   <!-- target -->
+                <col style="width:11%">  <!-- aircraft -->
+                <col style="width:11%">  <!-- category -->
+                <col style="width:7%">   <!-- alt -->
+                <col style="width:8%">   <!-- v/s -->
+                <col style="width:8%">   <!-- sky Δ -->
+                <col style="width:8%">   <!-- track -->
+                <col style="width:6%">   <!-- gnd spd -->
+                <col style="width:15%">  <!-- route -->
+                <col style="width:7%">   <!-- src/age -->
             </colgroup>
             <thead>
                 <tr>
-                    <th colspan="10" style="text-align:right; padding:2px 6px; background:transparent; border:none;">
+                    <th colspan="12" style="text-align:right; padding:2px 6px; background:transparent; border:none;">
                         <button class="btn-help" onclick="showInfo('table-columns-rich')" title="Explain rich table columns" style="font-size:0.8em;">ℹ️ Column guide</button>
                         <button class="btn-help" onclick="showInfo('transit-levels')" title="Explain High/Medium/Low transit probability" style="font-size:0.8em; margin-left:4px;">🟢 Probability guide</button>
                     </th>
@@ -238,9 +240,11 @@
                     <th title="☀️ Sun or 🌙 Moon — which celestial body this aircraft may transit">Target</th>
                     <th title="Callsign / flight ID and ICAO aircraft type code">aircraft</th>
                     <th title="ADS-B emitter category — aircraft class (UAV, glider, rotorcraft, heavy, etc.)">category</th>
-                    <th title="Altitude (FL above 18,000ft, otherwise feet) and vertical speed (▲ climbing, ▼ descending, ▶ level)">Alt v/s</th>
+                    <th title="Altitude (FL above 18,000ft, otherwise feet)">Alt</th>
+                    <th title="Vertical speed in ft/min (▲ climbing, ▼ descending, ▶ level)">v/s (fpm)</th>
                     <th title="Angular separation between aircraft and target at closest approach: Δaltitude° and Δazimuth°">sky Δ</th>
-                    <th title="Magnetic heading and ground speed in knots">track</th>
+                    <th title="True heading in degrees clockwise from north">track</th>
+                    <th title="Ground speed in knots">gnd spd</th>
                     <th title="Departure → Destination (ICAO airport codes when available)">route</th>
                     <th title="Position source (ADS-B / MLAT / FLARM / FA) and data age in seconds">src / age</th>
                 </tr>
