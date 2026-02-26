@@ -130,15 +130,16 @@ class TransitMonitor:
                         # Only include HIGH and MEDIUM probability (compare to enum values, not enums)
                         if probability in [PossibilityLevel.HIGH.value, PossibilityLevel.MEDIUM.value]:
                             all_transits.append({
-                                'flight': transit.get('name', 'Unknown'),
+                                'flight': transit.get('id', transit.get('name', 'Unknown')),
                                 'target': target_name.title(),
                                 'probability': PossibilityLevel(probability).name,
                                 'seconds_until': int(seconds_until),
-                                'altitude': round(float(transit.get('target_altitude', 0)), 1),
-                                'azimuth': round(float(transit.get('target_azimuth', 0)), 1)
+                                'altitude': round(float(transit.get('target_alt') or 0), 1),
+                                'azimuth': round(float(transit.get('target_az') or 0), 1)
                             })
             except Exception as e:
-                logger.warning(f"[TransitMonitor] Error checking {target_name} transits: {e}")
+                import traceback
+                logger.warning(f"[TransitMonitor] Error checking {target_name} transits: {e}\n{traceback.format_exc()}")
                 continue
         
         # Sort by time (nearest first)
