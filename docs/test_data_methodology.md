@@ -86,15 +86,57 @@ The generator calls Skyfield at the moment it runs and stores the resulting alt/
 Because the generator uses real-time positions rather than fixtures, re-running the generator immediately before the test is recommended. The workflow is:
 
 ```bash
-python3 data/test_data_generator.py --scenario dual_tracking
+python3 data/test_data_generator.py
 python3 tests/test_integration.py
 ```
 
 ---
 
-## 5. Known Limitations
+## 5. Flight Heading Design
 
-**15-minute projection.** `check_transit` projects each aircraft forward under constant velocity for 15 minutes. The synthetic flights are placed *at* the target at t = 0, but fly away on a random heading. If the random heading moves the aircraft directly away from the target, the minimum angular separation is found at t = 0 and the classification is correct. If the heading moves the aircraft *toward* the target briefly before diverging, the minimum may be slightly smaller than the placed offset, potentially upgrading a MEDIUM to HIGH. The fixed random seed (`seed = 42`) in the generator ensures reproducibility.
+### 5.1 Perpendicular headings for transit flights
+
+Transit test flights use a **perpendicular heading** relative to the observer-target azimuth:
+
+```
+heading = (target_az + 90) % 360
+```
+
+This ensures the aircraft sweeps *across* the target's apparent disc (as seen from the observer) rather than flying toward or away from it. The azimuth difference therefore stays near zero throughout the 15-minute window, and the minimum angular separation is governed purely by the initial altitude offset. Without this, a random heading could cause az_diff to grow as the aircraft diverges, pushing a MEDIUM flight into LOW or UNLIKELY territory.
+
+### 5.2 NONE/PRIV flights
+
+Decoy flights (`NONE_01`, `NONE_02`, `PRIV01`) are placed 15–25° away from both targets and use random headings — they are expected to remain UNLIKELY regardless of trajectory.
+
+---
+
+## 6. Unit Test Suite
+
+In addition to the end-to-end integration test, the following targeted unit tests exercise individual pipeline components without network calls:
+
+| File | Tests | What it covers |
+|------|-------|----------------|
+| `tests/test_position.py` | 10 | `predict_position()`, `compute_track_velocity()`, `transit_corridor_bbox()` — pure math only |
+| `tests/test_parse_flight_data.py` | 10 | FA unit conversions: hundreds-of-feet altitude → metres, knots → km/h, N/D destination, field passthrough |
+| `tests/test_fa_cache.py` | 9 | FA enrichment cache (`_enrich_from_fa`): cache miss/hit, TTL expiry, HTTP error, network exception, no-API-key guard |
+| `tests/test_flask_routes.py` | 7 | Flask smoke tests via `app.test_client()`: GET `/`, `/flights` 400 on missing coords, 200 with mocked `get_transits`, response schema |
+| `tests/test_classification_logic.py` | 22 | `_angular_separation()`, `get_possibility_level()` thresholds and cosine correction at zenith |
+| `tests/test_integration.py` | 1 | Full pipeline end-to-end with synthetic data |
+
+All tests are runnable with:
+
+```bash
+python3 tests/test_position.py
+python3 tests/test_parse_flight_data.py
+python3 tests/test_fa_cache.py
+python3 tests/test_flask_routes.py
+python3 tests/test_classification_logic.py
+python3 tests/test_integration.py
+```
+
+No test requires a live API key, hardware telescope, or real aircraft data.
+
+### 6.1 Known Limitations
 
 **Bounding-box clamping.** The generator clamps aircraft positions to a fixed bounding box (32.0–33.5° N, 118.0–117.0° W). For target azimuths pointing outside this box (e.g., due north or east) the clamped position will not achieve the intended angular separation and the test will fail. The current scenario always uses the Sun and Moon, whose azimuths at the San Diego observer location are sufficiently southerly during reasonable observing hours.
 
@@ -102,14 +144,14 @@ python3 tests/test_integration.py
 
 ---
 
-## 6. Modifying the Tests
+## 7. Modifying the Tests
 
 To add a new classification tier or change thresholds:
 
 1. Update `get_possibility_level()` in `src/transit.py`.
 2. Update `HIGH_OFFSET`, `MED_OFFSET`, `LOW_OFFSET` in `generate_test_data()` so that the altitude offsets fall within the new tier boundaries after cosine correction.
 3. Update the `expected_high / _medium / _low` lists in `tests/test_integration.py`.
-4. Regenerate: `python3 data/test_data_generator.py --scenario dual_tracking`.
+4. Regenerate: `python3 data/test_data_generator.py`.
 5. Run: `python3 tests/test_integration.py`.
 
 To add a new scenario (e.g., testing a local ADS-B receiver source), add an entry to `get_scenarios()` in the generator and a corresponding `elif data_source == "adsb-local":` branch with a `test_mode` guard in `get_transits()`.
