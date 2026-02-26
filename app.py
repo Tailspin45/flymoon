@@ -328,6 +328,15 @@ def get_all_flights():
             else:
                 logger.info(f"{target.capitalize()} below minimum altitude ({coords['altitude']:.1f}° < {float(min_altitude)}°), skipping transit check")
         
+        # Deduplicate: sun+moon calls both include excluded aircraft — keep the
+        # entry with the highest possibility_level for each flight ID.
+        seen: dict = {}
+        for f in all_flights:
+            fid = f.get("id") or f.get("name", "")
+            if fid not in seen or (f.get("possibility_level") or 0) > (seen[fid].get("possibility_level") or 0):
+                seen[fid] = f
+        all_flights = list(seen.values())
+        
         # Calculate adaptive refresh interval based on closest transit
         next_check_interval = calculate_adaptive_interval(all_flights)
 

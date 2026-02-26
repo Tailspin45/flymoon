@@ -586,6 +586,7 @@ def get_transits(
         _COARSE_SEP = max(_combined_threshold * 5, 30.0)  # generous margin
 
         prefiltered = []
+        excluded = []   # aircraft too far from target to transit — still shown in table
         for f in flight_data:
             try:
                 f_alt, f_az = geographic_to_altaz(
@@ -599,6 +600,8 @@ def get_transits(
             sep = _angular_separation(abs(f_alt - t_alt), abs(f_az - t_az), t_alt)
             if sep <= _COARSE_SEP:
                 prefiltered.append(f)
+            else:
+                excluded.append(f)
 
         logger.info(
             f"[Pre-filter] {len(prefiltered)}/{len(flight_data)} aircraft kept "
@@ -650,6 +653,37 @@ def get_transits(
                 result = future.result()
                 data.append(result)
                 logger.info(result)
+
+        # Add aircraft excluded by pre-filter as position-only rows (no transit analysis)
+        for f in excluded:
+            data.append({
+                "id":                f.get("name") or f.get("id", ""),
+                "fa_flight_id":      f.get("fa_flight_id", ""),
+                "origin":            f.get("origin", ""),
+                "destination":       f.get("destination", ""),
+                "latitude":          f["latitude"],
+                "longitude":         f["longitude"],
+                "aircraft_elevation": f.get("elevation") or f.get("aircraft_elevation", 0),
+                "aircraft_type":     f.get("aircraft_type", "N/A"),
+                "speed":             f.get("speed", 0),
+                "direction":         f.get("direction", 0),
+                "is_possible_transit": 0,
+                "possibility_level": PossibilityLevel.UNLIKELY.value,
+                "elevation_change":  CHANGE_ELEVATION.get(
+                    f.get("elevation_change"), f.get("elevation_change")
+                ),
+                "vertical_rate":     f.get("vertical_rate"),
+                "category":          f.get("category"),
+                "squawk":            f.get("squawk"),
+                "on_ground":         f.get("on_ground", False),
+                "icao24":            f.get("icao24", ""),
+                "waypoints":         f.get("waypoints", []),
+                "position_source":   f.get("position_source", "flightaware"),
+                "position_age_s":    f.get("position_age_s"),
+                "alt_diff": None, "az_diff": None, "time": None,
+                "target_alt": None, "plane_alt": None,
+                "target_az": None, "plane_az": None,
+            })
     else:
         logger.debug(
             f"{target_name} target is under horizon, skipping checking for transits..."
