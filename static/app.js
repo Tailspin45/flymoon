@@ -2629,23 +2629,67 @@ function updateLastUpdateDisplay() {
 // Update display every second
 setInterval(updateLastUpdateDisplay, 1000);
 
-// Telescope status indicator
+// Telescope status indicator + disconnect banner
+let _scopeWasConnected = null;   // null = unknown (first poll)
+let _scopeBannerDismissed = false;
+
+function dismissTelescopeBanner() {
+    _scopeBannerDismissed = true;
+    const banner = document.getElementById('telescopeDisconnectBanner');
+    if (banner) banner.style.display = 'none';
+}
+
+function reconnectTelescope() {
+    // Hit the connect endpoint then force a status refresh
+    fetch('/telescope/connect', { method: 'POST' })
+        .catch(() => {})
+        .finally(() => {
+            _scopeBannerDismissed = false;  // let the next poll decide visibility
+            updateTelescopeStatus();
+        });
+}
+
 function updateTelescopeStatus() {
     fetch('/telescope/status')
         .then(response => response.json())
         .then(data => {
             const statusLight = document.getElementById('telescopeStatusLight');
+            const banner      = document.getElementById('telescopeDisconnectBanner');
+            const isEnabled   = data.enabled;
+            const isConnected = data.connected;
+
+            // Status light
             if (statusLight) {
-                if (data.connected) {
+                if (isConnected) {
                     statusLight.style.backgroundColor = '#00ff00';
                     statusLight.title = 'Telescope connected';
+                } else if (!isEnabled) {
+                    statusLight.style.backgroundColor = '#555';
+                    statusLight.title = 'Telescope disabled';
                 } else {
                     statusLight.style.backgroundColor = '#ff0000';
                     statusLight.title = 'Telescope disconnected';
                 }
             }
+
+            // Disconnect banner — only show if telescope is enabled and was previously
+            // connected (i.e. we lost a live connection, not just startup with no scope)
+            if (banner && isEnabled) {
+                if (!isConnected) {
+                    // Was connected before → show banner (unless user dismissed this drop)
+                    if (_scopeWasConnected === true && !_scopeBannerDismissed) {
+                        banner.style.display = 'flex';
+                    }
+                } else {
+                    // Reconnected — hide banner and reset dismissed flag
+                    banner.style.display = 'none';
+                    _scopeBannerDismissed = false;
+                }
+            }
+
+            _scopeWasConnected = isConnected;
         })
-        .catch(error => {
+        .catch(() => {
             const statusLight = document.getElementById('telescopeStatusLight');
             if (statusLight) {
                 statusLight.style.backgroundColor = '#999';

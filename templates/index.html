@@ -25,6 +25,14 @@
   <a href="/cost-models" target="_blank" style="color:#7ab8d4; margin-left:6px; white-space:nowrap;">📄 Cost analysis</a>
   <button onclick="document.getElementById('dataSourceBanner').style.display='none'" style="margin-left:auto; background:none; border:none; color:#888; cursor:pointer; font-size:1.1em;" title="Dismiss">✕</button>
 </div>
+<!-- Telescope lost-connection banner — shown whenever scope goes offline -->
+<div id="telescopeDisconnectBanner" style="display:none; background:#3d0000; border-bottom:3px solid #ff4444; padding:12px 18px; align-items:center; gap:14px; font-size:1em; flex-wrap:wrap; position:relative; z-index:501;">
+  <span style="font-size:1.5em;">🔭</span>
+  <span style="color:#ff9999; font-weight:bold; font-size:1.05em;">Lost Connection With the Telescope</span>
+  <span style="color:#ccc; font-size:0.9em;">Automatic transit recording is suspended until the scope reconnects.</span>
+  <button onclick="reconnectTelescope()" style="background:#cc2222; color:#fff; border:none; border-radius:4px; padding:6px 14px; cursor:pointer; font-size:0.95em; font-weight:bold;" title="Attempt to reconnect">🔌 Reconnect</button>
+  <button onclick="dismissTelescopeBanner()" style="margin-left:auto; background:none; border:none; color:#888; cursor:pointer; font-size:1.2em;" title="Dismiss">✕</button>
+</div>
 <div id="mapView">
     <div class="header-row">
         <img src="{{ url_for('static', filename='images/logo.svg') }}" alt="Flymoon Transit Tracker" class="logo" />
