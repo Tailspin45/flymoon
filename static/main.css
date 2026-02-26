@@ -821,6 +821,11 @@ body {
 }
 #openaip-modal-box button:hover { background: #3a82c0; }
 
+/* ── Rich table ── */
+#resultsTableRich {
+    width: 100%;
+}
+
 /* ── Rich table row highlight ── */
 #resultsTableRich tbody tr.selected-row {
     outline: 1px solid #4a90d9;

@@ -1065,12 +1065,21 @@ function updateFlightRow(row, flight) {
             cell.textContent = value === "N/A" ? "" : value;
         } else if (column === "aircraft_elevation_feet") {
             const altitude = Math.round(value);
-            if (altitude > 18000) {
-                const flightLevel = Math.round(altitude / 100);
-                cell.textContent = `FL${flightLevel}`;
-            } else {
-                cell.textContent = altitude.toLocaleString('en-US');
+            const altStr = altitude > 18000
+                ? `FL${Math.round(altitude / 100)}`
+                : altitude.toLocaleString('en-US') + 'ft';
+            let vsStr = '';
+            if (flight.vertical_rate != null) {
+                const fpm = Math.round(flight.vertical_rate * 196.85);
+                if (fpm > 64) vsStr = ` <span style="color:#4caf50">▲ +${fpm.toLocaleString()}fpm</span>`;
+                else if (fpm < -64) vsStr = ` <span style="color:#f44336">▼ ${fpm.toLocaleString()}fpm</span>`;
+                else vsStr = ` <span style="color:#888">▶</span>`;
+            } else if (flight.elevation_change === 'C' || flight.elevation_change === 'climbing') {
+                vsStr = ` <span style="color:#4caf50">▲</span>`;
+            } else if (flight.elevation_change === 'D' || flight.elevation_change === 'descending') {
+                vsStr = ` <span style="color:#f44336">▼</span>`;
             }
+            cell.innerHTML = altStr + vsStr;
         } else if (column === "distance_nm") {
             const km = (value * 1.852).toFixed(1);
             const miles = (value * 1.15078).toFixed(1);
