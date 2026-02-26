@@ -115,7 +115,9 @@ def _parse_opensky_flight(callsign: str, os_data: dict) -> dict:
         "icao24":            os_data.get("icao24", ""),
         "vertical_rate":     vr,
         "squawk":            os_data.get("squawk"),
+        "spi":               os_data.get("spi", False),
         "on_ground":         os_data.get("on_ground", False),
+        "category":          os_data.get("category"),
     }
 from src.position import (
     AreaBoundingBox,
@@ -355,6 +357,10 @@ def check_transit(
                         flight.get("elevation_change"),  # pass through OpenSky full words
                     ),
                     "vertical_rate": flight.get("vertical_rate"),
+                    "category": flight.get("category"),
+                    "squawk": flight.get("squawk"),
+                    "on_ground": flight.get("on_ground", False),
+                    "icao24": flight.get("icao24", ""),
                     "direction": flight.get("direction", 0),
                     "waypoints": flight.get("waypoints", []),
                     "position_source": flight.get("position_source", "flightaware"),
@@ -383,6 +389,10 @@ def check_transit(
             flight.get("elevation_change"),  # pass through OpenSky full words
         ),
         "vertical_rate": flight.get("vertical_rate"),
+        "category": flight.get("category"),
+        "squawk": flight.get("squawk"),
+        "on_ground": flight.get("on_ground", False),
+        "icao24": flight.get("icao24", ""),
         "direction": flight.get("direction", 0),
         "waypoints": flight.get("waypoints", []),
         "position_source": flight.get("position_source", "flightaware"),

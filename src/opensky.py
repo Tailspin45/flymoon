@@ -153,6 +153,7 @@ def fetch_opensky_positions(
         "lomin": lon_ll,
         "lamax": lat_ur,
         "lomax": lon_ur,
+        "extended": 1,   # includes category (index 17) in state vectors
     }
 
     try:
@@ -191,6 +192,7 @@ def fetch_opensky_positions(
         # 4 last_contact, 5 lon, 6 lat, 7 baro_altitude, 8 on_ground,
         # 9 velocity(m/s), 10 true_track(deg), 11 vertical_rate(m/s),
         # 12 sensors, 13 geo_altitude, 14 squawk, 15 spi, 16 position_source
+        # 17 category (only present when extended=1 is requested)
         if len(s) < 11:
             continue
 
@@ -226,6 +228,9 @@ def fetch_opensky_positions(
             "vertical_rate_ms": float(vert_rate) if vert_rate is not None else None,
             "last_contact":     float(last_contact),
             "on_ground":        bool(on_ground),
+            "squawk":           s[14] if len(s) > 14 else None,
+            "spi":              bool(s[15]) if len(s) > 15 else False,
+            "category":         int(s[17]) if len(s) > 17 and s[17] is not None else None,
             "source":           "opensky",
         }
 
