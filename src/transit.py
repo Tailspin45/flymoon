@@ -287,7 +287,8 @@ def check_transit(
             t_alt, t_az = target.altitude.degrees, target.azimuthal.degrees
 
         alt_diff = abs(future_alt - t_alt)
-        az_diff = abs(future_az - t_az)
+        az_diff_raw = abs(future_az - t_az)
+        az_diff = min(az_diff_raw, 360 - az_diff_raw)  # shortest arc
         diff_combined = alt_diff + az_diff
 
         # Initialize closest_approach with first data point if not set
@@ -600,7 +601,8 @@ def get_transits(
             except Exception:
                 prefiltered.append(f)  # keep on error
                 continue
-            sep = _angular_separation(abs(f_alt - t_alt), abs(f_az - t_az), t_alt)
+            az_diff_raw = abs(f_az - t_az)
+            sep = _angular_separation(abs(f_alt - t_alt), min(az_diff_raw, 360 - az_diff_raw), t_alt)
             if sep <= _COARSE_SEP:
                 prefiltered.append(f)
             else:
@@ -690,7 +692,7 @@ def get_transits(
                 "position_source":   f.get("position_source", "flightaware"),
                 "position_age_s":    f.get("position_age_s"),
                 "alt_diff": round(f["_current_alt"] - t_alt, 2) if "_current_alt" in f else None,
-                "az_diff":  round(f["_current_az"]  - t_az,  2) if "_current_az"  in f else None,
+                "az_diff":  round(min(abs(f["_current_az"] - t_az), 360 - abs(f["_current_az"] - t_az)), 2) if "_current_az"  in f else None,
                 "time": None,
                 "target_alt": round(t_alt, 2),
                 "plane_alt":  round(f["_current_alt"], 2) if "_current_alt" in f else None,
