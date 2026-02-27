@@ -485,13 +485,14 @@ function renderRichFlightRow(item, bodyTable) {
     }
     row.appendChild(trackCell);
 
-    // Col 10 — Ground speed (kph / mph)
+    // Col 10 — Ground speed (kph / mph / kts)
     const spdCell = document.createElement('td');
     spdCell.style.whiteSpace = 'nowrap';
     if (item.speed != null && item.speed > 0) {
         const kph = Math.round(item.speed);
         const mph = Math.round(item.speed * 0.621371);
-        spdCell.textContent = `${kph}/${mph}`;
+        const kts = Math.round(item.speed * 0.539957);
+        spdCell.textContent = `${kph}/${mph}/${kts}`;
     } else {
         spdCell.innerHTML = '<span style="color:#444">—</span>';
     }
@@ -1578,7 +1579,7 @@ const HELP_CONTENT = {
 <tr><td style="padding:4px 8px;color:#7eb8f7;white-space:nowrap"><strong>GPS alt (ft)</strong></td><td style="padding:4px 8px">GPS altitude in feet above sea level from ADS-B transponder</td></tr>
 <tr><td style="padding:4px 8px;color:#7eb8f7;white-space:nowrap"><strong>Hdg (T)</strong></td><td style="padding:4px 8px">True heading — degrees clockwise from true North (not magnetic). Used to project the flight path forward.</td></tr>
 <tr><td style="padding:4px 8px;color:#7eb8f7;white-space:nowrap"><strong>dist</strong></td><td style="padding:4px 8px">Straight-line distance from your observer position to the aircraft</td></tr>
-<tr><td style="padding:4px 8px;color:#7eb8f7;white-space:nowrap"><strong>Grnd Spd</strong></td><td style="padding:4px 8px">Aircraft ground speed in mph (converted from knots)</td></tr>
+<tr><td style="padding:4px 8px;color:#7eb8f7;white-space:nowrap"><strong>Grnd Spd</strong></td><td style="padding:4px 8px">Aircraft ground speed in kph / mph / knots</td></tr>
 <tr><td style="padding:4px 8px;color:#7eb8f7;white-space:nowrap"><strong>src</strong></td><td style="padding:4px 8px">Data source: FA=FlightAware, OS=OpenSky, ADS-B=direct receiver</td></tr>
 </table>`
     },
