@@ -488,6 +488,7 @@ function renderRichFlightRow(item, bodyTable) {
     // Col 10 — Ground speed (kph / mph / kts)
     const spdCell = document.createElement('td');
     spdCell.style.whiteSpace = 'nowrap';
+    spdCell.style.textAlign = 'center';
     if (item.speed != null && item.speed > 0) {
         const kph = Math.round(item.speed);
         const mph = Math.round(item.speed * 0.621371);
@@ -2130,8 +2131,12 @@ function fetchFlights() {
                     val.style.whiteSpace = "nowrap";
                     val.title = display;
                 } else if (column === "speed") {
-                    // Show speed in MPH (value is in km/h from backend)
-                    val.textContent = Math.round(value / 1.60934);  // Convert km/h to MPH
+                    // Show speed in kph / mph / kts
+                    const kph = Math.round(value);
+                    const mph = Math.round(value * 0.621371);
+                    const kts = Math.round(value * 0.539957);
+                    val.textContent = `${kph}/${mph}/${kts}`;
+                    val.style.textAlign = 'center';
                 } else if (column === "aircraft_elevation_feet") {
                     // Show GPS altitude in feet with comma formatting, or as flight level if > 18000
                     const altitude = Math.round(value);
