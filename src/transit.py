@@ -577,6 +577,12 @@ def get_transits(
             for callsign, os_pos in opensky_data.items():
                 if os_pos.get("on_ground"):
                     continue  # skip ground traffic
+                lat, lon = os_pos.get("lat"), os_pos.get("lon")
+                if lat is None or lon is None:
+                    continue
+                if not (bbox.lat_lower_left <= lat <= bbox.lat_upper_right and
+                        bbox.long_lower_left <= lon <= bbox.long_upper_right):
+                    continue  # outside bounding box
                 flight_data.append(_parse_opensky_flight(callsign, os_pos))
 
             logger.info(f"[OpenSky] {len(flight_data)} airborne aircraft in bbox")
