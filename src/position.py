@@ -147,8 +147,6 @@ def transit_corridor_bbox(
     # tan(alt) = aircraft_altitude / ground_distance  →  d = alt / tan(alt)
     # Clamp alt to avoid division by zero / absurdly large distances.
     alt_clamped = max(target_alt_deg, 3.0)
-    ground_dist_km = aircraft_altitude_m / 1000.0 / radians(alt_clamped)  # approx for small angles
-    # More accurate: use tan
     from math import tan
     ground_dist_km = (aircraft_altitude_m / 1000.0) / tan(radians(alt_clamped))
     # Cap at ~500 km (covers low-altitude targets without going global)

@@ -467,7 +467,8 @@ function renderRichFlightRow(item, bodyTable) {
     skyCell.style.whiteSpace = 'nowrap';
     if (item.alt_diff != null && item.az_diff != null) {
         const ad = Math.round(item.alt_diff), azd = Math.round(item.az_diff);
-        const c = (Math.abs(ad) < 1 && Math.abs(azd) < 1) ? '#4caf50' : (Math.abs(ad) < 2 && Math.abs(azd) < 2) ? '#ff9800' : '#888';
+        const altAbs = Math.abs(item.alt_diff), azAbs = Math.abs(item.az_diff);
+        const c = (altAbs <= 1.5 && azAbs <= 1.5) ? '#4caf50' : (altAbs <= 2.5 && azAbs <= 2.5) ? '#ff9800' : '#888';
         skyCell.innerHTML = `<span style="color:${c}">↕${ad}° ↔${azd}°</span>`;
     } else {
         skyCell.innerHTML = '<span style="color:#444">—</span>';
@@ -2266,7 +2267,7 @@ function fetchFlights() {
         const stack = error.stack ? `\n\n${error.stack}` : "";
         let displayMsg;
         if (error.name === 'AbortError') {
-            displayMsg = "⚠️ Request timed out after 30 seconds.\n\nThe server may be overloaded or the FlightAware API is slow. Try again in a moment.";
+            displayMsg = "⚠️ Request timed out after 55 seconds.\n\nThe server may be overloaded or the FlightAware API is slow. Try again in a moment.";
         } else if (errorMsg.includes("AEROAPI") || errorMsg.includes("API key")) {
             displayMsg = "⚠️ FlightAware API key not configured.\n\nPlease set AEROAPI_API_KEY in your .env file.\nSee SETUP.md for instructions.";
         } else if (errorMsg.includes("Failed to fetch") || errorMsg.includes("ERR_EMPTY_RESPONSE") || errorMsg === "") {
