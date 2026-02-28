@@ -184,3 +184,6 @@ flymoon-server.exe
 electron/assets/icon.icns
 electron/assets/icon.ico
 electron/assets/icon.png
+
+# Transit recording captures
+static/captures/
