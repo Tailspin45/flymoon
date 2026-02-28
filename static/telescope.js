@@ -688,7 +688,7 @@ function applyZoom() {
     if (scrollArea) {
         const padX = Math.max(0, Math.round((cw - elW) / 2));
         const padY = Math.max(0, Math.round((ch - elH) / 2));
-        scrollArea.style.boxSizing      = 'content-box';
+        scrollArea.style.boxSizing      = 'border-box';
         scrollArea.style.minWidth       = cw + 'px';
         scrollArea.style.minHeight      = ch + 'px';
         scrollArea.style.paddingLeft    = padX + 'px';
