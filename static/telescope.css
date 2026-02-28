@@ -200,6 +200,15 @@
     background: #000;
 }
 
+/* Scroll area: always fills the viewport, centres content, expands with zoom */
+.preview-scroll-area {
+    min-width: 100%;
+    min-height: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
 /* Custom scrollbar styling */
 .preview-container::-webkit-scrollbar {
     width: 10px;
@@ -229,8 +238,7 @@
 
 #previewImage {
     display: block;
-    position: absolute;
-    /* Positioned and sized entirely by applyZoom() in JS */
+    flex-shrink: 0;  /* never let flex squish it */
 }
 
 .preview-placeholder {

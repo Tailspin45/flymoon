@@ -584,9 +584,10 @@ function startPreview() {
         if (previewStatusDot) previewStatusDot.className = 'status-dot connected';
         if (previewStatusText) previewStatusText.textContent = 'Live Stream Active';
         if (previewTitleIcon) previewTitleIcon.textContent = '🟢';
-        
-        // Fit to window
-        zoomFit();
+
+        // Apply initial fit zoom once we know the image has loaded
+        currentZoom = 1.0;
+        applyZoom();
     }, 2000);
     
     // Error handler
@@ -646,29 +647,29 @@ function applyZoom() {
 
     const cw = container.clientWidth;
     const ch = container.clientHeight;
+    const nw = el.naturalWidth  || el.videoWidth  || 0;
+    const nh = el.naturalHeight || el.videoHeight || 0;
 
-    // Natural pixel dimensions (MJPEG image or video)
-    const nw = el.naturalWidth || el.videoWidth || cw;
-    const nh = el.naturalHeight || el.videoHeight || ch;
+    if (!nw || !nh || !cw || !ch) {
+        // Dimensions not known yet — use a safe default; will be re-called on zoom
+        el.style.width  = '100%';
+        el.style.height = 'auto';
+        el.style.maxWidth  = '100%';
+        el.style.maxHeight = '100%';
+        updateSlider();
+        return;
+    }
 
-    // Fit-to-window scale (letterbox/pillarbox, never upscale beyond 1:1)
-    const fitScale = nw > 0 && nh > 0 ? Math.min(cw / nw, ch / nh, 1) : 1;
-    const fitW = (nw > 0 ? nw : cw) * fitScale;
-    const fitH = (nh > 0 ? nh : ch) * fitScale;
+    // Letterbox fit: scale so image fills as much of the container as possible
+    // without cropping, never upscaling beyond native resolution.
+    const fitScale = Math.min(cw / nw, ch / nh, 1);
+    const newW = Math.round(nw * fitScale * currentZoom);
+    const newH = Math.round(nh * fitScale * currentZoom);
 
-    const newW = Math.round(fitW * currentZoom);
-    const newH = Math.round(fitH * currentZoom);
-
-    // Centre when smaller than viewport; stick to top-left when larger (scrollable)
-    el.style.width  = newW + 'px';
-    el.style.height = newH + 'px';
-    el.style.left   = Math.max(0, Math.round((cw - newW) / 2)) + 'px';
-    el.style.top    = Math.max(0, Math.round((ch - newH) / 2)) + 'px';
-    el.style.transform = '';
-
-    // Expand container's scroll area to fit the image
-    container.style.minWidth  = newW + 'px';
-    container.style.minHeight = newH + 'px';
+    el.style.width     = newW + 'px';
+    el.style.height    = newH + 'px';
+    el.style.maxWidth  = 'none';
+    el.style.maxHeight = 'none';
 
     updateSlider();
 }
@@ -1921,10 +1922,11 @@ function startSimulatedPreview() {
         simulationVideo.autoplay = true;
         simulationVideo.loop = true;
         simulationVideo.muted = true;
-        simulationVideo.style.cssText = 'position:absolute; display:block;';
+        simulationVideo.style.cssText = 'display:block; flex-shrink:0;';
         simulationVideo.src = '/static/simulations/demo.mp4';
         simulationVideo.onloadedmetadata = () => applyZoom();
-        if (previewContainer) previewContainer.appendChild(simulationVideo);
+        const scrollArea = document.getElementById('previewScrollArea') || previewContainer;
+        scrollArea.appendChild(simulationVideo);
     } else {
         simulationVideo.style.display = 'block';
         simulationVideo.play();
