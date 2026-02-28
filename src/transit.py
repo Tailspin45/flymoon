@@ -709,7 +709,16 @@ def get_transits(
             f"{target_name} target is under horizon, skipping checking for transits..."
         )
 
-    return {"flights": data, "targetCoordinates": current_target_coordinates}
+    return {
+        "flights": data,
+        "targetCoordinates": current_target_coordinates,
+        "bbox_used": {
+            "latLowerLeft": bbox.lat_lower_left,
+            "lonLowerLeft": bbox.long_lower_left,
+            "latUpperRight": bbox.lat_upper_right,
+            "lonUpperRight": bbox.long_upper_right,
+        },
+    }
 
 
 def recalculate_transits(

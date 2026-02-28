@@ -288,6 +288,7 @@ def get_all_flights():
         local_timezone = get_localzone_name()
         ref_datetime = datetime.now().replace(tzinfo=ZoneInfo(local_timezone))
         
+        all_bboxes_used = []
         for target in ["sun", "moon"]:
             # Check altitude and calculate coordinates for both tracking and display
             celestial_obj = CelestialObject(name=target, observer_position=MY_POSITION)
@@ -307,6 +308,8 @@ def get_all_flights():
                 tracking_targets.append(target)  # Add to tracking list
                 logger.info(f"Checking transits for {target} (altitude: {coords['altitude']:.1f}°, thresholds: alt={alt_threshold}°, az={az_threshold}°)")
                 data = get_transits(latitude, longitude, elevation, target, test_mode, alt_threshold, az_threshold, custom_bbox, data_source)
+                if data.get("bbox_used"):
+                    all_bboxes_used.append(data["bbox_used"])
                 
                 # Tag each flight with which target it's for
                 for flight in data["flights"]:
@@ -340,29 +343,18 @@ def get_all_flights():
         # Calculate adaptive refresh interval based on closest transit
         next_check_interval = calculate_adaptive_interval(all_flights)
 
-        # Compute the bbox that was actually used (dynamic corridor or custom)
-        if custom_bbox:
+        # Compute the bbox for the client — union of all corridor bboxes actually used.
+        # This avoids the earlier mismatched-target bug where _best_alt came from one
+        # target and _best_az came from the other.
+        if all_bboxes_used:
             _bbox_for_client = {
-                "latLowerLeft": custom_bbox["lat_lower_left"],
-                "lonLowerLeft": custom_bbox["lon_lower_left"],
-                "latUpperRight": custom_bbox["lat_upper_right"],
-                "lonUpperRight": custom_bbox["lon_upper_right"],
+                "latLowerLeft":  min(b["latLowerLeft"]  for b in all_bboxes_used),
+                "lonLowerLeft":  min(b["lonLowerLeft"]  for b in all_bboxes_used),
+                "latUpperRight": max(b["latUpperRight"] for b in all_bboxes_used),
+                "lonUpperRight": max(b["lonUpperRight"] for b in all_bboxes_used),
             }
         else:
-            _best_alt = max((c.get("altitude", 0) for c in target_coordinates.values()), default=0)
-            _best_az  = next((c.get("azimuthal", 0) for c in target_coordinates.values()
-                              if c.get("altitude", 0) > 0), 0.0)
-            _cb = transit_corridor_bbox(
-                obs_lat=latitude, obs_lon=longitude,
-                target_alt_deg=max(_best_alt, 3.0),
-                target_az_deg=_best_az,
-            )
-            _bbox_for_client = {
-                "latLowerLeft": _cb.lat_lower_left,
-                "lonLowerLeft": _cb.long_lower_left,
-                "latUpperRight": _cb.lat_upper_right,
-                "lonUpperRight": _cb.long_upper_right,
-            }
+            _bbox_for_client = None  # both targets below min altitude — no API query made
 
         # Combine results
         data = {
