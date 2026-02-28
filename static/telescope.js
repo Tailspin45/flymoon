@@ -642,20 +642,11 @@ function applyZoom() {
     const container  = document.getElementById('previewContainer');
     const scrollArea = document.getElementById('previewScrollArea');
     const el = _getActiveMediaElement();
-    if (!container || !el || el.style.display === 'none') {
-        updateSlider();
-        return;
-    }
+    if (!container || !el || el.style.display === 'none') { updateSlider(); return; }
 
     const cw = container.clientWidth;
     const ch = container.clientHeight;
     if (!cw || !ch) { updateSlider(); return; }
-
-    // Save centre-point fraction before any layout change so we can restore it.
-    const prevSW = container.scrollWidth  || cw;
-    const prevSH = container.scrollHeight || ch;
-    const fracX  = (container.scrollLeft + cw / 2) / prevSW;
-    const fracY  = (container.scrollTop  + ch / 2) / prevSH;
 
     const nw = el.naturalWidth  || el.videoWidth  || 0;
     const nh = el.naturalHeight || el.videoHeight || 0;
@@ -670,27 +661,28 @@ function applyZoom() {
         el.style.maxWidth  = 'none';
         el.style.maxHeight = 'none';
     } else {
-        // Natural dimensions not yet available — let CSS letterbox without distortion.
-        // Use pixel max constraints (not %) so the browser can preserve aspect ratio.
         el.style.width     = 'auto';
         el.style.height    = 'auto';
         el.style.maxWidth  = cw + 'px';
         el.style.maxHeight = ch + 'px';
-        // Approximate rendered size so padding logic below still centres roughly.
         elW = el.offsetWidth  || cw;
         elH = el.offsetHeight || ch;
     }
 
-    // Centre via padding on the scroll-area (never use flex align-items:center for
-    // this — flex centering makes the overflow past the top/left edge unreachable).
-    // Use explicit pixel min-width/min-height so the scroll-area is always at least
-    // as large as the container (%-based min-height is unreliable in overflow:auto).
     if (scrollArea) {
-        const padX = Math.max(0, Math.round((cw - elW) / 2));
-        const padY = Math.max(0, Math.round((ch - elH) / 2));
+        // Size the scroll-area explicitly in pixels — never use % or min-* for this,
+        // they are unreliable in overflow:auto parents.
+        // Padding centres the image; when image > viewport the padding is 0 and the
+        // container scrolls normally.
+        const saW  = Math.max(cw, elW);
+        const saH  = Math.max(ch, elH);
+        const padX = Math.round((saW - elW) / 2);
+        const padY = Math.round((saH - elH) / 2);
         scrollArea.style.boxSizing      = 'border-box';
-        scrollArea.style.minWidth       = cw + 'px';
-        scrollArea.style.minHeight      = ch + 'px';
+        scrollArea.style.width          = saW + 'px';
+        scrollArea.style.height         = saH + 'px';
+        scrollArea.style.minWidth       = '';
+        scrollArea.style.minHeight      = '';
         scrollArea.style.paddingLeft    = padX + 'px';
         scrollArea.style.paddingRight   = padX + 'px';
         scrollArea.style.paddingTop     = padY + 'px';
@@ -699,12 +691,10 @@ function applyZoom() {
         scrollArea.style.justifyContent = 'flex-start';
     }
 
-    // After the browser has applied the new layout, restore the scroll centre.
+    // Scroll so the centre of the image is visible.
     requestAnimationFrame(() => {
-        const newSW = container.scrollWidth;
-        const newSH = container.scrollHeight;
-        container.scrollLeft = Math.round(fracX * newSW - cw / 2);
-        container.scrollTop  = Math.round(fracY * newSH - ch / 2);
+        container.scrollLeft = Math.round((container.scrollWidth  - container.clientWidth)  / 2);
+        container.scrollTop  = Math.round((container.scrollHeight - container.clientHeight) / 2);
     });
 
     updateSlider();
