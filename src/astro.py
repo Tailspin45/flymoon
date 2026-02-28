@@ -47,6 +47,11 @@ def get_rise_set_times(lat: float, lon: float, elevation: float) -> dict:
 
     Uses a 2-day search window for the Moon so that a moonset that falls
     after midnight (next calendar day) is still captured.
+
+    Returns a flat dict with keys: ``sun_rise``, ``sun_set``,
+    ``moon_rise``, ``moon_set``.  Any key may be absent if the event
+    doesn't occur today.  Moonset times that fall on the next calendar
+    day are suffixed with ``+1`` (e.g. ``"00:32+1"``).
     """
     tz = get_localzone()
     today = datetime.now(tz=tz).replace(hour=0, minute=0, second=0, microsecond=0)
