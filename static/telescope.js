@@ -15,7 +15,7 @@ let transitTickInterval = null; // 1-second local countdown tick
 let transitCaptureActive = false;
 let upcomingTransits = [];
 let currentZoom = 1.0;
-let zoomStep = 0.25;
+let zoomStep = 0.1;
 let isSimulating = false;
 let simulationVideo = null;
 let simulationFiles = []; // Track temporary simulation files
@@ -190,9 +190,11 @@ async function updateStatus() {
         updateRecordingUI();
         checkTargetMismatch();
         
-        // Auto-start preview if connected (e.g. navigating to the page while already connected)
+        // Auto-start preview if connected; stop stale stream if disconnected
         if (isConnected && typeof startPreview === 'function') {
             startPreview();
+        } else if (!isConnected && typeof stopPreview === 'function') {
+            stopPreview();
         }
         
         // Update last update timestamp
@@ -665,11 +667,10 @@ function applyZoom() {
     const scrollXPercent = container.scrollLeft / (container.scrollWidth - container.clientWidth || 1);
     const scrollYPercent = container.scrollTop / (container.scrollHeight - container.clientHeight || 1);
     
-    // Apply zoom using CSS transform
+    // Apply zoom by expanding the element width (avoids double-scaling with transform)
     element.classList.add('zoomed');
-    element.style.transform = `scale(${currentZoom})`;
-    element.style.transformOrigin = 'center center';
-    element.style.width = '100%';
+    element.style.transform = '';
+    element.style.width = `${currentZoom * 100}%`;
     element.style.height = 'auto';
     
     updateSlider();
