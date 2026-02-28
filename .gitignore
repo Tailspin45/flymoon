@@ -187,3 +187,4 @@ electron/assets/icon.png
 
 # Transit recording captures
 static/captures/
+DS_Store
