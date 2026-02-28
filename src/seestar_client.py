@@ -234,8 +234,10 @@ class SeestarClient:
 
     def _heartbeat_loop(self):
         """Background thread: sends periodic keepalive pings and auto-reconnects on drop."""
-        RECONNECT_INTERVAL = 10  # seconds between reconnect attempts
+        RECONNECT_INTERVAL = 5   # seconds between reconnect attempts (reduced from 10)
+        FAIL_THRESHOLD = 3       # consecutive socket errors required before marking disconnected
         reconnect_wait = 0
+        fail_count = 0
 
         while self._heartbeat_running:
             # Auto-reconnect when connection has dropped
@@ -254,18 +256,26 @@ class SeestarClient:
                 # Use scope_get_equ_coord as a lightweight keepalive ping.
                 # quiet=True suppresses WARNING/ERROR log spam.
                 self._send_command("scope_get_equ_coord", expect_response=True, quiet=True)
+                fail_count = 0  # successful ping — clear any transient failure streak
             except Exception as e:
                 err = str(e).lower()
                 # Only mark disconnected on real socket errors, not command timeouts.
                 # A timeout means the telescope is busy, not that the TCP link is broken.
                 if any(kw in err for kw in ("broken pipe", "connection reset", "connection refused",
                                              "communication failed")):
-                    logger.debug(f"Heartbeat: socket error, marking disconnected: {e}")
-                    if self._connected:  # only alert on transition connected→disconnected
-                        self._connected = False
-                        self._notify_scope_offline()
+                    fail_count += 1
+                    if fail_count >= FAIL_THRESHOLD:
+                        # Confirmed persistent disconnect — alert and let reconnect loop handle it
+                        logger.debug(f"Heartbeat: {fail_count} consecutive errors — marking disconnected: {e}")
+                        if self._connected:
+                            self._connected = False
+                            self._notify_scope_offline()
+                        else:
+                            self._connected = False
                     else:
-                        self._connected = False
+                        # Transient error — restore flag and keep trying
+                        self._connected = True
+                        logger.debug(f"Heartbeat: transient socket error ({fail_count}/{FAIL_THRESHOLD}): {e}")
                 else:
                     logger.debug(f"Heartbeat ping timed out (telescope busy): {e}")
 

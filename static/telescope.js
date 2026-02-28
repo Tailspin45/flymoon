@@ -18,6 +18,7 @@ let currentZoom = 1.0;
 let zoomStep = 0.1;
 let isSimulating = false;
 let simulationVideo = null;
+let disconnectedPollCount = 0; // consecutive disconnected polls before stopping preview
 let simulationFiles = []; // Track temporary simulation files
 
 // Eclipse state
@@ -203,9 +204,13 @@ async function updateStatus() {
         
         // Auto-start preview if connected; stop stale stream if disconnected
         if (isConnected && typeof startPreview === 'function') {
+            disconnectedPollCount = 0;
             startPreview();
         } else if (!isConnected && typeof stopPreview === 'function') {
-            stopPreview();
+            disconnectedPollCount++;
+            if (disconnectedPollCount >= 3) {
+                stopPreview();
+            }
         }
         
         // Update last update timestamp
