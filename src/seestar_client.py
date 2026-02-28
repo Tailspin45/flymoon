@@ -220,6 +220,7 @@ class SeestarClient:
             self.socket.connect((self.host, self.port))
             self._connected = True
             logger.info("Reconnected to Seestar")
+            self._notify_scope_online()
             return True
         except socket.error as e:
             logger.debug(f"Reconnect attempt failed: {e}")
@@ -287,6 +288,22 @@ class SeestarClient:
                 ))
             except Exception as e:
                 logger.debug(f"Scope-offline Telegram alert failed: {e}")
+        t = threading.Thread(target=_send, daemon=True)
+        t.start()
+
+    def _notify_scope_online(self):
+        """Fire-and-forget Telegram alert when scope reconnects."""
+        def _send():
+            import asyncio
+            try:
+                from src.telegram_notify import send_telegram_simple
+                asyncio.run(send_telegram_simple(
+                    "✅ <b>Seestar scope reconnected!</b>\n"
+                    "The telescope connection has been re-established. "
+                    "Transit recording is active again."
+                ))
+            except Exception as e:
+                logger.debug(f"Scope-online Telegram alert failed: {e}")
         t = threading.Thread(target=_send, daemon=True)
         t.start()
 

@@ -800,7 +800,7 @@ if __name__ == "__main__":
         exit(1)
     
     print(f"🚀 Starting server on port {port}")
-    
+
     # Reduce werkzeug logging noise
     import logging
     log = logging.getLogger('werkzeug')

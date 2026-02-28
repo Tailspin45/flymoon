@@ -246,10 +246,10 @@ def check_transit(
         is_possible_transit, and change_elev.
     """
     min_diff_combined = float("inf")
+    min_sep_seen = float("inf")  # track true minimum angular separation
     response = None
     closest_approach = None  # Track closest approach even if threshold not met
     no_decreasing_count = 0
-    update_response = False
     _pts_per_min = NUM_SECONDS_PER_MIN // INTERVAL_IN_SECS
     _no_decrease_limit = 3 * _pts_per_min  # bail after 3 min of increasing diff
 
@@ -311,7 +311,6 @@ def check_transit(
         if diff_combined < min_diff_combined:
             no_decreasing_count = 0
             min_diff_combined = diff_combined
-            update_response = True
             # Always track closest approach
             closest_approach = {
                 "alt_diff": round(float(alt_diff), 3),
@@ -332,7 +331,8 @@ def check_transit(
         combined_threshold = max(alt_threshold, az_threshold)
         if future_alt > 0 and sep < combined_threshold:
 
-            if update_response:
+            if sep < min_sep_seen:
+                min_sep_seen = sep
                 response = {
                     "id": flight.get("name") or flight.get("id", ""),
                     "fa_flight_id": flight.get("fa_flight_id", ""),
@@ -369,7 +369,6 @@ def check_transit(
                     "position_source": flight.get("position_source", "flightaware"),
                     "position_age_s": flight.get("position_age_s"),
                 }
-                update_response = False
 
     if response:
         return response
