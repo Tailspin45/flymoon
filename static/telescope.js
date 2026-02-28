@@ -649,42 +649,48 @@ function applyZoom() {
 
     const cw = container.clientWidth;
     const ch = container.clientHeight;
+    if (!cw || !ch) { updateSlider(); return; }
+
+    // Save centre-point fraction before any layout change so we can restore it.
+    const prevSW = container.scrollWidth  || cw;
+    const prevSH = container.scrollHeight || ch;
+    const fracX  = (container.scrollLeft + cw / 2) / prevSW;
+    const fracY  = (container.scrollTop  + ch / 2) / prevSH;
+
     const nw = el.naturalWidth  || el.videoWidth  || 0;
     const nh = el.naturalHeight || el.videoHeight || 0;
 
-    if (!nw || !nh || !cw || !ch) {
+    let elW, elH;
+    if (nw && nh) {
+        const fitScale = Math.min(cw / nw, ch / nh);
+        elW = Math.round(nw * fitScale * currentZoom);
+        elH = Math.round(nh * fitScale * currentZoom);
+        el.style.width     = elW + 'px';
+        el.style.height    = elH + 'px';
+        el.style.maxWidth  = 'none';
+        el.style.maxHeight = 'none';
+    } else {
         // Natural dimensions not yet available — let CSS letterbox without distortion.
-        // Never set both a width% and maxHeight% simultaneously; that squishes the image.
+        // Use pixel max constraints (not %) so the browser can preserve aspect ratio.
         el.style.width     = 'auto';
         el.style.height    = 'auto';
-        el.style.maxWidth  = '100%';
-        el.style.maxHeight = ch ? (ch + 'px') : '100%';
-        if (scrollArea) {
-            scrollArea.style.padding         = '0';
-            scrollArea.style.alignItems      = 'center';
-            scrollArea.style.justifyContent  = 'center';
-        }
-        updateSlider();
-        return;
+        el.style.maxWidth  = cw + 'px';
+        el.style.maxHeight = ch + 'px';
+        // Approximate rendered size so padding logic below still centres roughly.
+        elW = el.offsetWidth  || cw;
+        elH = el.offsetHeight || ch;
     }
 
-    // Letterbox fit: fill as much of the container as possible, no cropping.
-    const fitScale = Math.min(cw / nw, ch / nh);
-    const elW = Math.round(nw * fitScale * currentZoom);
-    const elH = Math.round(nh * fitScale * currentZoom);
-
-    el.style.width     = elW + 'px';
-    el.style.height    = elH + 'px';
-    el.style.maxWidth  = 'none';
-    el.style.maxHeight = 'none';
-
-    // Use padding (not flex-align) to centre the image.  Flex centering is broken
-    // when the child is larger than the container: the overflow past the top/left
-    // edge is inaccessible to scrolling.  Padding creates scrollable space on every
-    // side so the image is always reachable.
+    // Centre via padding on the scroll-area (never use flex align-items:center for
+    // this — flex centering makes the overflow past the top/left edge unreachable).
+    // Use explicit pixel min-width/min-height so the scroll-area is always at least
+    // as large as the container (%-based min-height is unreliable in overflow:auto).
     if (scrollArea) {
         const padX = Math.max(0, Math.round((cw - elW) / 2));
         const padY = Math.max(0, Math.round((ch - elH) / 2));
+        scrollArea.style.boxSizing      = 'content-box';
+        scrollArea.style.minWidth       = cw + 'px';
+        scrollArea.style.minHeight      = ch + 'px';
         scrollArea.style.paddingLeft    = padX + 'px';
         scrollArea.style.paddingRight   = padX + 'px';
         scrollArea.style.paddingTop     = padY + 'px';
@@ -692,6 +698,14 @@ function applyZoom() {
         scrollArea.style.alignItems     = 'flex-start';
         scrollArea.style.justifyContent = 'flex-start';
     }
+
+    // After the browser has applied the new layout, restore the scroll centre.
+    requestAnimationFrame(() => {
+        const newSW = container.scrollWidth;
+        const newSH = container.scrollHeight;
+        container.scrollLeft = Math.round(fracX * newSW - cw / 2);
+        container.scrollTop  = Math.round(fracY * newSH - ch / 2);
+    });
 
     updateSlider();
 }

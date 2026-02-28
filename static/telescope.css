@@ -200,15 +200,13 @@
     background: #000;
 }
 
-/* Scroll area: always fills the viewport, expands with zoom.
-   Centering is handled via JS padding (flex-align centering breaks overflow scrolling). */
+/* Scroll area: sized and padded entirely by applyZoom() in JS.
+   CSS only sets defaults; JS overrides minWidth/minHeight/padding each zoom. */
 .preview-scroll-area {
-    min-width: 100%;
-    min-height: 100%;
     display: flex;
     align-items: flex-start;
     justify-content: flex-start;
-    box-sizing: border-box;
+    box-sizing: content-box;
 }
 
 /* Custom scrollbar styling */
