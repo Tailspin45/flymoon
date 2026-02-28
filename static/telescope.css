@@ -198,48 +198,18 @@
     overflow: auto;
     min-height: 0;
     background: #000;
-}
-
-/* Scroll area: sized and padded entirely by applyZoom() in JS.
-   CSS only sets defaults; JS overrides minWidth/minHeight/padding each zoom. */
-.preview-scroll-area {
-    display: flex;
-    align-items: flex-start;
-    justify-content: flex-start;
-    box-sizing: border-box;
-}
-
-/* Custom scrollbar styling */
-.preview-container::-webkit-scrollbar {
-    width: 10px;
-    height: 10px;
-    background: rgba(0, 0, 0, 0.5);
-}
-
-.preview-container::-webkit-scrollbar-track {
-    background: rgba(0, 0, 0, 0.5);
-}
-
-.preview-container::-webkit-scrollbar-thumb {
-    background: rgba(3, 156, 156, 0.6);
-    border-radius: 5px;
-    border: 2px solid rgba(0, 0, 0, 0.5);
-}
-
-.preview-container::-webkit-scrollbar-thumb:hover {
-    background: rgba(3, 156, 156, 0.9);
-}
-
-/* Firefox scrollbar */
-.preview-container {
+    display: flex;                /* flex + margin:auto = reliable centering */
     scrollbar-width: thin;
     scrollbar-color: rgba(3, 156, 156, 0.6) rgba(0, 0, 0, 0.5);
 }
 
 #previewImage {
     display: block;
-    flex-shrink: 0;  /* never let flex squish it */
+    flex-shrink: 0;
+    margin: auto;   /* centres when smaller than container; collapses to 0 when larger */
 }
+
+/* Custom scrollbar styling */
 
 .preview-placeholder {
     position: absolute;

@@ -588,7 +588,6 @@ function startPreview() {
         // Apply initial fit zoom once we know the image has loaded
         currentZoom = 1.0;
         applyZoom();
-        centerPreview();
     }, 2000);
     
     // Error handler
@@ -639,8 +638,7 @@ function _getActiveMediaElement() {
 }
 
 function applyZoom() {
-    const container  = document.getElementById('previewContainer');
-    const scrollArea = document.getElementById('previewScrollArea');
+    const container = document.getElementById('previewContainer');
     const el = _getActiveMediaElement();
     if (!container || !el || el.style.display === 'none') { updateSlider(); return; }
 
@@ -651,47 +649,24 @@ function applyZoom() {
     const nw = el.naturalWidth  || el.videoWidth  || 0;
     const nh = el.naturalHeight || el.videoHeight || 0;
 
-    let elW, elH;
     if (nw && nh) {
+        // Letterbox fit: fill as much of the container as possible, no cropping.
         const fitScale = Math.min(cw / nw, ch / nh);
-        elW = Math.round(nw * fitScale * currentZoom);
-        elH = Math.round(nh * fitScale * currentZoom);
-        el.style.width     = elW + 'px';
-        el.style.height    = elH + 'px';
+        el.style.width     = Math.round(nw * fitScale * currentZoom) + 'px';
+        el.style.height    = Math.round(nh * fitScale * currentZoom) + 'px';
         el.style.maxWidth  = 'none';
         el.style.maxHeight = 'none';
     } else {
+        // Natural dimensions not yet available — constrain without distorting.
         el.style.width     = 'auto';
         el.style.height    = 'auto';
         el.style.maxWidth  = cw + 'px';
         el.style.maxHeight = ch + 'px';
-        elW = el.offsetWidth  || cw;
-        elH = el.offsetHeight || ch;
     }
 
-    if (scrollArea) {
-        // Size the scroll-area explicitly in pixels — never use % or min-* for this,
-        // they are unreliable in overflow:auto parents.
-        // Padding centres the image; when image > viewport the padding is 0 and the
-        // container scrolls normally.
-        const saW  = Math.max(cw, elW);
-        const saH  = Math.max(ch, elH);
-        const padX = Math.round((saW - elW) / 2);
-        const padY = Math.round((saH - elH) / 2);
-        scrollArea.style.boxSizing      = 'border-box';
-        scrollArea.style.width          = saW + 'px';
-        scrollArea.style.height         = saH + 'px';
-        scrollArea.style.minWidth       = '';
-        scrollArea.style.minHeight      = '';
-        scrollArea.style.paddingLeft    = padX + 'px';
-        scrollArea.style.paddingRight   = padX + 'px';
-        scrollArea.style.paddingTop     = padY + 'px';
-        scrollArea.style.paddingBottom  = padY + 'px';
-        scrollArea.style.alignItems     = 'flex-start';
-        scrollArea.style.justifyContent = 'flex-start';
-    }
-
-    // Scroll so the centre of the image is visible.
+    // CSS margin:auto centres the image when it's smaller than the container.
+    // When it's larger, margins collapse to 0 and the container scrolls.
+    // Scroll to show the centre of the image after a zoom change.
     requestAnimationFrame(() => {
         container.scrollLeft = Math.round((container.scrollWidth  - container.clientWidth)  / 2);
         container.scrollTop  = Math.round((container.scrollHeight - container.clientHeight) / 2);
@@ -1948,11 +1923,10 @@ function startSimulatedPreview() {
         simulationVideo.autoplay = true;
         simulationVideo.loop = true;
         simulationVideo.muted = true;
-        simulationVideo.style.cssText = 'display:block; flex-shrink:0;';
+        simulationVideo.style.cssText = 'display:block; flex-shrink:0; margin:auto;';
         simulationVideo.src = '/static/simulations/demo.mp4';
         simulationVideo.onloadedmetadata = () => applyZoom();
-        const scrollArea = document.getElementById('previewScrollArea') || previewContainer;
-        scrollArea.appendChild(simulationVideo);
+        previewContainer.appendChild(simulationVideo);
     } else {
         simulationVideo.style.display = 'block';
         simulationVideo.play();
