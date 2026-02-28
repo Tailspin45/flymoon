@@ -14,6 +14,7 @@ let transitPollInterval = null;
 let transitTickInterval = null; // 1-second local countdown tick
 let transitCaptureActive = false;
 let upcomingTransits = [];
+const capturedTransits = new Set(); // flight IDs triggered this session — persists across array replacements
 let currentZoom = 1.0;
 let zoomStep = 0.1;
 let isSimulating = false;
@@ -955,13 +956,14 @@ function checkAutoCapture() {
 
     const PRE = 10, POST = 10;
 
-    // Find next unhandled transit within PRE seconds
+    // Find next unhandled transit within PRE seconds that hasn't already been captured
     const imminent = upcomingTransits.find(t =>
-        t.seconds_until <= PRE && t.seconds_until > 0 && !t.handled
+        t.seconds_until <= PRE && t.seconds_until > 0 && !t.handled && !capturedTransits.has(t.flight)
     );
     if (!imminent) return;
 
-    imminent.handled = true; // prevent re-triggering each tick
+    imminent.handled = true;           // prevent re-triggering on per-second tick
+    capturedTransits.add(imminent.flight); // persist across array replacements from server poll
 
     const isSimFlight = imminent.flight === SIM_TRANSIT.flight ||
                         imminent.flight === SIM_ECLIPSE_TRANSIT.flight;
