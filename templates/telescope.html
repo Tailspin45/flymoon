@@ -72,16 +72,8 @@
                     </div>
                 </div>
                 <div class="preview-wrapper">
-                    <!-- Zoom Slider -->
-                    <div class="zoom-slider">
-                        <button class="zoom-btn" onclick="zoomIn()" title="Zoom In">+</button>
-                        <input type="range" id="zoomSlider" min="50" max="300" value="100" step="5" orient="vertical" oninput="setZoom(this.value)">
-                        <span id="zoomPercent" class="zoom-percent">100%</span>
-                        <button class="zoom-btn" onclick="zoomOut()" title="Zoom Out">−</button>
-                        <button class="zoom-btn" onclick="zoomFit()" title="Fit to Window">⊡</button>
-                    </div>
                     <div class="preview-container" id="previewContainer">
-                        <img id="previewImage" src="" alt="Live Preview" style="display: none;">
+                        <img id="previewImage" src="" alt="Live Preview" style="display: none;" onload="applyZoom()">
                         <div class="preview-placeholder" id="previewPlaceholder">
                             <div class="placeholder-icon">📹</div>
                             <div class="placeholder-text">Connect telescope to view live stream</div>
@@ -102,6 +94,14 @@
                         <div id="simPlane" style="display:none; position:absolute; pointer-events:none; z-index:22; transition:none;">
                             <img src="/static/images/sim_plane.png" width="95" height="80" alt="">
                         </div>
+                    </div>
+                    <!-- Horizontal Zoom Bar -->
+                    <div class="preview-zoom-bar">
+                        <button class="zoom-btn" onclick="zoomOut()" title="Zoom Out (−10%)">−</button>
+                        <input type="range" id="zoomSlider" min="50" max="400" value="100" step="5" oninput="setZoom(this.value)" title="Drag to zoom">
+                        <button class="zoom-btn" onclick="zoomIn()" title="Zoom In (+10%)">+</button>
+                        <span id="zoomPercent" class="zoom-percent">100%</span>
+                        <button class="zoom-btn zoom-fit-btn" onclick="zoomFit()" title="Fit to window">Fit</button>
                     </div>
                 </div>
             </div>

@@ -71,6 +71,17 @@ window.initTelescope = function() {
     if (autoCapture !== null) {
         document.getElementById('autoCaptureToggle').checked = autoCapture === 'true';
     }
+
+    // Mouse-wheel zoom on preview container
+    const previewContainer = document.getElementById('previewContainer');
+    if (previewContainer) {
+        previewContainer.addEventListener('wheel', (e) => {
+            e.preventDefault();
+            const delta = e.deltaY < 0 ? zoomStep : -zoomStep;
+            currentZoom = Math.min(4.0, Math.max(0.5, +(currentZoom + delta).toFixed(2)));
+            applyZoom();
+        }, { passive: false });
+    }
 };
 
 // ============================================================================
@@ -588,14 +599,12 @@ function startPreview() {
 }
 
 function zoomIn() {
-    currentZoom += zoomStep;
-    if (currentZoom > 3.0) currentZoom = 3.0;
+    currentZoom = Math.min(+(currentZoom + zoomStep).toFixed(2), 4.0);
     applyZoom();
 }
 
 function zoomOut() {
-    currentZoom -= zoomStep;
-    if (currentZoom < 0.5) currentZoom = 0.5;
+    currentZoom = Math.max(+(currentZoom - zoomStep).toFixed(2), 0.5);
     applyZoom();
 }
 
@@ -605,98 +614,72 @@ function zoomReset() {
 }
 
 function zoomFit() {
-    // Fit the image/video to container
     currentZoom = 1.0;
-    const image = document.getElementById('previewImage');
-    const video = document.getElementById('simulationVideo');
-    const container = document.getElementById('previewContainer');
-    
-    if (!container) return;
-    
-    const element = (video && video.style.display !== 'none') ? video : image;
-    if (!element) return;
-    
-    // Remove transform to reset
-    element.classList.remove('zoomed');
-    element.style.transform = '';
-    element.style.width = '100%';
-    element.style.height = 'auto';
-    
-    // Reset scroll
-    container.scrollTop = 0;
-    container.scrollLeft = 0;
-    
-    updateSlider();
+    applyZoom();
 }
 
 function setZoom(value) {
-    currentZoom = value / 100;
+    currentZoom = Math.round(value) / 100;
     applyZoom();
 }
 
 function updateSlider() {
     const slider = document.getElementById('zoomSlider');
     const percent = document.getElementById('zoomPercent');
-    if (slider) slider.value = currentZoom * 100;
+    if (slider) slider.value = Math.round(currentZoom * 100);
     if (percent) percent.textContent = Math.round(currentZoom * 100) + '%';
 }
 
-function applyZoom() {
-    const image = document.getElementById('previewImage');
+function _getActiveMediaElement() {
     const video = document.getElementById('simulationVideo');
+    if (video && video.style.display !== 'none') return video;
+    return document.getElementById('previewImage');
+}
+
+function applyZoom() {
     const container = document.getElementById('previewContainer');
-    
-    if (!container) return;
-    
-    // Determine which element is active (image or video)
-    const element = (video && video.style.display !== 'none') ? video : image;
-    if (!element) return;
-    
-    if (currentZoom === 1.0) {
-        element.classList.remove('zoomed');
-        element.style.transform = '';
-        element.style.width = '100%';
-        element.style.height = 'auto';
-        container.scrollTop = 0;
-        container.scrollLeft = 0;
+    const el = _getActiveMediaElement();
+    if (!container || !el || el.style.display === 'none') {
         updateSlider();
         return;
     }
-    
-    // Store current scroll position as percentage
-    const scrollXPercent = container.scrollLeft / (container.scrollWidth - container.clientWidth || 1);
-    const scrollYPercent = container.scrollTop / (container.scrollHeight - container.clientHeight || 1);
-    
-    // Apply zoom by expanding the element width (avoids double-scaling with transform)
-    element.classList.add('zoomed');
-    element.style.transform = '';
-    element.style.width = `${currentZoom * 100}%`;
-    element.style.height = 'auto';
-    
+
+    const cw = container.clientWidth;
+    const ch = container.clientHeight;
+
+    // Natural pixel dimensions (MJPEG image or video)
+    const nw = el.naturalWidth || el.videoWidth || cw;
+    const nh = el.naturalHeight || el.videoHeight || ch;
+
+    // Fit-to-window scale (letterbox/pillarbox, never upscale beyond 1:1)
+    const fitScale = nw > 0 && nh > 0 ? Math.min(cw / nw, ch / nh, 1) : 1;
+    const fitW = (nw > 0 ? nw : cw) * fitScale;
+    const fitH = (nh > 0 ? nh : ch) * fitScale;
+
+    const newW = Math.round(fitW * currentZoom);
+    const newH = Math.round(fitH * currentZoom);
+
+    // Centre when smaller than viewport; stick to top-left when larger (scrollable)
+    el.style.width  = newW + 'px';
+    el.style.height = newH + 'px';
+    el.style.left   = Math.max(0, Math.round((cw - newW) / 2)) + 'px';
+    el.style.top    = Math.max(0, Math.round((ch - newH) / 2)) + 'px';
+    el.style.transform = '';
+
+    // Expand container's scroll area to fit the image
+    container.style.minWidth  = newW + 'px';
+    container.style.minHeight = newH + 'px';
+
     updateSlider();
-    
-    // Restore scroll position after zoom
-    setTimeout(() => {
-        container.scrollLeft = scrollXPercent * (container.scrollWidth - container.clientWidth);
-        container.scrollTop = scrollYPercent * (container.scrollHeight - container.clientHeight);
-    }, 10);
 }
 
 function centerPreview() {
     const container = document.getElementById('previewContainer');
-    const image = document.getElementById('previewImage');
-    
-    if (!container || !image) return;
-    
-    // Wait a bit for image to render, then center
+    if (!container) return;
     setTimeout(() => {
-        const scrollHeight = container.scrollHeight;
-        const clientHeight = container.clientHeight;
-        const centerPosition = (scrollHeight - clientHeight) / 2;
-        
-        container.scrollTop = centerPosition;
-        console.log('[Telescope] Preview centered at', centerPosition);
-    }, 500);
+        container.scrollTop  = (container.scrollHeight - container.clientHeight) / 2;
+        container.scrollLeft = (container.scrollWidth  - container.clientWidth)  / 2;
+    }, 100);
 }
 
 function stopPreview() {
@@ -1938,12 +1921,14 @@ function startSimulatedPreview() {
         simulationVideo.autoplay = true;
         simulationVideo.loop = true;
         simulationVideo.muted = true;
-        simulationVideo.style.cssText = 'width:100%; height:auto; display:block; object-fit:contain;';
+        simulationVideo.style.cssText = 'position:absolute; display:block;';
         simulationVideo.src = '/static/simulations/demo.mp4';
+        simulationVideo.onloadedmetadata = () => applyZoom();
         if (previewContainer) previewContainer.appendChild(simulationVideo);
     } else {
         simulationVideo.style.display = 'block';
         simulationVideo.play();
+        applyZoom();
     }
 
     if (previewStatusDot)  previewStatusDot.className = 'status-dot connected';
