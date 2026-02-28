@@ -200,13 +200,15 @@
     background: #000;
 }
 
-/* Scroll area: always fills the viewport, centres content, expands with zoom */
+/* Scroll area: always fills the viewport, expands with zoom.
+   Centering is handled via JS padding (flex-align centering breaks overflow scrolling). */
 .preview-scroll-area {
     min-width: 100%;
     min-height: 100%;
     display: flex;
-    align-items: center;
-    justify-content: center;
+    align-items: flex-start;
+    justify-content: flex-start;
+    box-sizing: border-box;
 }
 
 /* Custom scrollbar styling */

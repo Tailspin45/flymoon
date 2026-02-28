@@ -588,6 +588,7 @@ function startPreview() {
         // Apply initial fit zoom once we know the image has loaded
         currentZoom = 1.0;
         applyZoom();
+        centerPreview();
     }, 2000);
     
     // Error handler
@@ -638,7 +639,8 @@ function _getActiveMediaElement() {
 }
 
 function applyZoom() {
-    const container = document.getElementById('previewContainer');
+    const container  = document.getElementById('previewContainer');
+    const scrollArea = document.getElementById('previewScrollArea');
     const el = _getActiveMediaElement();
     if (!container || !el || el.style.display === 'none') {
         updateSlider();
@@ -651,25 +653,45 @@ function applyZoom() {
     const nh = el.naturalHeight || el.videoHeight || 0;
 
     if (!nw || !nh || !cw || !ch) {
-        // Dimensions not known yet — use a safe default; will be re-called on zoom
-        el.style.width  = '100%';
-        el.style.height = 'auto';
+        // Natural dimensions not yet available — let CSS letterbox without distortion.
+        // Never set both a width% and maxHeight% simultaneously; that squishes the image.
+        el.style.width     = 'auto';
+        el.style.height    = 'auto';
         el.style.maxWidth  = '100%';
-        el.style.maxHeight = '100%';
+        el.style.maxHeight = ch ? (ch + 'px') : '100%';
+        if (scrollArea) {
+            scrollArea.style.padding         = '0';
+            scrollArea.style.alignItems      = 'center';
+            scrollArea.style.justifyContent  = 'center';
+        }
         updateSlider();
         return;
     }
 
-    // Letterbox fit: scale so image fills as much of the container as possible
-    // without cropping, never upscaling beyond native resolution.
-    const fitScale = Math.min(cw / nw, ch / nh, 1);
-    const newW = Math.round(nw * fitScale * currentZoom);
-    const newH = Math.round(nh * fitScale * currentZoom);
+    // Letterbox fit: fill as much of the container as possible, no cropping.
+    const fitScale = Math.min(cw / nw, ch / nh);
+    const elW = Math.round(nw * fitScale * currentZoom);
+    const elH = Math.round(nh * fitScale * currentZoom);
 
-    el.style.width     = newW + 'px';
-    el.style.height    = newH + 'px';
+    el.style.width     = elW + 'px';
+    el.style.height    = elH + 'px';
     el.style.maxWidth  = 'none';
     el.style.maxHeight = 'none';
+
+    // Use padding (not flex-align) to centre the image.  Flex centering is broken
+    // when the child is larger than the container: the overflow past the top/left
+    // edge is inaccessible to scrolling.  Padding creates scrollable space on every
+    // side so the image is always reachable.
+    if (scrollArea) {
+        const padX = Math.max(0, Math.round((cw - elW) / 2));
+        const padY = Math.max(0, Math.round((ch - elH) / 2));
+        scrollArea.style.paddingLeft    = padX + 'px';
+        scrollArea.style.paddingRight   = padX + 'px';
+        scrollArea.style.paddingTop     = padY + 'px';
+        scrollArea.style.paddingBottom  = padY + 'px';
+        scrollArea.style.alignItems     = 'flex-start';
+        scrollArea.style.justifyContent = 'flex-start';
+    }
 
     updateSlider();
 }
