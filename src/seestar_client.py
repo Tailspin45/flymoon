@@ -202,12 +202,11 @@ class SeestarClient:
                 raise RuntimeError("timed out")
 
             except socket.error as e:
-                # Actual socket error - connection is broken
+                # Socket error — let the heartbeat threshold decide if connection is lost
                 if quiet:
                     logger.debug(f"Socket error: {e}")
                 else:
                     logger.error(f"Socket error: {e}")
-                self._connected = False
                 raise RuntimeError(f"Communication failed: {e}")
 
             finally:
