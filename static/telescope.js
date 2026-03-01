@@ -18,6 +18,7 @@ const capturedTransits = new Set(); // flight IDs triggered this session — per
 let currentZoom = 1.0;
 let zoomStep = 0.1;
 let _previewLastError = 0; // timestamp of last preview onerror (ms)
+const _PREVIEW_BACKOFF_MS = 30000; // 30s between retry attempts after stream failure
 let isSimulating = false;
 let simulationVideo = null;
 let disconnectedPollCount = 0; // consecutive disconnected polls before stopping preview
@@ -335,7 +336,7 @@ function checkTargetMismatch() {
     // Only relevant when connected and in a known viewing mode
     if (!isConnected || !currentViewingMode) { banner.style.display = 'none'; return; }
 
-    const flights = window.lastFlightData || [];
+    const flights = (window.lastFlightData && window.lastFlightData.flights) || [];
     const oppositeTarget = currentViewingMode === 'sun' ? 'moon' : 'sun';
 
     // Find the soonest HIGH or MEDIUM transit on the opposite target
@@ -568,8 +569,8 @@ function startPreview() {
     // Already streaming — don't restart
     if (previewImage.style.display === 'block' && previewImage.src) return;
 
-    // Enforce 5-second backoff after a stream error
-    if (_previewLastError && (Date.now() - _previewLastError) < 5000) {
+    // Enforce backoff after a stream error
+    if (_previewLastError && (Date.now() - _previewLastError) < _PREVIEW_BACKOFF_MS) {
         console.log('[Telescope] Preview backoff active, skipping restart');
         return;
     }
