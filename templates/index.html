@@ -7,7 +7,7 @@
     <!-- favicon -->
     <link rel="icon" type="image/x-icon" href="{{ url_for('static', filename='images/favicon.ico') }}">
     <!-- CSS -->
-    <link rel="stylesheet" href="{{ url_for('static', filename='main.css') }}?v=1772392747">
+    <link rel="stylesheet" href="{{ url_for('static', filename='main.css') }}?v=1772393871">
     <!-- Leaflet CSS (self-hosted for security) -->
     <link rel="stylesheet" href="{{ url_for('static', filename='leaflet.css') }}" />
     <link rel="stylesheet" href="{{ url_for('static', filename='telescope.css') }}">
@@ -28,9 +28,8 @@
 <!-- Telescope lost-connection banner — shown whenever scope goes offline -->
 <div id="telescopeDisconnectBanner" style="display:none; background:#3d0000; border-bottom:3px solid #ff4444; padding:12px 18px; align-items:center; gap:14px; font-size:1em; flex-wrap:wrap; position:relative; z-index:501;">
   <span style="font-size:1.5em;">🔭</span>
-  <span style="color:#ff9999; font-weight:bold; font-size:1.05em;">Lost Connection With the Telescope</span>
-  <span style="color:#ccc; font-size:0.9em;">Automatic transit recording is suspended until the scope reconnects.</span>
-  <button onclick="reconnectTelescope()" style="background:#cc2222; color:#fff; border:none; border-radius:4px; padding:6px 14px; cursor:pointer; font-size:0.95em; font-weight:bold;" title="Attempt to reconnect">🔌 Reconnect</button>
+  <span style="color:#ff9999; font-weight:bold; font-size:1.05em;">Telescope Disconnected</span>
+  <span id="telescopeBannerDetail" style="color:#ccc; font-size:0.9em;">Reconnecting automatically — transit recording suspended.</span>
   <button onclick="dismissTelescopeBanner()" style="margin-left:auto; background:none; border:none; color:#888; cursor:pointer; font-size:1.2em;" title="Dismiss">✕</button>
 </div>
 <div id="mapView">
@@ -554,9 +553,9 @@
     <script src="{{ url_for('static', filename='leaflet-heat.js') }}"></script>
     <!-- OpenAIP key injected server-side to avoid async timing issues -->
     <script>window.OPENAIP_API_KEY = "{{ openaip_api_key|e }}";</script>
-    <script src="{{ url_for('static', filename='telescope.js') }}?v=1772392747" charset="utf-8"></script>
-    <script src="{{ url_for('static', filename='map.js') }}?v=1772392747" charset="utf-8"></script>
-    <script src="{{ url_for('static', filename='app.js') }}?v=1772392747" charset="utf-8"></script>
+    <script src="{{ url_for('static', filename='telescope.js') }}?v=1772393871" charset="utf-8"></script>
+    <script src="{{ url_for('static', filename='map.js') }}?v=1772393871" charset="utf-8"></script>
+    <script src="{{ url_for('static', filename='app.js') }}?v=1772393871" charset="utf-8"></script>
 
     <script>
         function showPanel(name) {

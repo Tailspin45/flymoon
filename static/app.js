@@ -2645,21 +2645,12 @@ setInterval(updateLastUpdateDisplay, 1000);
 // Telescope status indicator + disconnect banner
 let _scopeWasConnected = null;   // null = unknown (first poll)
 let _scopeBannerDismissed = false;
+let _disconnectPollCount = 0;    // consecutive polls where scope is disconnected
 
 function dismissTelescopeBanner() {
     _scopeBannerDismissed = true;
     const banner = document.getElementById('telescopeDisconnectBanner');
     if (banner) banner.style.display = 'none';
-}
-
-function reconnectTelescope() {
-    // Hit the connect endpoint then force a status refresh
-    fetch('/telescope/connect', { method: 'POST' })
-        .catch(() => {})
-        .finally(() => {
-            _scopeBannerDismissed = false;  // let the next poll decide visibility
-            updateTelescopeStatus();
-        });
 }
 
 function updateTelescopeStatus() {
@@ -2668,6 +2659,7 @@ function updateTelescopeStatus() {
         .then(data => {
             const statusLight = document.getElementById('telescopeStatusLight');
             const banner      = document.getElementById('telescopeDisconnectBanner');
+            const detail      = document.getElementById('telescopeBannerDetail');
             const isEnabled   = data.enabled;
             const isConnected = data.connected;
 
@@ -2689,12 +2681,22 @@ function updateTelescopeStatus() {
             // connected (i.e. we lost a live connection, not just startup with no scope)
             if (banner && isEnabled) {
                 if (!isConnected) {
+                    _disconnectPollCount++;
+                    // Phase 2: after ~1 minute of failed reconnects, suggest scope is offline
+                    if (detail) {
+                        if (_disconnectPollCount > 30) {
+                            detail.textContent = 'Scope may be offline — will keep checking.';
+                        } else {
+                            detail.textContent = 'Reconnecting automatically — transit recording suspended.';
+                        }
+                    }
                     // Was connected before → show banner (unless user dismissed this drop)
                     if (_scopeWasConnected === true && !_scopeBannerDismissed) {
                         banner.style.display = 'flex';
                     }
                 } else {
-                    // Reconnected — hide banner and reset dismissed flag
+                    // Reconnected — hide banner and reset counters
+                    _disconnectPollCount = 0;
                     banner.style.display = 'none';
                     _scopeBannerDismissed = false;
                 }
