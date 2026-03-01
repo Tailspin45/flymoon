@@ -192,10 +192,15 @@ async function updateStatus() {
     if (result) {
         isConnected = result.connected || false;
         currentViewingMode = result.viewing_mode || null;
-        // Don't overwrite isRecording if we're actively recording locally
-        // The status endpoint doesn't know about our RTSP recordings
-        if (!isRecording) {
-            isRecording = result.is_recording || false;
+        // Sync recording state from server — server is authoritative.
+        // Only preserve local state if we're mid-recording AND server agrees it's active.
+        const serverRecording = result.recording || false;
+        if (isRecording && !serverRecording) {
+            // Server says not recording but JS thinks it is — stale state, sync it
+            isRecording = false;
+            stopRecordingTimer();
+        } else if (!isRecording) {
+            isRecording = serverRecording;
         }
 
         // Update eclipse data from server (refreshes seconds_to_c1 baseline).

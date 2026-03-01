@@ -415,7 +415,8 @@ def get_telescope_status():
         status["mock_mode"] = is_mock_mode()
         status["eclipse"] = _get_eclipse_data()
 
-        # Add recording duration if recording
+        # Override recording state with RTSP _recording_state (authoritative for manual recordings)
+        status["recording"] = _recording_state["active"]
         if _recording_state["active"] and _recording_state["start_time"]:
             status["recording_duration"] = (
                 datetime.now() - _recording_state["start_time"]
