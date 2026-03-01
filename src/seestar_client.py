@@ -244,10 +244,10 @@ class SeestarClient:
     def _heartbeat_loop(self):
         """Background thread: sends periodic keepalive pings and auto-reconnects on drop."""
         RECONNECT_INTERVAL = 5  # seconds between reconnect attempts
-        HARD_FAIL_THRESHOLD = 3   # consecutive hard socket errors → disconnect
-        SOFT_FAIL_THRESHOLD = 10  # consecutive timeouts (scope busy) → disconnect
+        HARD_FAIL_THRESHOLD = 3  # consecutive hard socket errors → disconnect
         reconnect_wait = 0
-        fail_count = 0
+        hard_fail_count = 0
+        _timeout_logged = False  # log timeout once, not every 3 seconds
 
         while self._heartbeat_running:
             # Auto-reconnect when connection has dropped
@@ -257,7 +257,8 @@ class SeestarClient:
                     reconnect_wait = 0
                     logger.info("Heartbeat: connection lost — attempting reconnect...")
                     if self._reconnect():  # sets _connected = True on success
-                        fail_count = 0    # fresh start after reconnect
+                        hard_fail_count = 0
+                        _timeout_logged = False
                 time.sleep(1)
                 continue
 
@@ -265,9 +266,13 @@ class SeestarClient:
 
             try:
                 self._send_command(
-                    "scope_get_equ_coord", expect_response=True, quiet=True
+                    "scope_get_equ_coord", expect_response=True, quiet=True,
+                    timeout_override=5,  # short timeout for keepalive pings
                 )
-                fail_count = 0  # successful ping — clear any transient failure streak
+                hard_fail_count = 0  # successful ping
+                if _timeout_logged:
+                    logger.info("Heartbeat: scope responding again")
+                    _timeout_logged = False
             except Exception as e:
                 err = str(e).lower()
                 is_hard_error = any(
@@ -279,22 +284,29 @@ class SeestarClient:
                         "communication failed",
                     )
                 )
-                fail_count += 1
-                threshold = HARD_FAIL_THRESHOLD if is_hard_error else SOFT_FAIL_THRESHOLD
-                level = "hard" if is_hard_error else "soft"
-                if fail_count >= threshold:
-                    logger.warning(
-                        f"Heartbeat: {fail_count} consecutive {level} errors — marking disconnected: {e}"
-                    )
-                    if self._connected:
-                        self._connected = False
-                        self._notify_scope_offline()
+
+                if is_hard_error:
+                    hard_fail_count += 1
+                    if hard_fail_count >= HARD_FAIL_THRESHOLD:
+                        logger.warning(
+                            f"Heartbeat: {hard_fail_count} consecutive hard errors — marking disconnected: {e}"
+                        )
+                        if self._connected:
+                            self._connected = False
+                            self._notify_scope_offline()
+                        else:
+                            self._connected = False
                     else:
-                        self._connected = False
+                        logger.warning(
+                            f"Heartbeat: hard error ({hard_fail_count}/{HARD_FAIL_THRESHOLD}): {e}"
+                        )
                 else:
-                    logger.warning(
-                        f"Heartbeat: transient {level} error ({fail_count}/{threshold}): {e}"
-                    )
+                    # Timeouts / busy — scope is alive but not answering this command.
+                    # Don't count toward disconnect; log once to avoid spam.
+                    hard_fail_count = 0  # timeout proves TCP is up, reset hard counter
+                    if not _timeout_logged:
+                        logger.info(f"Heartbeat: scope not responding to ping (will keep trying quietly): {e}")
+                        _timeout_logged = True
 
             # Sleep in small intervals to allow quick shutdown
             for _ in range(self.heartbeat_interval):
