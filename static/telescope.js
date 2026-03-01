@@ -796,21 +796,24 @@ async function deleteFile(url, filename) {
         return;
     }
     
-    console.log('[Telescope] Deleting file:', filename);
-    
     try {
-        const result = await apiCall('/telescope/files/delete', 'POST', {
-            path: url.replace('/static/', '')
+        const path = url.replace('/static/', '');
+        const response = await fetch('/telescope/files/delete', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ path })
         });
-        
-        if (result && result.success) {
+        const data = await response.json();
+        if (response.ok && data.success) {
             showStatus(`Deleted ${filename}`, 'success', 3000);
-            refreshFiles();
+        } else {
+            showStatus(`Delete failed: ${data.error || response.status}`, 'error', 5000);
         }
     } catch (error) {
-        console.error('[Telescope] Delete failed:', error);
-        showStatus(`Failed to delete ${filename}`, 'error', 5000);
+        showStatus(`Delete failed: ${error.message}`, 'error', 5000);
     }
+    // Always refresh — whether delete succeeded or file was already gone
+    refreshFiles();
 }
 
 // ============================================================================
