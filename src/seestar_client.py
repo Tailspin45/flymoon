@@ -256,7 +256,8 @@ class SeestarClient:
                 if reconnect_wait >= RECONNECT_INTERVAL:
                     reconnect_wait = 0
                     logger.info("Heartbeat: connection lost — attempting reconnect...")
-                    self._reconnect()  # sets _connected = True on success
+                    if self._reconnect():  # sets _connected = True on success
+                        fail_count = 0    # fresh start after reconnect
                 time.sleep(1)
                 continue
 
