@@ -206,7 +206,7 @@ class SeestarClient:
                 if quiet:
                     logger.debug(f"Socket error: {e}")
                 else:
-                    logger.error(f"Socket error: {e}")
+                    logger.warning(f"Socket error in _send_command: {e}")
                 raise RuntimeError(f"Communication failed: {e}")
 
             finally:
@@ -232,7 +232,7 @@ class SeestarClient:
             self._notify_scope_online()
             return True
         except socket.error as e:
-            logger.debug(f"Reconnect attempt failed: {e}")
+            logger.warning(f"Reconnect attempt failed: {e}")
             if self.socket:
                 try:
                     self.socket.close()
@@ -281,9 +281,10 @@ class SeestarClient:
                 )
                 fail_count += 1
                 threshold = HARD_FAIL_THRESHOLD if is_hard_error else SOFT_FAIL_THRESHOLD
+                level = "hard" if is_hard_error else "soft"
                 if fail_count >= threshold:
-                    logger.debug(
-                        f"Heartbeat: {fail_count} consecutive errors — marking disconnected: {e}"
+                    logger.warning(
+                        f"Heartbeat: {fail_count} consecutive {level} errors — marking disconnected: {e}"
                     )
                     if self._connected:
                         self._connected = False
@@ -291,9 +292,8 @@ class SeestarClient:
                     else:
                         self._connected = False
                 else:
-                    level = "hard error" if is_hard_error else "timeout"
-                    logger.debug(
-                        f"Heartbeat: transient {level} ({fail_count}/{threshold}): {e}"
+                    logger.warning(
+                        f"Heartbeat: transient {level} error ({fail_count}/{threshold}): {e}"
                     )
 
             # Sleep in small intervals to allow quick shutdown
