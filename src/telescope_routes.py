@@ -532,6 +532,7 @@ def start_recording():
             ]
         else:
             # Normal video mode: record at full framerate
+            # frag_keyframe+empty_moov makes the MP4 valid even if interrupted
             cmd = [
                 "ffmpeg",
                 "-rtsp_transport",
@@ -546,6 +547,8 @@ def start_recording():
                 "fast",
                 "-crf",
                 "23",
+                "-movflags",
+                "frag_keyframe+empty_moov",
                 "-y",
                 filepath,
             ]
@@ -600,16 +603,23 @@ def stop_recording():
         if _recording_state["start_time"]:
             duration = (datetime.now() - _recording_state["start_time"]).total_seconds()
 
-        # Terminate FFmpeg process
+        # Terminate FFmpeg process gracefully so it can finalize the file
         if "process" in _recording_state and _recording_state["process"]:
             process = _recording_state["process"]
-            process.terminate()
             try:
-                process.wait(timeout=5)
+                process.stdin  # may not be available
+            except Exception:
+                pass
+            try:
+                process.send_signal(__import__('signal').SIGTERM)
+            except Exception:
+                process.terminate()
+            try:
+                process.wait(timeout=10)
             except subprocess.TimeoutExpired:
                 process.kill()
                 process.wait()
-            logger.info(f"[Telescope] FFmpeg process terminated")
+            logger.info("[Telescope] FFmpeg process terminated")
 
         filename = _recording_state.get("filename", "unknown")
         filepath = _recording_state.get("filepath", "")
