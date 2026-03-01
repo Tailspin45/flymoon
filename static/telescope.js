@@ -753,7 +753,7 @@ function stopPreview() {
 async function refreshFiles() {
     console.log('[Telescope] Refreshing file list');
     
-    const result = await apiCall('/telescope/files', 'GET');
+    const result = await apiCall(`/telescope/files?_=${Date.now()}`, 'GET');
     if (!result) return;
     
     const fileCount = document.getElementById('fileCount');

@@ -723,10 +723,9 @@ def list_telescope_files():
         files.sort(key=lambda x: x["mtime"], reverse=True)
 
         logger.info(f"[Telescope] Retrieved {len(files)} local files")
-        return (
-            jsonify({"files": files, "total": len(files), "source": "local_captures"}),
-            200,
-        )
+        response = jsonify({"files": files, "total": len(files), "source": "local_captures"})
+        response.headers["Cache-Control"] = "no-store"
+        return response, 200
 
     except Exception as e:
         logger.error(f"[Telescope] Error listing files: {e}")
