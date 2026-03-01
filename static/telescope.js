@@ -1459,7 +1459,7 @@ function updateFilmstrip(files) {
         return;
     }
     
-    filmstrip.innerHTML = files.slice(-10).reverse().map(file => {
+    filmstrip.innerHTML = files.slice(0, 10).map(file => {
         const isTemp = file.isSimulation;
         const badge = isTemp ? '<span class="temp-badge">TEMP</span>' : '';
         const itemClass = isTemp ? 'filmstrip-item temp-file' : 'filmstrip-item';
