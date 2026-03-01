@@ -213,8 +213,17 @@ async function updateStatus() {
         
         // Auto-start preview if connected; stop stale stream if disconnected
         const justReconnected = isConnected && !_prevConnected;
+        const justDisconnected = !isConnected && _prevConnected;
         if (justReconnected) {
-            _previewLastError = 0; // clear backoff so preview restarts immediately
+            console.log('[Scope] Reconnected — mode:', result.viewing_mode, '/ clearing preview backoff');
+            _previewLastError = 0;
+        }
+        if (justDisconnected) {
+            console.warn('[Scope] Disconnected — last status:', JSON.stringify({
+                viewing_mode: result.viewing_mode,
+                is_recording: result.is_recording,
+                last_update: result.last_update
+            }));
         }
         _prevConnected = isConnected;
 
@@ -531,9 +540,6 @@ function updateRecordingUI() {
     const recordingDot = document.getElementById('recordingDot');
     const recordingText = document.getElementById('recordingText');
     
-    console.log('[Telescope] updateRecordingUI called, isRecording:', isRecording);
-    console.log('[Telescope] Start button:', startBtn, 'Stop button:', stopBtn);
-    
     if (isRecording) {
         if (startBtn) {
             startBtn.disabled = true;
@@ -541,8 +547,7 @@ function updateRecordingUI() {
         }
         if (stopBtn) {
             stopBtn.disabled = false;
-            stopBtn.style.display = 'inline-block';  // Use inline-block instead of block
-            console.log('[Telescope] Stop button should now be visible');
+            stopBtn.style.display = 'inline-block';
         }
         if (recordingDot) recordingDot.className = 'status-dot recording';
         if (recordingText) recordingText.textContent = 'Recording...';
@@ -565,7 +570,6 @@ function updateRecordingUI() {
 // ============================================================================
 
 function startPreview() {
-    console.log('[Telescope] Starting preview stream');
     
     const previewImage = document.getElementById('previewImage');
     const previewPlaceholder = document.getElementById('previewPlaceholder');
@@ -583,13 +587,11 @@ function startPreview() {
 
     // Enforce backoff after a stream error
     if (_previewLastError && (Date.now() - _previewLastError) < _PREVIEW_BACKOFF_MS) {
-        console.log('[Telescope] Preview backoff active, skipping restart');
         return;
     }
     
     // Set stream URL (adds timestamp to avoid caching)
     const streamUrl = `/telescope/preview/stream.mjpg?t=${Date.now()}`;
-    console.log('[Telescope] Loading stream from:', streamUrl);
     
     previewImage.src = streamUrl;
     
@@ -606,7 +608,6 @@ function startPreview() {
     
     // After 2 seconds, assume stream is active (MJPEG streams don't trigger onload)
     setTimeout(() => {
-        console.log('[Telescope] Stream assumed active');
         if (previewStatusDot) previewStatusDot.className = 'status-dot connected';
         if (previewStatusText) previewStatusText.textContent = 'Live Stream Active';
         if (previewTitleIcon) previewTitleIcon.textContent = '🟢';
@@ -618,13 +619,14 @@ function startPreview() {
     
     // Error handler — reset state so the guard above doesn't block retries
     previewImage.onerror = () => {
-        console.error('[Telescope] Preview stream failed');
+        const backoffSecs = (_PREVIEW_BACKOFF_MS / 1000).toFixed(0);
+        console.warn(`[Preview] Stream failed (scope connected=${isConnected}, backoff=${backoffSecs}s) — ${streamUrl}`);
         _previewLastError = Date.now();
         previewImage.removeAttribute('src'); // avoid empty-src triggering another error
         previewImage.style.display = 'none';
         if (previewPlaceholder) previewPlaceholder.style.display = 'flex';
         if (previewStatusDot) previewStatusDot.className = 'status-dot disconnected';
-        if (previewStatusText) previewStatusText.textContent = 'Stream Error';
+        if (previewStatusText) previewStatusText.textContent = 'Stream unavailable';
         if (previewTitleIcon) previewTitleIcon.textContent = '🔴';
     };
 }
