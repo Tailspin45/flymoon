@@ -509,49 +509,34 @@ def start_recording():
             f"[Telescope] Starting recording: {filepath} (duration={duration}s, interval={interval}s)"
         )
 
+        # Common RTSP input options — keep the connection alive for the
+        # full recording duration (Seestar closes idle streams quickly).
+        rtsp_input = [
+            "ffmpeg",
+            "-rtsp_transport", "tcp",
+            "-stimeout", "5000000",      # socket timeout 5s (microseconds)
+            "-timeout", str((duration + 30) * 1000000),  # overall timeout
+            "-i", rtsp_url,
+            "-t", str(duration),
+        ]
+
         # Build FFmpeg command
         if interval > 0:
             # Timelapse mode: capture frames at specified interval
-            cmd = [
-                "ffmpeg",
-                "-rtsp_transport",
-                "tcp",
-                "-i",
-                rtsp_url,
-                "-t",
-                str(duration),
-                "-vf",
-                f"fps=1/{interval}",  # 1 frame every N seconds
-                "-c:v",
-                "libx264",
-                "-preset",
-                "fast",
-                "-crf",
-                "23",
-                "-y",
-                filepath,
+            cmd = rtsp_input + [
+                "-vf", f"fps=1/{interval}",
+                "-c:v", "libx264",
+                "-preset", "fast",
+                "-crf", "23",
+                "-y", filepath,
             ]
         else:
-            # Normal video mode: record at full framerate
+            # Normal video mode: copy H.264 stream directly (no re-encoding)
             # frag_keyframe+empty_moov makes the MP4 valid even if interrupted
-            cmd = [
-                "ffmpeg",
-                "-rtsp_transport",
-                "tcp",
-                "-i",
-                rtsp_url,
-                "-t",
-                str(duration),
-                "-c:v",
-                "libx264",
-                "-preset",
-                "fast",
-                "-crf",
-                "23",
-                "-movflags",
-                "frag_keyframe+empty_moov",
-                "-y",
-                filepath,
+            cmd = rtsp_input + [
+                "-c", "copy",
+                "-movflags", "frag_keyframe+empty_moov",
+                "-y", filepath,
             ]
 
         # Start FFmpeg in background
@@ -605,21 +590,21 @@ def stop_recording():
             duration = (datetime.now() - _recording_state["start_time"]).total_seconds()
 
         # Terminate FFmpeg process gracefully so it can finalize the file
+        ffmpeg_stderr = b""
         if "process" in _recording_state and _recording_state["process"]:
             process = _recording_state["process"]
-            try:
-                process.stdin  # may not be available
-            except Exception:
-                pass
             try:
                 process.send_signal(__import__('signal').SIGTERM)
             except Exception:
                 process.terminate()
             try:
-                process.wait(timeout=10)
+                _, ffmpeg_stderr = process.communicate(timeout=10)
             except subprocess.TimeoutExpired:
                 process.kill()
-                process.wait()
+                _, ffmpeg_stderr = process.communicate()
+            if ffmpeg_stderr:
+                stderr_tail = ffmpeg_stderr.decode(errors="replace")[-500:]
+                logger.info(f"[Telescope] FFmpeg stderr (tail): {stderr_tail}")
             logger.info("[Telescope] FFmpeg process terminated")
 
         filename = _recording_state.get("filename", "unknown")
