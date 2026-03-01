@@ -514,8 +514,7 @@ def start_recording():
         rtsp_input = [
             "ffmpeg",
             "-rtsp_transport", "tcp",
-            "-stimeout", "5000000",      # socket timeout 5s (microseconds)
-            "-timeout", str((duration + 30) * 1000000),  # overall timeout
+            "-timeout", str((duration + 30) * 1000000),  # socket I/O timeout (µs)
             "-i", rtsp_url,
             "-t", str(duration),
         ]
