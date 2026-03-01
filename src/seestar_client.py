@@ -244,10 +244,9 @@ class SeestarClient:
 
     def _heartbeat_loop(self):
         """Background thread: sends periodic keepalive pings and auto-reconnects on drop."""
-        RECONNECT_INTERVAL = 5  # seconds between reconnect attempts (reduced from 10)
-        FAIL_THRESHOLD = (
-            3  # consecutive socket errors required before marking disconnected
-        )
+        RECONNECT_INTERVAL = 5  # seconds between reconnect attempts
+        HARD_FAIL_THRESHOLD = 3   # consecutive hard socket errors → disconnect
+        SOFT_FAIL_THRESHOLD = 10  # consecutive timeouts (scope busy) → disconnect
         reconnect_wait = 0
         fail_count = 0
 
@@ -265,17 +264,12 @@ class SeestarClient:
             reconnect_wait = 0  # reset backoff once connected
 
             try:
-                # Use scope_get_equ_coord as a lightweight keepalive ping.
-                # quiet=True suppresses WARNING/ERROR log spam.
                 self._send_command(
                     "scope_get_equ_coord", expect_response=True, quiet=True
                 )
                 fail_count = 0  # successful ping — clear any transient failure streak
             except Exception as e:
                 err = str(e).lower()
-                # Hard socket errors count immediately toward the threshold.
-                # Timeouts (telescope busy) also count — if they persist for
-                # FAIL_THRESHOLD consecutive heartbeats the link is effectively dead.
                 is_hard_error = any(
                     kw in err
                     for kw in (
@@ -286,7 +280,8 @@ class SeestarClient:
                     )
                 )
                 fail_count += 1
-                if fail_count >= FAIL_THRESHOLD:
+                threshold = HARD_FAIL_THRESHOLD if is_hard_error else SOFT_FAIL_THRESHOLD
+                if fail_count >= threshold:
                     logger.debug(
                         f"Heartbeat: {fail_count} consecutive errors — marking disconnected: {e}"
                     )
@@ -296,9 +291,9 @@ class SeestarClient:
                     else:
                         self._connected = False
                 else:
-                    level = "error" if is_hard_error else "timeout"
+                    level = "hard error" if is_hard_error else "timeout"
                     logger.debug(
-                        f"Heartbeat: transient {level} ({fail_count}/{FAIL_THRESHOLD}): {e}"
+                        f"Heartbeat: transient {level} ({fail_count}/{threshold}): {e}"
                     )
 
             # Sleep in small intervals to allow quick shutdown
