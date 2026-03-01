@@ -7,6 +7,7 @@
 // State Management
 let isConnected = false;
 let _prevConnected = false; // tracks previous poll state to detect reconnect
+let _lastConnectedStatus = null; // cache last connected response for disconnect diagnostics
 let isRecording = false;
 let statusPollInterval = null;
 let visibilityPollInterval = null;
@@ -215,15 +216,17 @@ async function updateStatus() {
         const justReconnected = isConnected && !_prevConnected;
         const justDisconnected = !isConnected && _prevConnected;
         if (justReconnected) {
-            console.log('[Scope] Reconnected — mode:', result.viewing_mode, '/ clearing preview backoff');
+            console.log('[Scope] Reconnected — mode:', result.viewing_mode);
             _previewLastError = 0;
+            _lastConnectedStatus = null;
         }
         if (justDisconnected) {
-            console.warn('[Scope] Disconnected — last status:', JSON.stringify({
-                viewing_mode: result.viewing_mode,
-                is_recording: result.is_recording,
-                last_update: result.last_update
-            }));
+            console.warn('[Scope] Disconnected — prior connected state:', JSON.stringify(_lastConnectedStatus || {}));
+            if (result.error) console.warn('[Scope] Server error:', result.error);
+        }
+        // Cache last connected response for diagnostics
+        if (isConnected) {
+            _lastConnectedStatus = { viewing_mode: result.viewing_mode, recording: result.recording, host: result.host };
         }
         _prevConnected = isConnected;
 
