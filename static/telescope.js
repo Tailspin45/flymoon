@@ -6,6 +6,7 @@
 
 // State Management
 let isConnected = false;
+let _prevConnected = false; // tracks previous poll state to detect reconnect
 let isRecording = false;
 let statusPollInterval = null;
 let visibilityPollInterval = null;
@@ -206,6 +207,12 @@ async function updateStatus() {
         checkTargetMismatch();
         
         // Auto-start preview if connected; stop stale stream if disconnected
+        const justReconnected = isConnected && !_prevConnected;
+        if (justReconnected) {
+            _previewLastError = 0; // clear backoff so preview restarts immediately
+        }
+        _prevConnected = isConnected;
+
         if (isConnected && typeof startPreview === 'function') {
             disconnectedPollCount = 0;
             startPreview();
@@ -608,7 +615,7 @@ function startPreview() {
     previewImage.onerror = () => {
         console.error('[Telescope] Preview stream failed');
         _previewLastError = Date.now();
-        previewImage.src = '';
+        previewImage.removeAttribute('src'); // avoid empty-src triggering another error
         previewImage.style.display = 'none';
         if (previewPlaceholder) previewPlaceholder.style.display = 'flex';
         if (previewStatusDot) previewStatusDot.className = 'status-dot disconnected';
