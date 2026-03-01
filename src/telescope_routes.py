@@ -648,18 +648,23 @@ def stop_recording():
             # Generate thumbnail from first frame
             thumb_path = filepath.rsplit(".", 1)[0] + "_thumb.jpg"
             try:
-                subprocess.run(
+                result = subprocess.run(
                     [
                         "ffmpeg", "-i", filepath,
-                        "-vframes", "1", "-q:v", "5",
+                        "-frames:v", "1", "-update", "1", "-q:v", "5",
                         "-y", thumb_path,
                     ],
                     capture_output=True, timeout=10,
                 )
-                if os.path.exists(thumb_path):
+                if os.path.exists(thumb_path) and os.path.getsize(thumb_path) > 0:
                     rel_thumb = os.path.relpath(thumb_path, "static")
                     thumbnail_url = f"/static/{rel_thumb.replace(os.sep, '/')}"
                     logger.info(f"[Telescope] Thumbnail generated: {thumb_path}")
+                else:
+                    logger.warning(
+                        f"[Telescope] Thumbnail not created — ffmpeg stderr: "
+                        f"{result.stderr.decode(errors='replace')[-200:]}"
+                    )
             except Exception as te:
                 logger.warning(f"[Telescope] Thumbnail generation failed: {te}")
 
