@@ -868,6 +868,10 @@ async function apiCall(endpoint, method = 'GET', body = null) {
         }
         
         const response = await fetch(endpoint, options);
+        const contentType = response.headers.get('content-type') || '';
+        if (!contentType.includes('application/json')) {
+            throw new Error(`HTTP ${response.status}: unexpected response`);
+        }
         const data = await response.json();
         
         if (!response.ok) {
