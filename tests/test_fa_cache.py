@@ -7,34 +7,34 @@ Tests cover: cache miss (live fetch), cache hit, TTL expiry, HTTP errors,
 empty flight list (VFR/untracked), and exception handling.
 """
 import sys
-import time
 from pathlib import Path
-from unittest.mock import patch, MagicMock
+from unittest.mock import MagicMock, patch
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 import src.transit as transit_module
 from src.transit import _enrich_from_fa
 
-
 # ── helpers ───────────────────────────────────────────────────────────────────
 
 FAKE_API_KEY = "test-api-key-123"
 
 SAMPLE_FA_RESPONSE = {
-    "flights": [{
-        "aircraft_type": "B738",
-        "fa_flight_id": "UAL123-test",
-        "origin":      {"city": "Los Angeles"},
-        "destination": {"city": "New York"},
-    }]
+    "flights": [
+        {
+            "aircraft_type": "B738",
+            "fa_flight_id": "UAL123-test",
+            "origin": {"city": "Los Angeles"},
+            "destination": {"city": "New York"},
+        }
+    ]
 }
 
 EXPECTED_ENRICHMENT = {
     "aircraft_type": "B738",
-    "fa_flight_id":  "UAL123-test",
-    "origin":        "Los Angeles",
-    "destination":   "New York",
+    "fa_flight_id": "UAL123-test",
+    "origin": "Los Angeles",
+    "destination": "New York",
 }
 
 
@@ -51,6 +51,7 @@ def make_mock_response(status_code=200, json_data=None):
 
 
 # ── tests ─────────────────────────────────────────────────────────────────────
+
 
 def test_cache_miss_fetches_api():
     """First call for a callsign hits the FA API and returns enrichment data."""
@@ -71,11 +72,12 @@ def test_cache_hit_skips_api():
     mock_resp = make_mock_response(200, SAMPLE_FA_RESPONSE)
 
     with patch("src.transit.requests.get", return_value=mock_resp) as mock_get:
-        _enrich_from_fa("UAL123", FAKE_API_KEY)   # populate cache
-        result = _enrich_from_fa("UAL123", FAKE_API_KEY)   # should hit cache
+        _enrich_from_fa("UAL123", FAKE_API_KEY)  # populate cache
+        result = _enrich_from_fa("UAL123", FAKE_API_KEY)  # should hit cache
 
-    assert mock_get.call_count == 1, \
-        f"API should be called exactly once, called {mock_get.call_count} times"
+    assert (
+        mock_get.call_count == 1
+    ), f"API should be called exactly once, called {mock_get.call_count} times"
     assert result == EXPECTED_ENRICHMENT
     print(f"✓ Cache hit → API called only once for two requests")
 
@@ -89,12 +91,15 @@ def test_cache_ttl_expiry_refetches():
         _enrich_from_fa("UAL123", FAKE_API_KEY)
 
         # Manually expire the cache entry
-        transit_module._FA_ENRICHMENT_CACHE["UAL123"]["ts"] -= transit_module._FA_ENRICHMENT_TTL + 1
+        transit_module._FA_ENRICHMENT_CACHE["UAL123"]["ts"] -= (
+            transit_module._FA_ENRICHMENT_TTL + 1
+        )
 
         result = _enrich_from_fa("UAL123", FAKE_API_KEY)
 
-    assert mock_get.call_count == 2, \
-        f"After TTL expiry, API should be called again (got {mock_get.call_count} calls)"
+    assert (
+        mock_get.call_count == 2
+    ), f"After TTL expiry, API should be called again (got {mock_get.call_count} calls)"
     assert result == EXPECTED_ENRICHMENT
     print(f"✓ TTL expiry → API re-fetched after cache expired")
 
@@ -110,8 +115,9 @@ def test_empty_flight_list_caches_miss():
 
     assert result1 == {}, f"Empty flights should return {{}}, got {result1}"
     assert result2 == {}, f"Cached miss should return {{}}, got {result2}"
-    assert mock_get.call_count == 1, \
-        f"API should be called once even for VFR miss, called {mock_get.call_count} times"
+    assert (
+        mock_get.call_count == 1
+    ), f"API should be called once even for VFR miss, called {mock_get.call_count} times"
     print(f"✓ VFR/untracked → returns {{}} and caches miss to prevent repeat calls")
 
 
@@ -153,42 +159,53 @@ def test_no_api_key_returns_empty():
 def test_missing_aircraft_type_defaults_to_na():
     """Null aircraft_type in FA response defaults to 'N/A'."""
     _clear_cache()
-    response = {"flights": [{
-        "aircraft_type": None,
-        "fa_flight_id": "TEST-001",
-        "origin":      {"city": "Dallas"},
-        "destination": {"city": "Miami"},
-    }]}
+    response = {
+        "flights": [
+            {
+                "aircraft_type": None,
+                "fa_flight_id": "TEST-001",
+                "origin": {"city": "Dallas"},
+                "destination": {"city": "Miami"},
+            }
+        ]
+    }
     mock_resp = make_mock_response(200, response)
 
     with patch("src.transit.requests.get", return_value=mock_resp):
         result = _enrich_from_fa("DAL1", FAKE_API_KEY)
 
-    assert result["aircraft_type"] == "N/A", \
-        f"Null aircraft_type should default to 'N/A', got '{result['aircraft_type']}'"
+    assert (
+        result["aircraft_type"] == "N/A"
+    ), f"Null aircraft_type should default to 'N/A', got '{result['aircraft_type']}'"
     print(f"✓ Null aircraft_type → 'N/A'")
 
 
 def test_missing_destination_city_defaults_to_nd():
     """None destination in FA response defaults to 'N/D'."""
     _clear_cache()
-    response = {"flights": [{
-        "aircraft_type": "A320",
-        "fa_flight_id": "TEST-002",
-        "origin":      {"city": "Chicago"},
-        "destination": None,
-    }]}
+    response = {
+        "flights": [
+            {
+                "aircraft_type": "A320",
+                "fa_flight_id": "TEST-002",
+                "origin": {"city": "Chicago"},
+                "destination": None,
+            }
+        ]
+    }
     mock_resp = make_mock_response(200, response)
 
     with patch("src.transit.requests.get", return_value=mock_resp):
         result = _enrich_from_fa("AAL2", FAKE_API_KEY)
 
-    assert result["destination"] == "N/D", \
-        f"None destination should default to 'N/D', got '{result['destination']}'"
+    assert (
+        result["destination"] == "N/D"
+    ), f"None destination should default to 'N/D', got '{result['destination']}'"
     print(f"✓ None destination → 'N/D'")
 
 
 # ── runner ────────────────────────────────────────────────────────────────────
+
 
 def main():
     tests = [
@@ -216,6 +233,7 @@ def main():
             failed += 1
         except Exception as e:
             import traceback
+
             print(f"✗ ERROR {t.__name__}: {e}")
             traceback.print_exc()
             failed += 1

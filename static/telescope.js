@@ -17,6 +17,7 @@ let upcomingTransits = [];
 const capturedTransits = new Set(); // flight IDs triggered this session — persists across array replacements
 let currentZoom = 1.0;
 let zoomStep = 0.1;
+let _previewLastError = 0; // timestamp of last preview onerror (ms)
 let isSimulating = false;
 let simulationVideo = null;
 let disconnectedPollCount = 0; // consecutive disconnected polls before stopping preview
@@ -566,6 +567,12 @@ function startPreview() {
 
     // Already streaming — don't restart
     if (previewImage.style.display === 'block' && previewImage.src) return;
+
+    // Enforce 5-second backoff after a stream error
+    if (_previewLastError && (Date.now() - _previewLastError) < 5000) {
+        console.log('[Telescope] Preview backoff active, skipping restart');
+        return;
+    }
     
     // Set stream URL (adds timestamp to avoid caching)
     const streamUrl = `/telescope/preview/stream.mjpg?t=${Date.now()}`;
@@ -596,9 +603,13 @@ function startPreview() {
         applyZoom();
     }, 2000);
     
-    // Error handler
+    // Error handler — reset state so the guard above doesn't block retries
     previewImage.onerror = () => {
         console.error('[Telescope] Preview stream failed');
+        _previewLastError = Date.now();
+        previewImage.src = '';
+        previewImage.style.display = 'none';
+        if (previewPlaceholder) previewPlaceholder.style.display = 'flex';
         if (previewStatusDot) previewStatusDot.className = 'status-dot disconnected';
         if (previewStatusText) previewStatusText.textContent = 'Stream Error';
         if (previewTitleIcon) previewTitleIcon.textContent = '🔴';

@@ -4,11 +4,12 @@ Telegram notification module for transit alerts.
 
 import os
 from typing import List
+
 from telegram import Bot
 from telegram.error import TelegramError
 
 from src import logger
-from src.constants import PossibilityLevel, TARGET_TO_EMOJI
+from src.constants import TARGET_TO_EMOJI, PossibilityLevel
 
 
 async def send_telegram_simple(message: str) -> bool:
@@ -19,7 +20,7 @@ async def send_telegram_simple(message: str) -> bool:
         return False
     try:
         bot = Bot(token=bot_token)
-        await bot.send_message(chat_id=chat_id, text=message, parse_mode='HTML')
+        await bot.send_message(chat_id=chat_id, text=message, parse_mode="HTML")
         return True
     except Exception as e:
         logger.error(f"Telegram alert failed: {e}")
@@ -36,7 +37,9 @@ async def send_telegram_notification(flight_data: List[dict], target: str) -> bo
     chat_id = os.getenv("TELEGRAM_CHAT_ID")
 
     if not bot_token or not chat_id:
-        logger.warning("Telegram not configured (missing BOT_TOKEN or CHAT_ID), skipping notification")
+        logger.warning(
+            "Telegram not configured (missing BOT_TOKEN or CHAT_ID), skipping notification"
+        )
         return False
 
     # Filter for medium/high probability transits
@@ -46,7 +49,7 @@ async def send_telegram_notification(flight_data: List[dict], target: str) -> bo
             PossibilityLevel.MEDIUM.value,
             PossibilityLevel.HIGH.value,
         ):
-            eta_min = flight.get('time', 0)
+            eta_min = flight.get("time", 0)
             diff_sum = (flight.get("alt_diff") or 0) + (flight.get("az_diff") or 0)
             flight_target = flight.get("target", target or "")
             emoji = TARGET_TO_EMOJI.get(flight_target, "🌙")
@@ -69,11 +72,7 @@ async def send_telegram_notification(flight_data: List[dict], target: str) -> bo
     # Send via Telegram
     try:
         bot = Bot(token=bot_token)
-        await bot.send_message(
-            chat_id=chat_id,
-            text=message,
-            parse_mode='HTML'
-        )
+        await bot.send_message(chat_id=chat_id, text=message, parse_mode="HTML")
         logger.info(f"✅ Telegram notification sent: {len(possible_transits)} transits")
         return True
 

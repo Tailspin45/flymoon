@@ -2,11 +2,12 @@
 Tests for TransitRecorder scheduling and timing logic.
 Uses a MockSeestarClient to avoid requiring real hardware.
 """
+
 import sys
 import threading
 import time
 from pathlib import Path
-from unittest.mock import MagicMock, patch, call
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -74,8 +75,9 @@ def test_recording_starts_after_delay():
 
     # Patch OpenSky refinement so it doesn't try network calls
     with patch.object(recorder, "_opensky_refine"):
-        recorder.schedule_transit_recording("FL001", eta_seconds=0.05,
-                                            transit_duration_estimate=0.05)
+        recorder.schedule_transit_recording(
+            "FL001", eta_seconds=0.05, transit_duration_estimate=0.05
+        )
         time.sleep(0.5)  # wait for timer to fire
 
     client.start_recording.assert_called_once()
@@ -87,8 +89,9 @@ def test_recording_stops_after_duration():
     recorder = TransitRecorder(client, pre_buffer_seconds=0, post_buffer_seconds=0)
 
     with patch.object(recorder, "_opensky_refine"):
-        recorder.schedule_transit_recording("FL001", eta_seconds=0.05,
-                                            transit_duration_estimate=0.1)
+        recorder.schedule_transit_recording(
+            "FL001", eta_seconds=0.05, transit_duration_estimate=0.1
+        )
         time.sleep(0.8)  # wait for both start and stop
 
     client.start_recording.assert_called_once()
@@ -151,8 +154,9 @@ def test_cleanup_stale_timers_removes_finished():
     recorder = TransitRecorder(client, pre_buffer_seconds=0, post_buffer_seconds=0)
 
     with patch.object(recorder, "_opensky_refine"):
-        recorder.schedule_transit_recording("FL001", eta_seconds=0.02,
-                                            transit_duration_estimate=0.02)
+        recorder.schedule_transit_recording(
+            "FL001", eta_seconds=0.02, transit_duration_estimate=0.02
+        )
         time.sleep(0.2)  # let timer fire and finish
 
     recorder.cleanup_stale_timers()

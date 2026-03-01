@@ -148,6 +148,7 @@ def transit_corridor_bbox(
     # Clamp alt to avoid division by zero / absurdly large distances.
     alt_clamped = max(target_alt_deg, 3.0)
     from math import tan
+
     ground_dist_km = (aircraft_altitude_m / 1000.0) / tan(radians(alt_clamped))
     # Cap at ~500 km (covers low-altitude targets without going global)
     ground_dist_km = min(ground_dist_km, 500.0)
@@ -160,8 +161,7 @@ def transit_corridor_bbox(
     obs_lon_r = radians(obs_lon)
 
     tgp_lat_r = asin(
-        sin(obs_lat_r) * cos(ratio)
-        + cos(obs_lat_r) * sin(ratio) * cos(bearing)
+        sin(obs_lat_r) * cos(ratio) + cos(obs_lat_r) * sin(ratio) * cos(bearing)
     )
     tgp_lon_r = obs_lon_r + atan2(
         sin(bearing) * sin(ratio) * cos(obs_lat_r),
@@ -220,7 +220,8 @@ def compute_track_velocity(
         except (TypeError, ValueError):
             pass
         try:
-            from datetime import datetime, timezone
+            from datetime import datetime
+
             s = str(ts).replace("Z", "+00:00")
             return datetime.fromisoformat(s).timestamp()
         except Exception:
@@ -230,7 +231,11 @@ def compute_track_velocity(
     valid = []
     for p in track_positions:
         ts = _to_unix(p.get("timestamp"))
-        if ts is not None and p.get("latitude") is not None and p.get("longitude") is not None:
+        if (
+            ts is not None
+            and p.get("latitude") is not None
+            and p.get("longitude") is not None
+        ):
             valid.append({**p, "_ts": ts})
 
     if len(valid) < 2:

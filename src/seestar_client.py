@@ -13,8 +13,8 @@ import json
 import socket
 import threading
 import time
-from typing import Optional, Dict, Any
 from datetime import datetime
+from typing import Any, Dict, Optional
 
 from src import logger
 
@@ -25,7 +25,9 @@ class SeestarClient:
     # Default connection parameters
     DEFAULT_PORT = 4700
     DEFAULT_TIMEOUT = 10
-    DEFAULT_HEARTBEAT_INTERVAL = 3  # Ping every 3 seconds to prevent timeout (matches seestar_alp)
+    DEFAULT_HEARTBEAT_INTERVAL = (
+        3  # Ping every 3 seconds to prevent timeout (matches seestar_alp)
+    )
 
     def __init__(
         self,
@@ -57,7 +59,9 @@ class SeestarClient:
         self._connected = False
         self._recording = False
         self._recording_start_time: Optional[datetime] = None
-        self._viewing_mode: Optional[str] = None  # Track current viewing mode (sun/moon/None)
+        self._viewing_mode: Optional[str] = (
+            None  # Track current viewing mode (sun/moon/None)
+        )
         self._message_id = 0
         self._heartbeat_thread: Optional[threading.Thread] = None
         self._heartbeat_running = False
@@ -139,9 +143,13 @@ class SeestarClient:
 
                     start_time = time.time()
                     buffer = ""
-                    
+
                     # Use timeout override if provided, otherwise use instance timeout
-                    cmd_timeout = timeout_override if timeout_override is not None else self.timeout
+                    cmd_timeout = (
+                        timeout_override
+                        if timeout_override is not None
+                        else self.timeout
+                    )
                     # Also adjust socket recv timeout to match so it doesn't fire early
                     if timeout_override is not None:
                         self.socket.settimeout(timeout_override)
@@ -162,7 +170,9 @@ class SeestarClient:
 
                                 # Skip Event messages
                                 if "Event" in result:
-                                    logger.debug(f"Skipping event: {result.get('Event')}")
+                                    logger.debug(
+                                        f"Skipping event: {result.get('Event')}"
+                                    )
                                     continue
 
                                 # Check if this is our response
@@ -234,8 +244,10 @@ class SeestarClient:
 
     def _heartbeat_loop(self):
         """Background thread: sends periodic keepalive pings and auto-reconnects on drop."""
-        RECONNECT_INTERVAL = 5   # seconds between reconnect attempts (reduced from 10)
-        FAIL_THRESHOLD = 3       # consecutive socket errors required before marking disconnected
+        RECONNECT_INTERVAL = 5  # seconds between reconnect attempts (reduced from 10)
+        FAIL_THRESHOLD = (
+            3  # consecutive socket errors required before marking disconnected
+        )
         reconnect_wait = 0
         fail_count = 0
 
@@ -255,18 +267,29 @@ class SeestarClient:
             try:
                 # Use scope_get_equ_coord as a lightweight keepalive ping.
                 # quiet=True suppresses WARNING/ERROR log spam.
-                self._send_command("scope_get_equ_coord", expect_response=True, quiet=True)
+                self._send_command(
+                    "scope_get_equ_coord", expect_response=True, quiet=True
+                )
                 fail_count = 0  # successful ping — clear any transient failure streak
             except Exception as e:
                 err = str(e).lower()
                 # Only mark disconnected on real socket errors, not command timeouts.
                 # A timeout means the telescope is busy, not that the TCP link is broken.
-                if any(kw in err for kw in ("broken pipe", "connection reset", "connection refused",
-                                             "communication failed")):
+                if any(
+                    kw in err
+                    for kw in (
+                        "broken pipe",
+                        "connection reset",
+                        "connection refused",
+                        "communication failed",
+                    )
+                ):
                     fail_count += 1
                     if fail_count >= FAIL_THRESHOLD:
                         # Confirmed persistent disconnect — alert and let reconnect loop handle it
-                        logger.debug(f"Heartbeat: {fail_count} consecutive errors — marking disconnected: {e}")
+                        logger.debug(
+                            f"Heartbeat: {fail_count} consecutive errors — marking disconnected: {e}"
+                        )
                         if self._connected:
                             self._connected = False
                             self._notify_scope_offline()
@@ -275,7 +298,9 @@ class SeestarClient:
                     else:
                         # Transient error — restore flag and keep trying
                         self._connected = True
-                        logger.debug(f"Heartbeat: transient socket error ({fail_count}/{FAIL_THRESHOLD}): {e}")
+                        logger.debug(
+                            f"Heartbeat: transient socket error ({fail_count}/{FAIL_THRESHOLD}): {e}"
+                        )
                 else:
                     logger.debug(f"Heartbeat ping timed out (telescope busy): {e}")
 
@@ -287,33 +312,45 @@ class SeestarClient:
 
     def _notify_scope_offline(self):
         """Fire-and-forget Telegram alert when scope drops off the network."""
+
         def _send():
             import asyncio
+
             try:
                 from src.telegram_notify import send_telegram_simple
-                asyncio.run(send_telegram_simple(
-                    "⚠️ <b>Seestar scope went offline!</b>\n"
-                    "The telescope connection was lost. "
-                    "Any pending transit recordings will not be captured."
-                ))
+
+                asyncio.run(
+                    send_telegram_simple(
+                        "⚠️ <b>Seestar scope went offline!</b>\n"
+                        "The telescope connection was lost. "
+                        "Any pending transit recordings will not be captured."
+                    )
+                )
             except Exception as e:
                 logger.debug(f"Scope-offline Telegram alert failed: {e}")
+
         t = threading.Thread(target=_send, daemon=True)
         t.start()
 
     def _notify_scope_online(self):
         """Fire-and-forget Telegram alert when scope reconnects."""
+
         def _send():
             import asyncio
+
             try:
                 from src.telegram_notify import send_telegram_simple
-                asyncio.run(send_telegram_simple(
-                    "✅ <b>Seestar scope reconnected!</b>\n"
-                    "The telescope connection has been re-established. "
-                    "Transit recording is active again."
-                ))
+
+                asyncio.run(
+                    send_telegram_simple(
+                        "✅ <b>Seestar scope reconnected!</b>\n"
+                        "The telescope connection has been re-established. "
+                        "Transit recording is active again."
+                    )
+                )
             except Exception as e:
                 logger.debug(f"Scope-online Telegram alert failed: {e}")
+
         t = threading.Thread(target=_send, daemon=True)
         t.start()
 
@@ -352,7 +389,9 @@ class SeestarClient:
 
             # Start heartbeat thread
             self._heartbeat_running = True
-            self._heartbeat_thread = threading.Thread(target=self._heartbeat_loop, daemon=True)
+            self._heartbeat_thread = threading.Thread(
+                target=self._heartbeat_loop, daemon=True
+            )
             self._heartbeat_thread.start()
 
             return True
@@ -455,22 +494,30 @@ class SeestarClient:
             logger.warning("Recording already in progress")
             return True
 
-        # Refuse to record if scope is not in solar/lunar viewing mode —
-        # recording in deep-sky or standby mode would capture nothing useful.
-        if self._viewing_mode not in ("sun", "moon"):
+        # Refuse to record if scope is known to be in a non-solar/lunar mode.
+        # If mode is None (unknown, e.g. after reconnect), allow with a warning.
+        if self._viewing_mode is not None and self._viewing_mode not in ("sun", "moon"):
             raise RuntimeError(
                 f"Cannot record: scope is in mode '{self._viewing_mode}' "
                 "(must be 'sun' or 'moon'). Point the scope at the target first."
+            )
+        if self._viewing_mode is None:
+            logger.warning(
+                "Recording with unknown viewing mode — scope may not be pointed at target"
             )
 
         try:
             # Start video recording - fire-and-forget: Seestar acks via event, not RPC response
             params = {"raw": False}
-            _ = self._send_command("start_record_avi", params=params, expect_response=False)
+            _ = self._send_command(
+                "start_record_avi", params=params, expect_response=False
+            )
 
             self._recording = True
             self._recording_start_time = datetime.now()
-            logger.info(f"Started video recording (MP4 format, duration: {duration_seconds}s)")
+            logger.info(
+                f"Started video recording (MP4 format, duration: {duration_seconds}s)"
+            )
 
             # If duration specified, schedule auto-stop
             if duration_seconds:
@@ -550,7 +597,9 @@ class SeestarClient:
         """
         try:
             # Don't expect immediate response - Seestar may take time to switch modes
-            self._send_command("iscope_start_view", params={"mode": "sun"}, expect_response=False)
+            self._send_command(
+                "iscope_start_view", params={"mode": "sun"}, expect_response=False
+            )
             self._viewing_mode = "sun"
             logger.info("Started solar viewing mode (async)")
             # Give telescope time to process the command
@@ -577,7 +626,9 @@ class SeestarClient:
         """
         try:
             # Don't expect immediate response - Seestar may take time to switch modes
-            self._send_command("iscope_start_view", params={"mode": "moon"}, expect_response=False)
+            self._send_command(
+                "iscope_start_view", params={"mode": "moon"}, expect_response=False
+            )
             self._viewing_mode = "moon"
             logger.info("Started lunar viewing mode (async)")
             # Give telescope time to process the command
@@ -643,11 +694,13 @@ class SeestarClient:
             # Use pi_output_set_target to capture current view (works in viewing modes)
             # This is the command used by Seestar app during solar/lunar viewing
             params = {"target_name": ""}
-            
+
             # Extended timeout - Seestar takes time to capture and save
-            result = self._send_command("pi_output_set_target", params=params, timeout_override=90)
+            result = self._send_command(
+                "pi_output_set_target", params=params, timeout_override=90
+            )
             logger.info(f"📸 Captured photo")
-            
+
             # Alternative: If above doesn't work, the telescope might need to be triggered differently
             # The Seestar saves frames automatically during viewing, so we might not need explicit capture
             return result if result else {"success": True}
@@ -689,7 +742,7 @@ class SeestarClient:
 
         Use this after capture_photo() to retrieve the saved image path.
         Files can be downloaded via HTTP: http://<host>/<path>/<filename>
-        
+
         If telescope times out or has no albums, returns empty structure.
         """
         try:
@@ -698,7 +751,7 @@ class SeestarClient:
                 # Command succeeded but no response data
                 logger.warning("get_albums returned None, returning empty structure")
                 return {"path": "", "list": []}
-            
+
             logger.info(f"Retrieved albums: {len(response.get('list', []))} albums")
             return response
         except RuntimeError as e:
@@ -797,10 +850,7 @@ class TransitRecorder:
         )
 
     def schedule_transit_recording(
-        self,
-        flight_id: str,
-        eta_seconds: float,
-        transit_duration_estimate: float = 2.0
+        self, flight_id: str, eta_seconds: float, transit_duration_estimate: float = 2.0
     ) -> bool:
         """
         Schedule automated recording for a predicted transit.
@@ -823,7 +873,7 @@ class TransitRecorder:
         -----
         Aircraft transits are typically 0.5-2 seconds long. The total recording
         duration will be: pre_buffer + transit_duration + post_buffer
-        
+
         Duplicate detection: if a recording for the same flight_id is already
         scheduled, this call is ignored to prevent timer accumulation.
         """
@@ -832,15 +882,19 @@ class TransitRecorder:
             if flight_id in self._scheduled_recordings:
                 existing_timer = self._scheduled_recordings[flight_id]
                 if existing_timer.is_alive():
-                    logger.debug(f"Recording already scheduled for {flight_id}, skipping duplicate")
+                    logger.debug(
+                        f"Recording already scheduled for {flight_id}, skipping duplicate"
+                    )
                     return True  # Already scheduled, return success
                 else:
                     # Timer finished or cancelled, remove stale entry
                     del self._scheduled_recordings[flight_id]
-            
+
             # Calculate timing
             start_delay = max(0, eta_seconds - self.pre_buffer)
-            total_duration = self.pre_buffer + transit_duration_estimate + self.post_buffer
+            total_duration = (
+                self.pre_buffer + transit_duration_estimate + self.post_buffer
+            )
 
             logger.info(
                 f"Scheduling transit {flight_id}: start in {start_delay:.1f}s, "
@@ -848,7 +902,9 @@ class TransitRecorder:
             )
 
             # Schedule start
-            start_timer = threading.Timer(start_delay, self._start_recording, args=[flight_id, total_duration])
+            start_timer = threading.Timer(
+                start_delay, self._start_recording, args=[flight_id, total_duration]
+            )
             start_timer.daemon = True
             start_timer.start()
 
@@ -858,11 +914,12 @@ class TransitRecorder:
         except Exception as e:
             logger.error(f"Failed to schedule transit recording: {e}")
             return False
-    
+
     def cleanup_stale_timers(self):
         """Remove completed or cancelled timers from the scheduled recordings dict."""
         stale_keys = [
-            fid for fid, timer in self._scheduled_recordings.items()
+            fid
+            for fid, timer in self._scheduled_recordings.items()
             if not timer.is_alive()
         ]
         for fid in stale_keys:
@@ -875,23 +932,27 @@ class TransitRecorder:
         try:
             # OpenSky last-mile refinement: get fresh position right before recording
             self._opensky_refine(flight_id)
-            
+
             logger.info(f"Starting recording for transit {flight_id}")
             self.client.start_recording()
 
             # Schedule stop
-            stop_timer = threading.Timer(duration, self._stop_recording, args=[flight_id])
+            stop_timer = threading.Timer(
+                duration, self._stop_recording, args=[flight_id]
+            )
             stop_timer.daemon = True
             stop_timer.start()
 
         except Exception as e:
             logger.warning(f"Skipped recording for {flight_id}: {e}")
-    
+
     def _opensky_refine(self, flight_id: str):
         """Query OpenSky for latest position before recording (last-mile refinement)."""
         try:
-            from src.opensky import fetch_opensky_positions
             import os
+
+            from src.opensky import fetch_opensky_positions
+
             bbox = {
                 "lamin": float(os.getenv("LAT_LOWER_LEFT", 0)),
                 "lomin": float(os.getenv("LONG_LOWER_LEFT", 0)),
@@ -906,7 +967,9 @@ class TransitRecorder:
                     f"({pos['lat']:.4f}, {pos['lon']:.4f}) alt={pos.get('altitude_m',0):.0f}m"
                 )
             else:
-                logger.debug(f"[OpenSky Refinement] {flight_id}: not found in OpenSky data")
+                logger.debug(
+                    f"[OpenSky Refinement] {flight_id}: not found in OpenSky data"
+                )
         except Exception as e:
             # OpenSky refinement is best-effort, don't fail recording if it errors
             logger.debug(f"[OpenSky Refinement] Error for {flight_id}: {e}")
@@ -961,10 +1024,19 @@ def create_client_from_env() -> Optional[SeestarClient]:
     try:
         port = int(os.getenv("SEESTAR_PORT", str(SeestarClient.DEFAULT_PORT)))
         timeout = int(os.getenv("SEESTAR_TIMEOUT", str(SeestarClient.DEFAULT_TIMEOUT)))
-        heartbeat = int(os.getenv("SEESTAR_HEARTBEAT_INTERVAL", str(SeestarClient.DEFAULT_HEARTBEAT_INTERVAL)))
+        heartbeat = int(
+            os.getenv(
+                "SEESTAR_HEARTBEAT_INTERVAL",
+                str(SeestarClient.DEFAULT_HEARTBEAT_INTERVAL),
+            )
+        )
 
-        client = SeestarClient(host=host, port=port, timeout=timeout, heartbeat_interval=heartbeat)
-        logger.info(f"Created Seestar client from environment: {host}:{port} (heartbeat: {heartbeat}s)")
+        client = SeestarClient(
+            host=host, port=port, timeout=timeout, heartbeat_interval=heartbeat
+        )
+        logger.info(
+            f"Created Seestar client from environment: {host}:{port} (heartbeat: {heartbeat}s)"
+        )
         return client
 
     except Exception as e:

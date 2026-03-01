@@ -1,11 +1,11 @@
 """
 Tests for CelestialObject and get_rise_set_times().
 """
+
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
-import pytest
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
@@ -54,7 +54,9 @@ def test_sun_above_horizon_at_noon():
     noon = datetime(2024, 6, 21, 19, 0, 0, tzinfo=timezone.utc)  # ~noon PDT
     sun = CelestialObject("sun", MY_POS)
     sun.update_position(noon)
-    assert sun.altitude.degrees > 20, f"Expected sun above horizon, got {sun.altitude.degrees:.1f}°"
+    assert (
+        sun.altitude.degrees > 20
+    ), f"Expected sun above horizon, got {sun.altitude.degrees:.1f}°"
 
 
 def test_sun_below_horizon_at_midnight():
@@ -62,7 +64,9 @@ def test_sun_below_horizon_at_midnight():
     midnight = datetime(2024, 6, 22, 7, 0, 0, tzinfo=timezone.utc)  # midnight PDT
     sun = CelestialObject("sun", MY_POS)
     sun.update_position(midnight)
-    assert sun.altitude.degrees < 0, f"Expected sun below horizon, got {sun.altitude.degrees:.1f}°"
+    assert (
+        sun.altitude.degrees < 0
+    ), f"Expected sun below horizon, got {sun.altitude.degrees:.1f}°"
 
 
 def test_position_changes_over_time():

@@ -2,11 +2,11 @@
 Tests for transit detection core: check_transit(), get_thresholds(),
 get_possibility_level() boundary values.
 """
+
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
-import pytest
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
@@ -15,7 +15,6 @@ from skyfield.api import wgs84
 from src.astro import CelestialObject
 from src.constants import ASTRO_EPHEMERIS, PossibilityLevel
 from src.transit import (
-    _angular_separation,
     check_transit,
     get_possibility_level,
     get_thresholds,
@@ -164,8 +163,16 @@ def test_check_transit_no_transit_far_flight():
     sun = _make_sun()
     # Place flight 45° away from sun in azimuth, definitely not transiting
     flight = _make_flight(OBS_LAT - 40, OBS_LON - 40, direction=270)
-    result = check_transit(flight, WINDOW, REF_TIME, MY_POS, sun, EARTH,
-                           alt_threshold=5.0, az_threshold=10.0)
+    result = check_transit(
+        flight,
+        WINDOW,
+        REF_TIME,
+        MY_POS,
+        sun,
+        EARTH,
+        alt_threshold=5.0,
+        az_threshold=10.0,
+    )
     assert result["is_possible_transit"] == 0
 
 
@@ -174,7 +181,8 @@ def test_check_transit_with_precomputed_target_positions():
     sun = _make_sun()
     # Build a target_positions dict for all integer minutes in the window
     from datetime import timedelta
-    from src.position import geographic_to_altaz
+
+
     target_positions = {}
     for m in range(15):
         t = REF_TIME + timedelta(minutes=m)
@@ -183,8 +191,9 @@ def test_check_transit_with_precomputed_target_positions():
 
     flight = _make_flight(OBS_LAT + 5, OBS_LON)
     result_without = check_transit(flight, WINDOW, REF_TIME, MY_POS, sun, EARTH)
-    result_with = check_transit(flight, WINDOW, REF_TIME, MY_POS, sun, EARTH,
-                                target_positions=target_positions)
+    result_with = check_transit(
+        flight, WINDOW, REF_TIME, MY_POS, sun, EARTH, target_positions=target_positions
+    )
     # Both should agree on is_possible_transit
     assert result_without["is_possible_transit"] == result_with["is_possible_transit"]
 

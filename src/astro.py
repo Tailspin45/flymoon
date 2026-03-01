@@ -56,7 +56,7 @@ def get_rise_set_times(lat: float, lon: float, elevation: float) -> dict:
     tz = get_localzone()
     today = datetime.now(tz=tz).replace(hour=0, minute=0, second=0, microsecond=0)
     t0 = EARTH_TIMESCALE.from_datetime(today)
-    t1_sun  = EARTH_TIMESCALE.from_datetime(today + timedelta(days=1))
+    t1_sun = EARTH_TIMESCALE.from_datetime(today + timedelta(days=1))
     t1_moon = EARTH_TIMESCALE.from_datetime(today + timedelta(days=2))
     location = wgs84.latlon(lat, lon, elevation_m=elevation)
     result = {}

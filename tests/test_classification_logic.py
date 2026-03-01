@@ -11,8 +11,9 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from src.transit import _angular_separation, get_possibility_level
 import math
+
+from src.transit import _angular_separation, get_possibility_level
 
 TARGET_ALT = 45.0  # degrees — used throughout; cos(45°) ≈ 0.707
 
@@ -26,13 +27,18 @@ def test_angular_separation_calculation():
     c = math.cos(math.radians(TARGET_ALT))
     test_cases = [
         # (alt_diff, az_diff, expected_result, description)
-        (0,   0,   0.0,                                   "Perfect alignment"),
-        (1,   0,   1.0,                                   "1° altitude only — no cosine effect"),
-        (0,   1,   round(1.0 * c, 3),                    "1° azimuth only — compressed by cos(45°)"),
-        (3,   4,   round(math.sqrt(9 + (4*c)**2), 3),    "Mixed 3°/4° — cosine on az"),
-        (1,   1,   round(math.sqrt(1 + c**2), 3),        "1° each — cosine reduces az contribution"),
-        (2,   2,   round(math.sqrt(4 + (2*c)**2), 3),    "2° each"),
-        (5,   5,   round(math.sqrt(25 + (5*c)**2), 3),   "5° each"),
+        (0, 0, 0.0, "Perfect alignment"),
+        (1, 0, 1.0, "1° altitude only — no cosine effect"),
+        (0, 1, round(1.0 * c, 3), "1° azimuth only — compressed by cos(45°)"),
+        (3, 4, round(math.sqrt(9 + (4 * c) ** 2), 3), "Mixed 3°/4° — cosine on az"),
+        (
+            1,
+            1,
+            round(math.sqrt(1 + c**2), 3),
+            "1° each — cosine reduces az contribution",
+        ),
+        (2, 2, round(math.sqrt(4 + (2 * c) ** 2), 3), "2° each"),
+        (5, 5, round(math.sqrt(25 + (5 * c) ** 2), 3), "5° each"),
     ]
 
     passed = 0
@@ -42,12 +48,16 @@ def test_angular_separation_calculation():
         result = round(_angular_separation(alt_diff, az_diff, TARGET_ALT), 3)
         if abs(result - expected) < 0.001:
             print(f"✓ PASS: {description}")
-            print(f"  Input: alt_diff={alt_diff}°, az_diff={az_diff}° at target_alt={TARGET_ALT}°")
+            print(
+                f"  Input: alt_diff={alt_diff}°, az_diff={az_diff}° at target_alt={TARGET_ALT}°"
+            )
             print(f"  Expected: {expected}°, Got: {result}°")
             passed += 1
         else:
             print(f"✗ FAIL: {description}")
-            print(f"  Input: alt_diff={alt_diff}°, az_diff={az_diff}° at target_alt={TARGET_ALT}°")
+            print(
+                f"  Input: alt_diff={alt_diff}°, az_diff={az_diff}° at target_alt={TARGET_ALT}°"
+            )
             print(f"  Expected: {expected}°, Got: {result}°")
             failed += 1
         print()
@@ -72,15 +82,15 @@ def test_classification_thresholds():
 
     test_cases = [
         # (alt_diff_as_sep, expected_level_int, expected_name, description)
-        (0.0,  3, "HIGH",     "Perfect transit"),
-        (0.5,  3, "HIGH",     "0.5° — well inside HIGH"),
-        (1.5,  3, "HIGH",     "Exactly at HIGH boundary (1.5°)"),
-        (1.51, 2, "MEDIUM",   "Just outside HIGH (1.51°)"),
-        (2.0,  2, "MEDIUM",   "Mid MEDIUM range (2.0°)"),
-        (2.5,  2, "MEDIUM",   "Exactly at MEDIUM boundary (2.5°)"),
-        (2.51, 1, "LOW",      "Just outside MEDIUM (2.51°)"),
-        (2.8,  1, "LOW",      "Mid LOW range (2.8°)"),
-        (3.0,  1, "LOW",      "Exactly at LOW boundary (3.0°)"),
+        (0.0, 3, "HIGH", "Perfect transit"),
+        (0.5, 3, "HIGH", "0.5° — well inside HIGH"),
+        (1.5, 3, "HIGH", "Exactly at HIGH boundary (1.5°)"),
+        (1.51, 2, "MEDIUM", "Just outside HIGH (1.51°)"),
+        (2.0, 2, "MEDIUM", "Mid MEDIUM range (2.0°)"),
+        (2.5, 2, "MEDIUM", "Exactly at MEDIUM boundary (2.5°)"),
+        (2.51, 1, "LOW", "Just outside MEDIUM (2.51°)"),
+        (2.8, 1, "LOW", "Mid LOW range (2.8°)"),
+        (3.0, 1, "LOW", "Exactly at LOW boundary (3.0°)"),
         (3.01, 0, "UNLIKELY", "Just outside LOW (3.01°)"),
         (10.0, 0, "UNLIKELY", "Far from target"),
     ]
@@ -113,17 +123,31 @@ def test_cosine_correction_effect():
 
     test_cases = [
         # (alt_diff, az_diff, target_alt, expected_level_int, expected_name, description)
-        (0.0, 5.0,  89.0, 3, "HIGH",   "5° az at zenith ≈ 0.09° on-sky — HIGH"),
-        (0.0, 1.0,  45.0, 3, "HIGH",   "1° az at 45° → 0.71° on-sky — HIGH"),
-        (0.0, 3.0,  10.0, 1, "LOW",    "3° az at 10° → 2.95° on-sky — LOW (> MEDIUM boundary)"),
-        (2.0, 0.0,  45.0, 2, "MEDIUM", "2° alt, 0° az at 45° → 2.0° — MEDIUM"),
-        (1.0, 0.0,  89.0, 3, "HIGH",   "1° alt at zenith — no cosine on alt — HIGH"),
+        (0.0, 5.0, 89.0, 3, "HIGH", "5° az at zenith ≈ 0.09° on-sky — HIGH"),
+        (0.0, 1.0, 45.0, 3, "HIGH", "1° az at 45° → 0.71° on-sky — HIGH"),
+        (
+            0.0,
+            3.0,
+            10.0,
+            1,
+            "LOW",
+            "3° az at 10° → 2.95° on-sky — LOW (> MEDIUM boundary)",
+        ),
+        (2.0, 0.0, 45.0, 2, "MEDIUM", "2° alt, 0° az at 45° → 2.0° — MEDIUM"),
+        (1.0, 0.0, 89.0, 3, "HIGH", "1° alt at zenith — no cosine on alt — HIGH"),
     ]
 
     passed = 0
     failed = 0
 
-    for alt_diff, az_diff, target_alt, expected_level, expected_name, description in test_cases:
+    for (
+        alt_diff,
+        az_diff,
+        target_alt,
+        expected_level,
+        expected_name,
+        description,
+    ) in test_cases:
         sep = _angular_separation(alt_diff, az_diff, target_alt)
         result = get_possibility_level(target_alt, alt_diff, az_diff)
         if result == expected_level:
@@ -132,7 +156,9 @@ def test_cosine_correction_effect():
             passed += 1
         else:
             print(f"✗ FAIL: {description}")
-            print(f"  σ={sep:.3f}°, expected {expected_name} ({expected_level}), got {result}")
+            print(
+                f"  σ={sep:.3f}°, expected {expected_name} ({expected_level}), got {result}"
+            )
             failed += 1
         print()
 

@@ -7,8 +7,8 @@ Usage:
     python data/test_data_generator.py --scenario moon_only --num-flights 5
     python data/test_data_generator.py --custom
 """
-import json
 import argparse
+import json
 import math
 import random
 import sys
@@ -29,8 +29,8 @@ OBSERVER_ELEV = 100  # metres
 def _get_real_sky_positions():
     """Return current alt/az for Moon and Sun using Skyfield."""
     from src.astro import CelestialObject
-    from src.position import get_my_pos
     from src.constants import ASTRO_EPHEMERIS
+    from src.position import get_my_pos
 
     earth = ASTRO_EPHEMERIS["earth"]
     pos = get_my_pos(OBSERVER_LAT, OBSERVER_LON, OBSERVER_ELEV, earth)
@@ -67,27 +67,51 @@ def get_scenarios():
     return {
         "dual_tracking": _build_scenario(
             "Both Moon and Sun (real current sky positions)",
-            15, moon_alt, moon_az, sun_alt, sun_az,
+            15,
+            moon_alt,
+            moon_az,
+            sun_alt,
+            sun_az,
         ),
         "moon_only": _build_scenario(
             "Only Moon visible (daytime, Sun below horizon)",
-            20, moon_alt, moon_az, -10, 90,
+            20,
+            moon_alt,
+            moon_az,
+            -10,
+            90,
         ),
         "sun_only": _build_scenario(
             "Only Sun visible (daytime, Moon below horizon)",
-            10, -5, 270, sun_alt, sun_az,
+            10,
+            -5,
+            270,
+            sun_alt,
+            sun_az,
         ),
         "cloudy": _build_scenario(
             "Clear alignments but weather prevents tracking",
-            85, moon_alt, moon_az, sun_alt, sun_az,
+            85,
+            moon_alt,
+            moon_az,
+            sun_alt,
+            sun_az,
         ),
         "low_altitude": _build_scenario(
             "Targets below minimum altitude threshold",
-            5, 12, 160, 8, 250,
+            5,
+            12,
+            160,
+            8,
+            250,
         ),
         "perfect": _build_scenario(
             "Perfect conditions with well-separated targets",
-            0, moon_alt, moon_az, sun_alt, sun_az,
+            0,
+            moon_alt,
+            moon_az,
+            sun_alt,
+            sun_az,
         ),
     }
 
@@ -108,9 +132,17 @@ def azimuth_to_offset(azimuth_deg, distance_deg=0.5):
 
 
 def generate_flight_near_target(
-    flight_id, target_az, target_alt, offset_factor, heading_offset,
-    origin_code, origin_name, dest_code, dest_name,
-    altitude_ft=35000, groundspeed=450
+    flight_id,
+    target_az,
+    target_alt,
+    offset_factor,
+    heading_offset,
+    origin_code,
+    origin_name,
+    dest_code,
+    dest_name,
+    altitude_ft=35000,
+    groundspeed=450,
 ):
     """Generate flight positioned relative to a celestial target.
 
@@ -141,8 +173,16 @@ def generate_flight_near_target(
     heading = (target_az + heading_offset) % 360
 
     return generate_flight_data(
-        flight_id, origin_code, origin_name, dest_code, dest_name,
-        current_lat, current_lon, altitude_ft, groundspeed, heading
+        flight_id,
+        origin_code,
+        origin_name,
+        dest_code,
+        dest_name,
+        current_lat,
+        current_lon,
+        altitude_ft,
+        groundspeed,
+        heading,
     )
 
 
@@ -176,7 +216,9 @@ def generate_flight_data(
     return {
         "ident": flight_id,
         "ident_icao": flight_id,
-        "ident_iata": flight_id[:2] + flight_id[3:] if len(flight_id) > 3 else flight_id,
+        "ident_iata": (
+            flight_id[:2] + flight_id[3:] if len(flight_id) > 3 else flight_id
+        ),
         "fa_flight_id": f"{flight_id}-{int(now.timestamp())}-schedule-test",
         "actual_off": (now - timedelta(hours=2)).strftime("%Y-%m-%dT%H:%M:%SZ"),
         "actual_on": "None",
@@ -240,8 +282,8 @@ def generate_test_data(scenario_name="dual_tracking", custom_config=None):
     # MEDIUM: 1.5° < sep ≤ 2.5°  →  use alt_diff = 2.0°
     # LOW: 2.5° < sep ≤ 3.0°  →  use alt_diff = 2.8°
     HIGH_OFFSET = 0.5
-    MED_OFFSET  = 2.0
-    LOW_OFFSET  = 2.8
+    MED_OFFSET = 2.0
+    LOW_OFFSET = 2.8
 
     def position_at_azimuth(azimuth_deg, target_alt_angle, aircraft_alt_ft):
         """Calculate lat/lon at specific azimuth and altitude angle from the observer."""
@@ -249,7 +291,9 @@ def generate_test_data(scenario_name="dual_tracking", custom_config=None):
 
         # Horizontal distance in feet from flat-earth altitude-angle formula
         alt_angle_rad = math.radians(max(target_alt_angle, 1.0))
-        horizontal_dist_ft = (aircraft_alt_ft - observer_alt_ft) / math.tan(alt_angle_rad)
+        horizontal_dist_ft = (aircraft_alt_ft - observer_alt_ft) / math.tan(
+            alt_angle_rad
+        )
 
         # Convert to degrees of arc along Earth's surface
         dist_km = horizontal_dist_ft * 0.0003048
@@ -258,7 +302,9 @@ def generate_test_data(scenario_name="dual_tracking", custom_config=None):
         # Project along azimuth — longitude degrees must be scaled by cos(lat)
         az_rad = math.radians(azimuth_deg)
         lat = OBSERVER_LAT + dist_deg * math.cos(az_rad)
-        lon = OBSERVER_LON + dist_deg * math.sin(az_rad) / math.cos(math.radians(OBSERVER_LAT))
+        lon = OBSERVER_LON + dist_deg * math.sin(az_rad) / math.cos(
+            math.radians(OBSERVER_LAT)
+        )
 
         # Clamp to bounding box
         lat = max(32.0, min(33.5, lat))
@@ -274,29 +320,56 @@ def generate_test_data(scenario_name="dual_tracking", custom_config=None):
         # MOON HIGH
         alt_ft = 35000
         lat, lon = position_at_azimuth(moon_az, moon_alt + HIGH_OFFSET, alt_ft)
-        flights.append(generate_flight_data(
-            "MOON_HIGH", "KLAX", "Los Angeles International",
-            "KSAN", "San Diego International",
-            lat, lon, alt_ft, 450, perp_moon
-        ))
+        flights.append(
+            generate_flight_data(
+                "MOON_HIGH",
+                "KLAX",
+                "Los Angeles International",
+                "KSAN",
+                "San Diego International",
+                lat,
+                lon,
+                alt_ft,
+                450,
+                perp_moon,
+            )
+        )
 
         # MOON MEDIUM
         alt_ft = 36000
         lat, lon = position_at_azimuth(moon_az, moon_alt + MED_OFFSET, alt_ft)
-        flights.append(generate_flight_data(
-            "MOON_MED", "KPHX", "Phoenix Sky Harbor",
-            "KSAN", "San Diego International",
-            lat, lon, alt_ft, 460, perp_moon
-        ))
+        flights.append(
+            generate_flight_data(
+                "MOON_MED",
+                "KPHX",
+                "Phoenix Sky Harbor",
+                "KSAN",
+                "San Diego International",
+                lat,
+                lon,
+                alt_ft,
+                460,
+                perp_moon,
+            )
+        )
 
         # MOON LOW
         alt_ft = 37000
         lat, lon = position_at_azimuth(moon_az, moon_alt + LOW_OFFSET, alt_ft)
-        flights.append(generate_flight_data(
-            "MOON_LOW", "KSFO", "San Francisco International",
-            "KSAN", "San Diego International",
-            lat, lon, alt_ft, 480, perp_moon
-        ))
+        flights.append(
+            generate_flight_data(
+                "MOON_LOW",
+                "KSFO",
+                "San Francisco International",
+                "KSAN",
+                "San Diego International",
+                lat,
+                lon,
+                alt_ft,
+                480,
+                perp_moon,
+            )
+        )
 
     # Generate flights for Sun transits (if sun is visible)
     if sun_alt >= 15:
@@ -307,54 +380,106 @@ def generate_test_data(scenario_name="dual_tracking", custom_config=None):
         # SUN HIGH
         alt_ft = 34000
         lat, lon = position_at_azimuth(sun_az, sun_alt + HIGH_OFFSET, alt_ft)
-        flights.append(generate_flight_data(
-            "SUN_HIGH", "KLAS", "Las Vegas McCarran",
-            "KSAN", "San Diego International",
-            lat, lon, alt_ft, 440, perp_sun
-        ))
+        flights.append(
+            generate_flight_data(
+                "SUN_HIGH",
+                "KLAS",
+                "Las Vegas McCarran",
+                "KSAN",
+                "San Diego International",
+                lat,
+                lon,
+                alt_ft,
+                440,
+                perp_sun,
+            )
+        )
 
         # SUN MEDIUM
         alt_ft = 33000
         lat, lon = position_at_azimuth(sun_az, sun_alt + MED_OFFSET, alt_ft)
-        flights.append(generate_flight_data(
-            "SUN_MED", "KDEN", "Denver International",
-            "KSAN", "San Diego International",
-            lat, lon, alt_ft, 420, perp_sun
-        ))
+        flights.append(
+            generate_flight_data(
+                "SUN_MED",
+                "KDEN",
+                "Denver International",
+                "KSAN",
+                "San Diego International",
+                lat,
+                lon,
+                alt_ft,
+                420,
+                perp_sun,
+            )
+        )
 
         # SUN LOW
         alt_ft = 36000
         lat, lon = position_at_azimuth(sun_az, sun_alt + LOW_OFFSET, alt_ft)
-        flights.append(generate_flight_data(
-            "SUN_LOW", "KOAK", "Oakland International",
-            "KSAN", "San Diego International",
-            lat, lon, alt_ft, 470, perp_sun
-        ))
+        flights.append(
+            generate_flight_data(
+                "SUN_LOW",
+                "KOAK",
+                "Oakland International",
+                "KSAN",
+                "San Diego International",
+                lat,
+                lon,
+                alt_ft,
+                470,
+                perp_sun,
+            )
+        )
 
     # NONE probability - far from both targets (>20° offset)
     alt_ft = random.randint(30000, 35000)
     lat, lon = position_at_azimuth(90, 20, alt_ft)  # East, random alt angle
-    flights.append(generate_flight_data(
-        "NONE_01", "KSAN", "San Diego International",
-        "KSFO", "San Francisco International",
-        lat, lon, alt_ft, 450, random.randint(0, 360)
-    ))
+    flights.append(
+        generate_flight_data(
+            "NONE_01",
+            "KSAN",
+            "San Diego International",
+            "KSFO",
+            "San Francisco International",
+            lat,
+            lon,
+            alt_ft,
+            450,
+            random.randint(0, 360),
+        )
+    )
 
     alt_ft = random.randint(32000, 36000)
     lat, lon = position_at_azimuth(180, 25, alt_ft)  # South, random alt angle
-    flights.append(generate_flight_data(
-        "NONE_02", "KSAN", "San Diego International",
-        "KDEN", "Denver International",
-        lat, lon, alt_ft, 460, random.randint(0, 360)
-    ))
+    flights.append(
+        generate_flight_data(
+            "NONE_02",
+            "KSAN",
+            "San Diego International",
+            "KDEN",
+            "Denver International",
+            lat,
+            lon,
+            alt_ft,
+            460,
+            random.randint(0, 360),
+        )
+    )
 
     # N/D destination flight
     alt_ft = random.randint(28000, 32000)
     lat, lon = position_at_azimuth(270, 15, alt_ft)  # West, random alt angle
     nd_flight = generate_flight_data(
-        "PRIV01", "KSAN", "San Diego International",
-        None, None,
-        lat, lon, alt_ft, 380, random.randint(0, 360)
+        "PRIV01",
+        "KSAN",
+        "San Diego International",
+        None,
+        None,
+        lat,
+        lon,
+        alt_ft,
+        380,
+        random.randint(0, 360),
     )
     nd_flight["destination"] = None
     flights.append(nd_flight)
@@ -373,7 +498,7 @@ def generate_test_data(scenario_name="dual_tracking", custom_config=None):
             "sun_altitude": sun_alt,
             "sun_azimuth": sun_az,
             "cloud_cover": config["cloud_cover"],
-        }
+        },
     }
 
     return result
@@ -383,7 +508,14 @@ def main():
     parser = argparse.ArgumentParser(description="Generate test flight data")
     parser.add_argument(
         "--scenario",
-        choices=["dual_tracking", "moon_only", "sun_only", "cloudy", "low_altitude", "perfect"],
+        choices=[
+            "dual_tracking",
+            "moon_only",
+            "sun_only",
+            "cloudy",
+            "low_altitude",
+            "perfect",
+        ],
         default="dual_tracking",
         help="Pre-configured scenario",
     )
@@ -392,11 +524,15 @@ def main():
         default="data/raw_flight_data_example.json",
         help="Output file path",
     )
-    parser.add_argument("--custom", action="store_true", help="Interactive custom configuration")
-    parser.add_argument("--list-scenarios", action="store_true", help="List available scenarios")
-    
+    parser.add_argument(
+        "--custom", action="store_true", help="Interactive custom configuration"
+    )
+    parser.add_argument(
+        "--list-scenarios", action="store_true", help="List available scenarios"
+    )
+
     args = parser.parse_args()
-    
+
     if args.list_scenarios:
         scenarios = get_scenarios()
         print("\nAvailable test scenarios:\n")
@@ -421,12 +557,12 @@ def main():
     output_path = Path(args.output)
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
-    with open(output_path, 'w') as f:
+    with open(output_path, "w") as f:
         json.dump(data, f, indent=2)
 
     print(f"\n✓ Test data generated: {output_path}")
     print(f"  Total flights: {len(data['flights'])}")
-    meta = data['_test_metadata']
+    meta = data["_test_metadata"]
     print(f"  Moon: {meta['moon_altitude']}° alt, {meta['moon_azimuth']}° az")
     print(f"  Sun: {meta['sun_altitude']}° alt, {meta['sun_azimuth']}° az")
     print(f"\nRun with: python3 app.py --test")

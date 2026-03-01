@@ -2,15 +2,14 @@
 Tests for geographic_to_altaz() coordinate transform.
 Verifies that known observer/target geometry produces correct alt-az results.
 """
+
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
-import pytest
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from skyfield.api import wgs84
 
 from src.constants import ASTRO_EPHEMERIS
 from src.position import geographic_to_altaz, get_my_pos
@@ -77,8 +76,12 @@ def test_west_object_has_westerly_azimuth():
 
 def test_higher_elevation_means_higher_altitude():
     """Same ground position but higher elevation → higher apparent altitude."""
-    alt_low, _ = geographic_to_altaz(OBS_LAT + 1, OBS_LON, 1_000, EARTH, MY_POS, REF_TIME)
-    alt_high, _ = geographic_to_altaz(OBS_LAT + 1, OBS_LON, 100_000, EARTH, MY_POS, REF_TIME)
+    alt_low, _ = geographic_to_altaz(
+        OBS_LAT + 1, OBS_LON, 1_000, EARTH, MY_POS, REF_TIME
+    )
+    alt_high, _ = geographic_to_altaz(
+        OBS_LAT + 1, OBS_LON, 100_000, EARTH, MY_POS, REF_TIME
+    )
     assert alt_high > alt_low
 
 

@@ -42,8 +42,8 @@ MAX_POSITION_AGE: int = 60
 # Timeout for OpenSky HTTP requests
 REQUEST_TIMEOUT: int = 5
 
-_cache: Dict = {}           # {bbox_key: {"ts": float, "data": dict}}
-_backoff_until: float = 0   # epoch time until which OpenSky requests are paused
+_cache: Dict = {}  # {bbox_key: {"ts": float, "data": dict}}
+_backoff_until: float = 0  # epoch time until which OpenSky requests are paused
 
 # OpenSky position_source integer → source label string (index 16 in state vector)
 _POS_SOURCE: Dict[int, str] = {0: "adsb", 1: "asterix", 2: "mlat", 3: "flarm"}
@@ -66,7 +66,7 @@ def _get_bearer_token() -> Optional[str]:
     """
     global _token, _token_expires_at
 
-    client_id     = os.getenv("OPENSKY_CLIENT_ID", "")
+    client_id = os.getenv("OPENSKY_CLIENT_ID", "")
     client_secret = os.getenv("OPENSKY_CLIENT_SECRET", "")
     if not client_id or not client_secret:
         return None
@@ -79,8 +79,8 @@ def _get_bearer_token() -> Optional[str]:
         resp = requests.post(
             TOKEN_URL,
             data={
-                "grant_type":    "client_credentials",
-                "client_id":     client_id,
+                "grant_type": "client_credentials",
+                "client_id": client_id,
                 "client_secret": client_secret,
             },
             timeout=REQUEST_TIMEOUT,
@@ -89,7 +89,9 @@ def _get_bearer_token() -> Optional[str]:
         data = resp.json()
         _token = data["access_token"]
         _token_expires_at = now + data.get("expires_in", 3600)
-        logger.debug(f"OpenSky token refreshed (expires in {data.get('expires_in', 3600)}s)")
+        logger.debug(
+            f"OpenSky token refreshed (expires in {data.get('expires_in', 3600)}s)"
+        )
         return _token
     except Exception as exc:
         logger.warning(f"OpenSky token fetch failed: {exc}")
@@ -156,7 +158,7 @@ def fetch_opensky_positions(
         "lomin": lon_ll,
         "lamax": lat_ur,
         "lomax": lon_ur,
-        "extended": 1,   # includes category (index 17) in state vectors
+        "extended": 1,  # includes category (index 17) in state vectors
     }
 
     try:
@@ -212,32 +214,31 @@ def fetch_opensky_positions(
         if lat is None or lon is None:
             continue
 
-        baro_alt = s[7]   # metres (may be None)
-        geo_alt  = s[13]  # metres (may be None)
+        baro_alt = s[7]  # metres (may be None)
+        geo_alt = s[13]  # metres (may be None)
         altitude_m = geo_alt or baro_alt  # prefer geometric altitude
 
-        velocity_ms = s[9]   # m/s (may be None)
-        true_track   = s[10]  # degrees (may be None)
-        vert_rate    = s[11]  # m/s (may be None)
-        on_ground    = s[8]
+        velocity_ms = s[9]  # m/s (may be None)
+        true_track = s[10]  # degrees (may be None)
+        vert_rate = s[11]  # m/s (may be None)
+        on_ground = s[8]
 
         result[callsign] = {
-            "icao24":           s[0],
-            "lat":              float(lat),
-            "lon":              float(lon),
-            "altitude_m":       float(altitude_m) if altitude_m is not None else None,
-            "speed_kmh":        float(velocity_ms) * 3.6 if velocity_ms is not None else None,
-            "heading":          float(true_track) if true_track is not None else None,
+            "icao24": s[0],
+            "lat": float(lat),
+            "lon": float(lon),
+            "altitude_m": float(altitude_m) if altitude_m is not None else None,
+            "speed_kmh": float(velocity_ms) * 3.6 if velocity_ms is not None else None,
+            "heading": float(true_track) if true_track is not None else None,
             "vertical_rate_ms": float(vert_rate) if vert_rate is not None else None,
-            "last_contact":     float(last_contact),
-            "on_ground":        bool(on_ground),
-            "squawk":           s[14] if len(s) > 14 else None,
-            "spi":              bool(s[15]) if len(s) > 15 else False,
-            "category":         int(s[17]) if len(s) > 17 and s[17] is not None else None,
-            "origin_country":   s[2] if len(s) > 2 else None,
-            "position_source":  _POS_SOURCE.get(
-                int(s[16]) if len(s) > 16 and s[16] is not None else -1,
-                "opensky"
+            "last_contact": float(last_contact),
+            "on_ground": bool(on_ground),
+            "squawk": s[14] if len(s) > 14 else None,
+            "spi": bool(s[15]) if len(s) > 15 else False,
+            "category": int(s[17]) if len(s) > 17 and s[17] is not None else None,
+            "origin_country": s[2] if len(s) > 2 else None,
+            "position_source": _POS_SOURCE.get(
+                int(s[16]) if len(s) > 16 and s[16] is not None else -1, "opensky"
             ),
         }
 

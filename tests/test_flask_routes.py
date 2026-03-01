@@ -9,7 +9,7 @@ hitting FlightAware or OpenSky.
 """
 import sys
 from pathlib import Path
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
@@ -34,6 +34,7 @@ def get_client():
 
 # ── tests ─────────────────────────────────────────────────────────────────────
 
+
 def test_index_returns_200():
     """GET / returns the main HTML page."""
     client = get_client()
@@ -47,8 +48,9 @@ def test_flights_missing_lat_lon_returns_400():
     """GET /flights without lat/lon returns 400."""
     client = get_client()
     resp = client.get("/flights")
-    assert resp.status_code == 400, \
-        f"Missing lat/lon should return 400, got {resp.status_code}"
+    assert (
+        resp.status_code == 400
+    ), f"Missing lat/lon should return 400, got {resp.status_code}"
     body = resp.get_json()
     assert body is not None
     assert "error" in body
@@ -58,30 +60,53 @@ def test_flights_missing_lat_lon_returns_400():
 def test_flights_with_observer_returns_json():
     """GET /flights with observer position returns valid JSON with expected keys."""
     client = get_client()
-    with patch("app.get_transits", return_value={"flights": [], "target_coordinates": {"altitude": 45.0, "azimuthal": 180.0}}):
+    with patch(
+        "app.get_transits",
+        return_value={
+            "flights": [],
+            "target_coordinates": {"altitude": 45.0, "azimuthal": 180.0},
+        },
+    ):
         resp = client.get(f"/flights?{OBSERVER_QS}")
-    assert resp.status_code == 200, f"/flights returned {resp.status_code}: {resp.data[:200]}"
+    assert (
+        resp.status_code == 200
+    ), f"/flights returned {resp.status_code}: {resp.data[:200]}"
     body = resp.get_json()
     assert body is not None, "Response is not valid JSON"
     assert "flights" in body, f"Response missing 'flights' key: {list(body.keys())}"
-    assert "targetCoordinates" in body, \
-        f"Response missing 'targetCoordinates': {list(body.keys())}"
+    assert (
+        "targetCoordinates" in body
+    ), f"Response missing 'targetCoordinates': {list(body.keys())}"
     print(f"✓ GET /flights → 200, keys: {list(body.keys())}")
 
 
 def test_flights_target_coordinates_schema():
     """targetCoordinates contains per-target dicts with altitude and azimuthal fields."""
     client = get_client()
-    with patch("app.get_transits", return_value={"flights": [], "target_coordinates": {"altitude": 52.3, "azimuthal": 220.1}}):
+    with patch(
+        "app.get_transits",
+        return_value={
+            "flights": [],
+            "target_coordinates": {"altitude": 52.3, "azimuthal": 220.1},
+        },
+    ):
         resp = client.get(f"/flights?{OBSERVER_QS}")
     body = resp.get_json()
     coords = body["targetCoordinates"]
     # targetCoordinates is keyed by target name (sun/moon)
-    assert isinstance(coords, dict), f"targetCoordinates should be dict, got {type(coords)}"
+    assert isinstance(
+        coords, dict
+    ), f"targetCoordinates should be dict, got {type(coords)}"
     for target_name, target_coords in coords.items():
-        assert "altitude"  in target_coords, f"[{target_name}] missing 'altitude': {target_coords}"
-        assert "azimuthal" in target_coords, f"[{target_name}] missing 'azimuthal': {target_coords}"
-        print(f"✓ targetCoordinates[{target_name}]: alt={target_coords['altitude']:.1f}°, az={target_coords['azimuthal']:.1f}°")
+        assert (
+            "altitude" in target_coords
+        ), f"[{target_name}] missing 'altitude': {target_coords}"
+        assert (
+            "azimuthal" in target_coords
+        ), f"[{target_name}] missing 'azimuthal': {target_coords}"
+        print(
+            f"✓ targetCoordinates[{target_name}]: alt={target_coords['altitude']:.1f}°, az={target_coords['azimuthal']:.1f}°"
+        )
 
 
 def test_flights_response_flight_schema():
@@ -114,7 +139,13 @@ def test_flights_response_flight_schema():
     body = resp.get_json()
     flights = body.get("flights", [])
     assert len(flights) >= 1, "Expected at least one flight in response"
-    required_keys = {"id", "latitude", "longitude", "is_possible_transit", "possibility_level"}
+    required_keys = {
+        "id",
+        "latitude",
+        "longitude",
+        "is_possible_transit",
+        "possibility_level",
+    }
     for flight in flights[:5]:
         missing = required_keys - set(flight.keys())
         assert not missing, f"Flight missing keys: {missing}\n  Flight: {flight}"
@@ -140,6 +171,7 @@ def test_static_js_served():
 
 # ── runner ────────────────────────────────────────────────────────────────────
 
+
 def main():
     tests = [
         test_index_returns_200,
@@ -164,6 +196,7 @@ def main():
             failed += 1
         except Exception as e:
             import traceback
+
             print(f"✗ ERROR {t.__name__}: {e}")
             traceback.print_exc()
             failed += 1

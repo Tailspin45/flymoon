@@ -47,6 +47,7 @@ def get_aeroapi_key() -> str:
         or ""
     )
 
+
 # Test data
 TEST_DATA_PATH = "data/raw_flight_data_example.json"
 POSSIBLE_TRANSITS_LOGFILENAME = "data/possible-transits/log_{date_}.csv"
