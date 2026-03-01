@@ -321,9 +321,9 @@ class SeestarClient:
 
                 asyncio.run(
                     send_telegram_simple(
-                        "⚠️ <b>Seestar scope went offline!</b>\n"
-                        "The telescope connection was lost. "
-                        "Any pending transit recordings will not be captured."
+                        "🔴 <b>SCOPE DISCONNECTED</b>\n"
+                        "⚠️ Seestar telescope connection lost.\n"
+                        "<i>Any pending transit recordings will not be captured.</i>"
                     )
                 )
             except Exception as e:
@@ -343,9 +343,9 @@ class SeestarClient:
 
                 asyncio.run(
                     send_telegram_simple(
-                        "✅ <b>Seestar scope reconnected!</b>\n"
-                        "The telescope connection has been re-established. "
-                        "Transit recording is active again."
+                        "🟢 <b>Scope reconnected</b>\n"
+                        "✅ Seestar telescope connection re-established.\n"
+                        "<i>Transit recording is active again.</i>"
                     )
                 )
             except Exception as e:
