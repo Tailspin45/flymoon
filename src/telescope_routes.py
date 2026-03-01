@@ -625,7 +625,8 @@ def stop_recording():
         filename = _recording_state.get("filename", "unknown")
         filepath = _recording_state.get("filepath", "")
 
-        # Create metadata
+        # Create metadata + thumbnail
+        thumbnail_url = None
         if filepath and os.path.exists(filepath):
             metadata = {
                 "timestamp": (
@@ -643,6 +644,24 @@ def stop_recording():
                 import json
 
                 json.dump(metadata, f, indent=2)
+
+            # Generate thumbnail from first frame
+            thumb_path = filepath.rsplit(".", 1)[0] + "_thumb.jpg"
+            try:
+                subprocess.run(
+                    [
+                        "ffmpeg", "-i", filepath,
+                        "-vframes", "1", "-q:v", "5",
+                        "-y", thumb_path,
+                    ],
+                    capture_output=True, timeout=10,
+                )
+                if os.path.exists(thumb_path):
+                    rel_thumb = os.path.relpath(thumb_path, "static")
+                    thumbnail_url = f"/static/{rel_thumb.replace(os.sep, '/')}"
+                    logger.info(f"[Telescope] Thumbnail generated: {thumb_path}")
+            except Exception as te:
+                logger.warning(f"[Telescope] Thumbnail generation failed: {te}")
 
         _recording_state = {"active": False, "start_time": None}
 
@@ -689,6 +708,17 @@ def get_recording_status():
 # File Management Endpoint
 
 
+def _find_video_thumbnail(full_path: str):
+    """Return URL for a video's _thumb.jpg if it exists, else None."""
+    if not full_path.lower().endswith((".mp4", ".avi", ".mov")):
+        return None
+    thumb_path = full_path.rsplit(".", 1)[0] + "_thumb.jpg"
+    if os.path.exists(thumb_path):
+        rel = os.path.relpath(thumb_path, "static")
+        return f"/static/{rel.replace(os.sep, '/')}"
+    return None
+
+
 def list_telescope_files():
     """GET /telescope/files - List locally captured files."""
     logger.info("[Telescope] GET /telescope/files")
@@ -704,7 +734,7 @@ def list_telescope_files():
                 for filename in filenames:
                     if filename.lower().endswith(
                         (".jpg", ".jpeg", ".png", ".mp4", ".avi")
-                    ):
+                    ) and "_thumb." not in filename.lower():
                         full_path = os.path.join(root, filename)
                         rel_path = os.path.relpath(full_path, "static")
 
@@ -716,6 +746,7 @@ def list_telescope_files():
                                 "name": filename,
                                 "url": f"/static/{rel_path.replace(os.sep, '/')}",
                                 "mtime": mtime,
+                                "thumbnail": _find_video_thumbnail(full_path),
                             }
                         )
 
@@ -767,6 +798,11 @@ def delete_telescope_file():
         if os.path.exists(metadata_path):
             os.remove(metadata_path)
             logger.info(f"[Telescope] Deleted metadata: {metadata_path}")
+
+        # Delete thumbnail if exists
+        thumb_path = abs_path.rsplit(".", 1)[0] + "_thumb.jpg"
+        if os.path.exists(thumb_path):
+            os.remove(thumb_path)
 
         return (
             jsonify(
