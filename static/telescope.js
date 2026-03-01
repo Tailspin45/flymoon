@@ -47,6 +47,11 @@ window.initTelescope = function() {
         }
     });
 
+    // Sync mute button state from server
+    apiCall('/telescope/notifications/status', 'GET').then(r => {
+        if (r) updateTelegramMuteBtn(r.muted);
+    });
+
     // Start polling for target visibility
     updateTargetVisibility();
     visibilityPollInterval = setInterval(updateTargetVisibility, 30000);
@@ -1407,9 +1412,21 @@ function dismissTransit(flight) {
 // FILMSTRIP & MODAL
 // ============================================================================
 
+async function toggleTelegramMute() {
+    const result = await apiCall('/telescope/notifications/mute', 'POST');
+    if (result !== null) updateTelegramMuteBtn(result.muted);
+}
+
+function updateTelegramMuteBtn(muted) {
+    const btn = document.getElementById('telegramMuteBtn');
+    if (!btn) return;
+    btn.textContent = muted ? '🔕' : '🔔';
+    btn.title = muted ? 'Telegram alerts muted — click to unmute' : 'Mute Telegram alerts';
+    btn.style.opacity = muted ? '0.5' : '1';
+}
+
 function toggleFilesModal() {
     const modal = document.getElementById('filesModal');
-    if (!modal) return;
     
     if (modal.style.display === 'none' || !modal.style.display) {
         modal.style.display = 'flex';

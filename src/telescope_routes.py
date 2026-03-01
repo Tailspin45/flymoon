@@ -1210,6 +1210,28 @@ def get_simulate_status():
     return jsonify({"simulate_mode": _simulate_mode}), 200
 
 
+# ============================================================================
+# NOTIFICATION MUTE
+# ============================================================================
+
+
+def toggle_notifications_mute():
+    """POST /telescope/notifications/mute - Toggle Telegram alert mute."""
+    from src.telegram_notify import get_notifications_muted, set_notifications_muted
+
+    muted = not get_notifications_muted()
+    set_notifications_muted(muted)
+    logger.info(f"[Telescope] Telegram notifications {'muted' if muted else 'unmuted'}")
+    return jsonify({"muted": muted}), 200
+
+
+def get_notifications_status():
+    """GET /telescope/notifications/status - Get Telegram alert mute state."""
+    from src.telegram_notify import get_notifications_muted
+
+    return jsonify({"muted": get_notifications_muted()}), 200
+
+
 # Route Registration Helper
 
 
@@ -1320,6 +1342,20 @@ def register_routes(app):
         "/telescope/simulate",
         "telescope_simulate_status",
         get_simulate_status,
+        methods=["GET"],
+    )
+
+    # Notification mute toggle
+    app.add_url_rule(
+        "/telescope/notifications/mute",
+        "telescope_notifications_mute",
+        toggle_notifications_mute,
+        methods=["POST"],
+    )
+    app.add_url_rule(
+        "/telescope/notifications/status",
+        "telescope_notifications_status",
+        get_notifications_status,
         methods=["GET"],
     )
 

@@ -273,9 +273,10 @@ class SeestarClient:
                 fail_count = 0  # successful ping — clear any transient failure streak
             except Exception as e:
                 err = str(e).lower()
-                # Only mark disconnected on real socket errors, not command timeouts.
-                # A timeout means the telescope is busy, not that the TCP link is broken.
-                if any(
+                # Hard socket errors count immediately toward the threshold.
+                # Timeouts (telescope busy) also count — if they persist for
+                # FAIL_THRESHOLD consecutive heartbeats the link is effectively dead.
+                is_hard_error = any(
                     kw in err
                     for kw in (
                         "broken pipe",
@@ -283,26 +284,22 @@ class SeestarClient:
                         "connection refused",
                         "communication failed",
                     )
-                ):
-                    fail_count += 1
-                    if fail_count >= FAIL_THRESHOLD:
-                        # Confirmed persistent disconnect — alert and let reconnect loop handle it
-                        logger.debug(
-                            f"Heartbeat: {fail_count} consecutive errors — marking disconnected: {e}"
-                        )
-                        if self._connected:
-                            self._connected = False
-                            self._notify_scope_offline()
-                        else:
-                            self._connected = False
+                )
+                fail_count += 1
+                if fail_count >= FAIL_THRESHOLD:
+                    logger.debug(
+                        f"Heartbeat: {fail_count} consecutive errors — marking disconnected: {e}"
+                    )
+                    if self._connected:
+                        self._connected = False
+                        self._notify_scope_offline()
                     else:
-                        # Transient error — restore flag and keep trying
-                        self._connected = True
-                        logger.debug(
-                            f"Heartbeat: transient socket error ({fail_count}/{FAIL_THRESHOLD}): {e}"
-                        )
+                        self._connected = False
                 else:
-                    logger.debug(f"Heartbeat ping timed out (telescope busy): {e}")
+                    level = "error" if is_hard_error else "timeout"
+                    logger.debug(
+                        f"Heartbeat: transient {level} ({fail_count}/{FAIL_THRESHOLD}): {e}"
+                    )
 
             # Sleep in small intervals to allow quick shutdown
             for _ in range(self.heartbeat_interval):

@@ -11,9 +11,24 @@ from telegram.error import TelegramError
 from src import logger
 from src.constants import TARGET_TO_EMOJI, PossibilityLevel
 
+# Global mute flag — toggled via /telescope/notifications/mute endpoint
+_notifications_muted = False
+
+
+def set_notifications_muted(muted: bool):
+    global _notifications_muted
+    _notifications_muted = muted
+
+
+def get_notifications_muted() -> bool:
+    return _notifications_muted
+
 
 async def send_telegram_simple(message: str) -> bool:
     """Send a plain-text Telegram message (for system alerts like scope offline)."""
+    if _notifications_muted:
+        logger.debug("Telegram notifications muted — skipping alert")
+        return False
     bot_token = os.getenv("TELEGRAM_BOT_TOKEN")
     chat_id = os.getenv("TELEGRAM_CHAT_ID")
     if not bot_token or not chat_id:
@@ -33,6 +48,9 @@ async def send_telegram_notification(flight_data: List[dict], target: str) -> bo
 
     Returns True if notification was sent successfully, False otherwise.
     """
+    if _notifications_muted:
+        logger.debug("Telegram notifications muted — skipping transit alert")
+        return False
     bot_token = os.getenv("TELEGRAM_BOT_TOKEN")
     chat_id = os.getenv("TELEGRAM_CHAT_ID")
 
