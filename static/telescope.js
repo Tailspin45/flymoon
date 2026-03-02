@@ -1599,9 +1599,9 @@ function viewFile(path, name) {
         const hasPrev = _viewerIndex > 0;
         const hasNext = _viewerIndex >= 0 && _viewerIndex < files.length - 1;
         const scanBtn = isVideo
-            ? `<button class="btn-viewer" onclick="frameStep(-1)" title="Back 1 frame">◁</button>` +
+            ? `<button class="btn-viewer" onmousedown="frameStepStart(-1)" onmouseup="frameStepStop()" onmouseleave="frameStepStop()" title="Back 1 frame (hold to repeat)">◁</button>` +
               `<button class="btn-viewer btn-viewer-scan" id="scanTransitBtn" onclick="scanTransit()" title="Scan for transit frame">🎯 Find Transit</button>` +
-              `<button class="btn-viewer" onclick="frameStep(1)" title="Forward 1 frame">▷</button>`
+              `<button class="btn-viewer" onmousedown="frameStepStart(1)" onmouseup="frameStepStop()" onmouseleave="frameStepStop()" title="Forward 1 frame (hold to repeat)">▷</button>`
             : '';
         actionsEl.innerHTML =
             `<button class="btn-viewer" onclick="viewerNav(-1)" title="Previous" ${hasPrev ? '' : 'disabled'}>◀</button>` +
@@ -1623,13 +1623,29 @@ function closeFileViewer() {
     _viewerIndex = -1;
 }
 
+var _frameStepTimer = null;
+
 function frameStep(dir) {
     const vid = document.querySelector('#fileViewerBody video');
     if (!vid) return;
     vid.pause();
-    // Approximate frame duration: ~1/30s. If video reports fps via metadata
-    // we can't access it in JS, so use 1/30 as a safe default.
     vid.currentTime = Math.max(0, Math.min(vid.duration, vid.currentTime + dir / 30));
+}
+
+function frameStepStart(dir) {
+    frameStepStop();
+    frameStep(dir); // immediate first step
+    let delay = 250; // initial repeat delay
+    const repeat = () => {
+        frameStep(dir);
+        delay = Math.max(50, delay * 0.8); // accelerate
+        _frameStepTimer = setTimeout(repeat, delay);
+    };
+    _frameStepTimer = setTimeout(repeat, delay);
+}
+
+function frameStepStop() {
+    if (_frameStepTimer) { clearTimeout(_frameStepTimer); _frameStepTimer = null; }
 }
 
 function viewerNav(delta) {
