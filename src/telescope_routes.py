@@ -494,7 +494,7 @@ def start_recording():
 
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         mode_suffix = f"_timelapse_{interval}s" if interval > 0 else ""
-        filename = f"recording_{timestamp}{mode_suffix}.mp4"
+        filename = f"vid_{timestamp}{mode_suffix}.mp4"
 
         # Create year/month directories
         now = datetime.now()
