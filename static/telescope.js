@@ -1708,8 +1708,8 @@ async function scanTransit() {
 
 function _formatTimestamp(secs) {
     const m = Math.floor(secs / 60);
-    const s = (secs % 60).toFixed(1);
-    return m > 0 ? `${m}:${s.padStart(4, '0')}` : `${s}s`;
+    const s = (secs % 60).toFixed(2);
+    return m > 0 ? `${m}:${s.padStart(5, '0')}` : `${s}s`;
 }
 
 function _setScanBanner(type, text, onclick) {
