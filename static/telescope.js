@@ -1704,13 +1704,18 @@ async function scanTransit() {
  * Analyse a video for a transit event.
  * Returns { center, start, end, duration } in seconds, or null if nothing found.
  *
- * Approach:
- *  1. Coarse pass – sample every 0.25s, compare each downscaled frame
- *     against the first frame (background). Record per-sample difference.
- *  2. Identify candidate region – frames whose difference exceeds an
- *     adaptive threshold (background median + 3× MAD).
+ * Approach – consecutive-frame differencing so even a single-frame
+ * transit (≈33ms) is detected reliably:
+ *  1. Coarse pass – sample every 0.1s, compare each frame to its
+ *     predecessor.  A transit produces a spike when it appears AND
+ *     when it disappears, so even if no sample lands exactly on the
+ *     transit frame, the adjacent change boundary is caught.
+ *  2. Identify candidate region – consecutive-diff spikes that exceed
+ *     an adaptive threshold (median + 3× MAD).
  *  3. Fine pass – resample the candidate region at ~33ms (≈30fps) to
- *     pinpoint exact transit boundaries.
+ *     pinpoint exact transit boundaries.  Uses reference-frame
+ *     comparison (first frame of the fine window) to mark every frame
+ *     that contains the silhouette.
  *  4. Return the centre of the transit cluster.
  */
 async function _scanVideoForTransit(src, onProgress) {
@@ -1753,55 +1758,71 @@ async function _scanVideoForTransit(src, onProgress) {
         return sum;
     };
 
-    // --- Coarse pass (0.25s steps) ---
-    const coarseStep = 0.25;
-    const coarseSamples = [];
-    await seekTo(0);
-    const refFrame = grabFrame();
+    // --- Coarse pass (0.1s steps, consecutive-frame diff) ---
+    const coarseStep = 0.1;
     const numCoarse = Math.floor(duration / coarseStep);
+    const coarseSamples = []; // { time, diff }
 
-    for (let i = 0; i < numCoarse; i++) {
+    await seekTo(0);
+    let prevFrame = grabFrame();
+
+    for (let i = 1; i < numCoarse; i++) {
         await seekTo(i * coarseStep);
         const frame = grabFrame();
-        coarseSamples.push({ time: i * coarseStep, diff: frameDiff(frame, refFrame) });
-        if (onProgress && i % 8 === 0) onProgress(Math.round(50 * i / numCoarse));
+        coarseSamples.push({ time: i * coarseStep, diff: frameDiff(frame, prevFrame) });
+        prevFrame = frame;
+        if (onProgress && i % 10 === 0) onProgress(Math.round(50 * i / numCoarse));
     }
 
-    // Adaptive threshold: median + 3 × MAD (median absolute deviation)
+    if (coarseSamples.length < 3) { video.src = ''; return null; }
+
+    // Adaptive threshold: median + 3 × MAD
     const diffs = coarseSamples.map(s => s.diff);
     const sorted = [...diffs].sort((a, b) => a - b);
     const median = sorted[Math.floor(sorted.length / 2)];
     const mad = [...diffs].map(d => Math.abs(d - median)).sort((a, b) => a - b)[Math.floor(diffs.length / 2)];
     const threshold = median + Math.max(mad * 3, median * 0.5);
 
-    // Find the cluster with the highest peak above threshold
-    let bestCluster = null;
-    let curCluster = null;
-    for (const s of coarseSamples) {
-        if (s.diff > threshold) {
-            if (!curCluster) curCluster = { start: s.time, end: s.time, peak: s.diff };
-            curCluster.end = s.time;
-            curCluster.peak = Math.max(curCluster.peak, s.diff);
+    // Find the cluster of consecutive high-diff samples with the highest peak.
+    // A single-frame transit produces TWO spikes (appear + disappear) typically
+    // 1-3 coarse steps apart, so we merge spikes within 0.5s of each other.
+    const spikeIndices = [];
+    for (let i = 0; i < coarseSamples.length; i++) {
+        if (coarseSamples[i].diff > threshold) spikeIndices.push(i);
+    }
+    if (spikeIndices.length === 0) { video.src = ''; return null; }
+
+    // Merge spikes into clusters (gap ≤ 5 coarse steps = 0.5s)
+    const clusters = [];
+    let cStart = spikeIndices[0], cEnd = spikeIndices[0], cPeak = coarseSamples[cStart].diff;
+    for (let k = 1; k < spikeIndices.length; k++) {
+        if (spikeIndices[k] - spikeIndices[k-1] <= 5) {
+            cEnd = spikeIndices[k];
+            cPeak = Math.max(cPeak, coarseSamples[cEnd].diff);
         } else {
-            if (curCluster && (!bestCluster || curCluster.peak > bestCluster.peak)) {
-                bestCluster = curCluster;
-            }
-            curCluster = null;
+            clusters.push({ start: coarseSamples[cStart].time, end: coarseSamples[cEnd].time, peak: cPeak });
+            cStart = cEnd = spikeIndices[k];
+            cPeak = coarseSamples[cStart].diff;
         }
     }
-    if (curCluster && (!bestCluster || curCluster.peak > bestCluster.peak)) {
-        bestCluster = curCluster;
-    }
+    clusters.push({ start: coarseSamples[cStart].time, end: coarseSamples[cEnd].time, peak: cPeak });
 
-    if (!bestCluster) { video.src = ''; return null; }
+    // Pick the cluster with the highest peak
+    const bestCluster = clusters.reduce((a, b) => b.peak > a.peak ? b : a);
 
     // --- Fine pass (~30fps around the candidate region) ---
-    const margin = 1.0; // 1s padding around coarse cluster
+    // Use reference-frame comparison so every frame containing the
+    // silhouette is flagged, not just the transition edges.
+    const margin = 0.5;
     const fineStart = Math.max(0, bestCluster.start - margin);
     const fineEnd = Math.min(duration, bestCluster.end + margin);
     const fineStep = 0.033;
+    const numFine = Math.ceil((fineEnd - fineStart) / fineStep);
+
+    // Reference = first frame of the fine window (should be clean background)
+    await seekTo(fineStart);
+    const refFrame = grabFrame();
     const fineSamples = [];
-    const numFine = Math.floor((fineEnd - fineStart) / fineStep);
 
     for (let i = 0; i < numFine; i++) {
         const t = fineStart + i * fineStep;
