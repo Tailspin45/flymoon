@@ -1476,9 +1476,9 @@ function updateFilmstrip(files) {
         return `
         <div class="${itemClass}" onclick="viewFile('${file.url || file.path}', '${file.name}')">
             ${badge}
+            <div class="filmstrip-name" title="${file.name}">${file.name}</div>
             ${thumbnail}
             <div class="filmstrip-info">
-                <span>${file.name.split('_')[0]}</span>
                 <div class="filmstrip-actions">
                     <button class="btn-icon" onclick="event.stopPropagation(); downloadFile('${file.path}', '${file.name}')" title="Download" ${isTemp ? 'disabled' : ''}>⬇️</button>
                     <button class="btn-icon btn-danger" onclick="event.stopPropagation(); deleteFile('${file.path}', '${file.name}')" title="Delete" ${isTemp ? 'disabled' : ''}>🗑️</button>
