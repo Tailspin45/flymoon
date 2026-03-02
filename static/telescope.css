@@ -880,6 +880,21 @@ canvas.video-thumb-canvas {
     border-bottom: 1px solid rgba(255, 60, 60, 0.2);
 }
 
+/* Precise video time overlay */
+.video-precise-time {
+    position: absolute;
+    top: 6px;
+    right: 8px;
+    background: rgba(0, 0, 0, 0.7);
+    color: #0ff;
+    font-family: 'SF Mono', 'Menlo', 'Consolas', monospace;
+    font-size: 0.82em;
+    padding: 2px 8px;
+    border-radius: 3px;
+    pointer-events: none;
+    z-index: 1;
+}
+
 /* Files Modal */
 .modal {
     position: fixed;

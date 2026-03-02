@@ -1574,16 +1574,34 @@ function viewFile(path, name) {
 
     nameEl.textContent = name;
     _setScanBanner(null); // clear any previous scan result
-    body.innerHTML = isVideo
-        ? `<video src="${path}" controls autoplay style="max-width:90vw; max-height:80vh;"></video>`
-        : `<img src="${path}" alt="${name}" style="max-width:90vw; max-height:80vh; object-fit:contain;">`;
+    if (isVideo) {
+        body.innerHTML =
+            `<div style="position:relative; display:inline-block;">` +
+            `<video src="${path}" controls autoplay style="max-width:90vw; max-height:80vh;"></video>` +
+            `<div id="videoPreciseTime" class="video-precise-time">0.00 / 0.00</div>` +
+            `</div>`;
+        const vid = body.querySelector('video');
+        const timeEl = document.getElementById('videoPreciseTime');
+        const updateTime = () => {
+            const cur = (vid.currentTime || 0).toFixed(2);
+            const dur = (vid.duration || 0).toFixed(2);
+            timeEl.textContent = `${cur} / ${dur}`;
+        };
+        vid.addEventListener('timeupdate', updateTime);
+        vid.addEventListener('seeked', updateTime);
+        vid.addEventListener('loadedmetadata', updateTime);
+    } else {
+        body.innerHTML = `<img src="${path}" alt="${name}" style="max-width:90vw; max-height:80vh; object-fit:contain;">`;
+    }
 
     // Build action buttons (download, delete, prev/next, find transit)
     if (actionsEl) {
         const hasPrev = _viewerIndex > 0;
         const hasNext = _viewerIndex >= 0 && _viewerIndex < files.length - 1;
         const scanBtn = isVideo
-            ? `<button class="btn-viewer btn-viewer-scan" id="scanTransitBtn" onclick="scanTransit()" title="Scan for transit frame">🎯 Find Transit</button>`
+            ? `<button class="btn-viewer" onclick="frameStep(-1)" title="Back 1 frame">◁</button>` +
+              `<button class="btn-viewer btn-viewer-scan" id="scanTransitBtn" onclick="scanTransit()" title="Scan for transit frame">🎯 Find Transit</button>` +
+              `<button class="btn-viewer" onclick="frameStep(1)" title="Forward 1 frame">▷</button>`
             : '';
         actionsEl.innerHTML =
             `<button class="btn-viewer" onclick="viewerNav(-1)" title="Previous" ${hasPrev ? '' : 'disabled'}>◀</button>` +
@@ -1603,6 +1621,15 @@ function closeFileViewer() {
     body.innerHTML = '';  // Stop video playback
     _setScanBanner(null);
     _viewerIndex = -1;
+}
+
+function frameStep(dir) {
+    const vid = document.querySelector('#fileViewerBody video');
+    if (!vid) return;
+    vid.pause();
+    // Approximate frame duration: ~1/30s. If video reports fps via metadata
+    // we can't access it in JS, so use 1/30 as a safe default.
+    vid.currentTime = Math.max(0, Math.min(vid.duration, vid.currentTime + dir / 30));
 }
 
 function viewerNav(delta) {
