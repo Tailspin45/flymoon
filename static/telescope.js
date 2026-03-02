@@ -1470,7 +1470,7 @@ function updateFilmstrip(files) {
         const thumbnail = file.thumbnail
             ? `<img src="${file.thumbnail}" alt="${file.name}" class="filmstrip-thumbnail">`
             : isVideo
-                ? `<div class="filmstrip-thumbnail video-thumb">🎬</div>`
+                ? `<canvas class="filmstrip-thumbnail video-thumb-canvas" data-video-src="${file.url || file.path}"></canvas>`
                 : `<img src="${file.path}" alt="${file.name}" class="filmstrip-thumbnail">`;
         
         return `
@@ -1487,6 +1487,9 @@ function updateFilmstrip(files) {
         </div>
     `;
     }).join('');
+
+    // Generate thumbnails from video first frame for any canvas placeholders
+    filmstrip.querySelectorAll('canvas.video-thumb-canvas').forEach(generateVideoThumbnail);
 }
 
 function updateFilesGrid() {
@@ -1503,9 +1506,11 @@ function updateFilesGrid() {
     
     grid.innerHTML = files.map(file => {
         const isVideo = file.path.match(/\.(mp4|avi|mov)$/i);
-        const thumbnail = isVideo
-            ? `<div class="file-thumbnail video-thumb" onclick="viewFile('${file.path}')">🎬</div>`
-            : `<img src="${file.path}" alt="${file.name}" class="file-thumbnail" onclick="viewFile('${file.path}')">`;
+        const thumbnail = file.thumbnail
+            ? `<img src="${file.thumbnail}" alt="${file.name}" class="file-thumbnail" onclick="viewFile('${file.url || file.path}', '${file.name}')">`
+            : isVideo
+                ? `<canvas class="file-thumbnail video-thumb-canvas" data-video-src="${file.url || file.path}" onclick="viewFile('${file.url || file.path}', '${file.name}')"></canvas>`
+                : `<img src="${file.path}" alt="${file.name}" class="file-thumbnail" onclick="viewFile('${file.path}', '${file.name}')">`;
         return `
         <div class="file-item">
             ${thumbnail}
@@ -1518,19 +1523,70 @@ function updateFilesGrid() {
             </div>
         </div>
     `}).join('');
+
+    // Generate thumbnails from video first frame for any canvas placeholders
+    grid.querySelectorAll('canvas.video-thumb-canvas').forEach(generateVideoThumbnail);
 }
+
+// Generate a thumbnail from a video's first frame onto a <canvas>
+function generateVideoThumbnail(canvas) {
+    const src = canvas.dataset.videoSrc;
+    if (!src) return;
+    const video = document.createElement('video');
+    video.crossOrigin = 'anonymous';
+    video.muted = true;
+    video.preload = 'metadata';
+    video.src = src;
+    video.addEventListener('loadeddata', () => {
+        video.currentTime = 0.5; // seek to 0.5s to avoid blank first frame
+    });
+    video.addEventListener('seeked', () => {
+        canvas.width = video.videoWidth || 192;
+        canvas.height = video.videoHeight || 108;
+        canvas.getContext('2d').drawImage(video, 0, 0, canvas.width, canvas.height);
+        video.src = ''; // free memory
+    }, { once: true });
+    video.addEventListener('error', () => {
+        // Fallback: draw 🎬 emoji on canvas
+        canvas.width = 192; canvas.height = 108;
+        const ctx = canvas.getContext('2d');
+        ctx.fillStyle = '#1a1a2e';
+        ctx.fillRect(0, 0, 192, 108);
+        ctx.font = '36px serif';
+        ctx.textAlign = 'center';
+        ctx.fillText('🎬', 96, 66);
+    });
+}
+
+// Track viewer state for navigation
+var _viewerIndex = -1;
 
 function viewFile(path, name) {
     name = name || path.split('/').pop();
+    const files = window.currentFiles || [];
+    _viewerIndex = files.findIndex(f => (f.url || f.path) === path || f.path === path);
+
     const isVideo = /\.(mp4|avi|mov|mkv|webm)$/i.test(name);
     const viewer = document.getElementById('fileViewer');
     const body = document.getElementById('fileViewerBody');
     const nameEl = document.getElementById('fileViewerName');
+    const actionsEl = document.getElementById('fileViewerActions');
 
     nameEl.textContent = name;
     body.innerHTML = isVideo
         ? `<video src="${path}" controls autoplay style="max-width:90vw; max-height:80vh;"></video>`
         : `<img src="${path}" alt="${name}" style="max-width:90vw; max-height:80vh; object-fit:contain;">`;
+
+    // Build action buttons (download, delete, prev/next)
+    if (actionsEl) {
+        const hasPrev = _viewerIndex > 0;
+        const hasNext = _viewerIndex >= 0 && _viewerIndex < files.length - 1;
+        actionsEl.innerHTML =
+            `<button class="btn-viewer" onclick="viewerNav(-1)" title="Previous" ${hasPrev ? '' : 'disabled'}>◀</button>` +
+            `<button class="btn-viewer" onclick="viewerDownload()" title="Download">⬇️ Download</button>` +
+            `<button class="btn-viewer btn-viewer-danger" onclick="viewerDelete()" title="Delete">🗑️ Delete</button>` +
+            `<button class="btn-viewer" onclick="viewerNav(1)" title="Next" ${hasNext ? '' : 'disabled'}>▶</button>`;
+    }
 
     viewer.style.display = 'flex';
 }
@@ -1540,6 +1596,61 @@ function closeFileViewer() {
     const body = document.getElementById('fileViewerBody');
     viewer.style.display = 'none';
     body.innerHTML = '';  // Stop video playback
+    _viewerIndex = -1;
+}
+
+function viewerNav(delta) {
+    const files = window.currentFiles || [];
+    const newIdx = _viewerIndex + delta;
+    if (newIdx < 0 || newIdx >= files.length) return;
+    const f = files[newIdx];
+    viewFile(f.url || f.path, f.name);
+}
+
+function viewerDownload() {
+    const files = window.currentFiles || [];
+    if (_viewerIndex < 0 || _viewerIndex >= files.length) return;
+    const f = files[_viewerIndex];
+    downloadFile(f.path, f.name);
+}
+
+async function viewerDelete() {
+    const files = window.currentFiles || [];
+    if (_viewerIndex < 0 || _viewerIndex >= files.length) return;
+    const f = files[_viewerIndex];
+    if (!confirm(`Delete ${f.name}?`)) return;
+
+    try {
+        const path = (f.url || f.path).replace('/static/', '');
+        const response = await fetch('/telescope/files/delete', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ path })
+        });
+        const data = await response.json();
+        if (response.ok && data.success) {
+            showStatus(`Deleted ${f.name}`, 'success', 3000);
+        } else {
+            showStatus(`Delete failed: ${data.error || response.status}`, 'error', 5000);
+            return;
+        }
+    } catch (error) {
+        showStatus(`Delete failed: ${error.message}`, 'error', 5000);
+        return;
+    }
+
+    // Refresh file list, then navigate to next (or previous, or close)
+    await refreshFiles();
+    const updatedFiles = window.currentFiles || [];
+    if (updatedFiles.length === 0) {
+        closeFileViewer();
+    } else if (_viewerIndex < updatedFiles.length) {
+        const next = updatedFiles[_viewerIndex];
+        viewFile(next.url || next.path, next.name);
+    } else {
+        const prev = updatedFiles[updatedFiles.length - 1];
+        viewFile(prev.url || prev.path, prev.name);
+    }
 }
 
 // ============================================================================
