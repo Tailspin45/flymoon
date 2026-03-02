@@ -1272,3 +1272,103 @@ canvas.video-thumb-canvas {
     padding: 3px 8px;
 }
 .btn-transit-fire:hover { background: #3a5a2a; }
+
+/* ============================================================================
+   REAL-TIME TRANSIT DETECTION
+   ============================================================================ */
+
+/* Detection indicator */
+.detect-indicator {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 0.85em;
+    padding: 4px 8px;
+    border-radius: 4px;
+    margin-bottom: 6px;
+}
+.detect-idle {
+    color: #888;
+    background: #1a1a1a;
+}
+.detect-active {
+    color: #4ade80;
+    background: #0f2a0f;
+    border: 1px solid #22663a;
+}
+
+/* Pulsing green dot */
+.detect-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: #4ade80;
+    display: inline-block;
+    animation: detect-pulse 1.5s ease-in-out infinite;
+}
+@keyframes detect-pulse {
+    0%, 100% { opacity: 1; box-shadow: 0 0 0 0 rgba(74, 222, 128, 0.6); }
+    50% { opacity: 0.7; box-shadow: 0 0 6px 3px rgba(74, 222, 128, 0.3); }
+}
+
+/* Flash on detection */
+.detect-flash {
+    animation: detect-flash-anim 0.5s ease-out 3;
+}
+@keyframes detect-flash-anim {
+    0% { background: #0f2a0f; }
+    50% { background: #1a4a1a; }
+    100% { background: #0f2a0f; }
+}
+
+.detect-stats {
+    font-size: 0.75em;
+    color: #888;
+    margin-bottom: 6px;
+    font-family: 'SF Mono', 'Cascadia Code', monospace;
+}
+
+#detectToggleBtn {
+    width: 100%;
+    margin-bottom: 8px;
+}
+
+/* Detection event log */
+.detect-event-log {
+    max-height: 180px;
+    overflow-y: auto;
+    font-size: 0.8em;
+}
+.detect-event-row {
+    display: flex;
+    gap: 6px;
+    padding: 3px 4px;
+    border-bottom: 1px solid #222;
+    align-items: center;
+}
+.detect-event-row:hover {
+    background: #1a2a1a;
+}
+.detect-event-time {
+    color: #888;
+    font-family: 'SF Mono', 'Cascadia Code', monospace;
+    flex-shrink: 0;
+    font-size: 0.9em;
+}
+.detect-event-flight {
+    color: #eee;
+    flex: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.detect-event-sep {
+    color: #4ade80;
+    flex-shrink: 0;
+}
+
+.panel-subtitle {
+    font-size: 0.7em;
+    color: #666;
+    font-weight: normal;
+}

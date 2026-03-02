@@ -26,6 +26,11 @@ let simulationVideo = null;
 let disconnectedPollCount = 0; // consecutive disconnected polls before stopping preview
 let simulationFiles = []; // Track temporary simulation files
 
+// Detection state
+let isDetecting = false;
+let detectionPollInterval = null;
+let detectionStats = { fps: 0, detections: 0, elapsed_seconds: 0 };
+
 // Eclipse state
 let eclipseData = null;         // populated from /telescope/status
 let eclipseAlertLevel = null;   // 'outlook'|'watch'|'warning'|'active'|'cleared'|null
@@ -93,6 +98,9 @@ window.initTelescope = function() {
             applyZoom();
         }, { passive: false });
     }
+
+    // Load saved detection preference and sync UI
+    syncDetectionUI();
 };
 
 // ============================================================================
@@ -2705,6 +2713,225 @@ function _updateSimEclipseFireBtn() {
 // wrapping, to avoid hoisting / double-declaration issues.
 
 // ============================================================================
+// REAL-TIME TRANSIT DETECTION
+// ============================================================================
+
+/**
+ * Toggle detection on/off.
+ */
+async function toggleDetection() {
+    if (isDetecting) {
+        await stopDetection();
+    } else {
+        await startDetection();
+    }
+}
+
+async function startDetection() {
+    const btn = document.getElementById('detectToggleBtn');
+    if (btn) btn.disabled = true;
+
+    try {
+        const result = await apiCall('/telescope/detect/start', 'POST', {
+            record_on_detect: true
+        });
+        if (result && !result.error) {
+            isDetecting = true;
+            showStatus('🎯 Transit detection started', 'success', 3000);
+            // Start polling detection status
+            if (!detectionPollInterval) {
+                detectionPollInterval = setInterval(pollDetectionStatus, 2000);
+            }
+        } else {
+            showStatus(result?.error || 'Failed to start detection', 'error', 5000);
+        }
+    } catch (e) {
+        showStatus('Detection start failed: ' + e.message, 'error', 5000);
+    }
+    updateDetectionUI();
+    if (btn) btn.disabled = false;
+}
+
+async function stopDetection() {
+    const btn = document.getElementById('detectToggleBtn');
+    if (btn) btn.disabled = true;
+
+    try {
+        await apiCall('/telescope/detect/stop', 'POST');
+        isDetecting = false;
+        if (detectionPollInterval) {
+            clearInterval(detectionPollInterval);
+            detectionPollInterval = null;
+        }
+        showStatus('Detection stopped', 'info', 3000);
+    } catch (e) {
+        showStatus('Detection stop failed: ' + e.message, 'error', 5000);
+    }
+    updateDetectionUI();
+    if (btn) btn.disabled = false;
+}
+
+async function pollDetectionStatus() {
+    try {
+        const result = await apiCall('/telescope/detect/status', 'GET');
+        if (!result) return;
+
+        isDetecting = result.running || false;
+        detectionStats = {
+            fps: result.fps || 0,
+            detections: result.detections || 0,
+            elapsed_seconds: result.elapsed_seconds || 0,
+        };
+
+        // Check for new detection events
+        if (result.recent_events && result.recent_events.length > 0) {
+            const latest = result.recent_events[result.recent_events.length - 1];
+            const latestTs = latest.timestamp;
+            if (latestTs !== window._lastDetectionTs) {
+                window._lastDetectionTs = latestTs;
+                onTransitDetected(latest);
+            }
+        }
+
+        if (!isDetecting && detectionPollInterval) {
+            clearInterval(detectionPollInterval);
+            detectionPollInterval = null;
+        }
+
+        updateDetectionUI();
+    } catch (e) {
+        // Silent — polling failure is transient
+    }
+}
+
+function onTransitDetected(event) {
+    const ts = new Date(event.timestamp).toLocaleTimeString();
+    const flight = event.flight_info;
+    let msg = `🎯 Transit detected at ${ts}`;
+    if (flight) {
+        msg += ` — ${flight.name} (${flight.aircraft_type}) ${flight.separation_deg}°`;
+    }
+    showStatus(msg, 'success', 10000);
+
+    // Flash the detection indicator
+    const indicator = document.getElementById('detectIndicator');
+    if (indicator) {
+        indicator.classList.add('detect-flash');
+        setTimeout(() => indicator.classList.remove('detect-flash'), 2000);
+    }
+
+    // Refresh file list to show new recording
+    if (event.recording_file) {
+        setTimeout(refreshFiles, 3000);
+    }
+
+    // Add to event log
+    appendDetectionEvent(event);
+}
+
+function appendDetectionEvent(event) {
+    const log = document.getElementById('detectEventLog');
+    if (!log) return;
+
+    const ts = new Date(event.timestamp).toLocaleTimeString('en-US', {
+        hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false
+    });
+    const flight = event.flight_info;
+    const flightStr = flight ? `${flight.name} (${flight.aircraft_type})` : 'Unknown';
+    const sepStr = flight ? `${flight.separation_deg}°` : '';
+
+    const row = document.createElement('div');
+    row.className = 'detect-event-row';
+    row.innerHTML =
+        `<span class="detect-event-time">${ts}</span>` +
+        `<span class="detect-event-flight">${flightStr}</span>` +
+        `<span class="detect-event-sep">${sepStr}</span>`;
+
+    // If there's a recording file, make it clickable
+    if (event.recording_file) {
+        row.style.cursor = 'pointer';
+        row.onclick = () => {
+            const url = '/' + event.recording_file;
+            const name = event.recording_file.split('/').pop();
+            viewFile({ path: url, name: name });
+        };
+    }
+
+    // Prepend (newest first)
+    const empty = log.querySelector('.empty-state');
+    if (empty) empty.remove();
+    log.insertBefore(row, log.firstChild);
+
+    // Cap at 20 entries
+    while (log.children.length > 20) {
+        log.removeChild(log.lastChild);
+    }
+}
+
+function updateDetectionUI() {
+    const btn = document.getElementById('detectToggleBtn');
+    const indicator = document.getElementById('detectIndicator');
+    const statsEl = document.getElementById('detectStats');
+
+    if (btn) {
+        btn.textContent = isDetecting ? '⏹ Stop Detection' : '▶ Start Detection';
+        btn.className = isDetecting
+            ? 'btn btn-danger btn-compact'
+            : 'btn btn-primary btn-compact';
+    }
+
+    if (indicator) {
+        if (isDetecting) {
+            indicator.className = 'detect-indicator detect-active';
+            indicator.innerHTML =
+                `<span class="detect-dot"></span>` +
+                `<span>Monitoring</span>`;
+        } else {
+            indicator.className = 'detect-indicator detect-idle';
+            indicator.innerHTML = '<span>Idle</span>';
+        }
+    }
+
+    if (statsEl && isDetecting) {
+        const elapsed = detectionStats.elapsed_seconds;
+        const mins = Math.floor(elapsed / 60);
+        const secs = Math.floor(elapsed % 60);
+        statsEl.textContent =
+            `${mins}m${secs.toString().padStart(2, '0')}s · ${detectionStats.fps} fps · ${detectionStats.detections} detections`;
+        statsEl.style.display = '';
+    } else if (statsEl) {
+        statsEl.style.display = 'none';
+    }
+}
+
+/**
+ * Sync detection UI on page load — check if already running.
+ */
+async function syncDetectionUI() {
+    try {
+        const result = await apiCall('/telescope/detect/status', 'GET');
+        if (result && result.running) {
+            isDetecting = true;
+            detectionStats = {
+                fps: result.fps || 0,
+                detections: result.detections || 0,
+                elapsed_seconds: result.elapsed_seconds || 0,
+            };
+            if (!detectionPollInterval) {
+                detectionPollInterval = setInterval(pollDetectionStatus, 2000);
+            }
+            // Populate event log with recent events
+            if (result.recent_events) {
+                result.recent_events.forEach(e => appendDetectionEvent(e));
+            }
+        }
+    } catch (e) {
+        // Detection endpoint may not exist yet — ignore
+    }
+    updateDetectionUI();
+}
+
+// ============================================================================
 // CLEANUP
 // ============================================================================
 
@@ -2714,6 +2941,7 @@ window.destroyTelescope = function() {
     if (lastUpdateInterval)     { clearInterval(lastUpdateInterval);     lastUpdateInterval     = null; }
     if (transitPollInterval)    { clearInterval(transitPollInterval);    transitPollInterval    = null; }
     if (transitTickInterval)    { clearInterval(transitTickInterval);    transitTickInterval    = null; }
+    if (detectionPollInterval)  { clearInterval(detectionPollInterval);  detectionPollInterval  = null; }
 };
 
 console.log('[Telescope] Module loaded');

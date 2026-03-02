@@ -513,29 +513,41 @@ def start_recording():
         # full recording duration (Seestar closes idle streams quickly).
         rtsp_input = [
             "ffmpeg",
-            "-rtsp_transport", "tcp",
-            "-timeout", str((duration + 30) * 1000000),  # socket I/O timeout (µs)
-            "-i", rtsp_url,
-            "-t", str(duration),
+            "-rtsp_transport",
+            "tcp",
+            "-timeout",
+            str((duration + 30) * 1000000),  # socket I/O timeout (µs)
+            "-i",
+            rtsp_url,
+            "-t",
+            str(duration),
         ]
 
         # Build FFmpeg command
         if interval > 0:
             # Timelapse mode: capture frames at specified interval
             cmd = rtsp_input + [
-                "-vf", f"fps=1/{interval}",
-                "-c:v", "libx264",
-                "-preset", "fast",
-                "-crf", "23",
-                "-y", filepath,
+                "-vf",
+                f"fps=1/{interval}",
+                "-c:v",
+                "libx264",
+                "-preset",
+                "fast",
+                "-crf",
+                "23",
+                "-y",
+                filepath,
             ]
         else:
             # Normal video mode: copy H.264 stream directly (no re-encoding)
             # frag_keyframe+empty_moov makes the MP4 valid even if interrupted
             cmd = rtsp_input + [
-                "-c", "copy",
-                "-movflags", "frag_keyframe+empty_moov",
-                "-y", filepath,
+                "-c",
+                "copy",
+                "-movflags",
+                "frag_keyframe+empty_moov",
+                "-y",
+                filepath,
             ]
 
         # Start FFmpeg in background
@@ -593,7 +605,7 @@ def stop_recording():
         if "process" in _recording_state and _recording_state["process"]:
             process = _recording_state["process"]
             try:
-                process.send_signal(__import__('signal').SIGTERM)
+                process.send_signal(__import__("signal").SIGTERM)
             except Exception:
                 process.terminate()
             try:
@@ -634,11 +646,20 @@ def stop_recording():
             try:
                 result = subprocess.run(
                     [
-                        "ffmpeg", "-i", filepath,
-                        "-frames:v", "1", "-update", "1", "-q:v", "5",
-                        "-y", thumb_path,
+                        "ffmpeg",
+                        "-i",
+                        filepath,
+                        "-frames:v",
+                        "1",
+                        "-update",
+                        "1",
+                        "-q:v",
+                        "5",
+                        "-y",
+                        thumb_path,
                     ],
-                    capture_output=True, timeout=10,
+                    capture_output=True,
+                    timeout=10,
                 )
                 if os.path.exists(thumb_path) and os.path.getsize(thumb_path) > 0:
                     rel_thumb = os.path.relpath(thumb_path, "static")
@@ -721,9 +742,12 @@ def list_telescope_files():
             # Walk through captures directory
             for root, dirs, filenames in os.walk(captures_path):
                 for filename in filenames:
-                    if filename.lower().endswith(
-                        (".jpg", ".jpeg", ".png", ".mp4", ".avi")
-                    ) and "_thumb." not in filename.lower():
+                    if (
+                        filename.lower().endswith(
+                            (".jpg", ".jpeg", ".png", ".mp4", ".avi")
+                        )
+                        and "_thumb." not in filename.lower()
+                    ):
                         full_path = os.path.join(root, filename)
                         rel_path = os.path.relpath(full_path, "static")
 
@@ -743,7 +767,9 @@ def list_telescope_files():
         files.sort(key=lambda x: x["mtime"], reverse=True)
 
         logger.info(f"[Telescope] Retrieved {len(files)} local files")
-        response = jsonify({"files": files, "total": len(files), "source": "local_captures"})
+        response = jsonify(
+            {"files": files, "total": len(files), "source": "local_captures"}
+        )
         response.headers["Cache-Control"] = "no-store"
         return response, 200
 
@@ -1394,6 +1420,32 @@ def register_routes(app):
         methods=["GET"],
     )
 
+    # Transit detection (real-time)
+    app.add_url_rule(
+        "/telescope/detect/start",
+        "telescope_detect_start",
+        start_detection,
+        methods=["POST"],
+    )
+    app.add_url_rule(
+        "/telescope/detect/stop",
+        "telescope_detect_stop",
+        stop_detection,
+        methods=["POST"],
+    )
+    app.add_url_rule(
+        "/telescope/detect/status",
+        "telescope_detect_status",
+        get_detection_status,
+        methods=["GET"],
+    )
+    app.add_url_rule(
+        "/telescope/detect/events",
+        "telescope_detect_events",
+        get_detection_events,
+        methods=["GET"],
+    )
+
     logger.info("[Telescope] Routes registered")
 
     # Auto-connect if ENABLE_SEESTAR=true
@@ -1433,6 +1485,113 @@ def _auto_connect_background():
 
     t = threading.Thread(target=_worker, name="seestar-auto-connect", daemon=True)
     t.start()
+
+
+# ---------------------------------------------------------------------------
+# Real-time Transit Detection Endpoints
+# ---------------------------------------------------------------------------
+
+
+def start_detection():
+    """POST /telescope/detect/start - Start real-time transit detection."""
+    logger.info("[Telescope] POST /telescope/detect/start")
+
+    try:
+        from src.transit_detector import get_detector, start_detector
+
+        # Already running?
+        det = get_detector()
+        if det and det.is_running:
+            return (
+                jsonify({"error": "Detection already running", **det.get_status()}),
+                409,
+            )
+
+        # Build RTSP URL from telescope client or env
+        client = get_telescope_client()
+        if client and client.is_connected():
+            host = client.host
+        else:
+            host = os.getenv("SEESTAR_HOST")
+        if not host:
+            return jsonify({"error": "No telescope host configured"}), 400
+
+        rtsp_port = int(os.getenv("SEESTAR_RTSP_PORT", "4554"))
+        rtsp_url = f"rtsp://{host}:{rtsp_port}/stream"
+
+        # Optional params
+        record = True
+        try:
+            if request.is_json and request.json:
+                record = request.json.get("record_on_detect", True)
+        except Exception:
+            pass
+
+        det = start_detector(rtsp_url, record_on_detect=record)
+        return jsonify({"success": True, **det.get_status()}), 200
+
+    except Exception as e:
+        logger.error(f"[Telescope] Failed to start detection: {e}", exc_info=True)
+        return handle_error(e)
+
+
+def stop_detection():
+    """POST /telescope/detect/stop - Stop real-time transit detection."""
+    logger.info("[Telescope] POST /telescope/detect/stop")
+
+    try:
+        from src.transit_detector import get_detector, stop_detector
+
+        det = get_detector()
+        if not det or not det.is_running:
+            return jsonify({"success": True, "running": False}), 200
+
+        stop_detector()
+        return jsonify({"success": True, "running": False}), 200
+
+    except Exception as e:
+        logger.error(f"[Telescope] Failed to stop detection: {e}", exc_info=True)
+        return handle_error(e)
+
+
+def get_detection_status():
+    """GET /telescope/detect/status - Get detection status."""
+    try:
+        from src.transit_detector import get_detector
+
+        det = get_detector()
+        if not det:
+            return (
+                jsonify({"running": False, "detections": 0, "recent_events": []}),
+                200,
+            )
+        return jsonify(det.get_status()), 200
+
+    except Exception as e:
+        return handle_error(e)
+
+
+def get_detection_events():
+    """GET /telescope/detect/events - Get all detection events."""
+    try:
+        from src.transit_detector import get_detector
+
+        det = get_detector()
+        if not det:
+            return jsonify({"events": []}), 200
+
+        return (
+            jsonify(
+                {
+                    "events": [e.to_dict() for e in det.events],
+                    "total": len(det.events),
+                }
+            ),
+            200,
+        )
+
+    except Exception as e:
+        return handle_error(e)
 
 
 def get_transit_status():

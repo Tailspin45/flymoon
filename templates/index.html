@@ -355,9 +355,22 @@
                 <div class="sidebar-panel" id="transitPanel">
                     <!-- Eclipse watch/warning/active card — shown when eclipse is imminent/active -->
                     <div id="eclipseCard" style="display:none"></div>
-                    <h3>✈️ Upcoming Transits</h3>
+                    <h3>✈️ Upcoming Transits <span class="panel-subtitle">(Prediction)</span></h3>
                     <div id="transitList" class="transit-list">
                         <p class="empty-state">No transits detected</p>
+                    </div>
+                </div>
+
+                <!-- Real-time Transit Detection -->
+                <div class="sidebar-panel" id="detectPanel">
+                    <h3>🎯 Live Detection</h3>
+                    <div id="detectIndicator" class="detect-indicator detect-idle">
+                        <span>Idle</span>
+                    </div>
+                    <div id="detectStats" class="detect-stats" style="display:none"></div>
+                    <button id="detectToggleBtn" class="btn btn-primary btn-compact" onclick="toggleDetection()">▶ Start Detection</button>
+                    <div id="detectEventLog" class="detect-event-log">
+                        <p class="empty-state">No detections yet</p>
                     </div>
                 </div>
             </div>
