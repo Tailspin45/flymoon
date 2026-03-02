@@ -1513,7 +1513,6 @@ function updateFilesGrid() {
                 : `<img src="${file.path}" alt="${file.name}" class="file-thumbnail" onclick="viewFile('${file.path}', '${file.name}')">`;
         return `
         <div class="file-item">
-            ${thumbnail}
             <div class="file-info">
                 <span class="file-name" title="${file.name}">${file.name}</span>
                 <div class="file-actions">
@@ -1521,6 +1520,7 @@ function updateFilesGrid() {
                     <button class="btn-icon btn-danger" onclick="deleteFile('${file.path}', '${file.name}')" title="Delete">🗑️</button>
                 </div>
             </div>
+            ${thumbnail}
         </div>
     `}).join('');
 

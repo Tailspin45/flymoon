@@ -680,7 +680,7 @@
 .filmstrip {
     background: #1a1a1a;
     border-top: 1px solid #2a2a2a;
-    height: 150px;
+    height: 170px;
     flex-shrink: 0;
     display: flex;
     flex-direction: column;
@@ -733,8 +733,8 @@
     overflow-y: hidden;
     display: flex;
     gap: 8px;
-    padding: 4px 16px;
-    align-items: center;
+    padding: 6px 16px;
+    align-items: stretch;
 }
 
 .filmstrip-item {
@@ -785,15 +785,17 @@
 
 .filmstrip-thumbnail {
     width: 100%;
-    height: 84px;
+    flex: 1;
+    min-height: 0;
     object-fit: cover;
     background: #000;
 }
 
 .filmstrip-name {
-    font-size: 0.65em;
+    font-size: 0.7em;
+    line-height: 1.3;
     color: #ccc;
-    padding: 3px 4px;
+    padding: 3px 5px;
     background: #1a1a2e;
     white-space: nowrap;
     overflow: hidden;
@@ -827,7 +829,8 @@
 /* Video thumbnail canvas */
 canvas.video-thumb-canvas {
     width: 100%;
-    height: 84px;
+    flex: 1;
+    min-height: 0;
     object-fit: cover;
     background: #1a1a2e;
     cursor: pointer;
@@ -987,7 +990,7 @@ canvas.video-thumb-canvas {
     object-fit: cover;
     background: #000;
     border-radius: 4px;
-    margin-bottom: 8px;
+    margin-top: 6px;
     cursor: pointer;
 }
 
@@ -1065,7 +1068,7 @@ canvas.video-thumb-canvas {
     }
     
     .filmstrip {
-        height: 140px;
+        height: 160px;
     }
 }
 
