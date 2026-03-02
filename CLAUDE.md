@@ -293,7 +293,7 @@ logger.error("message")
 │   └── leaflet*.js/css      # Self-hosted Leaflet library
 ├── templates/                # Jinja2 HTML
 │   ├── index.html           # Main interface
-│   └── telescope.html       # Telescope control page
+│   └── cost_models.html     # API cost calculator
 ├── data/                     # Flight logs, gallery images
 ├── tests/                    # Manual tests
 └── de421.bsp                 # JPL ephemeris (auto-downloaded)
@@ -313,7 +313,7 @@ logger.error("message")
 1. Add JSON-RPC method to `SeestarClient._send_command()` in `src/seestar_client.py`
 2. Add public method to `SeestarClient` class
 3. Add Flask endpoint to `src/telescope_routes.py`
-4. Add UI controls to `templates/telescope.html` and `static/telescope.js`
+4. Add UI controls to `static/telescope.js`
 5. Add mock implementation to `MockSeestarClient` for testing
 
 ### Modifying Transit Detection Thresholds

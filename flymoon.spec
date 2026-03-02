@@ -25,6 +25,7 @@ a = Analysis(
         'skyfield',
         'skyfield.api',
         'skyfield.almanac',
+        'numpy',
         'tzlocal',
         'zoneinfo',
         'flask',

@@ -274,7 +274,7 @@ OPENAIP_API_KEY=your_openaip_api_key_here
 Run the transit capture script to test notifications:
 
 ```bash
-python3 examples/transit_capture.py \
+python3 transit_capture.py \
   --latitude 33.111369 \
   --longitude -117.310169 \
   --target moon
@@ -287,7 +287,7 @@ If configured correctly, you should receive a Telegram message when a high-proba
 Run the connection test:
 
 ```bash
-python3 examples/seestar_transit_trigger.py --test
+python3 transit_capture.py --test-seestar
 ```
 
 **Expected output:**
@@ -320,7 +320,7 @@ If the test fails, see the [Troubleshooting](#troubleshooting) section.
 Run the automated monitoring with both Telegram and telescope enabled:
 
 ```bash
-python3 examples/seestar_transit_trigger.py \
+python3 transit_capture.py \
   --latitude 33.111369 \
   --longitude -117.310169 \
   --target moon \
@@ -340,7 +340,7 @@ This will:
 ### Monitor Sun Transits with Notifications Only
 
 ```bash
-python3 examples/transit_capture.py \
+python3 transit_capture.py \
   --latitude 33.111369 \
   --longitude -117.310169 \
   --target sun \
@@ -350,7 +350,7 @@ python3 examples/transit_capture.py \
 ### Monitor Moon Transits with Telescope
 
 ```bash
-python3 examples/seestar_transit_trigger.py \
+python3 transit_capture.py \
   --latitude 33.111369 \
   --longitude -117.310169 \
   --target moon \
