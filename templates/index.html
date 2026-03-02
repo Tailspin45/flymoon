@@ -7,10 +7,10 @@
     <!-- favicon -->
     <link rel="icon" type="image/x-icon" href="{{ url_for('static', filename='images/favicon.ico') }}">
     <!-- CSS -->
-    <link rel="stylesheet" href="{{ url_for('static', filename='main.css') }}?v=1772401436">
+    <link rel="stylesheet" href="{{ url_for('static', filename='main.css') }}?v={{ range(100000, 999999) | random }}">
     <!-- Leaflet CSS (self-hosted for security) -->
     <link rel="stylesheet" href="{{ url_for('static', filename='leaflet.css') }}" />
-    <link rel="stylesheet" href="{{ url_for('static', filename='telescope.css') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='telescope.css') }}?v={{ range(100000, 999999) | random }}">
 </head>
 <body>
 <!-- Data source startup banner — shown once per session -->
@@ -555,9 +555,9 @@
     <script src="{{ url_for('static', filename='leaflet-heat.js') }}"></script>
     <!-- OpenAIP key injected server-side to avoid async timing issues -->
     <script>window.OPENAIP_API_KEY = "{{ openaip_api_key|e }}";</script>
-    <script src="{{ url_for('static', filename='telescope.js') }}?v=1772401436" charset="utf-8"></script>
-    <script src="{{ url_for('static', filename='map.js') }}?v=1772401436" charset="utf-8"></script>
-    <script src="{{ url_for('static', filename='app.js') }}?v=1772401436" charset="utf-8"></script>
+    <script src="{{ url_for('static', filename='telescope.js') }}?v={{ range(100000, 999999) | random }}" charset="utf-8"></script>
+    <script src="{{ url_for('static', filename='map.js') }}?v={{ range(100000, 999999) | random }}" charset="utf-8"></script>
+    <script src="{{ url_for('static', filename='app.js') }}?v={{ range(100000, 999999) | random }}" charset="utf-8"></script>
 
     <script>
         function showPanel(name) {
