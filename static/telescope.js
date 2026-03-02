@@ -1739,6 +1739,11 @@ function _setScanBanner(type, text, onclick) {
  *    Centre-weighting focuses on the sun/moon disk where the target
  *    appears, boosting signal-to-noise for small objects.
  *
+ *  Both diff functions subtract the mean per-channel brightness shift
+ *  before summing, making them immune to atmospheric scintillation
+ *  (global brightness fluctuations).  Only localised pixel changes
+ *  (actual silhouettes) contribute to the score.
+ *
  *  The coarse pass records both signals per sample and flags a sample
  *  as a spike if EITHER exceeds its own adaptive threshold.
  *
@@ -1776,34 +1781,51 @@ async function _scanVideoForTransit(src, onProgress) {
         return ctx.getImageData(0, 0, W, H).data;
     };
 
-    // Full-frame sum of absolute RGB differences
+    // Scintillation-immune diff: subtracts the mean per-channel brightness
+    // shift before summing.  Global brightness changes (atmospheric
+    // scintillation) cancel out; only localised anomalies (silhouettes)
+    // register.  Two passes over the pixels.
     const frameDiff = (a, b) => {
+        const n = a.length / 4;
+        let mR = 0, mG = 0, mB = 0;
+        for (let i = 0; i < a.length; i += 4) {
+            mR += a[i] - b[i];
+            mG += a[i+1] - b[i+1];
+            mB += a[i+2] - b[i+2];
+        }
+        mR /= n; mG /= n; mB /= n;
         let sum = 0;
         for (let i = 0; i < a.length; i += 4) {
-            sum += Math.abs(a[i] - b[i])
-                 + Math.abs(a[i+1] - b[i+1])
-                 + Math.abs(a[i+2] - b[i+2]);
+            sum += Math.abs((a[i] - b[i]) - mR)
+                 + Math.abs((a[i+1] - b[i+1]) - mG)
+                 + Math.abs((a[i+2] - b[i+2]) - mB);
         }
         return sum;
     };
 
-    // Centre-weighted diff: pixels near the frame centre (where the
-    // sun/moon disk is) count more heavily.  Uses a simple Gaussian-ish
-    // weight based on distance from centre.  This amplifies small or
-    // diffuse targets that only affect a handful of central pixels.
+    // Centre-weighted, scintillation-immune diff.  Same mean-subtraction
+    // approach, but pixels near the frame centre count more heavily since
+    // the sun/moon disk occupies the centre of the telescope FOV.
     const cxHalf = W / 2, cyHalf = H / 2;
-    const maxR = Math.sqrt(cxHalf * cxHalf + cyHalf * cyHalf);
     const centreWeightedDiff = (a, b) => {
+        const n = a.length / 4;
+        let mR = 0, mG = 0, mB = 0;
+        for (let i = 0; i < a.length; i += 4) {
+            mR += a[i] - b[i];
+            mG += a[i+1] - b[i+1];
+            mB += a[i+2] - b[i+2];
+        }
+        mR /= n; mG /= n; mB /= n;
         let sum = 0;
         for (let y = 0; y < H; y++) {
-            const dy = (y - cyHalf) / cyHalf;   // -1 … +1
+            const dy = (y - cyHalf) / cyHalf;
             for (let x = 0; x < W; x++) {
                 const dx = (x - cxHalf) / cxHalf;
-                const w = 1.0 - 0.7 * Math.sqrt(dx * dx + dy * dy); // 1.0 at centre → 0.3 at corners
+                const w = 1.0 - 0.7 * Math.sqrt(dx * dx + dy * dy);
                 const i = (y * W + x) * 4;
-                sum += w * (Math.abs(a[i] - b[i])
-                          + Math.abs(a[i+1] - b[i+1])
-                          + Math.abs(a[i+2] - b[i+2]));
+                sum += w * (Math.abs((a[i] - b[i]) - mR)
+                          + Math.abs((a[i+1] - b[i+1]) - mG)
+                          + Math.abs((a[i+2] - b[i+2]) - mB));
             }
         }
         return sum;
