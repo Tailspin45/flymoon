@@ -857,6 +857,29 @@ canvas.video-thumb-canvas {
     background: rgba(0, 180, 255, 0.3);
 }
 
+/* Scan result banner shown below the viewer header */
+#scanResultBanner {
+    padding: 6px 14px;
+    font-size: 0.85em;
+    text-align: center;
+    cursor: pointer;
+}
+#scanResultBanner.scan-found {
+    background: rgba(0, 200, 80, 0.15);
+    color: #4dff88;
+    border-bottom: 1px solid rgba(0, 200, 80, 0.25);
+}
+#scanResultBanner.scan-none {
+    background: rgba(255, 180, 0, 0.12);
+    color: #ffcc44;
+    border-bottom: 1px solid rgba(255, 180, 0, 0.2);
+}
+#scanResultBanner.scan-error {
+    background: rgba(255, 60, 60, 0.12);
+    color: #ff6666;
+    border-bottom: 1px solid rgba(255, 60, 60, 0.2);
+}
+
 /* Files Modal */
 .modal {
     position: fixed;

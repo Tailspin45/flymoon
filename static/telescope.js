@@ -1573,6 +1573,7 @@ function viewFile(path, name) {
     const actionsEl = document.getElementById('fileViewerActions');
 
     nameEl.textContent = name;
+    _setScanBanner(null); // clear any previous scan result
     body.innerHTML = isVideo
         ? `<video src="${path}" controls autoplay style="max-width:90vw; max-height:80vh;"></video>`
         : `<img src="${path}" alt="${name}" style="max-width:90vw; max-height:80vh; object-fit:contain;">`;
@@ -1600,6 +1601,7 @@ function closeFileViewer() {
     const body = document.getElementById('fileViewerBody');
     viewer.style.display = 'none';
     body.innerHTML = '';  // Stop video playback
+    _setScanBanner(null);
     _viewerIndex = -1;
 }
 
@@ -1676,6 +1678,7 @@ async function scanTransit() {
     if (!playerVideo) return;
 
     if (btn) { btn.disabled = true; btn.textContent = '🔍 0%'; }
+    _setScanBanner(null); // clear previous result
 
     try {
         const result = await _scanVideoForTransit(videoPath, pct => {
@@ -1686,18 +1689,37 @@ async function scanTransit() {
             playerVideo.currentTime = result.center;
             playerVideo.pause();
             const durMs = Math.round(result.duration * 1000);
-            showStatus(
-                `Transit found at ${result.center.toFixed(1)}s (~${durMs}ms)`,
-                'success', 5000
+            const ts = _formatTimestamp(result.center);
+            _setScanBanner('found',
+                `🎯 Transit detected at ${ts} (~${durMs}ms)` +
+                `  —  click to replay`,
+                () => { playerVideo.currentTime = Math.max(0, result.start - 0.2); playerVideo.play(); }
             );
         } else {
-            showStatus('No transit detected in this video', 'warning', 4000);
+            _setScanBanner('none', 'No transit detected in this video');
         }
     } catch (e) {
-        showStatus(`Scan failed: ${e.message}`, 'error', 5000);
+        _setScanBanner('error', `Scan failed: ${e.message}`);
     }
 
     if (btn) { btn.disabled = false; btn.textContent = '🎯 Find Transit'; }
+}
+
+function _formatTimestamp(secs) {
+    const m = Math.floor(secs / 60);
+    const s = (secs % 60).toFixed(1);
+    return m > 0 ? `${m}:${s.padStart(4, '0')}` : `${s}s`;
+}
+
+function _setScanBanner(type, text, onclick) {
+    const el = document.getElementById('scanResultBanner');
+    if (!el) return;
+    if (!type) { el.style.display = 'none'; el.className = ''; el.onclick = null; return; }
+    el.className = type === 'found' ? 'scan-found' : type === 'none' ? 'scan-none' : 'scan-error';
+    el.textContent = text;
+    el.style.display = 'block';
+    el.onclick = onclick || null;
+    el.style.cursor = onclick ? 'pointer' : 'default';
 }
 
 /**
