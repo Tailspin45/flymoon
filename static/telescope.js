@@ -1589,7 +1589,7 @@ function viewFile(path, name) {
             `<button class="btn-viewer" onclick="viewerNav(-1)" title="Previous" ${hasPrev ? '' : 'disabled'}>◀</button>` +
             scanBtn +
             `<button class="btn-viewer" onclick="viewerDownload()" title="Download">⬇️ Download</button>` +
-            `<button class="btn-viewer btn-viewer-danger" onclick="viewerDelete()" title="Delete">🗑️ Delete</button>` +
+            `<button class="btn-viewer btn-viewer-danger" onclick="viewerDelete(event)" title="Delete (⌘/Ctrl+click to skip confirm)">🗑️ Delete</button>` +
             `<button class="btn-viewer" onclick="viewerNav(1)" title="Next" ${hasNext ? '' : 'disabled'}>▶</button>`;
     }
 
@@ -1620,11 +1620,12 @@ function viewerDownload() {
     downloadFile(f.path, f.name);
 }
 
-async function viewerDelete() {
+async function viewerDelete(e) {
     const files = window.currentFiles || [];
     if (_viewerIndex < 0 || _viewerIndex >= files.length) return;
     const f = files[_viewerIndex];
-    if (!confirm(`Delete ${f.name}?`)) return;
+    const skipConfirm = e && (e.metaKey || e.ctrlKey);
+    if (!skipConfirm && !confirm(`Delete ${f.name}?`)) return;
 
     try {
         const path = (f.url || f.path).replace('/static/', '');
