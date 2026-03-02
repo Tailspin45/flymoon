@@ -1704,19 +1704,23 @@ async function scanTransit() {
  * Analyse a video for a transit event.
  * Returns { center, start, end, duration } in seconds, or null if nothing found.
  *
- * Approach – consecutive-frame differencing so even a single-frame
- * transit (≈33ms) is detected reliably:
- *  1. Coarse pass – sample every 0.1s, compare each frame to its
- *     predecessor.  A transit produces a spike when it appears AND
- *     when it disappears, so even if no sample lands exactly on the
- *     transit frame, the adjacent change boundary is caught.
- *  2. Identify candidate region – consecutive-diff spikes that exceed
- *     an adaptive threshold (median + 3× MAD).
- *  3. Fine pass – resample the candidate region at ~33ms (≈30fps) to
- *     pinpoint exact transit boundaries.  Uses reference-frame
- *     comparison (first frame of the fine window) to mark every frame
- *     that contains the silhouette.
- *  4. Return the centre of the transit cluster.
+ * Uses two complementary signals so it catches both fast aircraft and
+ * slow/stationary targets (high-altitude balloons):
+ *
+ *  Signal A – Consecutive-frame diff:  detects rapid change.  A fast
+ *    aircraft produces spikes when the silhouette enters and exits.
+ *    Even a single-frame transit (~33ms) creates a change boundary.
+ *
+ *  Signal B – Reference-frame diff (centre-weighted):  detects any
+ *    anomaly vs. clean background, however slow-moving or diffuse.
+ *    Centre-weighting focuses on the sun/moon disk where the target
+ *    appears, boosting signal-to-noise for small objects.
+ *
+ *  The coarse pass records both signals per sample and flags a sample
+ *  as a spike if EITHER exceeds its own adaptive threshold.
+ *
+ *  Fine pass uses reference-frame comparison at ~30fps to pinpoint
+ *  exact transit boundaries.
  */
 async function _scanVideoForTransit(src, onProgress) {
     const video = document.createElement('video');
@@ -1737,6 +1741,7 @@ async function _scanVideoForTransit(src, onProgress) {
     const canvas = document.createElement('canvas');
     canvas.width = W; canvas.height = H;
     const ctx = canvas.getContext('2d', { willReadFrequently: true });
+    const pixels = W * H;
 
     const seekTo = t => new Promise(resolve => {
         video.currentTime = Math.min(t, duration - 0.01);
@@ -1748,6 +1753,7 @@ async function _scanVideoForTransit(src, onProgress) {
         return ctx.getImageData(0, 0, W, H).data;
     };
 
+    // Full-frame sum of absolute RGB differences
     const frameDiff = (a, b) => {
         let sum = 0;
         for (let i = 0; i < a.length; i += 4) {
@@ -1758,51 +1764,85 @@ async function _scanVideoForTransit(src, onProgress) {
         return sum;
     };
 
-    // --- Coarse pass (0.1s steps, consecutive-frame diff) ---
+    // Centre-weighted diff: pixels near the frame centre (where the
+    // sun/moon disk is) count more heavily.  Uses a simple Gaussian-ish
+    // weight based on distance from centre.  This amplifies small or
+    // diffuse targets that only affect a handful of central pixels.
+    const cxHalf = W / 2, cyHalf = H / 2;
+    const maxR = Math.sqrt(cxHalf * cxHalf + cyHalf * cyHalf);
+    const centreWeightedDiff = (a, b) => {
+        let sum = 0;
+        for (let y = 0; y < H; y++) {
+            const dy = (y - cyHalf) / cyHalf;   // -1 … +1
+            for (let x = 0; x < W; x++) {
+                const dx = (x - cxHalf) / cxHalf;
+                const w = 1.0 - 0.7 * Math.sqrt(dx * dx + dy * dy); // 1.0 at centre → 0.3 at corners
+                const i = (y * W + x) * 4;
+                sum += w * (Math.abs(a[i] - b[i])
+                          + Math.abs(a[i+1] - b[i+1])
+                          + Math.abs(a[i+2] - b[i+2]));
+            }
+        }
+        return sum;
+    };
+
+    // Helper: adaptive threshold = median + max(3×MAD, 0.5×median)
+    const adaptiveThreshold = (values) => {
+        const s = [...values].sort((a, b) => a - b);
+        const med = s[Math.floor(s.length / 2)];
+        const mad = [...values].map(d => Math.abs(d - med)).sort((a, b) => a - b)[Math.floor(values.length / 2)];
+        return med + Math.max(mad * 3, med * 0.5);
+    };
+
+    // --- Coarse pass (0.1s steps, dual signals) ---
     const coarseStep = 0.1;
     const numCoarse = Math.floor(duration / coarseStep);
-    const coarseSamples = []; // { time, diff }
 
     await seekTo(0);
-    let prevFrame = grabFrame();
+    const refFrame = grabFrame();   // Signal B reference (clean background)
+    let prevFrame = refFrame;
+    const coarseSamples = [];       // { time, consecDiff, refDiff }
 
     for (let i = 1; i < numCoarse; i++) {
         await seekTo(i * coarseStep);
         const frame = grabFrame();
-        coarseSamples.push({ time: i * coarseStep, diff: frameDiff(frame, prevFrame) });
+        coarseSamples.push({
+            time: i * coarseStep,
+            consecDiff: frameDiff(frame, prevFrame),
+            refDiff:    centreWeightedDiff(frame, refFrame),
+        });
         prevFrame = frame;
         if (onProgress && i % 10 === 0) onProgress(Math.round(50 * i / numCoarse));
     }
 
     if (coarseSamples.length < 3) { video.src = ''; return null; }
 
-    // Adaptive threshold: median + 3 × MAD
-    const diffs = coarseSamples.map(s => s.diff);
-    const sorted = [...diffs].sort((a, b) => a - b);
-    const median = sorted[Math.floor(sorted.length / 2)];
-    const mad = [...diffs].map(d => Math.abs(d - median)).sort((a, b) => a - b)[Math.floor(diffs.length / 2)];
-    const threshold = median + Math.max(mad * 3, median * 0.5);
+    // Independent thresholds for each signal
+    const threshA = adaptiveThreshold(coarseSamples.map(s => s.consecDiff));
+    const threshB = adaptiveThreshold(coarseSamples.map(s => s.refDiff));
 
-    // Find the cluster of consecutive high-diff samples with the highest peak.
-    // A single-frame transit produces TWO spikes (appear + disappear) typically
-    // 1-3 coarse steps apart, so we merge spikes within 0.5s of each other.
+    // A sample is a spike if EITHER signal exceeds its threshold
     const spikeIndices = [];
     for (let i = 0; i < coarseSamples.length; i++) {
-        if (coarseSamples[i].diff > threshold) spikeIndices.push(i);
+        if (coarseSamples[i].consecDiff > threshA || coarseSamples[i].refDiff > threshB) {
+            spikeIndices.push(i);
+        }
     }
     if (spikeIndices.length === 0) { video.src = ''; return null; }
 
     // Merge spikes into clusters (gap ≤ 5 coarse steps = 0.5s)
     const clusters = [];
-    let cStart = spikeIndices[0], cEnd = spikeIndices[0], cPeak = coarseSamples[cStart].diff;
+    let cStart = spikeIndices[0], cEnd = spikeIndices[0];
+    let cPeak = Math.max(coarseSamples[cStart].consecDiff, coarseSamples[cStart].refDiff);
     for (let k = 1; k < spikeIndices.length; k++) {
         if (spikeIndices[k] - spikeIndices[k-1] <= 5) {
             cEnd = spikeIndices[k];
-            cPeak = Math.max(cPeak, coarseSamples[cEnd].diff);
+            const s = coarseSamples[cEnd];
+            cPeak = Math.max(cPeak, s.consecDiff, s.refDiff);
         } else {
             clusters.push({ start: coarseSamples[cStart].time, end: coarseSamples[cEnd].time, peak: cPeak });
             cStart = cEnd = spikeIndices[k];
-            cPeak = coarseSamples[cStart].diff;
+            cPeak = Math.max(coarseSamples[cStart].consecDiff, coarseSamples[cStart].refDiff);
         }
     }
     clusters.push({ start: coarseSamples[cStart].time, end: coarseSamples[cEnd].time, peak: cPeak });
@@ -1811,8 +1851,8 @@ async function _scanVideoForTransit(src, onProgress) {
     const bestCluster = clusters.reduce((a, b) => b.peak > a.peak ? b : a);
 
     // --- Fine pass (~30fps around the candidate region) ---
-    // Use reference-frame comparison so every frame containing the
-    // silhouette is flagged, not just the transition edges.
+    // Reference-frame (centre-weighted) comparison flags every frame
+    // that contains the silhouette, whether it moved or not.
     const margin = 0.5;
     const fineStart = Math.max(0, bestCluster.start - margin);
     const fineEnd = Math.min(duration, bestCluster.end + margin);
@@ -1821,23 +1861,19 @@ async function _scanVideoForTransit(src, onProgress) {
 
     // Reference = first frame of the fine window (should be clean background)
     await seekTo(fineStart);
-    const refFrame = grabFrame();
+    const fineRef = grabFrame();
     const fineSamples = [];
 
     for (let i = 0; i < numFine; i++) {
         const t = fineStart + i * fineStep;
         await seekTo(t);
         const frame = grabFrame();
-        fineSamples.push({ time: t, diff: frameDiff(frame, refFrame) });
+        fineSamples.push({ time: t, diff: centreWeightedDiff(frame, fineRef) });
         if (onProgress && i % 5 === 0) onProgress(50 + Math.round(50 * i / numFine));
     }
 
     // Re-threshold on fine samples
-    const fineDiffs = fineSamples.map(s => s.diff);
-    const fineSorted = [...fineDiffs].sort((a, b) => a - b);
-    const fineMedian = fineSorted[Math.floor(fineSorted.length / 2)];
-    const fineMad = [...fineDiffs].map(d => Math.abs(d - fineMedian)).sort((a, b) => a - b)[Math.floor(fineDiffs.length / 2)];
-    const fineThreshold = fineMedian + Math.max(fineMad * 3, fineMedian * 0.5);
+    const fineThreshold = adaptiveThreshold(fineSamples.map(s => s.diff));
 
     let transitStart = null, transitEnd = null;
     for (const s of fineSamples) {
