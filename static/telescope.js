@@ -1577,12 +1577,16 @@ function viewFile(path, name) {
         ? `<video src="${path}" controls autoplay style="max-width:90vw; max-height:80vh;"></video>`
         : `<img src="${path}" alt="${name}" style="max-width:90vw; max-height:80vh; object-fit:contain;">`;
 
-    // Build action buttons (download, delete, prev/next)
+    // Build action buttons (download, delete, prev/next, find transit)
     if (actionsEl) {
         const hasPrev = _viewerIndex > 0;
         const hasNext = _viewerIndex >= 0 && _viewerIndex < files.length - 1;
+        const scanBtn = isVideo
+            ? `<button class="btn-viewer btn-viewer-scan" id="scanTransitBtn" onclick="scanTransit()" title="Scan for transit frame">🎯 Find Transit</button>`
+            : '';
         actionsEl.innerHTML =
             `<button class="btn-viewer" onclick="viewerNav(-1)" title="Previous" ${hasPrev ? '' : 'disabled'}>◀</button>` +
+            scanBtn +
             `<button class="btn-viewer" onclick="viewerDownload()" title="Download">⬇️ Download</button>` +
             `<button class="btn-viewer btn-viewer-danger" onclick="viewerDelete()" title="Delete">🗑️ Delete</button>` +
             `<button class="btn-viewer" onclick="viewerNav(1)" title="Next" ${hasNext ? '' : 'disabled'}>▶</button>`;
@@ -1651,6 +1655,189 @@ async function viewerDelete() {
         const prev = updatedFiles[updatedFiles.length - 1];
         viewFile(prev.url || prev.path, prev.name);
     }
+}
+
+// ============================================================================
+// TRANSIT FRAME SCANNER
+// Scans a video to find the transit (aircraft crossing sun/moon disk).
+// Compares sampled frames against a reference to detect the brief anomaly,
+// then seeks the player to the centre of the transit.
+// ============================================================================
+
+async function scanTransit() {
+    const files = window.currentFiles || [];
+    if (_viewerIndex < 0 || _viewerIndex >= files.length) return;
+    const f = files[_viewerIndex];
+    const videoPath = f.url || f.path;
+    if (!/\.(mp4|avi|mov|mkv|webm)$/i.test(f.name)) return;
+
+    const btn = document.getElementById('scanTransitBtn');
+    const playerVideo = document.querySelector('#fileViewerBody video');
+    if (!playerVideo) return;
+
+    if (btn) { btn.disabled = true; btn.textContent = '🔍 0%'; }
+
+    try {
+        const result = await _scanVideoForTransit(videoPath, pct => {
+            if (btn) btn.textContent = `🔍 ${pct}%`;
+        });
+
+        if (result) {
+            playerVideo.currentTime = result.center;
+            playerVideo.pause();
+            const durMs = Math.round(result.duration * 1000);
+            showStatus(
+                `Transit found at ${result.center.toFixed(1)}s (~${durMs}ms)`,
+                'success', 5000
+            );
+        } else {
+            showStatus('No transit detected in this video', 'warning', 4000);
+        }
+    } catch (e) {
+        showStatus(`Scan failed: ${e.message}`, 'error', 5000);
+    }
+
+    if (btn) { btn.disabled = false; btn.textContent = '🎯 Find Transit'; }
+}
+
+/**
+ * Analyse a video for a transit event.
+ * Returns { center, start, end, duration } in seconds, or null if nothing found.
+ *
+ * Approach:
+ *  1. Coarse pass – sample every 0.25s, compare each downscaled frame
+ *     against the first frame (background). Record per-sample difference.
+ *  2. Identify candidate region – frames whose difference exceeds an
+ *     adaptive threshold (background median + 3× MAD).
+ *  3. Fine pass – resample the candidate region at ~33ms (≈30fps) to
+ *     pinpoint exact transit boundaries.
+ *  4. Return the centre of the transit cluster.
+ */
+async function _scanVideoForTransit(src, onProgress) {
+    const video = document.createElement('video');
+    video.muted = true;
+    video.preload = 'auto';
+    video.src = src;
+
+    await new Promise((resolve, reject) => {
+        video.addEventListener('loadeddata', resolve, { once: true });
+        video.addEventListener('error', () => reject(new Error('Video load failed')), { once: true });
+    });
+
+    const duration = video.duration;
+    if (!duration || duration < 0.5) { video.src = ''; return null; }
+
+    // Small canvas for fast pixel comparison
+    const W = 160, H = 90;
+    const canvas = document.createElement('canvas');
+    canvas.width = W; canvas.height = H;
+    const ctx = canvas.getContext('2d', { willReadFrequently: true });
+
+    const seekTo = t => new Promise(resolve => {
+        video.currentTime = Math.min(t, duration - 0.01);
+        video.addEventListener('seeked', resolve, { once: true });
+    });
+
+    const grabFrame = () => {
+        ctx.drawImage(video, 0, 0, W, H);
+        return ctx.getImageData(0, 0, W, H).data;
+    };
+
+    const frameDiff = (a, b) => {
+        let sum = 0;
+        for (let i = 0; i < a.length; i += 4) {
+            sum += Math.abs(a[i] - b[i])
+                 + Math.abs(a[i+1] - b[i+1])
+                 + Math.abs(a[i+2] - b[i+2]);
+        }
+        return sum;
+    };
+
+    // --- Coarse pass (0.25s steps) ---
+    const coarseStep = 0.25;
+    const coarseSamples = [];
+    await seekTo(0);
+    const refFrame = grabFrame();
+    const numCoarse = Math.floor(duration / coarseStep);
+
+    for (let i = 0; i < numCoarse; i++) {
+        await seekTo(i * coarseStep);
+        const frame = grabFrame();
+        coarseSamples.push({ time: i * coarseStep, diff: frameDiff(frame, refFrame) });
+        if (onProgress && i % 8 === 0) onProgress(Math.round(50 * i / numCoarse));
+    }
+
+    // Adaptive threshold: median + 3 × MAD (median absolute deviation)
+    const diffs = coarseSamples.map(s => s.diff);
+    const sorted = [...diffs].sort((a, b) => a - b);
+    const median = sorted[Math.floor(sorted.length / 2)];
+    const mad = [...diffs].map(d => Math.abs(d - median)).sort((a, b) => a - b)[Math.floor(diffs.length / 2)];
+    const threshold = median + Math.max(mad * 3, median * 0.5);
+
+    // Find the cluster with the highest peak above threshold
+    let bestCluster = null;
+    let curCluster = null;
+    for (const s of coarseSamples) {
+        if (s.diff > threshold) {
+            if (!curCluster) curCluster = { start: s.time, end: s.time, peak: s.diff };
+            curCluster.end = s.time;
+            curCluster.peak = Math.max(curCluster.peak, s.diff);
+        } else {
+            if (curCluster && (!bestCluster || curCluster.peak > bestCluster.peak)) {
+                bestCluster = curCluster;
+            }
+            curCluster = null;
+        }
+    }
+    if (curCluster && (!bestCluster || curCluster.peak > bestCluster.peak)) {
+        bestCluster = curCluster;
+    }
+
+    if (!bestCluster) { video.src = ''; return null; }
+
+    // --- Fine pass (~30fps around the candidate region) ---
+    const margin = 1.0; // 1s padding around coarse cluster
+    const fineStart = Math.max(0, bestCluster.start - margin);
+    const fineEnd = Math.min(duration, bestCluster.end + margin);
+    const fineStep = 0.033;
+    const fineSamples = [];
+    const numFine = Math.floor((fineEnd - fineStart) / fineStep);
+
+    for (let i = 0; i < numFine; i++) {
+        const t = fineStart + i * fineStep;
+        await seekTo(t);
+        const frame = grabFrame();
+        fineSamples.push({ time: t, diff: frameDiff(frame, refFrame) });
+        if (onProgress && i % 5 === 0) onProgress(50 + Math.round(50 * i / numFine));
+    }
+
+    // Re-threshold on fine samples
+    const fineDiffs = fineSamples.map(s => s.diff);
+    const fineSorted = [...fineDiffs].sort((a, b) => a - b);
+    const fineMedian = fineSorted[Math.floor(fineSorted.length / 2)];
+    const fineMad = [...fineDiffs].map(d => Math.abs(d - fineMedian)).sort((a, b) => a - b)[Math.floor(fineDiffs.length / 2)];
+    const fineThreshold = fineMedian + Math.max(fineMad * 3, fineMedian * 0.5);
+
+    let transitStart = null, transitEnd = null;
+    for (const s of fineSamples) {
+        if (s.diff > fineThreshold) {
+            if (transitStart === null) transitStart = s.time;
+            transitEnd = s.time;
+        }
+    }
+
+    video.src = ''; // free memory
+
+    if (transitStart === null) {
+        // Fall back to coarse cluster centre
+        const center = (bestCluster.start + bestCluster.end) / 2;
+        return { center, start: bestCluster.start, end: bestCluster.end,
+                 duration: bestCluster.end - bestCluster.start + coarseStep };
+    }
+
+    const center = (transitStart + transitEnd) / 2;
+    return { center, start: transitStart, end: transitEnd,
+             duration: transitEnd - transitStart + fineStep };
 }
 
 // ============================================================================

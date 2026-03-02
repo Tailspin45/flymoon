@@ -849,6 +849,13 @@ canvas.video-thumb-canvas {
     background: rgba(255, 0, 0, 0.25);
     border-color: #ff4444;
 }
+.btn-viewer-scan {
+    background: rgba(0, 180, 255, 0.15);
+    border-color: rgba(0, 180, 255, 0.4);
+}
+.btn-viewer-scan:hover:not(:disabled) {
+    background: rgba(0, 180, 255, 0.3);
+}
 
 /* Files Modal */
 .modal {
