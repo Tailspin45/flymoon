@@ -680,7 +680,7 @@
 .filmstrip {
     background: #1a1a1a;
     border-top: 1px solid #2a2a2a;
-    height: 110px;
+    height: 150px;
     flex-shrink: 0;
     display: flex;
     flex-direction: column;
@@ -997,25 +997,21 @@ canvas.video-thumb-canvas {
 
 .file-info {
     display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 6px;
+    flex-direction: column;
+    gap: 4px;
 }
 
 .file-name {
     font-size: 0.75em;
     color: #aaa;
-    white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
-    flex: 1;
-    min-width: 0;
+    white-space: nowrap;
 }
 
 .file-actions {
     display: flex;
     gap: 4px;
-    flex-shrink: 0;
 }
 
 /* Empty States */
@@ -1069,7 +1065,7 @@ canvas.video-thumb-canvas {
     }
     
     .filmstrip {
-        height: 100px;
+        height: 140px;
     }
 }
 
