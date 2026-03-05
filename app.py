@@ -184,6 +184,13 @@ def get_config():
             "cacheEnabled": True,
             "cacheTTLSeconds": 600,
             "openaipApiKey": os.getenv("OPENAIP_API_KEY", ""),
+            "observerLatitude": os.getenv("OBSERVER_LATITUDE", ""),
+            "observerLongitude": os.getenv("OBSERVER_LONGITUDE", ""),
+            "observerElevation": os.getenv("OBSERVER_ELEVATION", "0"),
+            "bboxLatLL": os.getenv("LAT_LOWER_LEFT", ""),
+            "bboxLonLL": os.getenv("LONG_LOWER_LEFT", ""),
+            "bboxLatUR": os.getenv("LAT_UPPER_RIGHT", ""),
+            "bboxLonUR": os.getenv("LONG_UPPER_RIGHT", ""),
         }
     )
 

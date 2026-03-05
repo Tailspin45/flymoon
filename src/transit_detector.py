@@ -560,9 +560,22 @@ class TransitDetector:
             lat_ur = float(os.getenv("LAT_UPPER_RIGHT", str(lat + 1)))
             lon_ur = float(os.getenv("LONG_UPPER_RIGHT", str(lon + 1)))
 
-            from src.flight_data import get_flights_in_area
+            from src.flight_data import get_flight_data, parse_fligh_data
+            from src.position import AreaBoundingBox
+            from src.constants import API_URL, get_aeroapi_key
 
-            flights = get_flights_in_area(lat_ll, lon_ll, lat_ur, lon_ur)
+            api_key = get_aeroapi_key()
+            if not api_key:
+                return
+
+            bbox = AreaBoundingBox(
+                lat_lower_left=lat_ll,
+                long_lower_left=lon_ll,
+                lat_upper_right=lat_ur,
+                long_upper_right=lon_ur,
+            )
+            raw = get_flight_data(bbox, API_URL, api_key)
+            flights = [parse_fligh_data(f) for f in raw.get("flights", [])]
 
             if flights:
                 # Find the flight closest to the observer's target line-of-sight

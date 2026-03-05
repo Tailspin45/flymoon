@@ -18,6 +18,26 @@ let transitCaptureActive = false;
 let upcomingTransits = [];
 const capturedTransits = new Set(); // flight IDs triggered this session — persists across array replacements
 let currentZoom = 1.0;
+
+// Favorites stored in localStorage
+function getFavorites() {
+    try { return new Set(JSON.parse(localStorage.getItem('flymoon_favorites') || '[]')); }
+    catch { return new Set(); }
+}
+function saveFavorites(favs) {
+    localStorage.setItem('flymoon_favorites', JSON.stringify([...favs]));
+}
+function toggleFavorite(path, event) {
+    if (event) event.stopPropagation();
+    const favs = getFavorites();
+    if (favs.has(path)) favs.delete(path); else favs.add(path);
+    saveFavorites(favs);
+    // Update all heart buttons for this path
+    document.querySelectorAll(`[data-fav-path="${CSS.escape(path)}"]`).forEach(btn => {
+        btn.textContent = favs.has(path) ? '❤️' : '🤍';
+        btn.title = favs.has(path) ? 'Unfavorite' : 'Favorite';
+    });
+}
 let zoomStep = 0.1;
 let _previewLastError = 0; // timestamp of last preview onerror (ms)
 const _PREVIEW_BACKOFF_MS = 30000; // 30s between retry attempts after stream failure
@@ -1201,7 +1221,7 @@ async function startEclipseRecording(c1, c4, eclipse) {
     const totalSecs = Math.max(20, Math.ceil((c4.getTime() + 10000 - Date.now()) / 1000));
     const typeLabel = eclipse.eclipse_class.charAt(0).toUpperCase() + eclipse.eclipse_class.slice(1);
     const label = `${typeLabel} ${eclipse.type === 'solar' ? 'Solar' : 'Lunar'} Eclipse`;
-    console.log(`[Eclipse] Starting eclipse recording: ${label} — ${totalSecs}s`);
+    console.log(`[Eclipse] Starting eclipse timelapse: ${label} — ${totalSecs}s, 1s interval`);
 
     if (isSimulating) {
         // In sim mode, treat like a regular recording
@@ -1209,18 +1229,21 @@ async function startEclipseRecording(c1, c4, eclipse) {
         return;
     }
 
+    const eclipseInterval = 1; // timelapse: 1 frame per second
     const result = await apiCall('/telescope/recording/start', 'POST', {
         duration: totalSecs,
-        interval: 0
+        interval: eclipseInterval
     });
     if (result && result.success) {
         isRecording = true;
         recordingIsReal = true;    // real eclipse recording
         recordingStartTime = Date.now();
         recordingEndTime = c4.getTime() + 10000;
+        const intervalInput = document.getElementById('frameInterval');
+        if (intervalInput) intervalInput.value = eclipseInterval;
         updateRecordingUI();
         startRecordingTimer(totalSecs);
-        showStatus(`🌙 Eclipse recording started: ${label} (${totalSecs}s)`, 'success', 8000);
+        showStatus(`🌙 Eclipse timelapse started: ${label} (${totalSecs}s, ${eclipseInterval}s interval)`, 'success', 8000);
     }
 }
 
@@ -1326,7 +1349,8 @@ function updateEclipseCard(level, c1, c2, c3, c4, secsToC1, eclipse) {
                 C1 <span>${fmtTime(c1)}</span>
                 ${c2 ? `· C2 <span>${fmtTime(c2)}</span> · C3 <span>${fmtTime(c3)}</span>` : ''}
                 · C4 <span>${fmtTime(c4)}</span>
-            </div>`;
+            </div>
+            <div class="ec-clock" id="eclipseClock">🕐 ${fmtTime(new Date())}</div>`;
 
         card.className   = newClass;
         card.style.display = 'block';
@@ -1353,6 +1377,13 @@ function updateEclipseCard(level, c1, c2, c3, c4, secsToC1, eclipse) {
         } else {
             cdEl.textContent = _fmtCountdown(secsToC1);
         }
+    }
+
+    // Always update the live clock
+    const clockEl = document.getElementById('eclipseClock');
+    if (clockEl) {
+        const now = new Date();
+        clockEl.textContent = `🕐 ${now.toLocaleTimeString([], {hour:'2-digit',minute:'2-digit',second:'2-digit'})}`;
     }
 
     // Always update phase label during active (changes as eclipse progresses)
@@ -1455,9 +1486,11 @@ function toggleFilesModal() {
     
     if (modal.style.display === 'none' || !modal.style.display) {
         modal.style.display = 'flex';
+        gridSelectNone();
         updateFilesGrid();
     } else {
         modal.style.display = 'none';
+        gridSelectNone();
     }
 }
 
@@ -1488,6 +1521,7 @@ function updateFilmstrip(files) {
             ${thumbnail}
             <div class="filmstrip-info">
                 <div class="filmstrip-actions">
+                    <button class="btn-icon btn-fav" data-fav-path="${file.path}" onclick="toggleFavorite('${file.path}', event)" title="${getFavorites().has(file.path) ? 'Unfavorite' : 'Favorite'}">${getFavorites().has(file.path) ? '❤️' : '🤍'}</button>
                     <button class="btn-icon" onclick="event.stopPropagation(); downloadFile('${file.path}', '${file.name}')" title="Download" ${isTemp ? 'disabled' : ''}>⬇️</button>
                     <button class="btn-icon btn-danger" onclick="event.stopPropagation(); deleteFile('${file.path}', '${file.name}')" title="Delete" ${isTemp ? 'disabled' : ''}>🗑️</button>
                 </div>
@@ -1500,6 +1534,157 @@ function updateFilmstrip(files) {
     filmstrip.querySelectorAll('canvas.video-thumb-canvas').forEach(generateVideoThumbnail);
 }
 
+// ── Multi-select state for expanded files grid ──
+const gridSelection = {
+    selected: new Set(),   // set of file paths
+    lastClicked: null,     // index of last clicked item (for shift-range)
+    dragging: false,       // lasso drag active
+    startX: 0, startY: 0, // lasso origin (page coords)
+};
+
+function gridSelectItem(index, path, event) {
+    event.stopPropagation();
+    const files = window.currentFiles || [];
+    if (event.shiftKey && gridSelection.lastClicked !== null) {
+        // Range select
+        const lo = Math.min(gridSelection.lastClicked, index);
+        const hi = Math.max(gridSelection.lastClicked, index);
+        for (let i = lo; i <= hi; i++) gridSelection.selected.add(files[i].path);
+    } else if (event.ctrlKey || event.metaKey) {
+        // Toggle single
+        if (gridSelection.selected.has(path)) gridSelection.selected.delete(path);
+        else gridSelection.selected.add(path);
+    } else {
+        // Plain click — if already the only selection, open viewer; else select just this
+        if (gridSelection.selected.size === 1 && gridSelection.selected.has(path)) {
+            const f = files[index];
+            viewFile(f.url || f.path, f.name);
+            return;
+        }
+        gridSelection.selected.clear();
+        gridSelection.selected.add(path);
+    }
+    gridSelection.lastClicked = index;
+    _syncGridSelectionUI();
+}
+
+function gridSelectAll() {
+    const files = window.currentFiles || [];
+    files.forEach(f => gridSelection.selected.add(f.path));
+    _syncGridSelectionUI();
+}
+
+function gridSelectNone() {
+    gridSelection.selected.clear();
+    gridSelection.lastClicked = null;
+    _syncGridSelectionUI();
+}
+
+async function gridDeleteSelected() {
+    const paths = [...gridSelection.selected];
+    const n = paths.length;
+    if (n === 0) return;
+    if (!confirm(`Delete ${n} file${n > 1 ? 's' : ''}?`)) return;
+    let deleted = 0;
+    for (const filePath of paths) {
+        try {
+            const p = filePath.replace('/static/', '');
+            const response = await fetch('/telescope/files/delete', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ path: p })
+            });
+            const data = await response.json();
+            if (response.ok && data.success) deleted++;
+            else console.warn('[Grid] Delete failed for', p, data.error);
+        } catch (err) {
+            console.error('[Grid] Delete error for', filePath, err);
+        }
+    }
+    gridSelection.selected.clear();
+    gridSelection.lastClicked = null;
+    showStatus(`Deleted ${deleted} of ${n} file${n > 1 ? 's' : ''}`, deleted > 0 ? 'success' : 'error', 3000);
+    await refreshFiles();
+    updateFilesGrid();
+}
+
+function gridDownloadSelected() {
+    const files = window.currentFiles || [];
+    for (const f of files) {
+        if (gridSelection.selected.has(f.path)) downloadFile(f.path, f.name);
+    }
+}
+
+function _syncGridSelectionUI() {
+    const grid = document.getElementById('filesGrid');
+    if (!grid) return;
+    grid.querySelectorAll('.file-item').forEach(el => {
+        const path = el.dataset.filePath;
+        el.classList.toggle('selected', gridSelection.selected.has(path));
+    });
+    // Update toolbar
+    const toolbar = document.getElementById('gridSelectionToolbar');
+    if (toolbar) {
+        const n = gridSelection.selected.size;
+        toolbar.style.display = n > 0 ? 'flex' : 'none';
+        const cnt = document.getElementById('gridSelCount');
+        if (cnt) cnt.textContent = `${n} selected`;
+    }
+}
+
+// Lasso drag-select on the files grid
+function _initGridLasso() {
+    const grid = document.getElementById('filesGrid');
+    if (!grid || grid._lassoInit) return;
+    grid._lassoInit = true;
+
+    let lasso = null;
+
+    grid.addEventListener('mousedown', e => {
+        // Only start lasso from the grid background (not from items/buttons)
+        if (e.target !== grid) return;
+        e.preventDefault();
+        gridSelection.dragging = true;
+        gridSelection.startX = e.pageX;
+        gridSelection.startY = e.pageY;
+        if (!e.ctrlKey && !e.metaKey && !e.shiftKey) gridSelection.selected.clear();
+        lasso = document.createElement('div');
+        lasso.className = 'grid-lasso';
+        document.body.appendChild(lasso);
+    });
+
+    document.addEventListener('mousemove', e => {
+        if (!gridSelection.dragging || !lasso) return;
+        const x1 = Math.min(gridSelection.startX, e.pageX);
+        const y1 = Math.min(gridSelection.startY, e.pageY);
+        const x2 = Math.max(gridSelection.startX, e.pageX);
+        const y2 = Math.max(gridSelection.startY, e.pageY);
+        Object.assign(lasso.style, {
+            left: x1 + 'px', top: y1 + 'px',
+            width: (x2 - x1) + 'px', height: (y2 - y1) + 'px',
+        });
+        // Hit-test items
+        const rect = { left: x1, top: y1, right: x2, bottom: y2 };
+        grid.querySelectorAll('.file-item').forEach(el => {
+            const r = el.getBoundingClientRect();
+            const ir = { left: r.left + window.scrollX, top: r.top + window.scrollY,
+                         right: r.right + window.scrollX, bottom: r.bottom + window.scrollY };
+            const hit = !(ir.right < rect.left || ir.left > rect.right ||
+                          ir.bottom < rect.top || ir.top > rect.bottom);
+            if (hit) gridSelection.selected.add(el.dataset.filePath);
+            else if (!e.ctrlKey && !e.metaKey) gridSelection.selected.delete(el.dataset.filePath);
+            el.classList.toggle('selected', gridSelection.selected.has(el.dataset.filePath));
+        });
+    });
+
+    document.addEventListener('mouseup', () => {
+        if (!gridSelection.dragging) return;
+        gridSelection.dragging = false;
+        if (lasso) { lasso.remove(); lasso = null; }
+        _syncGridSelectionUI();
+    });
+}
+
 function updateFilesGrid() {
     const grid = document.getElementById('filesGrid');
     if (!grid) return;
@@ -1509,23 +1694,32 @@ function updateFilesGrid() {
     
     if (files.length === 0) {
         grid.innerHTML = '<p class="empty-state">No files</p>';
+        gridSelection.selected.clear();
+        _syncGridSelectionUI();
         return;
     }
     
-    grid.innerHTML = files.map(file => {
+    // Prune selection of paths that no longer exist
+    const pathSet = new Set(files.map(f => f.path));
+    for (const p of gridSelection.selected) { if (!pathSet.has(p)) gridSelection.selected.delete(p); }
+
+    grid.innerHTML = files.map((file, idx) => {
         const isVideo = file.path.match(/\.(mp4|avi|mov)$/i);
+        const sel = gridSelection.selected.has(file.path) ? ' selected' : '';
         const thumbnail = file.thumbnail
-            ? `<img src="${file.thumbnail}" alt="${file.name}" class="file-thumbnail" onclick="viewFile('${file.url || file.path}', '${file.name}')">`
+            ? `<img src="${file.thumbnail}" alt="${file.name}" class="file-thumbnail">`
             : isVideo
-                ? `<canvas class="file-thumbnail video-thumb-canvas" data-video-src="${file.url || file.path}" onclick="viewFile('${file.url || file.path}', '${file.name}')"></canvas>`
-                : `<img src="${file.path}" alt="${file.name}" class="file-thumbnail" onclick="viewFile('${file.path}', '${file.name}')">`;
+                ? `<canvas class="file-thumbnail video-thumb-canvas" data-video-src="${file.url || file.path}"></canvas>`
+                : `<img src="${file.path}" alt="${file.name}" class="file-thumbnail">`;
         return `
-        <div class="file-item">
+        <div class="file-item${sel}" data-file-path="${file.path}" data-file-idx="${idx}"
+             onclick="gridSelectItem(${idx}, '${file.path}', event)">
             <div class="file-info">
                 <span class="file-name" title="${file.name}">${file.name}</span>
                 <div class="file-actions">
-                    <button class="btn-icon" onclick="downloadFile('${file.path}', '${file.name}')" title="Download">⬇️</button>
-                    <button class="btn-icon btn-danger" onclick="deleteFile('${file.path}', '${file.name}')" title="Delete">🗑️</button>
+                    <button class="btn-icon btn-fav" data-fav-path="${file.path}" onclick="toggleFavorite('${file.path}', event)" title="${getFavorites().has(file.path) ? 'Unfavorite' : 'Favorite'}">${getFavorites().has(file.path) ? '❤️' : '🤍'}</button>
+                    <button class="btn-icon" onclick="event.stopPropagation(); downloadFile('${file.path}', '${file.name}')" title="Download">⬇️</button>
+                    <button class="btn-icon btn-danger" onclick="event.stopPropagation(); deleteFile('${file.path}', '${file.name}')" title="Delete">🗑️</button>
                 </div>
             </div>
             ${thumbnail}
@@ -1534,6 +1728,8 @@ function updateFilesGrid() {
 
     // Generate thumbnails from video first frame for any canvas placeholders
     grid.querySelectorAll('canvas.video-thumb-canvas').forEach(generateVideoThumbnail);
+    _initGridLasso();
+    _syncGridSelectionUI();
 }
 
 // Generate a thumbnail from a video's first frame onto a <canvas>
