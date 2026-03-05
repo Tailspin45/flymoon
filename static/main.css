@@ -95,6 +95,30 @@ body {
 }
 .btn-help:hover { opacity: 1; }
 
+/* Guide-button row above table column headers */
+.guide-btn-row {
+    background: transparent !important;
+    border: none !important;
+    padding: 4px 6px !important;
+    text-align: right;
+}
+.guide-btn-group {
+    display: inline-flex;
+    gap: 4px;
+    background: rgba(78, 96, 96, 0.35);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 16px;
+    padding: 3px 10px;
+    backdrop-filter: blur(4px);
+}
+.guide-btn-group .btn-help {
+    opacity: 0.8;
+    transition: opacity 0.15s;
+}
+.guide-btn-group .btn-help:hover {
+    opacity: 1;
+}
+
 .btn-lg-icon {
     font-size: 1.2em;
 }
@@ -190,6 +214,9 @@ body {
 #resultsTable thead > tr {
     background-color: #4e6060;
     color: white;
+}
+#resultsTable thead > tr:has(.guide-btn-row) {
+    background: transparent;
 }
 
 .alert {

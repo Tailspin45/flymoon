@@ -184,6 +184,13 @@ def get_config():
             "cacheEnabled": True,
             "cacheTTLSeconds": 600,
             "openaipApiKey": os.getenv("OPENAIP_API_KEY", ""),
+            "observerLatitude": os.getenv("OBSERVER_LATITUDE", ""),
+            "observerLongitude": os.getenv("OBSERVER_LONGITUDE", ""),
+            "observerElevation": os.getenv("OBSERVER_ELEVATION", "0"),
+            "bboxLatLL": os.getenv("LAT_LOWER_LEFT", ""),
+            "bboxLonLL": os.getenv("LONG_LOWER_LEFT", ""),
+            "bboxLatUR": os.getenv("LAT_UPPER_RIGHT", ""),
+            "bboxLonUR": os.getenv("LONG_UPPER_RIGHT", ""),
         }
     )
 
@@ -908,6 +915,11 @@ if __name__ == "__main__":
         for p in range(8000, 8101):
             try:
                 sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+                try:
+                    sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEPORT, 1)
+                except (AttributeError, OSError):
+                    pass
                 sock.bind(("0.0.0.0", p))
                 sock.close()
                 port = p
@@ -928,4 +940,48 @@ if __name__ == "__main__":
     log = logging.getLogger("werkzeug")
     log.setLevel(logging.WARNING)
 
-    app.run(host="0.0.0.0", port=port, debug=False)
+    # Allow immediate port reuse and clean shutdown on Ctrl-C / SIGTERM
+    import signal
+    import threading
+    from werkzeug.serving import BaseWSGIServer, WSGIRequestHandler
+
+    class ReusableWSGIServer(BaseWSGIServer):
+        """Threaded WSGI server with SO_REUSEADDR/SO_REUSEPORT set before bind."""
+        allow_reuse_address = True
+        daemon_threads = True
+        request_queue_size = 128
+
+        def server_bind(self):
+            self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            try:
+                self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEPORT, 1)
+            except (AttributeError, OSError):
+                pass
+            super().server_bind()
+
+        def process_request(self, request, client_address):
+            """Handle each request in a new daemon thread."""
+            t = threading.Thread(target=self.process_request_thread,
+                                 args=(request, client_address), daemon=True)
+            t.start()
+
+        def process_request_thread(self, request, client_address):
+            try:
+                self.finish_request(request, client_address)
+            except Exception:
+                self.handle_error(request, client_address)
+            finally:
+                self.shutdown_request(request)
+
+    server = ReusableWSGIServer("0.0.0.0", port, app,
+                                handler=WSGIRequestHandler)
+
+    def _shutdown(sig, frame):
+        print("\n🛑 Shutting down…")
+        server.server_close()
+        threading.Thread(target=server.shutdown, daemon=True).start()
+
+    signal.signal(signal.SIGINT, _shutdown)
+    signal.signal(signal.SIGTERM, _shutdown)
+
+    server.serve_forever()

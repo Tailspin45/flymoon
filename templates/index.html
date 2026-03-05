@@ -141,7 +141,7 @@
         <p class="loading-text">Loading flight data...</p>
     </div>
 
-    <div id="transitCountdown" style="display: none; text-align: center; font-size: 1.5em; font-weight: bold; padding: 15px; margin: 10px 0; border-radius: 5px;"></div>
+    <div id="transitCountdown" style="display: none; text-align: center; font-size: 1.5em; font-weight: bold; font-variant-numeric: tabular-nums; padding: 15px; margin: 10px 0; border-radius: 5px;"></div>
 
     <div id="mapContainer" style="display: none;">
         <div style="display: flex; align-items: flex-start; gap: 0;">
@@ -196,9 +196,11 @@
         <table id="resultsTable">
             <thead>
                 <tr>
-                    <th colspan="17" style="text-align:right; padding:2px 6px; background:transparent; border:none;">
-                        <button class="btn-help" onclick="showInfo('table-columns')" title="Explain all column headings" style="font-size:0.8em;">ℹ️ Column guide</button>
-                        <button class="btn-help" onclick="showInfo('transit-levels')" title="Explain High/Medium/Low transit probability" style="font-size:0.8em; margin-left:4px;">🟢 Probability guide</button>
+                    <th colspan="17" class="guide-btn-row">
+                        <span class="guide-btn-group">
+                            <button class="btn-help" onclick="showInfo('table-columns')" title="Explain all column headings" style="font-size:0.8em;">ℹ️ Column guide</button>
+                            <button class="btn-help" onclick="showInfo('transit-levels')" title="Explain High/Medium/Low transit probability" style="font-size:0.8em;">🟢 Probability guide</button>
+                        </span>
                     </th>
                 </tr>
                 <tr>
@@ -243,8 +245,8 @@
             </colgroup>
             <thead>
                 <tr>
-                    <th colspan="12" style="padding:4px 6px; background:transparent; border:none; text-align:center;">
-                        <span style="display:inline-flex; gap:6px; background:#1a2535; border:1px solid #2e4a6b; border-radius:6px; padding:3px 8px;">
+                    <th colspan="12" class="guide-btn-row">
+                        <span class="guide-btn-group">
                             <button class="btn-help" onclick="showInfo('table-columns-rich')" title="Explain rich table columns" style="font-size:0.8em;">ℹ️ Column guide</button>
                             <button class="btn-help" onclick="showInfo('transit-levels')" title="Explain High/Medium/Low transit probability" style="font-size:0.8em;">🟢 Probability guide</button>
                         </span>
@@ -355,9 +357,22 @@
                 <div class="sidebar-panel" id="transitPanel">
                     <!-- Eclipse watch/warning/active card — shown when eclipse is imminent/active -->
                     <div id="eclipseCard" style="display:none"></div>
-                    <h3>✈️ Upcoming Transits</h3>
+                    <h3>✈️ Upcoming Transits <span class="panel-subtitle">(Prediction)</span></h3>
                     <div id="transitList" class="transit-list">
                         <p class="empty-state">No transits detected</p>
+                    </div>
+                </div>
+
+                <!-- Real-time Transit Detection -->
+                <div class="sidebar-panel" id="detectPanel">
+                    <h3>🎯 Live Detection</h3>
+                    <div id="detectIndicator" class="detect-indicator detect-idle">
+                        <span>Idle</span>
+                    </div>
+                    <div id="detectStats" class="detect-stats" style="display:none"></div>
+                    <button id="detectToggleBtn" class="btn btn-primary btn-compact" onclick="toggleDetection()">▶ Start Detection</button>
+                    <div id="detectEventLog" class="detect-event-log">
+                        <p class="empty-state">No detections yet</p>
                     </div>
                 </div>
             </div>
@@ -522,8 +537,16 @@
             <div class="modal-content">
                 <div class="modal-header">
                     <h2>📁 All Captured Files</h2>
+                    <div id="gridSelectionToolbar" class="grid-sel-toolbar" style="display:none;">
+                        <span id="gridSelCount" class="grid-sel-count"></span>
+                        <button class="btn-icon" onclick="gridSelectAll()" title="Select all">☑️</button>
+                        <button class="btn-icon" onclick="gridSelectNone()" title="Clear selection">✖️</button>
+                        <button class="btn-icon" onclick="gridDownloadSelected()" title="Download selected">⬇️</button>
+                        <button class="btn-icon btn-danger" onclick="gridDeleteSelected()" title="Delete selected">🗑️</button>
+                    </div>
                     <button class="modal-close" onclick="toggleFilesModal()">✕</button>
                 </div>
+                <div class="grid-sel-hint">Click to select · Ctrl+click to add · Shift+click for range · Drag to lasso</div>
                 <div id="filesGrid" class="files-grid-modal">
                     <p class="empty-state">No files</p>
                 </div>

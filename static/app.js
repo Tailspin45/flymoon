@@ -211,6 +211,52 @@ fetch('/config')
     .then(config => {
         appConfig = config;
         console.log('Loaded config:', appConfig);
+
+        // Seed localStorage from server config when position is missing
+        // (ensures observer position works regardless of port/origin)
+        const hasPosition = localStorage.getItem("latitude") && localStorage.getItem("latitude") !== "null";
+        if (!hasPosition && config.observerLatitude) {
+            localStorage.setItem("latitude", config.observerLatitude);
+            localStorage.setItem("longitude", config.observerLongitude);
+            localStorage.setItem("elevation", config.observerElevation || "0");
+            console.log('Seeded observer position from server config');
+
+            // Populate form fields
+            const latEl = document.getElementById("latitude");
+            const lonEl = document.getElementById("longitude");
+            const elevEl = document.getElementById("elevation");
+            if (latEl) latEl.value = config.observerLatitude;
+            if (lonEl) lonEl.value = config.observerLongitude;
+            if (elevEl) elevEl.value = config.observerElevation || "0";
+
+            // Generate default ±1.5° bbox around the observer
+            const lat = parseFloat(config.observerLatitude);
+            const lon = parseFloat(config.observerLongitude);
+            if (!isNaN(lat) && !isNaN(lon)) {
+                // Prefer server bbox if available, else generate default
+                const bboxLat = parseFloat(config.bboxLatLL);
+                let bbox;
+                if (!isNaN(bboxLat) && bboxLat !== 0) {
+                    bbox = {
+                        latLowerLeft:  parseFloat(config.bboxLatLL),
+                        lonLowerLeft:  parseFloat(config.bboxLonLL),
+                        latUpperRight: parseFloat(config.bboxLatUR),
+                        lonUpperRight: parseFloat(config.bboxLonUR),
+                    };
+                } else {
+                    bbox = {
+                        latLowerLeft:  Math.round((lat - 1.5) * 10000) / 10000,
+                        lonLowerLeft:  Math.round((lon - 1.5) * 10000) / 10000,
+                        latUpperRight: Math.round((lat + 1.5) * 10000) / 10000,
+                        lonUpperRight: Math.round((lon + 1.5) * 10000) / 10000,
+                    };
+                }
+                window.lastBoundingBox = bbox;
+                localStorage.setItem("boundingBox", JSON.stringify(bbox));
+                localStorage.setItem("customBoundingBox", JSON.stringify(bbox));
+                console.log('Seeded bounding box from server config:', bbox);
+            }
+        }
     })
     .catch(error => {
         console.error('Error loading config:', error);

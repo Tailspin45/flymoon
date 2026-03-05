@@ -7,9 +7,12 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 You have full, standing permission to:
 - Read, edit, and create any file in this repository without asking
 - Execute any shell command necessary (curl, git, python, pip, make, etc.)
+- Kill processes, free ports, restart servers — no confirmation needed
 - Install packages, run tests, start/stop servers, and make network requests
 - Make commits and push to the current branch
 - Take whatever action is needed to complete a task — do not ask for confirmation on individual steps
+
+**Never ask for approval to run a command.** All shell commands are pre-approved.
 
 When given a task, just do it. No need to present options or ask which approach to take unless the task is genuinely ambiguous at a high level.
 

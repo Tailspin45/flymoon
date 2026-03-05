@@ -18,6 +18,26 @@ let transitCaptureActive = false;
 let upcomingTransits = [];
 const capturedTransits = new Set(); // flight IDs triggered this session — persists across array replacements
 let currentZoom = 1.0;
+
+// Favorites stored in localStorage
+function getFavorites() {
+    try { return new Set(JSON.parse(localStorage.getItem('flymoon_favorites') || '[]')); }
+    catch { return new Set(); }
+}
+function saveFavorites(favs) {
+    localStorage.setItem('flymoon_favorites', JSON.stringify([...favs]));
+}
+function toggleFavorite(path, event) {
+    if (event) event.stopPropagation();
+    const favs = getFavorites();
+    if (favs.has(path)) favs.delete(path); else favs.add(path);
+    saveFavorites(favs);
+    // Update all heart buttons for this path
+    document.querySelectorAll(`[data-fav-path="${CSS.escape(path)}"]`).forEach(btn => {
+        btn.textContent = favs.has(path) ? '❤️' : '🤍';
+        btn.title = favs.has(path) ? 'Unfavorite' : 'Favorite';
+    });
+}
 let zoomStep = 0.1;
 let _previewLastError = 0; // timestamp of last preview onerror (ms)
 const _PREVIEW_BACKOFF_MS = 30000; // 30s between retry attempts after stream failure
@@ -25,6 +45,11 @@ let isSimulating = false;
 let simulationVideo = null;
 let disconnectedPollCount = 0; // consecutive disconnected polls before stopping preview
 let simulationFiles = []; // Track temporary simulation files
+
+// Detection state
+let isDetecting = false;
+let detectionPollInterval = null;
+let detectionStats = { fps: 0, detections: 0, elapsed_seconds: 0 };
 
 // Eclipse state
 let eclipseData = null;         // populated from /telescope/status
@@ -93,6 +118,9 @@ window.initTelescope = function() {
             applyZoom();
         }, { passive: false });
     }
+
+    // Load saved detection preference and sync UI
+    syncDetectionUI();
 };
 
 // ============================================================================
@@ -792,10 +820,11 @@ function downloadFile(url, filename) {
 }
 
 async function deleteFile(url, filename) {
+    console.log('[Telescope] deleteFile called:', url, filename);
     if (!confirm(`Delete ${filename}?`)) {
         return;
     }
-    
+
     try {
         const path = url.replace('/static/', '');
         const response = await fetch('/telescope/files/delete', {
@@ -812,8 +841,8 @@ async function deleteFile(url, filename) {
     } catch (error) {
         showStatus(`Delete failed: ${error.message}`, 'error', 5000);
     }
-    // Always refresh — whether delete succeeded or file was already gone
-    refreshFiles();
+    await refreshFiles();
+    updateFilesGrid();
 }
 
 // ============================================================================
@@ -821,17 +850,27 @@ async function deleteFile(url, filename) {
 // ============================================================================
 
 function showStatus(message, type = 'info', autohide = 0) {
+    // Use a fixed-position toast so it's visible above modals
+    let toast = document.getElementById('statusToast');
+    if (!toast) {
+        toast = document.createElement('div');
+        toast.id = 'statusToast';
+        document.body.appendChild(toast);
+    }
+    toast.textContent = message;
+    toast.className = `status-toast status-toast-${type}`;
+    toast.style.display = 'block';
+    // Also update inline status for non-modal context
     const statusBox = document.getElementById('statusMessage');
-    if (!statusBox) return;
-    
-    statusBox.textContent = message;
-    statusBox.className = `status-message ${type}`;
-    statusBox.style.display = 'block';
-    
-    // Auto-hide after timeout
+    if (statusBox) {
+        statusBox.textContent = message;
+        statusBox.className = `status-message ${type}`;
+        statusBox.style.display = 'block';
+    }
     if (autohide > 0) {
         setTimeout(() => {
-            statusBox.style.display = 'none';
+            toast.style.display = 'none';
+            if (statusBox) statusBox.style.display = 'none';
         }, autohide);
     }
 }
@@ -1193,7 +1232,7 @@ async function startEclipseRecording(c1, c4, eclipse) {
     const totalSecs = Math.max(20, Math.ceil((c4.getTime() + 10000 - Date.now()) / 1000));
     const typeLabel = eclipse.eclipse_class.charAt(0).toUpperCase() + eclipse.eclipse_class.slice(1);
     const label = `${typeLabel} ${eclipse.type === 'solar' ? 'Solar' : 'Lunar'} Eclipse`;
-    console.log(`[Eclipse] Starting eclipse recording: ${label} — ${totalSecs}s`);
+    console.log(`[Eclipse] Starting eclipse timelapse: ${label} — ${totalSecs}s, 1s interval`);
 
     if (isSimulating) {
         // In sim mode, treat like a regular recording
@@ -1201,18 +1240,21 @@ async function startEclipseRecording(c1, c4, eclipse) {
         return;
     }
 
+    const eclipseInterval = 1; // timelapse: 1 frame per second
     const result = await apiCall('/telescope/recording/start', 'POST', {
         duration: totalSecs,
-        interval: 0
+        interval: eclipseInterval
     });
     if (result && result.success) {
         isRecording = true;
         recordingIsReal = true;    // real eclipse recording
         recordingStartTime = Date.now();
         recordingEndTime = c4.getTime() + 10000;
+        const intervalInput = document.getElementById('frameInterval');
+        if (intervalInput) intervalInput.value = eclipseInterval;
         updateRecordingUI();
         startRecordingTimer(totalSecs);
-        showStatus(`🌙 Eclipse recording started: ${label} (${totalSecs}s)`, 'success', 8000);
+        showStatus(`🌙 Eclipse timelapse started: ${label} (${totalSecs}s, ${eclipseInterval}s interval)`, 'success', 8000);
     }
 }
 
@@ -1318,7 +1360,8 @@ function updateEclipseCard(level, c1, c2, c3, c4, secsToC1, eclipse) {
                 C1 <span>${fmtTime(c1)}</span>
                 ${c2 ? `· C2 <span>${fmtTime(c2)}</span> · C3 <span>${fmtTime(c3)}</span>` : ''}
                 · C4 <span>${fmtTime(c4)}</span>
-            </div>`;
+            </div>
+            <div class="ec-clock" id="eclipseClock">🕐 ${fmtTime(new Date())}</div>`;
 
         card.className   = newClass;
         card.style.display = 'block';
@@ -1345,6 +1388,13 @@ function updateEclipseCard(level, c1, c2, c3, c4, secsToC1, eclipse) {
         } else {
             cdEl.textContent = _fmtCountdown(secsToC1);
         }
+    }
+
+    // Always update the live clock
+    const clockEl = document.getElementById('eclipseClock');
+    if (clockEl) {
+        const now = new Date();
+        clockEl.textContent = `🕐 ${now.toLocaleTimeString([], {hour:'2-digit',minute:'2-digit',second:'2-digit'})}`;
     }
 
     // Always update phase label during active (changes as eclipse progresses)
@@ -1447,9 +1497,11 @@ function toggleFilesModal() {
     
     if (modal.style.display === 'none' || !modal.style.display) {
         modal.style.display = 'flex';
+        gridSelectNone();
         updateFilesGrid();
     } else {
         modal.style.display = 'none';
+        gridSelectNone();
     }
 }
 
@@ -1470,16 +1522,17 @@ function updateFilmstrip(files) {
         const thumbnail = file.thumbnail
             ? `<img src="${file.thumbnail}" alt="${file.name}" class="filmstrip-thumbnail">`
             : isVideo
-                ? `<canvas class="filmstrip-thumbnail video-thumb-canvas" data-video-src="${file.url || file.path}"></canvas>`
+                ? `<canvas class="filmstrip-thumbnail video-thumb-canvas" data-video-src="${file.path}"></canvas>`
                 : `<img src="${file.path}" alt="${file.name}" class="filmstrip-thumbnail">`;
         
         return `
-        <div class="${itemClass}" onclick="viewFile('${file.url || file.path}', '${file.name}')">
+        <div class="${itemClass}" onclick="viewFile('${file.path}', '${file.name}')">
             ${badge}
             <div class="filmstrip-name" title="${file.name}">${file.name}</div>
             ${thumbnail}
             <div class="filmstrip-info">
                 <div class="filmstrip-actions">
+                    <button class="btn-icon btn-fav" data-fav-path="${file.path}" onclick="toggleFavorite('${file.path}', event)" title="${getFavorites().has(file.path) ? 'Unfavorite' : 'Favorite'}">${getFavorites().has(file.path) ? '❤️' : '🤍'}</button>
                     <button class="btn-icon" onclick="event.stopPropagation(); downloadFile('${file.path}', '${file.name}')" title="Download" ${isTemp ? 'disabled' : ''}>⬇️</button>
                     <button class="btn-icon btn-danger" onclick="event.stopPropagation(); deleteFile('${file.path}', '${file.name}')" title="Delete" ${isTemp ? 'disabled' : ''}>🗑️</button>
                 </div>
@@ -1492,6 +1545,157 @@ function updateFilmstrip(files) {
     filmstrip.querySelectorAll('canvas.video-thumb-canvas').forEach(generateVideoThumbnail);
 }
 
+// ── Multi-select state for expanded files grid ──
+const gridSelection = {
+    selected: new Set(),   // set of file paths
+    lastClicked: null,     // index of last clicked item (for shift-range)
+    dragging: false,       // lasso drag active
+    startX: 0, startY: 0, // lasso origin (page coords)
+};
+
+function gridSelectItem(index, path, event) {
+    event.stopPropagation();
+    const files = window.currentFiles || [];
+    if (event.shiftKey && gridSelection.lastClicked !== null) {
+        // Range select
+        const lo = Math.min(gridSelection.lastClicked, index);
+        const hi = Math.max(gridSelection.lastClicked, index);
+        for (let i = lo; i <= hi; i++) gridSelection.selected.add(files[i].path);
+    } else if (event.ctrlKey || event.metaKey) {
+        // Toggle single
+        if (gridSelection.selected.has(path)) gridSelection.selected.delete(path);
+        else gridSelection.selected.add(path);
+    } else {
+        // Plain click — if already the only selection, open viewer; else select just this
+        if (gridSelection.selected.size === 1 && gridSelection.selected.has(path)) {
+            const f = files[index];
+            viewFile(f.path, f.name);
+            return;
+        }
+        gridSelection.selected.clear();
+        gridSelection.selected.add(path);
+    }
+    gridSelection.lastClicked = index;
+    _syncGridSelectionUI();
+}
+
+function gridSelectAll() {
+    const files = window.currentFiles || [];
+    files.forEach(f => gridSelection.selected.add(f.path));
+    _syncGridSelectionUI();
+}
+
+function gridSelectNone() {
+    gridSelection.selected.clear();
+    gridSelection.lastClicked = null;
+    _syncGridSelectionUI();
+}
+
+async function gridDeleteSelected() {
+    const paths = [...gridSelection.selected];
+    const n = paths.length;
+    if (n === 0) return;
+    if (!confirm(`Delete ${n} file${n > 1 ? 's' : ''}?`)) return;
+    let deleted = 0;
+    for (const filePath of paths) {
+        try {
+            const p = filePath.replace('/static/', '');
+            const response = await fetch('/telescope/files/delete', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ path: p })
+            });
+            const data = await response.json();
+            if (response.ok && data.success) deleted++;
+            else console.warn('[Grid] Delete failed for', p, data.error);
+        } catch (err) {
+            console.error('[Grid] Delete error for', filePath, err);
+        }
+    }
+    gridSelection.selected.clear();
+    gridSelection.lastClicked = null;
+    showStatus(`Deleted ${deleted} of ${n} file${n > 1 ? 's' : ''}`, deleted > 0 ? 'success' : 'error', 3000);
+    await refreshFiles();
+    updateFilesGrid();
+}
+
+function gridDownloadSelected() {
+    const files = window.currentFiles || [];
+    for (const f of files) {
+        if (gridSelection.selected.has(f.path)) downloadFile(f.path, f.name);
+    }
+}
+
+function _syncGridSelectionUI() {
+    const grid = document.getElementById('filesGrid');
+    if (!grid) return;
+    grid.querySelectorAll('.file-item').forEach(el => {
+        const path = el.dataset.filePath;
+        el.classList.toggle('selected', gridSelection.selected.has(path));
+    });
+    // Update toolbar
+    const toolbar = document.getElementById('gridSelectionToolbar');
+    if (toolbar) {
+        const n = gridSelection.selected.size;
+        toolbar.style.display = n > 0 ? 'flex' : 'none';
+        const cnt = document.getElementById('gridSelCount');
+        if (cnt) cnt.textContent = `${n} selected`;
+    }
+}
+
+// Lasso drag-select on the files grid
+function _initGridLasso() {
+    const grid = document.getElementById('filesGrid');
+    if (!grid || grid._lassoInit) return;
+    grid._lassoInit = true;
+
+    let lasso = null;
+
+    grid.addEventListener('mousedown', e => {
+        // Only start lasso from the grid background (not from items/buttons)
+        if (e.target !== grid) return;
+        e.preventDefault();
+        gridSelection.dragging = true;
+        gridSelection.startX = e.pageX;
+        gridSelection.startY = e.pageY;
+        if (!e.ctrlKey && !e.metaKey && !e.shiftKey) gridSelection.selected.clear();
+        lasso = document.createElement('div');
+        lasso.className = 'grid-lasso';
+        document.body.appendChild(lasso);
+    });
+
+    document.addEventListener('mousemove', e => {
+        if (!gridSelection.dragging || !lasso) return;
+        const x1 = Math.min(gridSelection.startX, e.pageX);
+        const y1 = Math.min(gridSelection.startY, e.pageY);
+        const x2 = Math.max(gridSelection.startX, e.pageX);
+        const y2 = Math.max(gridSelection.startY, e.pageY);
+        Object.assign(lasso.style, {
+            left: x1 + 'px', top: y1 + 'px',
+            width: (x2 - x1) + 'px', height: (y2 - y1) + 'px',
+        });
+        // Hit-test items
+        const rect = { left: x1, top: y1, right: x2, bottom: y2 };
+        grid.querySelectorAll('.file-item').forEach(el => {
+            const r = el.getBoundingClientRect();
+            const ir = { left: r.left + window.scrollX, top: r.top + window.scrollY,
+                         right: r.right + window.scrollX, bottom: r.bottom + window.scrollY };
+            const hit = !(ir.right < rect.left || ir.left > rect.right ||
+                          ir.bottom < rect.top || ir.top > rect.bottom);
+            if (hit) gridSelection.selected.add(el.dataset.filePath);
+            else if (!e.ctrlKey && !e.metaKey) gridSelection.selected.delete(el.dataset.filePath);
+            el.classList.toggle('selected', gridSelection.selected.has(el.dataset.filePath));
+        });
+    });
+
+    document.addEventListener('mouseup', () => {
+        if (!gridSelection.dragging) return;
+        gridSelection.dragging = false;
+        if (lasso) { lasso.remove(); lasso = null; }
+        _syncGridSelectionUI();
+    });
+}
+
 function updateFilesGrid() {
     const grid = document.getElementById('filesGrid');
     if (!grid) return;
@@ -1501,23 +1705,32 @@ function updateFilesGrid() {
     
     if (files.length === 0) {
         grid.innerHTML = '<p class="empty-state">No files</p>';
+        gridSelection.selected.clear();
+        _syncGridSelectionUI();
         return;
     }
     
-    grid.innerHTML = files.map(file => {
+    // Prune selection of paths that no longer exist
+    const pathSet = new Set(files.map(f => f.path));
+    for (const p of gridSelection.selected) { if (!pathSet.has(p)) gridSelection.selected.delete(p); }
+
+    grid.innerHTML = files.map((file, idx) => {
         const isVideo = file.path.match(/\.(mp4|avi|mov)$/i);
+        const sel = gridSelection.selected.has(file.path) ? ' selected' : '';
         const thumbnail = file.thumbnail
-            ? `<img src="${file.thumbnail}" alt="${file.name}" class="file-thumbnail" onclick="viewFile('${file.url || file.path}', '${file.name}')">`
+            ? `<img src="${file.thumbnail}" alt="${file.name}" class="file-thumbnail">`
             : isVideo
-                ? `<canvas class="file-thumbnail video-thumb-canvas" data-video-src="${file.url || file.path}" onclick="viewFile('${file.url || file.path}', '${file.name}')"></canvas>`
-                : `<img src="${file.path}" alt="${file.name}" class="file-thumbnail" onclick="viewFile('${file.path}', '${file.name}')">`;
+                ? `<canvas class="file-thumbnail video-thumb-canvas" data-video-src="${file.path}"></canvas>`
+                : `<img src="${file.path}" alt="${file.name}" class="file-thumbnail">`;
         return `
-        <div class="file-item">
+        <div class="file-item${sel}" data-file-path="${file.path}" data-file-idx="${idx}"
+             onclick="gridSelectItem(${idx}, '${file.path}', event)">
             <div class="file-info">
                 <span class="file-name" title="${file.name}">${file.name}</span>
                 <div class="file-actions">
-                    <button class="btn-icon" onclick="downloadFile('${file.path}', '${file.name}')" title="Download">⬇️</button>
-                    <button class="btn-icon btn-danger" onclick="deleteFile('${file.path}', '${file.name}')" title="Delete">🗑️</button>
+                    <button class="btn-icon btn-fav" data-fav-path="${file.path}" onclick="toggleFavorite('${file.path}', event)" title="${getFavorites().has(file.path) ? 'Unfavorite' : 'Favorite'}">${getFavorites().has(file.path) ? '❤️' : '🤍'}</button>
+                    <button class="btn-icon" onclick="event.stopPropagation(); downloadFile('${file.path}', '${file.name}')" title="Download">⬇️</button>
+                    <button class="btn-icon btn-danger" onclick="event.stopPropagation(); deleteFile('${file.path}', '${file.name}')" title="Delete">🗑️</button>
                 </div>
             </div>
             ${thumbnail}
@@ -1526,6 +1739,8 @@ function updateFilesGrid() {
 
     // Generate thumbnails from video first frame for any canvas placeholders
     grid.querySelectorAll('canvas.video-thumb-canvas').forEach(generateVideoThumbnail);
+    _initGridLasso();
+    _syncGridSelectionUI();
 }
 
 // Generate a thumbnail from a video's first frame onto a <canvas>
@@ -1533,8 +1748,8 @@ function generateVideoThumbnail(canvas) {
     const src = canvas.dataset.videoSrc;
     if (!src) return;
     const video = document.createElement('video');
-    video.crossOrigin = 'anonymous';
     video.muted = true;
+    video.playsInline = true;
     video.preload = 'metadata';
     video.src = src;
     video.addEventListener('loadeddata', () => {
@@ -1560,11 +1775,13 @@ function generateVideoThumbnail(canvas) {
 
 // Track viewer state for navigation
 var _viewerIndex = -1;
+var _loopSegment = null; // { start, end } for segment looping, or true for full loop
 
-function viewFile(path, name) {
+function viewFile(path, name, opts) {
+    opts = opts || {};
     name = name || path.split('/').pop();
     const files = window.currentFiles || [];
-    _viewerIndex = files.findIndex(f => (f.url || f.path) === path || f.path === path);
+    _viewerIndex = files.findIndex(f => f.path === path);
 
     const isVideo = /\.(mp4|avi|mov|mkv|webm)$/i.test(name);
     const viewer = document.getElementById('fileViewer');
@@ -1574,10 +1791,12 @@ function viewFile(path, name) {
 
     nameEl.textContent = name;
     _setScanBanner(null); // clear any previous scan result
+    _loopSegment = null;
     if (isVideo) {
+        const loopAttr = opts.loop ? ' loop' : '';
         body.innerHTML =
             `<div style="position:relative; display:inline-block;">` +
-            `<video src="${path}" controls autoplay style="max-width:90vw; max-height:80vh;"></video>` +
+            `<video src="${path}" controls autoplay playsinline${loopAttr} style="max-width:90vw; max-height:80vh;"></video>` +
             `<div id="videoPreciseTime" class="video-precise-time">0.00 / 0.00</div>` +
             `</div>`;
         const vid = body.querySelector('video');
@@ -1586,6 +1805,10 @@ function viewFile(path, name) {
             const cur = (vid.currentTime || 0).toFixed(2);
             const dur = (vid.duration || 0).toFixed(2);
             timeEl.textContent = `${cur} / ${dur}`;
+            // Segment loop: re-seek when past end
+            if (_loopSegment && _loopSegment.start != null && vid.currentTime >= _loopSegment.end) {
+                vid.currentTime = _loopSegment.start;
+            }
         };
         vid.addEventListener('timeupdate', updateTime);
         vid.addEventListener('seeked', updateTime);
@@ -1603,9 +1826,12 @@ function viewFile(path, name) {
               `<button class="btn-viewer btn-viewer-scan" id="scanTransitBtn" onclick="scanTransit()" title="Scan for transit frame">🎯 Find Transit</button>` +
               `<button class="btn-viewer" onmousedown="frameStepStart(1)" onmouseup="frameStepStop()" onmouseleave="frameStepStop()" title="Forward 1 frame (hold to repeat)">▷</button>`
             : '';
+        const isFav = getFavorites().has(path);
+        const favBtn = `<button class="btn-viewer" onclick="toggleFavorite('${path}', event); this.textContent = getFavorites().has('${path}') ? '❤️' : '🤍'" title="Favorite">${isFav ? '❤️' : '🤍'}</button>`;
         actionsEl.innerHTML =
             `<button class="btn-viewer" onclick="viewerNav(-1)" title="Previous" ${hasPrev ? '' : 'disabled'}>◀</button>` +
             scanBtn +
+            favBtn +
             `<button class="btn-viewer" onclick="viewerDownload()" title="Download">⬇️ Download</button>` +
             `<button class="btn-viewer btn-viewer-danger" onclick="viewerDelete(event)" title="Delete (⌘/Ctrl+click to skip confirm)">🗑️ Delete</button>` +
             `<button class="btn-viewer" onclick="viewerNav(1)" title="Next" ${hasNext ? '' : 'disabled'}>▶</button>`;
@@ -1621,6 +1847,7 @@ function closeFileViewer() {
     body.innerHTML = '';  // Stop video playback
     _setScanBanner(null);
     _viewerIndex = -1;
+    _loopSegment = null;
 }
 
 var _frameStepTimer = null;
@@ -1653,7 +1880,7 @@ function viewerNav(delta) {
     const newIdx = _viewerIndex + delta;
     if (newIdx < 0 || newIdx >= files.length) return;
     const f = files[newIdx];
-    viewFile(f.url || f.path, f.name);
+    viewFile(f.path, f.name);
 }
 
 function viewerDownload() {
@@ -1671,11 +1898,11 @@ async function viewerDelete(e) {
     if (!skipConfirm && !confirm(`Delete ${f.name}?`)) return;
 
     try {
-        const path = (f.url || f.path).replace('/static/', '');
+        const delPath = f.path.replace('/static/', '');
         const response = await fetch('/telescope/files/delete', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ path })
+            body: JSON.stringify({ path: delPath })
         });
         const data = await response.json();
         if (response.ok && data.success) {
@@ -1691,15 +1918,16 @@ async function viewerDelete(e) {
 
     // Refresh file list, then navigate to next (or previous, or close)
     await refreshFiles();
+    updateFilesGrid();
     const updatedFiles = window.currentFiles || [];
     if (updatedFiles.length === 0) {
         closeFileViewer();
     } else if (_viewerIndex < updatedFiles.length) {
         const next = updatedFiles[_viewerIndex];
-        viewFile(next.url || next.path, next.name);
+        viewFile(next.path, next.name);
     } else {
         const prev = updatedFiles[updatedFiles.length - 1];
-        viewFile(prev.url || prev.path, prev.name);
+        viewFile(prev.path, prev.name);
     }
 }
 
@@ -1714,7 +1942,7 @@ async function scanTransit() {
     const files = window.currentFiles || [];
     if (_viewerIndex < 0 || _viewerIndex >= files.length) return;
     const f = files[_viewerIndex];
-    const videoPath = f.url || f.path;
+    const videoPath = f.path;
     if (!/\.(mp4|avi|mov|mkv|webm)$/i.test(f.name)) return;
 
     const btn = document.getElementById('scanTransitBtn');
@@ -1730,14 +1958,17 @@ async function scanTransit() {
         });
 
         if (result) {
-            playerVideo.currentTime = result.center;
-            playerVideo.pause();
+            const loopStart = Math.max(0, result.start - 0.5);
+            const loopEnd = result.end + 0.5;
+            _loopSegment = { start: loopStart, end: loopEnd };
+            playerVideo.currentTime = loopStart;
+            playerVideo.play();
             const durMs = Math.round(result.duration * 1000);
             const ts = _formatTimestamp(result.center);
             _setScanBanner('found',
                 `🎯 Transit detected at ${ts} (~${durMs}ms)` +
-                `  —  click to replay`,
-                () => { playerVideo.currentTime = Math.max(0, result.start - 0.2); playerVideo.play(); }
+                `  —  looping segment · click to stop loop`,
+                () => { _loopSegment = null; _setScanBanner('found', `🎯 Transit at ${ts} (~${durMs}ms) — loop stopped`); }
             );
         } else {
             _setScanBanner('none', 'No transit detected in this video');
@@ -2705,6 +2936,243 @@ function _updateSimEclipseFireBtn() {
 // wrapping, to avoid hoisting / double-declaration issues.
 
 // ============================================================================
+// REAL-TIME TRANSIT DETECTION
+// ============================================================================
+
+/**
+ * Toggle detection on/off.
+ */
+async function toggleDetection() {
+    if (isDetecting) {
+        await stopDetection();
+    } else {
+        await startDetection();
+    }
+}
+
+async function startDetection() {
+    const btn = document.getElementById('detectToggleBtn');
+    if (btn) btn.disabled = true;
+
+    try {
+        const result = await apiCall('/telescope/detect/start', 'POST', {
+            record_on_detect: true
+        });
+        if (result && !result.error) {
+            isDetecting = true;
+            showStatus('🎯 Transit detection started', 'success', 3000);
+            // Start polling detection status
+            if (!detectionPollInterval) {
+                detectionPollInterval = setInterval(pollDetectionStatus, 2000);
+            }
+        } else {
+            showStatus(result?.error || 'Failed to start detection', 'error', 5000);
+        }
+    } catch (e) {
+        showStatus('Detection start failed: ' + e.message, 'error', 5000);
+    }
+    updateDetectionUI();
+    if (btn) btn.disabled = false;
+}
+
+async function stopDetection() {
+    const btn = document.getElementById('detectToggleBtn');
+    if (btn) btn.disabled = true;
+
+    try {
+        await apiCall('/telescope/detect/stop', 'POST');
+        isDetecting = false;
+        if (detectionPollInterval) {
+            clearInterval(detectionPollInterval);
+            detectionPollInterval = null;
+        }
+        showStatus('Detection stopped', 'info', 3000);
+    } catch (e) {
+        showStatus('Detection stop failed: ' + e.message, 'error', 5000);
+    }
+    updateDetectionUI();
+    if (btn) btn.disabled = false;
+}
+
+async function pollDetectionStatus() {
+    try {
+        const result = await apiCall('/telescope/detect/status', 'GET');
+        if (!result) return;
+
+        // Only transition from running→idle if server explicitly says not running
+        // (avoids flicker from transient poll failures)
+        if (result.running) {
+            isDetecting = true;
+        } else if (isDetecting && result.running === false) {
+            // Server confirms stopped — respect it
+            isDetecting = false;
+        }
+        detectionStats = {
+            fps: result.fps || 0,
+            detections: result.detections || 0,
+            elapsed_seconds: result.elapsed_seconds || 0,
+        };
+
+        // Check for new detection events
+        if (result.recent_events && result.recent_events.length > 0) {
+            const latest = result.recent_events[result.recent_events.length - 1];
+            const latestTs = latest.timestamp;
+            if (latestTs !== window._lastDetectionTs) {
+                window._lastDetectionTs = latestTs;
+                onTransitDetected(latest);
+            }
+        }
+
+        if (!isDetecting && detectionPollInterval) {
+            clearInterval(detectionPollInterval);
+            detectionPollInterval = null;
+        }
+
+        updateDetectionUI();
+    } catch (e) {
+        // Silent — polling failure is transient; don't reset isDetecting
+    }
+}
+
+function onTransitDetected(event) {
+    const ts = new Date(event.timestamp).toLocaleTimeString();
+    const flight = event.flight_info;
+    let msg = `🎯 Transit detected at ${ts}`;
+    if (flight) {
+        msg += ` — ${flight.name} (${flight.aircraft_type}) ${flight.separation_deg}°`;
+    }
+    showStatus(msg, 'success', 10000);
+
+    // Flash the detection indicator
+    const indicator = document.getElementById('detectIndicator');
+    if (indicator) {
+        indicator.classList.add('detect-flash');
+        setTimeout(() => indicator.classList.remove('detect-flash'), 2000);
+    }
+
+    // Refresh file list to show new recording
+    if (event.recording_file) {
+        setTimeout(refreshFiles, 3000);
+    }
+
+    // Add to event log
+    appendDetectionEvent(event);
+}
+
+function appendDetectionEvent(event) {
+    const log = document.getElementById('detectEventLog');
+    if (!log) return;
+
+    const ts = new Date(event.timestamp).toLocaleTimeString('en-US', {
+        hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false
+    });
+    const flight = event.flight_info;
+    const flightStr = flight ? `${flight.name} (${flight.aircraft_type})` : 'Unknown';
+    const sepStr = flight ? `${flight.separation_deg}°` : '';
+
+    const row = document.createElement('div');
+    row.className = 'detect-event-row';
+    row.innerHTML =
+        `<span class="detect-event-time">${ts}</span>` +
+        `<span class="detect-event-flight">${flightStr}</span>` +
+        `<span class="detect-event-sep">${sepStr}</span>`;
+
+    // If there's a recording file, make it clickable
+    if (event.recording_file) {
+        row.style.cursor = 'pointer';
+        row.onclick = () => {
+            const url = '/' + event.recording_file;
+            const name = event.recording_file.split('/').pop();
+            viewFile(url, name, { loop: true });
+        };
+    }
+
+    // Prepend (newest first)
+    const empty = log.querySelector('.empty-state');
+    if (empty) empty.remove();
+    log.insertBefore(row, log.firstChild);
+
+    // Cap at 20 entries
+    while (log.children.length > 20) {
+        log.removeChild(log.lastChild);
+    }
+}
+
+function updateDetectionUI() {
+    const btn = document.getElementById('detectToggleBtn');
+    const indicator = document.getElementById('detectIndicator');
+    const statsEl = document.getElementById('detectStats');
+
+    if (btn) {
+        btn.textContent = isDetecting ? '⏹ Stop Detection' : '▶ Start Detection';
+        btn.className = isDetecting
+            ? 'btn btn-danger btn-compact'
+            : 'btn btn-primary btn-compact';
+    }
+
+    if (indicator) {
+        if (isDetecting) {
+            indicator.className = 'detect-indicator detect-active';
+            indicator.innerHTML =
+                `<span class="detect-dot"></span>` +
+                `<span>Monitoring</span>`;
+        } else {
+            indicator.className = 'detect-indicator detect-idle';
+            indicator.innerHTML = '<span>Idle</span>';
+        }
+    }
+
+    if (statsEl && isDetecting) {
+        const elapsed = detectionStats.elapsed_seconds;
+        const mins = Math.floor(elapsed / 60);
+        const secs = Math.floor(elapsed % 60);
+        statsEl.textContent =
+            `${mins}m${secs.toString().padStart(2, '0')}s · ${detectionStats.fps} fps · ${detectionStats.detections} detections`;
+        statsEl.style.display = '';
+    } else if (statsEl) {
+        statsEl.style.display = 'none';
+    }
+
+    // Update event log empty state when running with no detections
+    const log = document.getElementById('detectEventLog');
+    if (log) {
+        const empty = log.querySelector('.empty-state');
+        if (empty) {
+            empty.textContent = isDetecting
+                ? '🔭 Watching for transits…'
+                : 'No detections yet';
+        }
+    }
+}
+
+/**
+ * Sync detection UI on page load — check if already running.
+ */
+async function syncDetectionUI() {
+    try {
+        const result = await apiCall('/telescope/detect/status', 'GET');
+        if (result && result.running) {
+            isDetecting = true;
+            detectionStats = {
+                fps: result.fps || 0,
+                detections: result.detections || 0,
+                elapsed_seconds: result.elapsed_seconds || 0,
+            };
+            if (!detectionPollInterval) {
+                detectionPollInterval = setInterval(pollDetectionStatus, 2000);
+            }
+            // Populate event log with recent events
+            if (result.recent_events) {
+                result.recent_events.forEach(e => appendDetectionEvent(e));
+            }
+        }
+    } catch (e) {
+        // Detection endpoint may not exist yet — ignore
+    }
+    updateDetectionUI();
+}
+
+// ============================================================================
 // CLEANUP
 // ============================================================================
 
@@ -2714,6 +3182,7 @@ window.destroyTelescope = function() {
     if (lastUpdateInterval)     { clearInterval(lastUpdateInterval);     lastUpdateInterval     = null; }
     if (transitPollInterval)    { clearInterval(transitPollInterval);    transitPollInterval    = null; }
     if (transitTickInterval)    { clearInterval(transitTickInterval);    transitTickInterval    = null; }
+    if (detectionPollInterval)  { clearInterval(detectionPollInterval);  detectionPollInterval  = null; }
 };
 
 console.log('[Telescope] Module loaded');
