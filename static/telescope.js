@@ -2984,7 +2984,14 @@ async function pollDetectionStatus() {
         const result = await apiCall('/telescope/detect/status', 'GET');
         if (!result) return;
 
-        isDetecting = result.running || false;
+        // Only transition from running→idle if server explicitly says not running
+        // (avoids flicker from transient poll failures)
+        if (result.running) {
+            isDetecting = true;
+        } else if (isDetecting && result.running === false) {
+            // Server confirms stopped — respect it
+            isDetecting = false;
+        }
         detectionStats = {
             fps: result.fps || 0,
             detections: result.detections || 0,
@@ -3008,7 +3015,7 @@ async function pollDetectionStatus() {
 
         updateDetectionUI();
     } catch (e) {
-        // Silent — polling failure is transient
+        // Silent — polling failure is transient; don't reset isDetecting
     }
 }
 
@@ -3109,6 +3116,17 @@ function updateDetectionUI() {
         statsEl.style.display = '';
     } else if (statsEl) {
         statsEl.style.display = 'none';
+    }
+
+    // Update event log empty state when running with no detections
+    const log = document.getElementById('detectEventLog');
+    if (log) {
+        const empty = log.querySelector('.empty-state');
+        if (empty) {
+            empty.textContent = isDetecting
+                ? '🔭 Watching for transits…'
+                : 'No detections yet';
+        }
     }
 }
 
