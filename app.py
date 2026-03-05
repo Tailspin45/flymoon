@@ -30,7 +30,6 @@ Environment Variables (see SETUP.md):
 
 import argparse
 import asyncio
-import json
 import os
 import time
 from datetime import date, datetime
@@ -38,25 +37,28 @@ from zoneinfo import ZoneInfo
 
 import requests
 from dotenv import load_dotenv
-from flask import Flask, jsonify, redirect, render_template, request, Response
+from flask import Flask, Response, jsonify, redirect, render_template, request
 from tzlocal import get_localzone_name
 
-from src.constants import POSSIBLE_TRANSITS_LOGFILENAME, ASTRO_EPHEMERIS, get_aeroapi_key
+from src.constants import (
+    ASTRO_EPHEMERIS,
+    POSSIBLE_TRANSITS_LOGFILENAME,
+    get_aeroapi_key,
+)
 
 # SETUP
 load_dotenv()
 
-from src import logger
+from src import logger, telescope_routes
 from src.astro import CelestialObject, get_rise_set_times
 from src.config_wizard import ConfigWizard
-from src.flight_data import save_possible_transits, sort_results
+from src.constants import PossibilityLevel
 from src.flight_cache import get_cache
-from src.position import get_my_pos, compute_track_velocity
+from src.flight_data import save_possible_transits, sort_results
+from src.position import compute_track_velocity, get_my_pos
+from src.seestar_client import TransitRecorder
 from src.telegram_notify import send_telegram_notification
 from src.transit import get_transits
-from src import telescope_routes
-from src.seestar_client import TransitRecorder
-from src.constants import PossibilityLevel
 
 # Module-level cache: {fa_flight_id: (speed_kmh, heading_deg)}
 # Populated when a user loads a flight's track; consumed by soft-refresh recalculation.
@@ -82,12 +84,15 @@ app = Flask(__name__)
 
 # Configure logging to suppress telescope status polling
 import logging
-werkzeug_logger = logging.getLogger('werkzeug')
+
+werkzeug_logger = logging.getLogger("werkzeug")
+
 
 class TelescopeStatusFilter(logging.Filter):
     def filter(self, record):
         # Filter out telescope status endpoint logs (polled every 2 seconds)
-        return '/telescope/status' not in record.getMessage()
+        return "/telescope/status" not in record.getMessage()
+
 
 werkzeug_logger.addFilter(TelescopeStatusFilter())
 
@@ -109,7 +114,7 @@ def get_transit_recorder():
         _transit_recorder = TransitRecorder(
             seestar_client=telescope_client,
             pre_buffer_seconds=10,
-            post_buffer_seconds=10
+            post_buffer_seconds=10,
         )
         logger.info("✅ TransitRecorder initialized")
 
@@ -119,7 +124,7 @@ def get_transit_recorder():
 def calculate_adaptive_interval(flights: list) -> int:
     """
     Calculate adaptive polling interval based on transit proximity.
-    
+
     Returns interval in seconds:
     - 30s if transit <2 min away
     - 60s if transit <5 min away
@@ -128,20 +133,22 @@ def calculate_adaptive_interval(flights: list) -> int:
     """
     if not flights:
         return 600  # 10 minutes if no flights
-    
+
     # Find closest high/medium probability transit
     priority_transits = [
-        f.get("time", 999) for f in flights 
-        if f.get("is_possible_transit") == 1 and 
-        f.get("possibility_level") in [PossibilityLevel.HIGH.value, PossibilityLevel.MEDIUM.value]
+        f.get("time", 999)
+        for f in flights
+        if f.get("is_possible_transit") == 1
+        and f.get("possibility_level")
+        in [PossibilityLevel.HIGH.value, PossibilityLevel.MEDIUM.value]
     ]
-    
+
     if not priority_transits:
         # Only low probability or no transits
         return 600  # 10 minutes
-    
+
     closest_transit_time = min(priority_transits)
-    
+
     if closest_transit_time < 2:  # <2 min away
         return 30  # 30 seconds
     elif closest_transit_time < 5:  # <5 min away
@@ -154,38 +161,89 @@ def calculate_adaptive_interval(flights: list) -> int:
 
 @app.route("/")
 def index():
-    return render_template("index.html", openaip_api_key=os.getenv("OPENAIP_API_KEY", ""))
+    return render_template(
+        "index.html", openaip_api_key=os.getenv("OPENAIP_API_KEY", "")
+    )
+
+
+@app.route("/cost-models")
+def cost_models():
+    """Flight data acquisition cost-benefit analysis paper."""
+    return render_template("cost_models.html")
 
 
 @app.route("/config")
 def get_config():
     """Return app configuration for client."""
     load_dotenv(override=True)  # Always pick up latest .env without restarting
-    return jsonify({
-        "autoRefreshIntervalMinutes": int(os.getenv("AUTO_REFRESH_INTERVAL_MINUTES", 10)),
-        "cacheEnabled": True,
-        "cacheTTLSeconds": 600,
-        "openaipApiKey": os.getenv("OPENAIP_API_KEY", ""),
-    })
+    return jsonify(
+        {
+            "autoRefreshIntervalMinutes": int(
+                os.getenv("AUTO_REFRESH_INTERVAL_MINUTES", 10)
+            ),
+            "cacheEnabled": True,
+            "cacheTTLSeconds": 600,
+            "openaipApiKey": os.getenv("OPENAIP_API_KEY", ""),
+        }
+    )
+
+
+import threading as _threading
+
+# Server-side OpenAIP tile cache — avoids re-fetching the same tile from OpenAIP
+# on every page load. Each tile is stored for TILE_CACHE_TTL seconds (1 hour).
+_tile_cache: dict = {}
+_tile_cache_lock = _threading.Lock()
+TILE_CACHE_TTL = 3600  # seconds
+
+
+def _get_cached_tile(key):
+    with _tile_cache_lock:
+        entry = _tile_cache.get(key)
+        if entry and (time.time() - entry["ts"]) < TILE_CACHE_TTL:
+            return entry["data"], entry["ct"]
+    return None, None
+
+
+def _set_cached_tile(key, data, content_type):
+    with _tile_cache_lock:
+        _tile_cache[key] = {"data": data, "ct": content_type, "ts": time.time()}
 
 
 @app.route("/tiles/openaip/<int:z>/<int:x>/<int:y>.png")
 def proxy_openaip_tile(z, x, y):
     """Proxy OpenAIP tiles through Flask to avoid browser extension blocking.
 
-    Browser extensions (ad blockers, privacy tools) often block direct requests to
-    third-party tile servers or URLs containing 'apiKey'. Proxying through localhost
-    bypasses this entirely.
+    Server-side cache (1 hour TTL) prevents each tile from making a new
+    outbound request on every page load, eliminating thread saturation that
+    could delay /flights responses.
     """
     api_key = os.getenv("OPENAIP_API_KEY", "")
     if not api_key:
         return Response(status=404)
-    url = f"https://api.tiles.openaip.net/api/data/openaip/{z}/{x}/{y}.png?apiKey={api_key}"
+
+    cache_key = f"{z}/{x}/{y}"
+    cached_data, cached_ct = _get_cached_tile(cache_key)
+    if cached_data is not None:
+        return Response(
+            cached_data,
+            status=200,
+            content_type=cached_ct or "image/png",
+            headers={"Cache-Control": "public, max-age=3600", "X-Tile-Cache": "HIT"},
+        )
+
+    url = f"https://api.tiles.openaip.net/api/data/openaip/{z}/{x}/{y}.png"
     try:
-        resp = requests.get(url, timeout=10)
-        return Response(resp.content, status=resp.status_code,
-                        content_type=resp.headers.get("Content-Type", "image/png"),
-                        headers={"Cache-Control": "public, max-age=3600"})
+        resp = requests.get(url, headers={"x-openaip-api-key": api_key}, timeout=5)
+        ct = resp.headers.get("Content-Type", "image/png")
+        if resp.status_code == 200:
+            _set_cached_tile(cache_key, resp.content, ct)
+        return Response(
+            resp.content,
+            status=resp.status_code,
+            content_type=ct,
+            headers={"Cache-Control": "public, max-age=3600", "X-Tile-Cache": "MISS"},
+        )
     except Exception:
         return Response(status=502)
 
@@ -206,7 +264,12 @@ def get_all_flights():
         _lon_raw = request.args.get("longitude")
         if _lat_raw is None or _lon_raw is None:
             logger.warning("[Flights] Missing or invalid coordinates")
-            return jsonify({"error": "Missing required parameter: 'latitude' and 'longitude'"}), 400
+            return (
+                jsonify(
+                    {"error": "Missing required parameter: 'latitude' and 'longitude'"}
+                ),
+                400,
+            )
         latitude = float(_lat_raw)
         longitude = float(_lon_raw)
         elevation = float(request.args.get("elevation") or 0)
@@ -214,17 +277,27 @@ def get_all_flights():
         alt_threshold = float(request.args.get("alt_threshold", 5.0))
         az_threshold = float(request.args.get("az_threshold", 10.0))
 
-        logger.debug(f"Parameter types: min_altitude={type(min_altitude)}, alt_threshold={type(alt_threshold)}, az_threshold={type(az_threshold)}")
-        
+        logger.debug(
+            f"Parameter types: min_altitude={type(min_altitude)}, alt_threshold={type(alt_threshold)}, az_threshold={type(az_threshold)}"
+        )
+
         has_send_notification = request.args.get("send-notification") == "true"
+
+        # Data source mode: 'hybrid' (default), 'fa-only', 'opensky-only', 'adsb-local'
+        data_source = request.args.get("data_source", "hybrid")
 
         # Targets disabled by the user in the UI (comma-separated: "sun", "moon", or "sun,moon")
         _disabled_raw = request.args.get("disabled_targets", "")
-        disabled_targets = {t.strip().lower() for t in _disabled_raw.split(",") if t.strip()}
+        disabled_targets = {
+            t.strip().lower() for t in _disabled_raw.split(",") if t.strip()
+        }
 
         # Check for custom bounding box from user
         custom_bbox = None
-        if all(key in request.args for key in ["bbox_lat_ll", "bbox_lon_ll", "bbox_lat_ur", "bbox_lon_ur"]):
+        if all(
+            key in request.args
+            for key in ["bbox_lat_ll", "bbox_lon_ll", "bbox_lat_ur", "bbox_lon_ur"]
+        ):
             custom_bbox = {
                 "lat_lower_left": float(request.args["bbox_lat_ll"]),
                 "lon_lower_left": float(request.args["bbox_lon_ll"]),
@@ -236,57 +309,116 @@ def get_all_flights():
         # Always check both sun and moon for transits
         all_flights = []
         target_coordinates = {}
-        tracking_targets = []  # List of targets actually being tracked (above min altitude)
-        
+        tracking_targets = (
+            []
+        )  # List of targets actually being tracked (above min altitude)
+
         # Check if target is above minimum altitude
         EARTH = ASTRO_EPHEMERIS["earth"]
-        MY_POSITION = get_my_pos(lat=latitude, lon=longitude, elevation=elevation, base_ref=EARTH)
+        MY_POSITION = get_my_pos(
+            lat=latitude, lon=longitude, elevation=elevation, base_ref=EARTH
+        )
         local_timezone = get_localzone_name()
         ref_datetime = datetime.now().replace(tzinfo=ZoneInfo(local_timezone))
-        
+
+        all_bboxes_used = []
         for target in ["sun", "moon"]:
             # Check altitude and calculate coordinates for both tracking and display
             celestial_obj = CelestialObject(name=target, observer_position=MY_POSITION)
             celestial_obj.update_position(ref_datetime=ref_datetime)
             coords = celestial_obj.get_coordinates()
-            
+
             # Always save coordinates for display in header (even if below horizon)
             target_coordinates[target] = coords
-            
+
             # Skip if user has toggled this target off in the UI
             if target in disabled_targets:
-                logger.info(f"{target.capitalize()} disabled by user toggle, skipping transit check")
+                logger.info(
+                    f"{target.capitalize()} disabled by user toggle, skipping transit check"
+                )
                 continue
 
             # Only check transits if above minimum altitude
             if coords["altitude"] >= min_altitude:
                 tracking_targets.append(target)  # Add to tracking list
-                logger.info(f"Checking transits for {target} (altitude: {coords['altitude']:.1f}°, thresholds: alt={alt_threshold}°, az={az_threshold}°)")
-                data = get_transits(latitude, longitude, elevation, target, test_mode, alt_threshold, az_threshold, custom_bbox)
-                
+                logger.info(
+                    f"Checking transits for {target} (altitude: {coords['altitude']:.1f}°, thresholds: alt={alt_threshold}°, az={az_threshold}°)"
+                )
+                data = get_transits(
+                    latitude,
+                    longitude,
+                    elevation,
+                    target,
+                    test_mode,
+                    alt_threshold,
+                    az_threshold,
+                    custom_bbox,
+                    data_source,
+                )
+                if data.get("bbox_used"):
+                    all_bboxes_used.append(data["bbox_used"])
+
                 # Tag each flight with which target it's for
                 for flight in data["flights"]:
                     flight["target"] = target
                     # Add computed fields for display
                     if "aircraft_elevation" in flight:
-                        flight["aircraft_elevation_feet"] = int(flight["aircraft_elevation"] * 3.28084)
+                        flight["aircraft_elevation_feet"] = int(
+                            flight["aircraft_elevation"] * 3.28084
+                        )
                     # Calculate distance from observer to aircraft in nautical miles
                     if "latitude" in flight and "longitude" in flight:
-                        from math import radians, sin, cos, sqrt, atan2
+                        from math import atan2, cos, radians, sin, sqrt
+
                         lat1, lon1 = radians(latitude), radians(longitude)
-                        lat2, lon2 = radians(flight["latitude"]), radians(flight["longitude"])
+                        lat2, lon2 = radians(flight["latitude"]), radians(
+                            flight["longitude"]
+                        )
                         dlat, dlon = lat2 - lat1, lon2 - lon1
-                        a = sin(dlat/2)**2 + cos(lat1) * cos(lat2) * sin(dlon/2)**2
-                        c = 2 * atan2(sqrt(a), sqrt(1-a))
+                        a = (
+                            sin(dlat / 2) ** 2
+                            + cos(lat1) * cos(lat2) * sin(dlon / 2) ** 2
+                        )
+                        c = 2 * atan2(sqrt(a), sqrt(1 - a))
                         distance_km = 6371 * c  # Earth radius in km
-                        flight["distance_nm"] = distance_km * 0.539957  # Convert km to nautical miles
+                        flight["distance_nm"] = (
+                            distance_km * 0.539957
+                        )  # Convert km to nautical miles
                 all_flights.extend(data["flights"])
             else:
-                logger.info(f"{target.capitalize()} below minimum altitude ({coords['altitude']:.1f}° < {float(min_altitude)}°), skipping transit check")
-        
+                logger.info(
+                    f"{target.capitalize()} below minimum altitude ({coords['altitude']:.1f}° < {float(min_altitude)}°), skipping transit check"
+                )
+
+        # Deduplicate: sun+moon calls both include excluded aircraft — keep the
+        # entry with the highest possibility_level for each flight ID.
+        seen: dict = {}
+        for f in all_flights:
+            fid = f.get("id") or f.get("name", "")
+            if fid not in seen or (f.get("possibility_level") or 0) > (
+                seen[fid].get("possibility_level") or 0
+            ):
+                seen[fid] = f
+        all_flights = list(seen.values())
+
         # Calculate adaptive refresh interval based on closest transit
         next_check_interval = calculate_adaptive_interval(all_flights)
-        
+
+        # Compute the bbox for the client — union of all corridor bboxes actually used.
+        # This avoids the earlier mismatched-target bug where _best_alt came from one
+        # target and _best_az came from the other.
+        if all_bboxes_used:
+            _bbox_for_client = {
+                "latLowerLeft": min(b["latLowerLeft"] for b in all_bboxes_used),
+                "lonLowerLeft": min(b["lonLowerLeft"] for b in all_bboxes_used),
+                "latUpperRight": max(b["latUpperRight"] for b in all_bboxes_used),
+                "lonUpperRight": max(b["lonUpperRight"] for b in all_bboxes_used),
+            }
+        else:
+            _bbox_for_client = (
+                None  # both targets below min altitude — no API query made
+            )
+
         # Combine results
         data = {
             "flights": sort_results(all_flights),
@@ -296,79 +428,138 @@ def get_all_flights():
             "disabledTargets": list(disabled_targets),
             "nextCheckInterval": next_check_interval,  # Seconds until next check
             "weather": None,  # Weather functionality not implemented yet
-            "boundingBox": {
-                "latLowerLeft": custom_bbox["lat_lower_left"] if custom_bbox else float(os.getenv("LAT_LOWER_LEFT", "0")),
-                "lonLowerLeft": custom_bbox["lon_lower_left"] if custom_bbox else float(os.getenv("LONG_LOWER_LEFT", "0")),
-                "latUpperRight": custom_bbox["lat_upper_right"] if custom_bbox else float(os.getenv("LAT_UPPER_RIGHT", "0")),
-                "lonUpperRight": custom_bbox["lon_upper_right"] if custom_bbox else float(os.getenv("LONG_UPPER_RIGHT", "0")),
-            }
+            "boundingBox": _bbox_for_client,
         }
 
         end_time = time.time()
         elapsed_time = end_time - start_time
         logger.info(f"Elapsed time: {elapsed_time} seconds")
 
-        if not test_mode:
-            try:
-                date_ = date.today().strftime("%Y%m%d")
-                # Stamp scope status onto each flight dict before saving
-                tc = telescope_routes.get_telescope_client()
-                scope_connected = bool(tc and tc.is_connected())
-                scope_mode = (tc._viewing_mode if tc and hasattr(tc, '_viewing_mode') else None) or ""
-                for f in data["flights"]:
-                    f["scope_connected"] = scope_connected
-                    f["scope_mode"] = scope_mode
-                asyncio.run(
-                    save_possible_transits(
-                        data["flights"], POSSIBLE_TRANSITS_LOGFILENAME.format(date_=date_)
+        # Run file-save and Telegram notification in a background thread so they
+        # don't block the HTTP response.  Both are best-effort — failures are logged.
+        def _background_tasks(flights_snapshot, send_notif):
+            if not test_mode:
+                try:
+                    date_ = date.today().strftime("%Y%m%d")
+                    tc = telescope_routes.get_telescope_client()
+                    scope_connected = bool(tc and tc.is_connected())
+                    scope_mode = (
+                        tc._viewing_mode
+                        if tc and hasattr(tc, "_viewing_mode")
+                        else None
+                    ) or ""
+                    for f in flights_snapshot:
+                        f["scope_connected"] = scope_connected
+                        f["scope_mode"] = scope_mode
+                    asyncio.run(
+                        save_possible_transits(
+                            flights_snapshot,
+                            POSSIBLE_TRANSITS_LOGFILENAME.format(date_=date_),
+                        )
                     )
-                )
-            except Exception as e:
-                logger.error(
-                    f"Error while trying to save possible transits. Details:\n{str(e)}"
-                )
+                except Exception as e:
+                    logger.error(f"Error saving possible transits: {e}")
+            if send_notif:
+                try:
+                    asyncio.run(send_telegram_notification(flights_snapshot, None))
+                except Exception as e:
+                    logger.error(f"Error sending Telegram notification: {e}")
 
-        if has_send_notification:
-            try:
-                # Send Telegram notification for medium/high probability transits
-                # Notification will include which target (sun/moon) each transit is for
-                asyncio.run(send_telegram_notification(data["flights"], None))
-            except Exception as e:
-                logger.error(f"Error while trying to send Telegram notification. Details:\n{str(e)}")
+            # Pre-fetch track data for HIGH-probability transits so that track-derived
+            # velocity is available for soft-refresh dead-reckoning without a user click.
+            api_key = get_aeroapi_key()
+            if api_key:
+                now_ts = time.time()
+                for f in flights_snapshot:
+                    if f.get("possibility_level") != PossibilityLevel.HIGH.value:
+                        continue
+                    fid = f.get("fa_flight_id") or ""
+                    if not fid:
+                        continue
+                    # Skip if already cached
+                    cached = _track_response_cache.get(fid)
+                    if cached and (now_ts - cached[0]) < ROUTE_TRACK_CACHE_TTL:
+                        continue
+                    try:
+                        import requests as _req
+
+                        url = f"https://aeroapi.flightaware.com/aeroapi/flights/{fid}/track"
+                        headers = {
+                            "Accept": "application/json; charset=UTF-8",
+                            "x-apikey": api_key,
+                        }
+                        resp = _req.get(url=url, headers=headers, timeout=10)
+                        if resp.status_code == 200:
+                            track_json = resp.json()
+                            from src.position import compute_track_velocity
+
+                            positions = (
+                                track_json.get("positions")
+                                or track_json.get("track")
+                                or []
+                            )
+                            velocity = compute_track_velocity(positions)
+                            if velocity:
+                                _track_velocity_cache[fid] = velocity
+                                logger.info(
+                                    f"[BG] Track velocity prefetched for {fid}: "
+                                    f"{velocity[0]:.0f} km/h  hdg {velocity[1]:.1f}°"
+                                )
+                            _track_response_cache[fid] = (now_ts, track_json)
+                        else:
+                            logger.warning(
+                                f"[BG] Track prefetch for {fid} returned {resp.status_code}"
+                            )
+                    except Exception as e:
+                        logger.error(f"[BG] Track prefetch failed for {fid}: {e}")
+
+        import threading as _t
+
+        _t.Thread(
+            target=_background_tasks,
+            args=(list(data["flights"]), has_send_notification),
+            daemon=True,
+        ).start()
 
         # Schedule automatic recordings for high-probability transits
         transit_recorder = get_transit_recorder()
         if transit_recorder:
             # Cleanup any stale timers from previous cycles
             transit_recorder.cleanup_stale_timers()
-            
+
             for flight in data["flights"]:
                 # Only record HIGH probability transits (green rows)
                 if flight.get("possibility_level") == PossibilityLevel.HIGH.value:
-                    eta_seconds = flight.get("time", 0) * 60  # time field is minutes from now
+                    eta_seconds = (
+                        flight.get("time", 0) * 60
+                    )  # time field is minutes from now
                     flight_id = flight.get("ident", flight.get("id", "unknown"))
 
                     try:
                         transit_recorder.schedule_transit_recording(
                             flight_id=flight_id,
                             eta_seconds=eta_seconds,
-                            transit_duration_estimate=2.0  # Aircraft transits ~0.5-2 seconds
+                            transit_duration_estimate=2.0,  # Aircraft transits ~0.5-2 seconds
                         )
-                        logger.info(f"📹 Scheduled recording for {flight_id} (ETA: {eta_seconds:.0f}s)")
+                        logger.info(
+                            f"📹 Scheduled recording for {flight_id} (ETA: {eta_seconds:.0f}s)"
+                        )
                     except Exception as e:
-                        logger.error(f"Failed to schedule recording for {flight_id}: {e}")
+                        logger.error(
+                            f"Failed to schedule recording for {flight_id}: {e}"
+                        )
 
         return jsonify(data)
-    
+
     except KeyError as e:
         logger.error(f"Missing required parameter: {e}")
         return jsonify({"error": f"Missing required parameter: {e}"}), 400
     except ValueError as e:
         logger.error(f"Invalid parameter value: {e}", exc_info=True)
-        return jsonify({"error": f"Invalid parameter value: {e}"}), 400
+        return jsonify({"error": "Invalid parameter value"}), 400
     except Exception as e:
         logger.error(f"Error in /flights endpoint: {str(e)}", exc_info=True)
-        return jsonify({"error": f"Server error: {str(e)}"}), 500
+        return jsonify({"error": "Internal server error"}), 500
 
 
 @app.route("/flights/<fa_flight_id>/route")
@@ -391,10 +582,13 @@ def get_flight_route(fa_flight_id):
             _route_response_cache[fa_flight_id] = (now, data)
             return jsonify(data)
         else:
-            return jsonify({"error": f"API returned status {response.status_code}"}), response.status_code
+            return (
+                jsonify({"error": f"API returned status {response.status_code}"}),
+                response.status_code,
+            )
     except Exception as e:
         logger.error(f"Error fetching route for {fa_flight_id}: {str(e)}")
-        return jsonify({"error": str(e)}), 500
+        return jsonify({"error": "Failed to fetch route data"}), 500
 
 
 @app.route("/transits/recalculate", methods=["POST"])
@@ -402,7 +596,7 @@ def recalculate_transits_endpoint():
     """
     Recalculate transit predictions for flights with updated positions.
     Does NOT call FlightAware API - uses provided flight data from soft refresh.
-    
+
     Request JSON:
     {
         "flights": [...],  // Array of flight objects with updated positions
@@ -414,7 +608,7 @@ def recalculate_transits_endpoint():
         "alt_threshold": 1.0,  // Optional
         "az_threshold": 1.0    // Optional
     }
-    
+
     Returns:
     {
         "flights": [...],  // Updated flight objects with new transit predictions
@@ -423,7 +617,7 @@ def recalculate_transits_endpoint():
     """
     try:
         data = request.get_json()
-        
+
         flights = data.get("flights", [])
         _lat_raw = data.get("latitude")
         _lon_raw = data.get("longitude")
@@ -435,11 +629,13 @@ def recalculate_transits_endpoint():
         elevation = float(data.get("elevation", 0))
         target = data.get("target", "auto")
         min_altitude = float(data.get("min_altitude", 15.0))
-        alt_threshold = float(data.get("alt_threshold", 
-                                      float(os.getenv("ALT_THRESHOLD", "1.0"))))
-        az_threshold = float(data.get("az_threshold", 
-                                     float(os.getenv("AZ_THRESHOLD", "1.0"))))
-        
+        alt_threshold = float(
+            data.get("alt_threshold", float(os.getenv("ALT_THRESHOLD", "1.0")))
+        )
+        az_threshold = float(
+            data.get("az_threshold", float(os.getenv("AZ_THRESHOLD", "1.0")))
+        )
+
         if not flights:
             return jsonify({"flights": [], "targetCoordinates": {}}), 200
 
@@ -452,47 +648,57 @@ def recalculate_transits_endpoint():
             fid = flight.get("fa_flight_id") or flight.get("id", "")
             if fid and fid in _track_velocity_cache:
                 spd, hdg = _track_velocity_cache[fid]
-                flight["speed"]     = spd
+                flight["speed"] = spd
                 flight["direction"] = hdg
                 flight.setdefault("position_source", "track")
                 tv_applied += 1
         if tv_applied:
-            logger.info(f"Track velocity applied to {tv_applied} flights in recalculate")
-        from src.transit import recalculate_transits
-        from src.astro import CelestialObject
-        from src.position import get_my_pos
-        from src.constants import ASTRO_EPHEMERIS
+            logger.info(
+                f"Track velocity applied to {tv_applied} flights in recalculate"
+            )
+        from math import atan2, cos, radians, sin, sqrt
         from zoneinfo import ZoneInfo
+
         from tzlocal import get_localzone_name
-        from math import radians, sin, cos, sqrt, atan2
-        
+
+        from src.astro import CelestialObject
+        from src.constants import ASTRO_EPHEMERIS
+        from src.position import get_my_pos
+        from src.transit import recalculate_transits
+
         EARTH = ASTRO_EPHEMERIS["earth"]
-        MY_POSITION = get_my_pos(lat=latitude, lon=longitude, elevation=elevation, base_ref=EARTH)
+        MY_POSITION = get_my_pos(
+            lat=latitude, lon=longitude, elevation=elevation, base_ref=EARTH
+        )
         local_timezone = get_localzone_name()
         ref_datetime = datetime.now().replace(tzinfo=ZoneInfo(local_timezone))
-        
+
         all_flights = []
         target_coordinates = {}
         tracking_targets = []
-        
+
         # Determine which targets to check
         targets_to_check = []
         if target == "auto":
             targets_to_check = ["sun", "moon"]
         else:
             targets_to_check = [target]
-        
+
         for target_name in targets_to_check:
             # Check altitude
-            celestial_obj = CelestialObject(name=target_name, observer_position=MY_POSITION)
+            celestial_obj = CelestialObject(
+                name=target_name, observer_position=MY_POSITION
+            )
             celestial_obj.update_position(ref_datetime=ref_datetime)
             coords = celestial_obj.get_coordinates()
             target_coordinates[target_name] = coords
-            
+
             if coords["altitude"] >= min_altitude:
                 tracking_targets.append(target_name)
-                logger.info(f"Recalculating transits for {target_name} (altitude: {coords['altitude']:.1f}°)")
-                
+                logger.info(
+                    f"Recalculating transits for {target_name} (altitude: {coords['altitude']:.1f}°)"
+                )
+
                 result = recalculate_transits(
                     flights,
                     latitude,
@@ -500,41 +706,50 @@ def recalculate_transits_endpoint():
                     elevation,
                     target_name,
                     alt_threshold,
-                    az_threshold
+                    az_threshold,
                 )
-                
+
                 # Tag each flight with target and add computed fields
                 for flight in result["flights"]:
                     flight["target"] = target_name
                     if "aircraft_elevation" in flight:
-                        flight["aircraft_elevation_feet"] = int(flight["aircraft_elevation"] * 3.28084)
+                        flight["aircraft_elevation_feet"] = int(
+                            flight["aircraft_elevation"] * 3.28084
+                        )
                     # Calculate distance
                     if "latitude" in flight and "longitude" in flight:
                         lat1, lon1 = radians(latitude), radians(longitude)
-                        lat2, lon2 = radians(flight["latitude"]), radians(flight["longitude"])
+                        lat2, lon2 = radians(flight["latitude"]), radians(
+                            flight["longitude"]
+                        )
                         dlat, dlon = lat2 - lat1, lon2 - lon1
-                        a = sin(dlat/2)**2 + cos(lat1) * cos(lat2) * sin(dlon/2)**2
-                        c = 2 * atan2(sqrt(a), sqrt(1-a))
+                        a = (
+                            sin(dlat / 2) ** 2
+                            + cos(lat1) * cos(lat2) * sin(dlon / 2) ** 2
+                        )
+                        c = 2 * atan2(sqrt(a), sqrt(1 - a))
                         distance_km = 6371 * c
                         flight["distance_nm"] = distance_km * 0.539957
-                
+
                 all_flights.extend(result["flights"])
-        
-        return jsonify({
-            "flights": all_flights,
-            "targetCoordinates": target_coordinates,
-            "trackingTargets": tracking_targets
-        })
-    
+
+        return jsonify(
+            {
+                "flights": all_flights,
+                "targetCoordinates": target_coordinates,
+                "trackingTargets": tracking_targets,
+            }
+        )
+
     except KeyError as e:
         logger.error(f"Missing required parameter: {e}")
         return jsonify({"error": f"Missing required parameter: {e}"}), 400
     except ValueError as e:
         logger.error(f"Invalid parameter value: {e}")
-        return jsonify({"error": f"Invalid parameter value: {e}"}), 400
+        return jsonify({"error": "Invalid parameter value"}), 400
     except Exception as e:
         logger.error(f"Error in /transits/recalculate: {str(e)}", exc_info=True)
-        return jsonify({"error": f"Server error: {str(e)}"}), 500
+        return jsonify({"error": "Internal server error"}), 500
 
 
 @app.route("/flights/<fa_flight_id>/track")
@@ -566,10 +781,13 @@ def get_flight_track(fa_flight_id):
             _track_response_cache[fa_flight_id] = (now, track_json)
             return jsonify(track_json)
         else:
-            return jsonify({"error": f"API returned status {response.status_code}"}), response.status_code
+            return (
+                jsonify({"error": f"API returned status {response.status_code}"}),
+                response.status_code,
+            )
     except Exception as e:
         logger.error(f"Error fetching track for {fa_flight_id}: {str(e)}")
-        return jsonify({"error": str(e)}), 500
+        return jsonify({"error": "Failed to fetch track data"}), 500
 
 
 @app.route("/telescope")
@@ -581,7 +799,9 @@ def telescope_page():
 @app.route("/transit-log")
 def transit_log():
     """Return deduplicated near-miss log: best angular separation per flight per day."""
-    import csv, glob, math
+    import csv
+    import glob
+    import math
 
     pattern = POSSIBLE_TRANSITS_LOGFILENAME.replace("{date_}", "*")
     files = sorted(glob.glob(pattern))
@@ -590,18 +810,22 @@ def transit_log():
     for filepath in files:
         date_str = filepath.split("log_")[1].replace(".csv", "")
         # Normalize date_str to ISO for consistent sort: "20260222" → "2026-02-22"
-        iso_date = f"{date_str[:4]}-{date_str[4:6]}-{date_str[6:8]}" if len(date_str) == 8 else date_str
+        iso_date = (
+            f"{date_str[:4]}-{date_str[4:6]}-{date_str[6:8]}"
+            if len(date_str) == 8
+            else date_str
+        )
         try:
             with open(filepath, newline="") as fh:
                 for row in csv.DictReader(fh):
                     try:
                         alt = float(row.get("alt_diff") or 999)
-                        az  = float(row.get("az_diff") or 999)
+                        az = float(row.get("az_diff") or 999)
                         # Fallback for old misaligned schema (waypoints commas broke CSV columns):
                         # the real alt_diff/az_diff ended up in is_possible_transit/possibility_level
                         if alt > 15 or az > 15:
                             alt_fb = float(row.get("is_possible_transit") or 999)
-                            az_fb  = float(row.get("possibility_level") or 999)
+                            az_fb = float(row.get("possibility_level") or 999)
                             if alt_fb < 15 and az_fb < 15:
                                 alt, az = alt_fb, az_fb
                             else:
@@ -625,7 +849,9 @@ def transit_log():
                                 "az_diff": round(az, 3),
                                 "sep": round(sep, 3),
                                 "time": row.get("time", ""),
-                                "possibility_level": int(float(row.get("possibility_level") or 0)),
+                                "possibility_level": int(
+                                    float(row.get("possibility_level") or 0)
+                                ),
                                 "target_alt": row.get("target_alt", ""),
                                 "plane_alt": row.get("plane_alt", ""),
                                 "target_az": row.get("target_az", ""),
@@ -648,14 +874,21 @@ telescope_routes.register_routes(app)
 
 # Start transit monitor
 from src.transit_monitor import get_monitor
+
 transit_monitor = get_monitor()
 transit_monitor.start()
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Flymoon Transit Monitor")
-    parser.add_argument("--test", action="store_true", help="Use test data (deprecated, use --demo)")
-    parser.add_argument("--demo", action="store_true", help="Use mock demonstration data with guaranteed classifications")
+    parser.add_argument(
+        "--test", action="store_true", help="Use test data (deprecated, use --demo)"
+    )
+    parser.add_argument(
+        "--demo",
+        action="store_true",
+        help="Use mock demonstration data with guaranteed classifications",
+    )
     args = parser.parse_args()
 
     test_mode = args.test or args.demo
@@ -666,6 +899,7 @@ if __name__ == "__main__":
 
     # Use PORT env var if set (e.g. by Electron), otherwise find a free port
     import socket
+
     port = None
     env_port = os.getenv("PORT")
     if env_port:
@@ -674,7 +908,7 @@ if __name__ == "__main__":
         for p in range(8000, 8101):
             try:
                 sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-                sock.bind(('0.0.0.0', p))
+                sock.bind(("0.0.0.0", p))
                 sock.close()
                 port = p
                 break
@@ -685,12 +919,13 @@ if __name__ == "__main__":
         logger.error("❌ No available ports in range 8000-8100")
         print("❌ No available ports in range 8000-8100")
         exit(1)
-    
+
     print(f"🚀 Starting server on port {port}")
-    
+
     # Reduce werkzeug logging noise
     import logging
-    log = logging.getLogger('werkzeug')
+
+    log = logging.getLogger("werkzeug")
     log.setLevel(logging.WARNING)
-    
+
     app.run(host="0.0.0.0", port=port, debug=False)

@@ -7,13 +7,38 @@
     <!-- favicon -->
     <link rel="icon" type="image/x-icon" href="{{ url_for('static', filename='images/favicon.ico') }}">
     <!-- CSS -->
-    <link rel="stylesheet" href="{{ url_for('static', filename='main.css') }}?v=1771957271">
+    <link rel="stylesheet" href="{{ url_for('static', filename='main.css') }}?v={{ range(100000, 999999) | random }}">
     <!-- Leaflet CSS (self-hosted for security) -->
     <link rel="stylesheet" href="{{ url_for('static', filename='leaflet.css') }}" />
-    <link rel="stylesheet" href="{{ url_for('static', filename='telescope.css') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='telescope.css') }}?v={{ range(100000, 999999) | random }}">
 </head>
 <body>
+<!-- Data source startup banner — shown once per session -->
+<div id="dataSourceBanner" style="display:none; background:#1a1435; border-bottom:2px solid #a78bfa; padding:10px 18px; display:flex; align-items:center; gap:14px; font-size:0.88em; flex-wrap:wrap; position:relative; z-index:500;">
+  <span id="dsb-icon" style="font-size:1.3em;"></span>
+  <span>
+    <strong id="dsb-mode" style="color:#fff;"></strong>
+    <span id="dsb-cost" style="color:#a78bfa; margin-left:8px;"></span>
+    &mdash;
+    <span id="dsb-note" style="color:#aaa;"></span>
+  </span>
+  <a href="/cost-models" target="_blank" style="color:#7ab8d4; margin-left:6px; white-space:nowrap;">📄 Cost analysis</a>
+  <button onclick="document.getElementById('dataSourceBanner').style.display='none'" style="margin-left:auto; background:none; border:none; color:#888; cursor:pointer; font-size:1.1em;" title="Dismiss">✕</button>
+</div>
+<!-- Telescope lost-connection banner — shown whenever scope goes offline -->
+<div id="telescopeDisconnectBanner" style="display:none; background:#3d0000; border-bottom:3px solid #ff4444; padding:12px 18px; align-items:center; gap:14px; font-size:1em; flex-wrap:wrap; position:relative; z-index:501;">
+  <span style="font-size:1.5em;">🔭</span>
+  <span style="color:#ff9999; font-weight:bold; font-size:1.05em;">Telescope Disconnected</span>
+  <span id="telescopeBannerDetail" style="color:#ccc; font-size:0.9em;">Reconnecting automatically — transit recording suspended.</span>
+  <button onclick="dismissTelescopeBanner()" style="margin-left:auto; background:none; border:none; color:#888; cursor:pointer; font-size:1.2em;" title="Dismiss">✕</button>
+</div>
 <div id="mapView">
+    <!-- Hero image — visible on load, slides up after first flight fetch -->
+    <div id="heroImageWrap" style="padding:0; margin:0; overflow:hidden; height:280px; max-height:280px; transition: max-height 0.6s ease, opacity 0.5s ease; opacity:1;
+         background-image:url('{{ url_for('static', filename='images/flymoon-hero.jpg') }}');
+         background-size:cover; background-position:center 20%; background-repeat:no-repeat;"
+         role="img" aria-label="Flymoon — Aircraft Transit Prediction">
+    </div>
     <div class="header-row">
         <img src="{{ url_for('static', filename='images/logo.svg') }}" alt="Flymoon Transit Tracker" class="logo" />
         <div style="flex: 1; text-align: center;">
@@ -62,12 +87,15 @@
     <div class="controls-row">
         <button id="goBtn" class="btn-primary" onclick="go();" title="Force an immediate FlightAware API call — bypasses the 10-minute cache. Each call costs $0.02 (1 result set). Use sparingly; the $5/month credit covers only ~250 calls total.">⟳ Force Refresh</button>
         <button class="btn-help" onclick="showInfo('force-refresh')" title="Learn more about API cost and caching">ℹ️</button>
+        <button id="dataSourceBtn" onclick="window.open('/cost-models','_blank')" title="Current data source mode — click to view cost analysis and change mode" style="font-size:0.75em; padding:3px 8px; border-radius:4px; border:1px solid #444; background:#1a1435; color:#a78bfa; cursor:pointer; white-space:nowrap;">⚡ Loading…</button>
+        <button id="tableViewToggle" onclick="toggleTableView()" title="Switch between Classic (FA columns) and Rich (OpenSky-enhanced) table views" style="font-size:0.75em; padding:3px 8px; border-radius:4px; border:1px solid #444; background:#1a2430; color:#7ab8d4; cursor:pointer; white-space:nowrap;">⊞ Rich View</button>
         <button id="sunToggle" class="btn-sm" onclick="toggleTarget('sun')" title="Sun tracking ON — click to disable. When off, transit checks and azimuth arrow for the Sun are skipped.">☀️ Sun</button>
         <button id="moonToggle" class="btn-sm" onclick="toggleTarget('moon')" title="Moon tracking ON — click to disable. When off, transit checks and azimuth arrow for the Moon are skipped.">🌙 Moon</button>
         <button class="btn-help" onclick="showInfo('sun-moon-toggle')" title="Learn about Sun/Moon toggles">ℹ️</button>
         <button id="heatmapToggle" class="btn-sm" onclick="toggleHeatmap()" title="Show traffic density heatmap — accumulates aircraft positions across all refreshes to reveal flight corridors.">🔥 Heatmap</button>
         <button id="heatmapClear" class="btn-sm" onclick="clearHeatmap()" title="Clear all accumulated heatmap data from browser storage" style="opacity:0.6; font-size:0.75em;">🗑</button>
         <button class="btn-help" onclick="showInfo('heatmap')" title="Learn about the heatmap">ℹ️</button>
+        <button id="ghostToggle" class="btn-sm" onclick="toggleGhostTrail()" title="Hide ghost trail (breadcrumb dots)" style="opacity:1;">👻 Trail</button>
         <span class="separator">|</span>
         <div class="control-group">
             <input type="number" id="latitude" placeholder="Lat" autocomplete="on" title="Your observing location latitude in decimal degrees (e.g. 14.05 for 14°05′N). Positive = North, negative = South.">
@@ -164,6 +192,7 @@
     </div>
 
     <div id="results">
+        <!-- ── Classic table (FA columns, 17 cols) ── -->
         <table id="resultsTable">
             <thead>
                 <tr>
@@ -185,14 +214,58 @@
                     <th title="Altitude separation between aircraft and target at closest approach — smaller means higher transit chance. High ≤1°, Medium ≤2°, Low ≤3°">△angle</th>
                     <th title="Azimuth separation between aircraft and target at closest approach — smaller means higher transit chance. High ≤1°, Medium ≤2°, Low ≤3°">△az</th>
                     <th title="Flight level in hundreds of feet (e.g. 350 = FL350 = 35,000 ft). Affects angular size calculation.">elev</th>
-                    <th title="GPS altitude in feet above sea level (as reported by ADS-B transponder)">GPS alt<br>(ft)</th>
+                    <th title="Altitude (FL above 18,000ft, otherwise feet) and vertical speed (▲ climbing, ▼ descending, ▶ level)">Alt v/s</th>
                     <th title="True heading — degrees clockwise from true North (not magnetic). Used to project the flight path.">Hdg (T)</th>
                     <th title="Straight-line distance from your observer position to the aircraft right now">dist<br>(km/miles)</th>
-                    <th title="Aircraft ground speed in miles per hour (converted from knots)">Grnd Spd<br>(mph)</th>
+                    <th title="Aircraft ground speed in kph / mph / knots">Grnd Spd<br>kph/mph/kts</th>
                     <th title="Position data source: FA=FlightAware API, OS=OpenSky Network, ADS-B=direct receiver">src</th>
                 </tr>
             </thead>
             <tbody id="flightData">
+            </tbody>
+        </table>
+
+        <!-- ── Rich table (OpenSky-enhanced, 10 cols) ── -->
+        <table id="resultsTableRich" style="display:none;">
+            <colgroup>
+                <col style="width:4%">   <!-- status -->
+                <col style="width:8%">   <!-- transit -->
+                <col style="width:4%">   <!-- target -->
+                <col style="width:11%">  <!-- aircraft -->
+                <col style="width:11%">  <!-- category -->
+                <col style="width:7%">   <!-- alt -->
+                <col style="width:8%">   <!-- v/s -->
+                <col style="width:8%">   <!-- sky Δ -->
+                <col style="width:8%">   <!-- track -->
+                <col style="width:6%">   <!-- gnd spd -->
+                <col style="width:15%">  <!-- route -->
+                <col style="width:7%">   <!-- src/age -->
+            </colgroup>
+            <thead>
+                <tr>
+                    <th colspan="12" style="padding:4px 6px; background:transparent; border:none; text-align:center;">
+                        <span style="display:inline-flex; gap:6px; background:#1a2535; border:1px solid #2e4a6b; border-radius:6px; padding:3px 8px;">
+                            <button class="btn-help" onclick="showInfo('table-columns-rich')" title="Explain rich table columns" style="font-size:0.8em;">ℹ️ Column guide</button>
+                            <button class="btn-help" onclick="showInfo('transit-levels')" title="Explain High/Medium/Low transit probability" style="font-size:0.8em;">🟢 Probability guide</button>
+                        </span>
+                    </th>
+                </tr>
+                <tr>
+                    <th title="Status — emergency squawk codes (7700/7600/7500), military, VFR, IDENT pressed, on ground. Silent when normal.">⚠</th>
+                    <th title="Transit probability and ETA to closest approach">transit</th>
+                    <th title="☀️ Sun or 🌙 Moon — which celestial body this aircraft may transit">Target</th>
+                    <th title="Callsign / flight ID and ICAO aircraft type code">aircraft</th>
+                    <th title="ADS-B emitter category — aircraft class (UAV, glider, rotorcraft, heavy, etc.)">category</th>
+                    <th title="Altitude (FL above 18,000ft, otherwise feet)">Alt</th>
+                    <th title="Vertical speed in ft/min (▲ climbing, ▼ descending, ▶ level)">v/s (fpm)</th>
+                    <th title="Angular separation between aircraft and target at closest approach: Δaltitude° and Δazimuth°">sky Δ</th>
+                    <th title="True heading in degrees clockwise from north">track</th>
+                    <th title="Ground speed in kilometres per hour / miles per hour / knots">spd<br>kph/mph/kts</th>
+                    <th title="Departure → Destination (ICAO airport codes when available)">route</th>
+                    <th title="Position source (ADS-B / MLAT / FLARM / FA) and data age in seconds">src / age</th>
+                </tr>
+            </thead>
+            <tbody id="richFlightData">
             </tbody>
         </table>
     </div>
@@ -250,6 +323,7 @@
         <div style="flex: 1; text-align: center;">
             <div style="font-size: 1.2em;">🔭 Seestar Control</div>
         </div>
+        <button id="telegramMuteBtn" class="btn-sm" onclick="toggleTelegramMute()" title="Mute/unmute Telegram alerts">🔔</button>
         <button class="btn-sm" onclick="showPanel('map')">← Map</button>
     </div>
 
@@ -407,8 +481,12 @@
                             <span>📹 Video</span>
                         </div>
                         <div class="input-row">
-                            <input type="number" id="videoDuration" value="30" min="1" max="3600" step="1" class="input-compact" placeholder="Duration (s)">
+                            <input type="number" id="videoDuration" value="10" min="1" max="3600" step="1" class="input-compact" placeholder="Duration (s)">
                             <input type="number" id="frameInterval" value="0" min="0" max="60" step="0.1" class="input-compact" placeholder="Interval" title="0 = normal, >0 = timelapse">
+                        </div>
+                        <div class="input-row input-labels-row">
+                            <span class="input-label">Seconds</span>
+                            <span class="input-label">Interval (sec)</span>
                         </div>
                         <div class="recording-status-compact" id="recordingStatus">
                             <span class="status-dot" id="recordingDot"></span>
@@ -455,10 +533,12 @@
         <!-- File Viewer Lightbox -->
         <div id="fileViewer" class="modal" style="display: none;" onclick="closeFileViewer()">
             <div class="modal-content" style="max-width: 95vw; max-height: 95vh; background: #111; padding: 0; overflow: hidden;" onclick="event.stopPropagation()">
-                <div class="modal-header" style="background: #222; padding: 8px 12px;">
-                    <span id="fileViewerName" style="color: #eee; font-size: 0.9em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;"></span>
+                <div class="modal-header" style="background: #222; padding: 8px 12px; display: flex; align-items: center; gap: 8px;">
+                    <span id="fileViewerName" style="color: #eee; font-size: 0.9em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1;"></span>
+                    <div id="fileViewerActions" style="display: flex; gap: 6px; flex-shrink: 0;"></div>
                     <button class="modal-close" onclick="closeFileViewer()">✕</button>
                 </div>
+                <div id="scanResultBanner" style="display: none;"></div>
                 <div id="fileViewerBody" style="display: flex; align-items: center; justify-content: center; min-height: 200px;">
                 </div>
             </div>
@@ -475,9 +555,9 @@
     <script src="{{ url_for('static', filename='leaflet-heat.js') }}"></script>
     <!-- OpenAIP key injected server-side to avoid async timing issues -->
     <script>window.OPENAIP_API_KEY = "{{ openaip_api_key|e }}";</script>
-    <script src="{{ url_for('static', filename='telescope.js') }}?v=1771957271" charset="utf-8"></script>
-    <script src="{{ url_for('static', filename='map.js') }}?v=1771957271" charset="utf-8"></script>
-    <script src="{{ url_for('static', filename='app.js') }}?v=1771957271" charset="utf-8"></script>
+    <script src="{{ url_for('static', filename='telescope.js') }}?v={{ range(100000, 999999) | random }}" charset="utf-8"></script>
+    <script src="{{ url_for('static', filename='map.js') }}?v={{ range(100000, 999999) | random }}" charset="utf-8"></script>
+    <script src="{{ url_for('static', filename='app.js') }}?v={{ range(100000, 999999) | random }}" charset="utf-8"></script>
 
     <script>
         function showPanel(name) {

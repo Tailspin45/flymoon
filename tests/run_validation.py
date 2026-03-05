@@ -3,6 +3,7 @@ Validation test suite — matches tests described in transit_capture_position_pa
 
 Run:   python3 tests/run_validation.py
 """
+
 import csv
 import glob
 import inspect
@@ -65,17 +66,19 @@ WINDOW = list(np.arange(0, TOP_MINUTE, INTERVAL_IN_SECS / NUM_SECONDS_PER_MIN))
 section("1 — Classification thresholds (get_possibility_level)")
 # Verifies boundary conditions for all four probability levels.
 cases1 = [
-    (0.0,  0.0,  3, "Perfect alignment"),
-    (0.5,  0.5,  3, "0.71° diagonal — inside disk"),
-    (1.0,  1.0,  3, "Both exactly at HIGH boundary"),
-    (1.01, 1.01, 2, "Just outside HIGH"),
-    (2.0,  2.0,  2, "Both exactly at MEDIUM boundary"),
-    (2.01, 2.01, 1, "Just outside MEDIUM"),
-    (3.0,  3.0,  1, "Both exactly at LOW boundary"),
-    (3.01, 3.01, 0, "Just outside LOW"),
-    (10.0, 10.0, 0, "Far away"),
-    (0.5,  1.5,  2, "alt HIGH, az MEDIUM → MEDIUM (max wins)"),
-    (1.0,  3.0,  1, "alt HIGH, az LOW → LOW (az dominates)"),
+    # All at target_alt=45°; σ = sqrt(alt² + (az·cos45°)²).
+    # Thresholds: HIGH≤1.5°, MEDIUM≤2.5°, LOW≤3.0°, UNLIKELY>3.0°
+    (0.0, 0.0, 3, "Perfect alignment → σ=0°"),
+    (0.5, 0.5, 3, "σ≈0.86° → HIGH"),
+    (1.0, 1.0, 3, "σ≈1.22° → HIGH (cosine compresses az)"),
+    (1.01, 1.01, 3, "σ≈1.24° → still HIGH"),
+    (2.0, 2.0, 2, "σ≈2.45° → MEDIUM"),
+    (2.01, 2.01, 2, "σ≈2.46° → still MEDIUM"),
+    (3.0, 3.0, 0, "σ≈3.67° → UNLIKELY (cosine pushes over 3.0°)"),
+    (3.01, 3.01, 0, "Just outside LOW → UNLIKELY"),
+    (10.0, 10.0, 0, "Far away → UNLIKELY"),
+    (0.5, 1.5, 3, "σ≈1.17° → HIGH (az compressed by cos45°)"),
+    (1.0, 3.0, 2, "σ≈2.35° → MEDIUM (az compressed by cos45°)"),
 ]
 for alt, az, exp, desc in cases1:
     got = get_possibility_level(45.0, alt, az)
@@ -86,7 +89,9 @@ for alt, az, exp, desc in cases1:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-section("2 — Geometry: end-to-end pipeline with aircraft placed at known alt/az offsets")
+section(
+    "2 — Geometry: end-to-end pipeline with aircraft placed at known alt/az offsets"
+)
 # Uses flat-earth inverse projection: given desired elevation angle α and
 # aircraft height h, horizontal distance d = h / tan(α).
 # Aircraft speed set to near-zero so position barely drifts during window.
@@ -111,12 +116,20 @@ def make_flight(target_alt_deg: float, target_az_deg: float, label: str) -> dict
     dlat = (d_km / 111.32) * math.cos(bearing)
     dlon = (d_km / (111.32 * math.cos(math.radians(LAT)))) * math.sin(bearing)
     return {
-        "id": label, "name": label, "fa_flight_id": f"{label}-synth",
-        "origin": "SYNTH", "destination": "SYNTH",
-        "latitude": LAT + dlat, "longitude": LON + dlon,
-        "direction": 0.0, "speed": 1.0,  # near-stationary
-        "elevation": h_km * 1000, "elevation_feet": int(h_km * 3281),
-        "elevation_change": "-", "aircraft_type": "B738", "waypoints": [],
+        "id": label,
+        "name": label,
+        "fa_flight_id": f"{label}-synth",
+        "origin": "SYNTH",
+        "destination": "SYNTH",
+        "latitude": LAT + dlat,
+        "longitude": LON + dlon,
+        "direction": 0.0,
+        "speed": 1.0,  # near-stationary
+        "elevation": h_km * 1000,
+        "elevation_feet": int(h_km * 3281),
+        "elevation_change": "-",
+        "aircraft_type": "B738",
+        "waypoints": [],
     }
 
 
@@ -125,15 +138,22 @@ if sun_alt <= 5:
     [ok("SKIPPED (Sun below horizon)") for _ in range(6)]
 else:
     cases2 = [
-        (0.0,  0.0,  3, "Exact Sun centre → HIGH"),
-        (0.3,  0.3,  3, "~0.42° offset → HIGH"),
-        (0.2,  0.2,  3, "~0.28° offset → HIGH (well inside)"),
-        (1.5,  1.5, None, "~2° projected offset → MEDIUM or LOW (boundary, varies with Sun alt)"),
-        (2.5,  2.5,  1, "~3.54° offset → LOW"),
-        (5.0,  5.0,  0, "~7.07° offset → UNLIKELY"),
+        (0.0, 0.0, 3, "Exact Sun centre → HIGH"),
+        (0.3, 0.3, 3, "~0.42° offset → HIGH"),
+        (0.2, 0.2, 3, "~0.28° offset → HIGH (well inside)"),
+        (
+            1.5,
+            1.5,
+            None,
+            "~2° projected offset → MEDIUM or LOW (boundary, varies with Sun alt)",
+        ),
+        (2.5, 2.5, 1, "~3.54° offset → LOW"),
+        (5.0, 5.0, 0, "~7.07° offset → UNLIKELY"),
     ]
     for off_alt, off_az, exp, desc in cases2:
-        f = make_flight(sun_alt + off_alt, sun_az + off_az, label=f"T2_{off_alt}_{off_az}")
+        f = make_flight(
+            sun_alt + off_alt, sun_az + off_az, label=f"T2_{off_alt}_{off_az}"
+        )
         r = check_transit(f, WINDOW, NOW, MY_POS, sun, EARTH)
         if r is None:
             fail(f"{desc}: check_transit returned None")
@@ -146,11 +166,15 @@ else:
             if got >= 1:
                 ok(f"{desc}: alt_diff={alt_d:.3f}° az_diff={az_d:.3f}° → {LVL[got]}")
             else:
-                fail(f"{desc}: alt_diff={alt_d:.3f}° az_diff={az_d:.3f}° → UNLIKELY (expected ≥LOW)")
+                fail(
+                    f"{desc}: alt_diff={alt_d:.3f}° az_diff={az_d:.3f}° → UNLIKELY (expected ≥LOW)"
+                )
         elif got == exp:
             ok(f"{desc}: alt_diff={alt_d:.3f}° az_diff={az_d:.3f}° → {LVL[got]}")
         else:
-            fail(f"{desc}: alt_diff={alt_d:.3f}° az_diff={az_d:.3f}° → expected {LVL[exp]}, got {LVL.get(got, got)}")
+            fail(
+                f"{desc}: alt_diff={alt_d:.3f}° az_diff={az_d:.3f}° → expected {LVL[exp]}, got {LVL.get(got, got)}"
+            )
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -182,7 +206,9 @@ elif total3 == 0:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-section("4 — Prediction timing: system detects transits with actionable advance warning")
+section(
+    "4 — Prediction timing: system detects transits with actionable advance warning"
+)
 # ETA is the predicted time-to-closest-approach (minutes).
 # HIGH ETA values (>3 min) mean the system gives early warning — this is GOOD.
 # We verify that < 5% of entries have ETA=0 (which would indicate logging on

@@ -29,22 +29,25 @@ import asyncio
 import os
 import sys
 from datetime import datetime, timedelta
-from typing import List, Optional
+from typing import List
+
 from dotenv import load_dotenv
 
 # Load environment first
 load_dotenv()
 
-from src import logger
-from src.constants import PossibilityLevel
-from src.transit import get_transits
-from src.seestar_client import create_client_from_env
 from telegram import Bot
 from telegram.error import TelegramError
+
+from src import logger
+from src.constants import PossibilityLevel
+from src.seestar_client import create_client_from_env
+from src.transit import get_transits
 
 
 class TransitCaptureMode:
     """Enum for capture modes."""
+
     AUTOMATIC = "automatic"
     MANUAL = "manual"
 
@@ -114,7 +117,7 @@ class TransitCaptureSystem:
                 host=host,
                 port=int(os.getenv("SEESTAR_PORT", "4700")),
                 timeout=5,  # Short timeout for testing
-                heartbeat_interval=0  # No heartbeat for test
+                heartbeat_interval=0,  # No heartbeat for test
             )
 
             # Try to connect
@@ -246,13 +249,15 @@ class TransitCaptureSystem:
 
             # Send notification about fallback mode
             if self.telegram_bot:
-                asyncio.create_task(self._send_telegram_message(
-                    "⚠️ *Transit Monitor - Manual Mode*\n\n"
-                    f"Automatic Seestar control unavailable\\.\n"
-                    f"Monitoring {self.target} transits at \\({self.latitude}, {self.longitude}\\)\n"
-                    f"You will receive notifications to manually start/stop recording\\.\n\n"
-                    f"When automatic mode is available, the system will record automatically\\."
-                ))
+                asyncio.create_task(
+                    self._send_telegram_message(
+                        "⚠️ *Transit Monitor - Manual Mode*\n\n"
+                        f"Automatic Seestar control unavailable\\.\n"
+                        f"Monitoring {self.target} transits at \\({self.latitude}, {self.longitude}\\)\n"
+                        f"You will receive notifications to manually start/stop recording\\.\n\n"
+                        f"When automatic mode is available, the system will record automatically\\."
+                    )
+                )
 
             return True
 
@@ -269,7 +274,8 @@ class TransitCaptureSystem:
             all_transits = transit_data.get("flights", [])
 
             high_prob = [
-                t for t in all_transits
+                t
+                for t in all_transits
                 if t.get("possibility_level") == PossibilityLevel.HIGH.value
             ]
 
@@ -321,7 +327,9 @@ class TransitCaptureSystem:
                 self._execute_automatic_recording(transit_id, delay, duration)
             )
         else:
-            logger.warning(f"Transit {transit['id']} too soon to schedule (in {delay:.0f}s)")
+            logger.warning(
+                f"Transit {transit['id']} too soon to schedule (in {delay:.0f}s)"
+            )
 
     async def _execute_automatic_recording(
         self, transit_id: str, delay: float, duration: float
@@ -352,9 +360,7 @@ class TransitCaptureSystem:
         """Send a Telegram message."""
         try:
             await self.telegram_bot.send_message(
-                chat_id=self.telegram_chat_id,
-                text=message,
-                parse_mode='MarkdownV2'
+                chat_id=self.telegram_chat_id, text=message, parse_mode="MarkdownV2"
             )
             return True
         except TelegramError as e:
@@ -383,7 +389,10 @@ class TransitCaptureSystem:
             logger.info(f"📱 Sent detection notification for {transit['id']}")
 
         # Imminent warning
-        if time_minutes <= self.warning_minutes and transit_id not in self.notified_transits:
+        if (
+            time_minutes <= self.warning_minutes
+            and transit_id not in self.notified_transits
+        ):
             self.notified_transits.add(transit_id)
 
             now = datetime.now()
@@ -458,7 +467,7 @@ class TransitCaptureSystem:
 
         try:
             while True:
-                timestamp = datetime.now().strftime('%H:%M:%S')
+                timestamp = datetime.now().strftime("%H:%M:%S")
                 logger.info(f"[{timestamp}] Checking for transits...")
 
                 await self.check_and_capture()
@@ -516,7 +525,7 @@ def test_seestar() -> None:
             host=host,
             port=int(os.getenv("SEESTAR_PORT", "4700")),
             timeout=10,
-            heartbeat_interval=0
+            heartbeat_interval=0,
         )
 
         print("\n1. Connecting...")
@@ -556,32 +565,22 @@ def main():
     parser.add_argument("--longitude", type=float, help="Observer longitude")
     parser.add_argument("--elevation", type=float, default=0, help="Elevation (m)")
     parser.add_argument(
-        "--target",
-        choices=["sun", "moon", "auto"],
-        default="sun",
-        help="Target body"
+        "--target", choices=["sun", "moon", "auto"], default="sun", help="Target body"
     )
     parser.add_argument(
         "--interval",
         type=int,
         default=None,
-        help="Check interval (min, default: from .env or 15)"
+        help="Check interval (min, default: from .env or 15)",
     )
     parser.add_argument(
-        "--warning",
-        type=int,
-        default=5,
-        help="Warning lead time for manual mode (min)"
+        "--warning", type=int, default=5, help="Warning lead time for manual mode (min)"
     )
     parser.add_argument(
-        "--manual",
-        action="store_true",
-        help="Force manual mode (skip automatic)"
+        "--manual", action="store_true", help="Force manual mode (skip automatic)"
     )
     parser.add_argument(
-        "--test-seestar",
-        action="store_true",
-        help="Test Seestar connection and exit"
+        "--test-seestar", action="store_true", help="Test Seestar connection and exit"
     )
 
     args = parser.parse_args()

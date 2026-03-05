@@ -2,7 +2,7 @@
 
 .telescope-container {
     max-width: 100%;
-    height: calc(100vh - 100px);
+    height: calc(100vh - 140px);
     margin: 0;
     padding: 0;
     display: flex;
@@ -82,41 +82,36 @@
 
 .preview-wrapper {
     flex: 1;
-    position: relative;
     display: flex;
+    flex-direction: column;
     min-height: 0;
 }
 
-/* Zoom Slider */
-.zoom-slider {
-    position: absolute;
-    left: 12px;
-    top: 50%;
-    transform: translateY(-50%);
+/* ── Zoom bar (horizontal, below preview) ── */
+.preview-zoom-bar {
     display: flex;
-    flex-direction: column;
     align-items: center;
     gap: 8px;
-    padding: 12px 8px;
-    background: rgba(26, 26, 26, 0.9);
-    border: 1px solid #2a2a2a;
-    border-radius: 6px;
-    z-index: 100;
+    padding: 6px 12px;
+    background: #1a1a1a;
+    border-top: 1px solid #2a2a2a;
+    flex-shrink: 0;
 }
 
 .zoom-btn {
-    width: 32px;
-    height: 32px;
+    width: 28px;
+    height: 28px;
     background: rgba(255, 255, 255, 0.08);
     border: 1px solid #333;
     border-radius: 4px;
     color: #039c9c;
-    font-size: 1.2em;
+    font-size: 1.1em;
     cursor: pointer;
-    transition: all 0.2s;
+    transition: background 0.15s, border-color 0.15s;
     display: flex;
     align-items: center;
     justify-content: center;
+    flex-shrink: 0;
 }
 
 .zoom-btn:hover {
@@ -124,31 +119,35 @@
     border-color: #039c9c;
 }
 
+.zoom-fit-btn {
+    font-size: 0.8em;
+    width: auto;
+    padding: 0 8px;
+}
+
 #zoomSlider {
-    width: 120px;
-    height: 6px;
+    flex: 1;
+    height: 4px;
     -webkit-appearance: none;
     appearance: none;
-    background: rgba(255, 255, 255, 0.1);
-    border-radius: 3px;
-    transform: rotate(-90deg);
-    transform-origin: center;
-    margin: 60px 0;
+    background: rgba(255, 255, 255, 0.15);
+    border-radius: 2px;
+    cursor: pointer;
 }
 
 #zoomSlider::-webkit-slider-thumb {
     -webkit-appearance: none;
     appearance: none;
-    width: 16px;
-    height: 16px;
+    width: 14px;
+    height: 14px;
     background: #039c9c;
     border-radius: 50%;
     cursor: pointer;
 }
 
 #zoomSlider::-moz-range-thumb {
-    width: 16px;
-    height: 16px;
+    width: 14px;
+    height: 14px;
     background: #039c9c;
     border-radius: 50%;
     cursor: pointer;
@@ -156,9 +155,12 @@
 }
 
 .zoom-percent {
-    font-size: 0.75em;
+    font-size: 0.78em;
     color: #039c9c;
     font-weight: 600;
+    min-width: 38px;
+    text-align: right;
+    flex-shrink: 0;
 }
 
 .preview-controls {
@@ -193,57 +195,21 @@
 .preview-container {
     flex: 1;
     position: relative;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    overflow: scroll;
-    scroll-behavior: smooth;
+    overflow: auto;
     min-height: 0;
-}
-
-/* Custom scrollbar styling */
-.preview-container::-webkit-scrollbar {
-    width: 14px;
-    height: 14px;
-    background: rgba(0, 0, 0, 0.5);
-}
-
-.preview-container::-webkit-scrollbar-track {
-    background: rgba(0, 0, 0, 0.5);
-    border-left: 1px solid #2a2a2a;
-}
-
-.preview-container::-webkit-scrollbar-thumb {
-    background: rgba(3, 156, 156, 0.6);
-    border-radius: 7px;
-    border: 3px solid rgba(0, 0, 0, 0.5);
-}
-
-.preview-container::-webkit-scrollbar-thumb:hover {
-    background: rgba(3, 156, 156, 0.9);
-}
-
-/* Firefox scrollbar */
-.preview-container {
+    background: #000;
+    display: flex;                /* flex + margin:auto = reliable centering */
     scrollbar-width: thin;
     scrollbar-color: rgba(3, 156, 156, 0.6) rgba(0, 0, 0, 0.5);
 }
 
 #previewImage {
     display: block;
-    max-width: 100%;
-    max-height: 100%;
-    width: auto;
-    height: auto;
-    object-fit: contain;
-    transition: transform 0.2s ease;
+    flex-shrink: 0;
+    margin: auto;   /* centres when smaller than container; collapses to 0 when larger */
 }
 
-#previewImage.zoomed {
-    max-width: none;
-    max-height: none;
-    transform-origin: center center;
-}
+/* Custom scrollbar styling */
 
 .preview-placeholder {
     position: absolute;
@@ -657,6 +623,18 @@
     margin-bottom: 8px;
 }
 
+.input-labels-row {
+    margin-top: -6px;
+    margin-bottom: 8px;
+}
+
+.input-label {
+    flex: 1;
+    text-align: center;
+    font-size: 0.7em;
+    color: #888;
+}
+
 .input-compact {
     flex: 1;
     padding: 6px 8px;
@@ -702,7 +680,8 @@
 .filmstrip {
     background: #1a1a1a;
     border-top: 1px solid #2a2a2a;
-    height: 140px;
+    height: 170px;
+    flex-shrink: 0;
     display: flex;
     flex-direction: column;
 }
@@ -711,7 +690,7 @@
     display: flex;
     align-items: center;
     justify-content: space-between;
-    padding: 8px 16px;
+    padding: 4px 16px;
     border-bottom: 1px solid #2a2a2a;
 }
 
@@ -754,20 +733,21 @@
     overflow-y: hidden;
     display: flex;
     gap: 8px;
-    padding: 8px 16px;
-    align-items: center;
+    padding: 6px 16px;
+    align-items: stretch;
 }
 
 .filmstrip-item {
     flex-shrink: 0;
-    width: 140px;
-    height: 80px;
+    width: 150px;
     position: relative;
     cursor: pointer;
     border: 2px solid #333;
     border-radius: 4px;
     overflow: hidden;
     transition: all 0.2s;
+    display: flex;
+    flex-direction: column;
 }
 
 .filmstrip-item.temp-file {
@@ -805,23 +785,30 @@
 
 .filmstrip-thumbnail {
     width: 100%;
-    height: 100%;
+    flex: 1;
+    min-height: 0;
     object-fit: cover;
     background: #000;
 }
 
-.filmstrip-info {
-    position: absolute;
-    bottom: 0;
-    left: 0;
-    right: 0;
-    background: linear-gradient(to top, rgba(0,0,0,0.9), transparent);
-    padding: 4px 6px;
+.filmstrip-name {
     font-size: 0.7em;
+    line-height: 1.3;
     color: #ccc;
+    padding: 3px 5px;
+    background: #1a1a2e;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    order: -1;
+}
+
+.filmstrip-info {
     display: flex;
-    justify-content: space-between;
+    justify-content: flex-end;
     align-items: center;
+    padding: 2px 4px;
+    background: rgba(0,0,0,0.8);
 }
 
 .filmstrip-actions {
@@ -837,6 +824,84 @@
 .btn-icon.btn-danger:hover {
     background: rgba(255, 0, 0, 0.2);
     border-color: #ff4444;
+}
+
+/* Video thumbnail canvas */
+canvas.video-thumb-canvas {
+    width: 100%;
+    flex: 1;
+    min-height: 0;
+    object-fit: cover;
+    background: #1a1a2e;
+    cursor: pointer;
+}
+
+/* Viewer action buttons */
+.btn-viewer {
+    background: rgba(255, 255, 255, 0.1);
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    color: #eee;
+    padding: 4px 10px;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 0.82em;
+    white-space: nowrap;
+}
+.btn-viewer:hover:not(:disabled) {
+    background: rgba(255, 255, 255, 0.2);
+}
+.btn-viewer:disabled {
+    opacity: 0.3;
+    cursor: default;
+}
+.btn-viewer-danger:hover:not(:disabled) {
+    background: rgba(255, 0, 0, 0.25);
+    border-color: #ff4444;
+}
+.btn-viewer-scan {
+    background: rgba(0, 180, 255, 0.15);
+    border-color: rgba(0, 180, 255, 0.4);
+}
+.btn-viewer-scan:hover:not(:disabled) {
+    background: rgba(0, 180, 255, 0.3);
+}
+
+/* Scan result banner shown below the viewer header */
+#scanResultBanner {
+    padding: 6px 14px;
+    font-size: 0.85em;
+    text-align: center;
+    cursor: pointer;
+}
+#scanResultBanner.scan-found {
+    background: rgba(0, 200, 80, 0.15);
+    color: #4dff88;
+    border-bottom: 1px solid rgba(0, 200, 80, 0.25);
+}
+#scanResultBanner.scan-none {
+    background: rgba(255, 180, 0, 0.12);
+    color: #ffcc44;
+    border-bottom: 1px solid rgba(255, 180, 0, 0.2);
+}
+#scanResultBanner.scan-error {
+    background: rgba(255, 60, 60, 0.12);
+    color: #ff6666;
+    border-bottom: 1px solid rgba(255, 60, 60, 0.2);
+}
+
+/* Precise video time overlay */
+.video-precise-time {
+    position: absolute;
+    top: 6px;
+    right: 8px;
+    background: rgba(0, 0, 0, 0.7);
+    color: #0ff;
+    font-family: 'SF Mono', 'Menlo', 'Consolas', monospace;
+    font-size: 0.82em;
+    padding: 2px 8px;
+    border-radius: 3px;
+    pointer-events: none;
+    z-index: 1;
 }
 
 /* Files Modal */
@@ -925,7 +990,7 @@
     object-fit: cover;
     background: #000;
     border-radius: 4px;
-    margin-bottom: 8px;
+    margin-top: 6px;
     cursor: pointer;
 }
 
@@ -935,25 +1000,21 @@
 
 .file-info {
     display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 6px;
+    flex-direction: column;
+    gap: 4px;
 }
 
 .file-name {
     font-size: 0.75em;
     color: #aaa;
-    white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
-    flex: 1;
-    min-width: 0;
+    white-space: nowrap;
 }
 
 .file-actions {
     display: flex;
     gap: 4px;
-    flex-shrink: 0;
 }
 
 /* Empty States */
@@ -1007,7 +1068,7 @@
     }
     
     .filmstrip {
-        height: 120px;
+        height: 160px;
     }
 }
 

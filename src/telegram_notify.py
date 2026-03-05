@@ -4,22 +4,38 @@ Telegram notification module for transit alerts.
 
 import os
 from typing import List
+
 from telegram import Bot
 from telegram.error import TelegramError
 
 from src import logger
-from src.constants import PossibilityLevel, TARGET_TO_EMOJI
+from src.constants import TARGET_TO_EMOJI, PossibilityLevel
+
+# Global mute flag — toggled via /telescope/notifications/mute endpoint
+_notifications_muted = False
+
+
+def set_notifications_muted(muted: bool):
+    global _notifications_muted
+    _notifications_muted = muted
+
+
+def get_notifications_muted() -> bool:
+    return _notifications_muted
 
 
 async def send_telegram_simple(message: str) -> bool:
     """Send a plain-text Telegram message (for system alerts like scope offline)."""
+    if _notifications_muted:
+        logger.debug("Telegram notifications muted — skipping alert")
+        return False
     bot_token = os.getenv("TELEGRAM_BOT_TOKEN")
     chat_id = os.getenv("TELEGRAM_CHAT_ID")
     if not bot_token or not chat_id:
         return False
     try:
         bot = Bot(token=bot_token)
-        await bot.send_message(chat_id=chat_id, text=message, parse_mode='HTML')
+        await bot.send_message(chat_id=chat_id, text=message, parse_mode="HTML")
         return True
     except Exception as e:
         logger.error(f"Telegram alert failed: {e}")
@@ -32,11 +48,16 @@ async def send_telegram_notification(flight_data: List[dict], target: str) -> bo
 
     Returns True if notification was sent successfully, False otherwise.
     """
+    if _notifications_muted:
+        logger.debug("Telegram notifications muted — skipping transit alert")
+        return False
     bot_token = os.getenv("TELEGRAM_BOT_TOKEN")
     chat_id = os.getenv("TELEGRAM_CHAT_ID")
 
     if not bot_token or not chat_id:
-        logger.warning("Telegram not configured (missing BOT_TOKEN or CHAT_ID), skipping notification")
+        logger.warning(
+            "Telegram not configured (missing BOT_TOKEN or CHAT_ID), skipping notification"
+        )
         return False
 
     # Filter for medium/high probability transits
@@ -46,7 +67,7 @@ async def send_telegram_notification(flight_data: List[dict], target: str) -> bo
             PossibilityLevel.MEDIUM.value,
             PossibilityLevel.HIGH.value,
         ):
-            eta_min = flight.get('time', 0)
+            eta_min = flight.get("time", 0)
             diff_sum = (flight.get("alt_diff") or 0) + (flight.get("az_diff") or 0)
             flight_target = flight.get("target", target or "")
             emoji = TARGET_TO_EMOJI.get(flight_target, "🌙")
@@ -69,11 +90,7 @@ async def send_telegram_notification(flight_data: List[dict], target: str) -> bo
     # Send via Telegram
     try:
         bot = Bot(token=bot_token)
-        await bot.send_message(
-            chat_id=chat_id,
-            text=message,
-            parse_mode='HTML'
-        )
+        await bot.send_message(chat_id=chat_id, text=message, parse_mode="HTML")
         logger.info(f"✅ Telegram notification sent: {len(possible_transits)} transits")
         return True
 

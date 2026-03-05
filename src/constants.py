@@ -47,6 +47,7 @@ def get_aeroapi_key() -> str:
         or ""
     )
 
+
 # Test data
 TEST_DATA_PATH = "data/raw_flight_data_example.json"
 POSSIBLE_TRANSITS_LOGFILENAME = "data/possible-transits/log_{date_}.csv"
@@ -70,6 +71,12 @@ INTERVAL_IN_SECS = 5  # 5-second sampling: 180 pts vs 900 — plenty for 1° thr
 
 # Transit
 class Altitude(Enum):
+    """Classify the celestial target's altitude in degrees above the horizon.
+
+    Each value is a predicate called with the target's altitude in degrees
+    (e.g. Sun/Moon elevation).  This is NOT aircraft elevation in metres.
+    """
+
     LOW = lambda x: x <= 15  # less or equal
     MEDIUM = lambda x: x <= 30  # less or equal
     MEDIUM_HIGH = lambda x: x <= 60  # less or equal

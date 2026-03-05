@@ -105,6 +105,89 @@ def get_my_pos(lat, lon, elevation, base_ref):
     return base_ref + wgs84.latlon(lat, lon, elevation_m=elevation)
 
 
+def transit_corridor_bbox(
+    obs_lat: float,
+    obs_lon: float,
+    target_alt_deg: float,
+    target_az_deg: float,
+    aircraft_altitude_m: float = 10_000.0,
+    time_window_minutes: float = 15.0,
+    max_speed_kmh: float = 950.0,
+) -> AreaBoundingBox:
+    """Compute a geographic bounding box that covers all aircraft that could
+    possibly transit the target (Sun/Moon) within the prediction window.
+
+    The box is centred on the ground point directly below where an aircraft
+    flying at *aircraft_altitude_m* would need to be to appear in front of
+    the target right now (the "transit ground point").  The box is expanded
+    by the maximum distance a fast jet could travel in *time_window_minutes*
+    so that incoming aircraft are included.
+
+    Parameters
+    ----------
+    obs_lat, obs_lon : float
+        Observer position in decimal degrees.
+    target_alt_deg : float
+        Current altitude of the celestial target in degrees above horizon.
+    target_az_deg : float
+        Current azimuth of the target in degrees (0 = north, clockwise).
+    aircraft_altitude_m : float
+        Assumed cruise altitude for ground-point projection (default 10 km).
+    time_window_minutes : float
+        Prediction window; box is expanded so incoming aircraft are captured.
+    max_speed_kmh : float
+        Maximum aircraft speed used to expand the box.
+
+    Returns
+    -------
+    AreaBoundingBox
+        Bounding box guaranteed to contain all candidate aircraft.
+    """
+    # Distance from observer to the transit ground point.
+    # tan(alt) = aircraft_altitude / ground_distance  →  d = alt / tan(alt)
+    # Clamp alt to avoid division by zero / absurdly large distances.
+    alt_clamped = max(target_alt_deg, 3.0)
+    from math import tan
+
+    ground_dist_km = (aircraft_altitude_m / 1000.0) / tan(radians(alt_clamped))
+    # Cap at ~500 km (covers low-altitude targets without going global)
+    ground_dist_km = min(ground_dist_km, 500.0)
+
+    # Project along target azimuth to get transit ground point
+    bearing = radians(target_az_deg)
+    R = EARTH_RADIOUS
+    ratio = ground_dist_km / R
+    obs_lat_r = radians(obs_lat)
+    obs_lon_r = radians(obs_lon)
+
+    tgp_lat_r = asin(
+        sin(obs_lat_r) * cos(ratio) + cos(obs_lat_r) * sin(ratio) * cos(bearing)
+    )
+    tgp_lon_r = obs_lon_r + atan2(
+        sin(bearing) * sin(ratio) * cos(obs_lat_r),
+        cos(ratio) - sin(obs_lat_r) * sin(tgp_lat_r),
+    )
+    tgp_lat = degrees(tgp_lat_r)
+    tgp_lon = degrees(tgp_lon_r)
+
+    # Radius to expand: distance a fast jet can cover in the time window
+    travel_km = max_speed_kmh * (time_window_minutes / 60.0)
+    # Also include the ground_dist uncertainty (aircraft may be at 8–12 km alt)
+    radius_km = travel_km + ground_dist_km * 0.2  # 20% alt uncertainty margin
+    radius_km = min(radius_km, 600.0)
+
+    # Convert radius to degrees (approximate, good enough for a bbox)
+    lat_delta = radius_km / 111.32
+    lon_delta = radius_km / (111.32 * cos(radians(tgp_lat)) + 1e-9)
+
+    return AreaBoundingBox(
+        lat_lower_left=tgp_lat - lat_delta,
+        long_lower_left=tgp_lon - lon_delta,
+        lat_upper_right=tgp_lat + lat_delta,
+        long_upper_right=tgp_lon + lon_delta,
+    )
+
+
 def compute_track_velocity(
     track_positions: List[dict],
 ) -> Optional[Tuple[float, float]]:
@@ -137,7 +220,8 @@ def compute_track_velocity(
         except (TypeError, ValueError):
             pass
         try:
-            from datetime import datetime, timezone
+            from datetime import datetime
+
             s = str(ts).replace("Z", "+00:00")
             return datetime.fromisoformat(s).timestamp()
         except Exception:
@@ -147,7 +231,11 @@ def compute_track_velocity(
     valid = []
     for p in track_positions:
         ts = _to_unix(p.get("timestamp"))
-        if ts is not None and p.get("latitude") is not None and p.get("longitude") is not None:
+        if (
+            ts is not None
+            and p.get("latitude") is not None
+            and p.get("longitude") is not None
+        ):
             valid.append({**p, "_ts": ts})
 
     if len(valid) < 2:

@@ -2,12 +2,13 @@
 
 Track aircraft transiting the Sun and Moon in real-time with automatic telescope photography.
 
-![Flymoon Interface](data/assets/flymoon.png)
+![Flymoon — Aircraft Transit Prediction](static/images/flymoon-hero.jpg)
 
 ## ✨ Features
 
 - **Real-Time Transit Detection** - Monitor flights up to 15 minutes ahead for potential transits
 - **Interactive Map** - Leaflet-based visualization with flight routes, altitude indicators, and azimuth arrows
+- **Traffic Density Heatmap** - Accumulates aircraft positions across refreshes to reveal flight corridors
 - **Smart Probability Analysis** - Color-coded transit likelihood (🟢 High, 🟠 Medium, 🟡 Low)
 - **Automatic Telescope Control** - Integrated Seestar S50 support with automatic recording
 - **Telegram Notifications** - Get alerts when possible transits are detected
@@ -93,6 +94,7 @@ Transits are ranked by the angular separation between aircraft and celestial tar
 - **Altitude Overlay** - Thin horizontal bars show aircraft altitude (clickable)
 - **Route Display** - Click any indicator to show planned route and historical track
 - **Azimuth Arrows** - Visual direction indicators to Sun/Moon
+- **Traffic Density Heatmap** - Toggle 🔥 to reveal accumulated flight corridors; data persists in browser storage across sessions (capped at 2,000 points)
 - **Bounding Box** - Adjustable search area (drag corners to resize)
 
 ## ⚙️ Advanced Features
@@ -208,12 +210,12 @@ Flymoon predicts aircraft transits using a multi-step process:
 2. **Position Prediction** - Projects each aircraft's position up to 15 minutes ahead assuming constant velocity and heading
 3. **Celestial Tracking** - Calculates Sun/Moon altitude and azimuth using Skyfield and JPL ephemeris data (de421.bsp)
 4. **Angular Separation** - Uses numerical optimization to find the minimum angular distance between aircraft path and celestial target
-5. **Probability Classification** - Ranks transits using angular separation thresholds:
-   - **🟢 High**: ≤1° separation (direct transit very likely)
-   - **🟠 Medium**: ≤2° separation (near miss, worth recording)
-   - **⚪ Low**: ≤3° separation (possible distant transit)
+5. **Probability Classification** - Ranks transits using true on-sky angular separation:
+   - **🟢 High**: ≤1.5° separation (direct transit very likely)
+   - **🟠 Medium**: ≤2.5° separation (near miss, worth recording)
+   - **⚪ Low**: ≤3.0° separation (possible distant transit)
 
-The algorithm assumes a 1° target size (0.5° for Sun/Moon diameter + 0.5° margin for near misses). Thresholds are configurable via `ALT_THRESHOLD` and `AZ_THRESHOLD` environment variables.
+The algorithm uses great-circle angular separation in alt-az space (azimuth differences are cosine-weighted by target altitude to correct for geometric compression near the zenith).
 
 **Key Assumptions:**
 - Aircraft maintain constant velocity and heading over the prediction window
@@ -261,9 +263,28 @@ Contributions welcome! Please open an issue or pull request for:
 
 **Share Your Transits!** Post your transit photos in [this issue](https://github.com/dbetm/flymoon/issues/21)
 
-## 📝 Credits
+## 📝 Credits & Attribution
 
 Created with contributions from the Flymoon community. Special thanks to all contributors and transit photographers!
+
+### Open-Source Libraries & Services
+
+| Component | Project | License |
+|-----------|---------|---------|
+| Interactive map | [Leaflet 1.9.4](https://leafletjs.com) © 2010–2023 Vladimir Agafonkin | BSD 2-Clause |
+| Bounding-box drawing | [Leaflet.Editable](https://github.com/Leaflet/Leaflet.editable) © Yoann Aubineau | MIT |
+| Traffic heatmap | [Leaflet.heat](https://github.com/Leaflet/Leaflet.heat) © 2014 Vladimir Agafonkin | MIT |
+| Celestial calculations | [Skyfield 1.49](https://rhodesmill.org/skyfield/) © Brandon Rhodes | MIT |
+| Web framework | [Flask 3.0.3](https://flask.palletsprojects.com) © Pallets | BSD 3-Clause |
+| HTTP client | [Requests 2.32](https://requests.readthedocs.io) © Kenneth Reitz | Apache 2.0 |
+| Telegram alerts | [python-telegram-bot 21.0](https://python-telegram-bot.org) © Leandro Toledo | LGPLv3 |
+| Environment config | [python-dotenv 1.0](https://github.com/theskumar/python-dotenv) © Saurabh Kumar | BSD 3-Clause |
+| Timezone detection | [tzlocal 5.2](https://github.com/regebro/tzlocal) © Lennart Regebro | MIT |
+| JPL Ephemeris | [DE421](https://naif.jpl.nasa.gov/pub/naif/generic_kernels/spk/planets/) — NASA/JPL | Public Domain |
+| Aviation charts overlay | [OpenAIP](https://www.openaip.net) | CC BY-NC-SA 4.0 |
+| Free flight positions | [OpenSky Network](https://opensky-network.org) (planned hybrid mode) | [Terms of Use](https://opensky-network.org/about/terms-of-use) |
+
+See [ATTRIBUTION.md](ATTRIBUTION.md) for full license texts and acknowledgements.
 
 ## 📄 License
 

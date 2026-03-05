@@ -11,13 +11,35 @@ from src.position import AreaBoundingBox
 
 # Fixed log schema — stable across code changes; waypoints excluded (too large, not useful for analysis)
 TRANSIT_LOG_FIELDS = [
-    "timestamp", "id", "fa_flight_id", "origin", "destination",
-    "latitude", "longitude", "aircraft_elevation", "aircraft_elevation_feet",
-    "aircraft_type", "speed", "is_possible_transit", "possibility_level",
-    "elevation_change", "direction", "alt_diff", "az_diff", "time",
-    "target_alt", "plane_alt", "target_az", "plane_az", "target",
-    "distance_nm", "position_source", "scope_connected", "scope_mode",
+    "timestamp",
+    "id",
+    "fa_flight_id",
+    "origin",
+    "destination",
+    "latitude",
+    "longitude",
+    "aircraft_elevation",
+    "aircraft_elevation_feet",
+    "aircraft_type",
+    "speed",
+    "is_possible_transit",
+    "possibility_level",
+    "elevation_change",
+    "direction",
+    "alt_diff",
+    "az_diff",
+    "time",
+    "target_alt",
+    "plane_alt",
+    "target_az",
+    "plane_az",
+    "target",
+    "distance_nm",
+    "position_source",
+    "scope_connected",
+    "scope_mode",
 ]
+
 
 def get_flight_data(
     area_bbox: AreaBoundingBox, url_: str, api_key: str = ""
@@ -31,12 +53,10 @@ def get_flight_data(
         f"{area_bbox.lat_upper_right}+{area_bbox.long_upper_right}%22&max_pages=1"
     )
 
-    response = requests.get(url=url, headers=headers)
-
+    response = requests.get(url=url, headers=headers, timeout=15)
     if response.status_code == HTTPStatus.OK:
         return response.json()
     else:
-        # If not successful, raise exception with the status code and response text
         raise Exception(f"Error: {response.status_code}, {response.text}")
 
 
@@ -57,8 +77,11 @@ def parse_fligh_data(flight_data: dict):
         "longitude": flight_data["last_position"]["longitude"],
         "direction": flight_data["last_position"]["heading"],
         "speed": int(flight_data["last_position"]["groundspeed"]) * 1.852,
-        "elevation": int(flight_data["last_position"]["altitude"]) * 0.3048 * 100,  # hundreds of feet to meters (for calculations)
-        "elevation_feet": int(flight_data["last_position"]["altitude"]) * 100,  # API returns hundreds of feet, multiply by 100
+        "elevation": int(flight_data["last_position"]["altitude"])
+        * 0.3048
+        * 100,  # hundreds of feet to meters (for calculations)
+        "elevation_feet": int(flight_data["last_position"]["altitude"])
+        * 100,  # API returns hundreds of feet, multiply by 100
         "elevation_change": flight_data["last_position"]["altitude_change"],
         "waypoints": flight_data.get("waypoints", []),
     }
@@ -106,9 +129,12 @@ async def save_possible_transits(data: List[dict], dest_path: str) -> None:
             else:
                 # Schema mismatch — rename old file and start fresh
                 import shutil
+
                 shutil.move(dest_path, dest_path.replace(".csv", "_old_schema.csv"))
         with open(dest_path, "a", newline="") as f:
-            writer = csv.DictWriter(f, fieldnames=TRANSIT_LOG_FIELDS, extrasaction="ignore")
+            writer = csv.DictWriter(
+                f, fieldnames=TRANSIT_LOG_FIELDS, extrasaction="ignore"
+            )
             if needs_header:
                 writer.writeheader()
             writer.writerows(rows_to_write)

@@ -6,6 +6,8 @@
 
 // State Management
 let isConnected = false;
+let _prevConnected = false; // tracks previous poll state to detect reconnect
+let _lastConnectedStatus = null; // cache last connected response for disconnect diagnostics
 let isRecording = false;
 let statusPollInterval = null;
 let visibilityPollInterval = null;
@@ -14,10 +16,14 @@ let transitPollInterval = null;
 let transitTickInterval = null; // 1-second local countdown tick
 let transitCaptureActive = false;
 let upcomingTransits = [];
+const capturedTransits = new Set(); // flight IDs triggered this session — persists across array replacements
 let currentZoom = 1.0;
-let zoomStep = 0.25;
+let zoomStep = 0.1;
+let _previewLastError = 0; // timestamp of last preview onerror (ms)
+const _PREVIEW_BACKOFF_MS = 30000; // 30s between retry attempts after stream failure
 let isSimulating = false;
 let simulationVideo = null;
+let disconnectedPollCount = 0; // consecutive disconnected polls before stopping preview
 let simulationFiles = []; // Track temporary simulation files
 
 // Eclipse state
@@ -40,6 +46,11 @@ window.initTelescope = function() {
         if (!isConnected) {
             connect();
         }
+    });
+
+    // Sync mute button state from server
+    apiCall('/telescope/notifications/status', 'GET').then(r => {
+        if (r) updateTelegramMuteBtn(r.muted);
     });
 
     // Start polling for target visibility
@@ -70,6 +81,17 @@ window.initTelescope = function() {
     const autoCapture = localStorage.getItem('autoCaptureTransits');
     if (autoCapture !== null) {
         document.getElementById('autoCaptureToggle').checked = autoCapture === 'true';
+    }
+
+    // Mouse-wheel zoom on preview container
+    const previewContainer = document.getElementById('previewContainer');
+    if (previewContainer) {
+        previewContainer.addEventListener('wheel', (e) => {
+            e.preventDefault();
+            const delta = e.deltaY < 0 ? zoomStep : -zoomStep;
+            currentZoom = Math.min(4.0, Math.max(0.5, +(currentZoom + delta).toFixed(2)));
+            applyZoom();
+        }, { passive: false });
     }
 };
 
@@ -170,10 +192,15 @@ async function updateStatus() {
     if (result) {
         isConnected = result.connected || false;
         currentViewingMode = result.viewing_mode || null;
-        // Don't overwrite isRecording if we're actively recording locally
-        // The status endpoint doesn't know about our RTSP recordings
-        if (!isRecording) {
-            isRecording = result.is_recording || false;
+        // Sync recording state from server — server is authoritative.
+        // Only preserve local state if we're mid-recording AND server agrees it's active.
+        const serverRecording = result.recording || false;
+        if (isRecording && !serverRecording) {
+            // Server says not recording but JS thinks it is — stale state, sync it
+            isRecording = false;
+            stopRecordingTimer();
+        } else if (!isRecording) {
+            isRecording = serverRecording;
         }
 
         // Update eclipse data from server (refreshes seconds_to_c1 baseline).
@@ -190,9 +217,32 @@ async function updateStatus() {
         updateRecordingUI();
         checkTargetMismatch();
         
-        // Auto-start preview if connected (e.g. navigating to the page while already connected)
+        // Auto-start preview if connected; stop stale stream if disconnected
+        const justReconnected = isConnected && !_prevConnected;
+        const justDisconnected = !isConnected && _prevConnected;
+        if (justReconnected) {
+            console.log('[Scope] Reconnected — mode:', result.viewing_mode);
+            _previewLastError = 0;
+            _lastConnectedStatus = null;
+        }
+        if (justDisconnected) {
+            console.warn('[Scope] Disconnected — prior connected state:', JSON.stringify(_lastConnectedStatus || {}));
+            if (result.error) console.warn('[Scope] Server error:', result.error);
+        }
+        // Cache last connected response for diagnostics
+        if (isConnected) {
+            _lastConnectedStatus = { viewing_mode: result.viewing_mode, recording: result.recording, host: result.host };
+        }
+        _prevConnected = isConnected;
+
         if (isConnected && typeof startPreview === 'function') {
+            disconnectedPollCount = 0;
             startPreview();
+        } else if (!isConnected && typeof stopPreview === 'function') {
+            disconnectedPollCount++;
+            if (disconnectedPollCount >= 3) {
+                stopPreview();
+            }
         }
         
         // Update last update timestamp
@@ -315,7 +365,7 @@ function checkTargetMismatch() {
     // Only relevant when connected and in a known viewing mode
     if (!isConnected || !currentViewingMode) { banner.style.display = 'none'; return; }
 
-    const flights = window.lastFlightData || [];
+    const flights = (window.lastFlightData && window.lastFlightData.flights) || [];
     const oppositeTarget = currentViewingMode === 'sun' ? 'moon' : 'sun';
 
     // Find the soonest HIGH or MEDIUM transit on the opposite target
@@ -498,9 +548,6 @@ function updateRecordingUI() {
     const recordingDot = document.getElementById('recordingDot');
     const recordingText = document.getElementById('recordingText');
     
-    console.log('[Telescope] updateRecordingUI called, isRecording:', isRecording);
-    console.log('[Telescope] Start button:', startBtn, 'Stop button:', stopBtn);
-    
     if (isRecording) {
         if (startBtn) {
             startBtn.disabled = true;
@@ -508,8 +555,7 @@ function updateRecordingUI() {
         }
         if (stopBtn) {
             stopBtn.disabled = false;
-            stopBtn.style.display = 'inline-block';  // Use inline-block instead of block
-            console.log('[Telescope] Stop button should now be visible');
+            stopBtn.style.display = 'inline-block';
         }
         if (recordingDot) recordingDot.className = 'status-dot recording';
         if (recordingText) recordingText.textContent = 'Recording...';
@@ -532,7 +578,6 @@ function updateRecordingUI() {
 // ============================================================================
 
 function startPreview() {
-    console.log('[Telescope] Starting preview stream');
     
     const previewImage = document.getElementById('previewImage');
     const previewPlaceholder = document.getElementById('previewPlaceholder');
@@ -547,10 +592,14 @@ function startPreview() {
 
     // Already streaming — don't restart
     if (previewImage.style.display === 'block' && previewImage.src) return;
+
+    // Enforce backoff after a stream error
+    if (_previewLastError && (Date.now() - _previewLastError) < _PREVIEW_BACKOFF_MS) {
+        return;
+    }
     
     // Set stream URL (adds timestamp to avoid caching)
     const streamUrl = `/telescope/preview/stream.mjpg?t=${Date.now()}`;
-    console.log('[Telescope] Loading stream from:', streamUrl);
     
     previewImage.src = streamUrl;
     
@@ -567,33 +616,36 @@ function startPreview() {
     
     // After 2 seconds, assume stream is active (MJPEG streams don't trigger onload)
     setTimeout(() => {
-        console.log('[Telescope] Stream assumed active');
         if (previewStatusDot) previewStatusDot.className = 'status-dot connected';
         if (previewStatusText) previewStatusText.textContent = 'Live Stream Active';
         if (previewTitleIcon) previewTitleIcon.textContent = '🟢';
-        
-        // Fit to window
-        zoomFit();
+
+        // Apply initial fit zoom once we know the image has loaded
+        currentZoom = 1.0;
+        applyZoom();
     }, 2000);
     
-    // Error handler
+    // Error handler — reset state so the guard above doesn't block retries
     previewImage.onerror = () => {
-        console.error('[Telescope] Preview stream failed');
+        const backoffSecs = (_PREVIEW_BACKOFF_MS / 1000).toFixed(0);
+        console.warn(`[Preview] Stream failed (scope connected=${isConnected}, backoff=${backoffSecs}s) — ${streamUrl}`);
+        _previewLastError = Date.now();
+        previewImage.removeAttribute('src'); // avoid empty-src triggering another error
+        previewImage.style.display = 'none';
+        if (previewPlaceholder) previewPlaceholder.style.display = 'flex';
         if (previewStatusDot) previewStatusDot.className = 'status-dot disconnected';
-        if (previewStatusText) previewStatusText.textContent = 'Stream Error';
+        if (previewStatusText) previewStatusText.textContent = 'Stream unavailable';
         if (previewTitleIcon) previewTitleIcon.textContent = '🔴';
     };
 }
 
 function zoomIn() {
-    currentZoom += zoomStep;
-    if (currentZoom > 3.0) currentZoom = 3.0;
+    currentZoom = Math.min(+(currentZoom + zoomStep).toFixed(2), 4.0);
     applyZoom();
 }
 
 function zoomOut() {
-    currentZoom -= zoomStep;
-    if (currentZoom < 0.5) currentZoom = 0.5;
+    currentZoom = Math.max(+(currentZoom - zoomStep).toFixed(2), 0.5);
     applyZoom();
 }
 
@@ -603,99 +655,73 @@ function zoomReset() {
 }
 
 function zoomFit() {
-    // Fit the image/video to container
     currentZoom = 1.0;
-    const image = document.getElementById('previewImage');
-    const video = document.getElementById('simulationVideo');
-    const container = document.getElementById('previewContainer');
-    
-    if (!container) return;
-    
-    const element = (video && video.style.display !== 'none') ? video : image;
-    if (!element) return;
-    
-    // Remove transform to reset
-    element.classList.remove('zoomed');
-    element.style.transform = '';
-    element.style.width = '100%';
-    element.style.height = 'auto';
-    
-    // Reset scroll
-    container.scrollTop = 0;
-    container.scrollLeft = 0;
-    
-    updateSlider();
+    applyZoom();
 }
 
 function setZoom(value) {
-    currentZoom = value / 100;
+    currentZoom = Math.round(value) / 100;
     applyZoom();
 }
 
 function updateSlider() {
     const slider = document.getElementById('zoomSlider');
     const percent = document.getElementById('zoomPercent');
-    if (slider) slider.value = currentZoom * 100;
+    if (slider) slider.value = Math.round(currentZoom * 100);
     if (percent) percent.textContent = Math.round(currentZoom * 100) + '%';
 }
 
-function applyZoom() {
-    const image = document.getElementById('previewImage');
+function _getActiveMediaElement() {
     const video = document.getElementById('simulationVideo');
+    if (video && video.style.display !== 'none') return video;
+    return document.getElementById('previewImage');
+}
+
+function applyZoom() {
     const container = document.getElementById('previewContainer');
-    
-    if (!container) return;
-    
-    // Determine which element is active (image or video)
-    const element = (video && video.style.display !== 'none') ? video : image;
-    if (!element) return;
-    
-    if (currentZoom === 1.0) {
-        element.classList.remove('zoomed');
-        element.style.transform = '';
-        element.style.width = '100%';
-        element.style.height = 'auto';
-        container.scrollTop = 0;
-        container.scrollLeft = 0;
-        updateSlider();
-        return;
+    const el = _getActiveMediaElement();
+    if (!container || !el || el.style.display === 'none') { updateSlider(); return; }
+
+    const cw = container.clientWidth;
+    const ch = container.clientHeight;
+    if (!cw || !ch) { updateSlider(); return; }
+
+    const nw = el.naturalWidth  || el.videoWidth  || 0;
+    const nh = el.naturalHeight || el.videoHeight || 0;
+
+    if (nw && nh) {
+        // Letterbox fit: fill as much of the container as possible, no cropping.
+        const fitScale = Math.min(cw / nw, ch / nh);
+        el.style.width     = Math.round(nw * fitScale * currentZoom) + 'px';
+        el.style.height    = Math.round(nh * fitScale * currentZoom) + 'px';
+        el.style.maxWidth  = 'none';
+        el.style.maxHeight = 'none';
+    } else {
+        // Natural dimensions not yet available — constrain without distorting.
+        el.style.width     = 'auto';
+        el.style.height    = 'auto';
+        el.style.maxWidth  = cw + 'px';
+        el.style.maxHeight = ch + 'px';
     }
-    
-    // Store current scroll position as percentage
-    const scrollXPercent = container.scrollLeft / (container.scrollWidth - container.clientWidth || 1);
-    const scrollYPercent = container.scrollTop / (container.scrollHeight - container.clientHeight || 1);
-    
-    // Apply zoom using CSS transform
-    element.classList.add('zoomed');
-    element.style.transform = `scale(${currentZoom})`;
-    element.style.transformOrigin = 'center center';
-    element.style.width = '100%';
-    element.style.height = 'auto';
-    
+
+    // CSS margin:auto centres the image when it's smaller than the container.
+    // When it's larger, margins collapse to 0 and the container scrolls.
+    // Scroll to show the centre of the image after a zoom change.
+    requestAnimationFrame(() => {
+        container.scrollLeft = Math.round((container.scrollWidth  - container.clientWidth)  / 2);
+        container.scrollTop  = Math.round((container.scrollHeight - container.clientHeight) / 2);
+    });
+
     updateSlider();
-    
-    // Restore scroll position after zoom
-    setTimeout(() => {
-        container.scrollLeft = scrollXPercent * (container.scrollWidth - container.clientWidth);
-        container.scrollTop = scrollYPercent * (container.scrollHeight - container.clientHeight);
-    }, 10);
 }
 
 function centerPreview() {
     const container = document.getElementById('previewContainer');
-    const image = document.getElementById('previewImage');
-    
-    if (!container || !image) return;
-    
-    // Wait a bit for image to render, then center
+    if (!container) return;
     setTimeout(() => {
-        const scrollHeight = container.scrollHeight;
-        const clientHeight = container.clientHeight;
-        const centerPosition = (scrollHeight - clientHeight) / 2;
-        
-        container.scrollTop = centerPosition;
-        console.log('[Telescope] Preview centered at', centerPosition);
-    }, 500);
+        container.scrollTop  = (container.scrollHeight - container.clientHeight) / 2;
+        container.scrollLeft = (container.scrollWidth  - container.clientWidth)  / 2;
+    }, 100);
 }
 
 function stopPreview() {
@@ -727,14 +753,14 @@ function stopPreview() {
 async function refreshFiles() {
     console.log('[Telescope] Refreshing file list');
     
-    const result = await apiCall('/telescope/files', 'GET');
+    const result = await apiCall(`/telescope/files?_=${Date.now()}`, 'GET');
     if (!result) return;
     
     const fileCount = document.getElementById('fileCount');
     const files = result.files || [];
     
     // Store globally for modal
-    window.currentFiles = files.map(f => ({ path: f.url, name: f.name }));
+    window.currentFiles = files.map(f => ({ path: f.url, name: f.name, thumbnail: f.thumbnail || null }));
     
     // Update count badge
     if (fileCount) {
@@ -770,21 +796,24 @@ async function deleteFile(url, filename) {
         return;
     }
     
-    console.log('[Telescope] Deleting file:', filename);
-    
     try {
-        const result = await apiCall('/telescope/files/delete', 'POST', {
-            path: url.replace('/static/', '')
+        const path = url.replace('/static/', '');
+        const response = await fetch('/telescope/files/delete', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ path })
         });
-        
-        if (result && result.success) {
+        const data = await response.json();
+        if (response.ok && data.success) {
             showStatus(`Deleted ${filename}`, 'success', 3000);
-            refreshFiles();
+        } else {
+            showStatus(`Delete failed: ${data.error || response.status}`, 'error', 5000);
         }
     } catch (error) {
-        console.error('[Telescope] Delete failed:', error);
-        showStatus(`Failed to delete ${filename}`, 'error', 5000);
+        showStatus(`Delete failed: ${error.message}`, 'error', 5000);
     }
+    // Always refresh — whether delete succeeded or file was already gone
+    refreshFiles();
 }
 
 // ============================================================================
@@ -852,6 +881,10 @@ async function apiCall(endpoint, method = 'GET', body = null) {
         }
         
         const response = await fetch(endpoint, options);
+        const contentType = response.headers.get('content-type') || '';
+        if (!contentType.includes('application/json')) {
+            throw new Error(`HTTP ${response.status}: unexpected response`);
+        }
         const data = await response.json();
         
         if (!response.ok) {
@@ -964,13 +997,14 @@ function checkAutoCapture() {
 
     const PRE = 10, POST = 10;
 
-    // Find next unhandled transit within PRE seconds
+    // Find next unhandled transit within PRE seconds that hasn't already been captured
     const imminent = upcomingTransits.find(t =>
-        t.seconds_until <= PRE && t.seconds_until > 0 && !t.handled
+        t.seconds_until <= PRE && t.seconds_until > 0 && !t.handled && !capturedTransits.has(t.flight)
     );
     if (!imminent) return;
 
-    imminent.handled = true; // prevent re-triggering each tick
+    imminent.handled = true;           // prevent re-triggering on per-second tick
+    capturedTransits.add(imminent.flight); // persist across array replacements from server poll
 
     const isSimFlight = imminent.flight === SIM_TRANSIT.flight ||
                         imminent.flight === SIM_ECLIPSE_TRANSIT.flight;
@@ -1395,9 +1429,21 @@ function dismissTransit(flight) {
 // FILMSTRIP & MODAL
 // ============================================================================
 
+async function toggleTelegramMute() {
+    const result = await apiCall('/telescope/notifications/mute', 'POST');
+    if (result !== null) updateTelegramMuteBtn(result.muted);
+}
+
+function updateTelegramMuteBtn(muted) {
+    const btn = document.getElementById('telegramMuteBtn');
+    if (!btn) return;
+    btn.textContent = muted ? '🔕' : '🔔';
+    btn.title = muted ? 'Telegram alerts muted — click to unmute' : 'Mute Telegram alerts';
+    btn.style.opacity = muted ? '0.5' : '1';
+}
+
 function toggleFilesModal() {
     const modal = document.getElementById('filesModal');
-    if (!modal) return;
     
     if (modal.style.display === 'none' || !modal.style.display) {
         modal.style.display = 'flex';
@@ -1416,7 +1462,7 @@ function updateFilmstrip(files) {
         return;
     }
     
-    filmstrip.innerHTML = files.slice(-10).reverse().map(file => {
+    filmstrip.innerHTML = files.slice(0, 10).map(file => {
         const isTemp = file.isSimulation;
         const badge = isTemp ? '<span class="temp-badge">TEMP</span>' : '';
         const itemClass = isTemp ? 'filmstrip-item temp-file' : 'filmstrip-item';
@@ -1424,15 +1470,15 @@ function updateFilmstrip(files) {
         const thumbnail = file.thumbnail
             ? `<img src="${file.thumbnail}" alt="${file.name}" class="filmstrip-thumbnail">`
             : isVideo
-                ? `<div class="filmstrip-thumbnail video-thumb">🎬</div>`
+                ? `<canvas class="filmstrip-thumbnail video-thumb-canvas" data-video-src="${file.url || file.path}"></canvas>`
                 : `<img src="${file.path}" alt="${file.name}" class="filmstrip-thumbnail">`;
         
         return `
         <div class="${itemClass}" onclick="viewFile('${file.url || file.path}', '${file.name}')">
             ${badge}
+            <div class="filmstrip-name" title="${file.name}">${file.name}</div>
             ${thumbnail}
             <div class="filmstrip-info">
-                <span>${file.name.split('_')[0]}</span>
                 <div class="filmstrip-actions">
                     <button class="btn-icon" onclick="event.stopPropagation(); downloadFile('${file.path}', '${file.name}')" title="Download" ${isTemp ? 'disabled' : ''}>⬇️</button>
                     <button class="btn-icon btn-danger" onclick="event.stopPropagation(); deleteFile('${file.path}', '${file.name}')" title="Delete" ${isTemp ? 'disabled' : ''}>🗑️</button>
@@ -1441,6 +1487,9 @@ function updateFilmstrip(files) {
         </div>
     `;
     }).join('');
+
+    // Generate thumbnails from video first frame for any canvas placeholders
+    filmstrip.querySelectorAll('canvas.video-thumb-canvas').forEach(generateVideoThumbnail);
 }
 
 function updateFilesGrid() {
@@ -1457,12 +1506,13 @@ function updateFilesGrid() {
     
     grid.innerHTML = files.map(file => {
         const isVideo = file.path.match(/\.(mp4|avi|mov)$/i);
-        const thumbnail = isVideo
-            ? `<div class="file-thumbnail video-thumb" onclick="viewFile('${file.path}')">🎬</div>`
-            : `<img src="${file.path}" alt="${file.name}" class="file-thumbnail" onclick="viewFile('${file.path}')">`;
+        const thumbnail = file.thumbnail
+            ? `<img src="${file.thumbnail}" alt="${file.name}" class="file-thumbnail" onclick="viewFile('${file.url || file.path}', '${file.name}')">`
+            : isVideo
+                ? `<canvas class="file-thumbnail video-thumb-canvas" data-video-src="${file.url || file.path}" onclick="viewFile('${file.url || file.path}', '${file.name}')"></canvas>`
+                : `<img src="${file.path}" alt="${file.name}" class="file-thumbnail" onclick="viewFile('${file.path}', '${file.name}')">`;
         return `
         <div class="file-item">
-            ${thumbnail}
             <div class="file-info">
                 <span class="file-name" title="${file.name}">${file.name}</span>
                 <div class="file-actions">
@@ -1470,21 +1520,96 @@ function updateFilesGrid() {
                     <button class="btn-icon btn-danger" onclick="deleteFile('${file.path}', '${file.name}')" title="Delete">🗑️</button>
                 </div>
             </div>
+            ${thumbnail}
         </div>
     `}).join('');
+
+    // Generate thumbnails from video first frame for any canvas placeholders
+    grid.querySelectorAll('canvas.video-thumb-canvas').forEach(generateVideoThumbnail);
 }
+
+// Generate a thumbnail from a video's first frame onto a <canvas>
+function generateVideoThumbnail(canvas) {
+    const src = canvas.dataset.videoSrc;
+    if (!src) return;
+    const video = document.createElement('video');
+    video.crossOrigin = 'anonymous';
+    video.muted = true;
+    video.preload = 'metadata';
+    video.src = src;
+    video.addEventListener('loadeddata', () => {
+        video.currentTime = 0.5; // seek to 0.5s to avoid blank first frame
+    });
+    video.addEventListener('seeked', () => {
+        canvas.width = video.videoWidth || 192;
+        canvas.height = video.videoHeight || 108;
+        canvas.getContext('2d').drawImage(video, 0, 0, canvas.width, canvas.height);
+        video.src = ''; // free memory
+    }, { once: true });
+    video.addEventListener('error', () => {
+        // Fallback: draw 🎬 emoji on canvas
+        canvas.width = 192; canvas.height = 108;
+        const ctx = canvas.getContext('2d');
+        ctx.fillStyle = '#1a1a2e';
+        ctx.fillRect(0, 0, 192, 108);
+        ctx.font = '36px serif';
+        ctx.textAlign = 'center';
+        ctx.fillText('🎬', 96, 66);
+    });
+}
+
+// Track viewer state for navigation
+var _viewerIndex = -1;
 
 function viewFile(path, name) {
     name = name || path.split('/').pop();
+    const files = window.currentFiles || [];
+    _viewerIndex = files.findIndex(f => (f.url || f.path) === path || f.path === path);
+
     const isVideo = /\.(mp4|avi|mov|mkv|webm)$/i.test(name);
     const viewer = document.getElementById('fileViewer');
     const body = document.getElementById('fileViewerBody');
     const nameEl = document.getElementById('fileViewerName');
+    const actionsEl = document.getElementById('fileViewerActions');
 
     nameEl.textContent = name;
-    body.innerHTML = isVideo
-        ? `<video src="${path}" controls autoplay style="max-width:90vw; max-height:80vh;"></video>`
-        : `<img src="${path}" alt="${name}" style="max-width:90vw; max-height:80vh; object-fit:contain;">`;
+    _setScanBanner(null); // clear any previous scan result
+    if (isVideo) {
+        body.innerHTML =
+            `<div style="position:relative; display:inline-block;">` +
+            `<video src="${path}" controls autoplay style="max-width:90vw; max-height:80vh;"></video>` +
+            `<div id="videoPreciseTime" class="video-precise-time">0.00 / 0.00</div>` +
+            `</div>`;
+        const vid = body.querySelector('video');
+        const timeEl = document.getElementById('videoPreciseTime');
+        const updateTime = () => {
+            const cur = (vid.currentTime || 0).toFixed(2);
+            const dur = (vid.duration || 0).toFixed(2);
+            timeEl.textContent = `${cur} / ${dur}`;
+        };
+        vid.addEventListener('timeupdate', updateTime);
+        vid.addEventListener('seeked', updateTime);
+        vid.addEventListener('loadedmetadata', updateTime);
+    } else {
+        body.innerHTML = `<img src="${path}" alt="${name}" style="max-width:90vw; max-height:80vh; object-fit:contain;">`;
+    }
+
+    // Build action buttons (download, delete, prev/next, find transit)
+    if (actionsEl) {
+        const hasPrev = _viewerIndex > 0;
+        const hasNext = _viewerIndex >= 0 && _viewerIndex < files.length - 1;
+        const scanBtn = isVideo
+            ? `<button class="btn-viewer" onmousedown="frameStepStart(-1)" onmouseup="frameStepStop()" onmouseleave="frameStepStop()" title="Back 1 frame (hold to repeat)">◁</button>` +
+              `<button class="btn-viewer btn-viewer-scan" id="scanTransitBtn" onclick="scanTransit()" title="Scan for transit frame">🎯 Find Transit</button>` +
+              `<button class="btn-viewer" onmousedown="frameStepStart(1)" onmouseup="frameStepStop()" onmouseleave="frameStepStop()" title="Forward 1 frame (hold to repeat)">▷</button>`
+            : '';
+        actionsEl.innerHTML =
+            `<button class="btn-viewer" onclick="viewerNav(-1)" title="Previous" ${hasPrev ? '' : 'disabled'}>◀</button>` +
+            scanBtn +
+            `<button class="btn-viewer" onclick="viewerDownload()" title="Download">⬇️ Download</button>` +
+            `<button class="btn-viewer btn-viewer-danger" onclick="viewerDelete(event)" title="Delete (⌘/Ctrl+click to skip confirm)">🗑️ Delete</button>` +
+            `<button class="btn-viewer" onclick="viewerNav(1)" title="Next" ${hasNext ? '' : 'disabled'}>▶</button>`;
+    }
 
     viewer.style.display = 'flex';
 }
@@ -1494,6 +1619,370 @@ function closeFileViewer() {
     const body = document.getElementById('fileViewerBody');
     viewer.style.display = 'none';
     body.innerHTML = '';  // Stop video playback
+    _setScanBanner(null);
+    _viewerIndex = -1;
+}
+
+var _frameStepTimer = null;
+
+function frameStep(dir) {
+    const vid = document.querySelector('#fileViewerBody video');
+    if (!vid) return;
+    vid.pause();
+    vid.currentTime = Math.max(0, Math.min(vid.duration, vid.currentTime + dir / 30));
+}
+
+function frameStepStart(dir) {
+    frameStepStop();
+    frameStep(dir); // immediate first step
+    let delay = 250; // initial repeat delay
+    const repeat = () => {
+        frameStep(dir);
+        delay = Math.max(50, delay * 0.8); // accelerate
+        _frameStepTimer = setTimeout(repeat, delay);
+    };
+    _frameStepTimer = setTimeout(repeat, delay);
+}
+
+function frameStepStop() {
+    if (_frameStepTimer) { clearTimeout(_frameStepTimer); _frameStepTimer = null; }
+}
+
+function viewerNav(delta) {
+    const files = window.currentFiles || [];
+    const newIdx = _viewerIndex + delta;
+    if (newIdx < 0 || newIdx >= files.length) return;
+    const f = files[newIdx];
+    viewFile(f.url || f.path, f.name);
+}
+
+function viewerDownload() {
+    const files = window.currentFiles || [];
+    if (_viewerIndex < 0 || _viewerIndex >= files.length) return;
+    const f = files[_viewerIndex];
+    downloadFile(f.path, f.name);
+}
+
+async function viewerDelete(e) {
+    const files = window.currentFiles || [];
+    if (_viewerIndex < 0 || _viewerIndex >= files.length) return;
+    const f = files[_viewerIndex];
+    const skipConfirm = e && (e.metaKey || e.ctrlKey);
+    if (!skipConfirm && !confirm(`Delete ${f.name}?`)) return;
+
+    try {
+        const path = (f.url || f.path).replace('/static/', '');
+        const response = await fetch('/telescope/files/delete', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ path })
+        });
+        const data = await response.json();
+        if (response.ok && data.success) {
+            showStatus(`Deleted ${f.name}`, 'success', 3000);
+        } else {
+            showStatus(`Delete failed: ${data.error || response.status}`, 'error', 5000);
+            return;
+        }
+    } catch (error) {
+        showStatus(`Delete failed: ${error.message}`, 'error', 5000);
+        return;
+    }
+
+    // Refresh file list, then navigate to next (or previous, or close)
+    await refreshFiles();
+    const updatedFiles = window.currentFiles || [];
+    if (updatedFiles.length === 0) {
+        closeFileViewer();
+    } else if (_viewerIndex < updatedFiles.length) {
+        const next = updatedFiles[_viewerIndex];
+        viewFile(next.url || next.path, next.name);
+    } else {
+        const prev = updatedFiles[updatedFiles.length - 1];
+        viewFile(prev.url || prev.path, prev.name);
+    }
+}
+
+// ============================================================================
+// TRANSIT FRAME SCANNER
+// Scans a video to find the transit (aircraft crossing sun/moon disk).
+// Compares sampled frames against a reference to detect the brief anomaly,
+// then seeks the player to the centre of the transit.
+// ============================================================================
+
+async function scanTransit() {
+    const files = window.currentFiles || [];
+    if (_viewerIndex < 0 || _viewerIndex >= files.length) return;
+    const f = files[_viewerIndex];
+    const videoPath = f.url || f.path;
+    if (!/\.(mp4|avi|mov|mkv|webm)$/i.test(f.name)) return;
+
+    const btn = document.getElementById('scanTransitBtn');
+    const playerVideo = document.querySelector('#fileViewerBody video');
+    if (!playerVideo) return;
+
+    if (btn) { btn.disabled = true; btn.textContent = '🔍 0%'; }
+    _setScanBanner(null); // clear previous result
+
+    try {
+        const result = await _scanVideoForTransit(videoPath, pct => {
+            if (btn) btn.textContent = `🔍 ${pct}%`;
+        });
+
+        if (result) {
+            playerVideo.currentTime = result.center;
+            playerVideo.pause();
+            const durMs = Math.round(result.duration * 1000);
+            const ts = _formatTimestamp(result.center);
+            _setScanBanner('found',
+                `🎯 Transit detected at ${ts} (~${durMs}ms)` +
+                `  —  click to replay`,
+                () => { playerVideo.currentTime = Math.max(0, result.start - 0.2); playerVideo.play(); }
+            );
+        } else {
+            _setScanBanner('none', 'No transit detected in this video');
+        }
+    } catch (e) {
+        _setScanBanner('error', `Scan failed: ${e.message}`);
+    }
+
+    if (btn) { btn.disabled = false; btn.textContent = '🎯 Find Transit'; }
+}
+
+function _formatTimestamp(secs) {
+    const m = Math.floor(secs / 60);
+    const s = (secs % 60).toFixed(2);
+    return m > 0 ? `${m}:${s.padStart(5, '0')}` : `${s}s`;
+}
+
+function _setScanBanner(type, text, onclick) {
+    const el = document.getElementById('scanResultBanner');
+    if (!el) return;
+    if (!type) { el.style.display = 'none'; el.className = ''; el.onclick = null; return; }
+    el.className = type === 'found' ? 'scan-found' : type === 'none' ? 'scan-none' : 'scan-error';
+    el.textContent = text;
+    el.style.display = 'block';
+    el.onclick = onclick || null;
+    el.style.cursor = onclick ? 'pointer' : 'default';
+}
+
+/**
+ * Analyse a video for a transit event.
+ * Returns { center, start, end, duration } in seconds, or null if nothing found.
+ *
+ * Uses two complementary signals so it catches both fast aircraft and
+ * slow/stationary targets (high-altitude balloons):
+ *
+ *  Signal A – Consecutive-frame diff:  detects rapid change.  A fast
+ *    aircraft produces spikes when the silhouette enters and exits.
+ *    Even a single-frame transit (~33ms) creates a change boundary.
+ *
+ *  Signal B – Reference-frame diff (centre-weighted):  detects any
+ *    anomaly vs. clean background, however slow-moving or diffuse.
+ *    Centre-weighting focuses on the sun/moon disk where the target
+ *    appears, boosting signal-to-noise for small objects.
+ *
+ *  Both diff functions subtract the mean per-channel brightness shift
+ *  before summing, making them immune to atmospheric scintillation
+ *  (global brightness fluctuations).  Only localised pixel changes
+ *  (actual silhouettes) contribute to the score.
+ *
+ *  The coarse pass records both signals per sample and flags a sample
+ *  as a spike if EITHER exceeds its own adaptive threshold.
+ *
+ *  Fine pass uses reference-frame comparison at ~30fps to pinpoint
+ *  exact transit boundaries.
+ */
+async function _scanVideoForTransit(src, onProgress) {
+    const video = document.createElement('video');
+    video.muted = true;
+    video.preload = 'auto';
+    video.src = src;
+
+    await new Promise((resolve, reject) => {
+        video.addEventListener('loadeddata', resolve, { once: true });
+        video.addEventListener('error', () => reject(new Error('Video load failed')), { once: true });
+    });
+
+    const duration = video.duration;
+    if (!duration || duration < 0.5) { video.src = ''; return null; }
+
+    // Small canvas for fast pixel comparison
+    const W = 160, H = 90;
+    const canvas = document.createElement('canvas');
+    canvas.width = W; canvas.height = H;
+    const ctx = canvas.getContext('2d', { willReadFrequently: true });
+    const pixels = W * H;
+
+    const seekTo = t => new Promise(resolve => {
+        video.currentTime = Math.min(t, duration - 0.01);
+        video.addEventListener('seeked', resolve, { once: true });
+    });
+
+    const grabFrame = () => {
+        ctx.drawImage(video, 0, 0, W, H);
+        return ctx.getImageData(0, 0, W, H).data;
+    };
+
+    // Scintillation-immune diff: subtracts the mean per-channel brightness
+    // shift before summing.  Global brightness changes (atmospheric
+    // scintillation) cancel out; only localised anomalies (silhouettes)
+    // register.  Two passes over the pixels.
+    const frameDiff = (a, b) => {
+        const n = a.length / 4;
+        let mR = 0, mG = 0, mB = 0;
+        for (let i = 0; i < a.length; i += 4) {
+            mR += a[i] - b[i];
+            mG += a[i+1] - b[i+1];
+            mB += a[i+2] - b[i+2];
+        }
+        mR /= n; mG /= n; mB /= n;
+        let sum = 0;
+        for (let i = 0; i < a.length; i += 4) {
+            sum += Math.abs((a[i] - b[i]) - mR)
+                 + Math.abs((a[i+1] - b[i+1]) - mG)
+                 + Math.abs((a[i+2] - b[i+2]) - mB);
+        }
+        return sum;
+    };
+
+    // Centre-weighted, scintillation-immune diff.  Same mean-subtraction
+    // approach, but pixels near the frame centre count more heavily since
+    // the sun/moon disk occupies the centre of the telescope FOV.
+    const cxHalf = W / 2, cyHalf = H / 2;
+    const centreWeightedDiff = (a, b) => {
+        const n = a.length / 4;
+        let mR = 0, mG = 0, mB = 0;
+        for (let i = 0; i < a.length; i += 4) {
+            mR += a[i] - b[i];
+            mG += a[i+1] - b[i+1];
+            mB += a[i+2] - b[i+2];
+        }
+        mR /= n; mG /= n; mB /= n;
+        let sum = 0;
+        for (let y = 0; y < H; y++) {
+            const dy = (y - cyHalf) / cyHalf;
+            for (let x = 0; x < W; x++) {
+                const dx = (x - cxHalf) / cxHalf;
+                const w = 1.0 - 0.7 * Math.sqrt(dx * dx + dy * dy);
+                const i = (y * W + x) * 4;
+                sum += w * (Math.abs((a[i] - b[i]) - mR)
+                          + Math.abs((a[i+1] - b[i+1]) - mG)
+                          + Math.abs((a[i+2] - b[i+2]) - mB));
+            }
+        }
+        return sum;
+    };
+
+    // Helper: adaptive threshold = median + max(3×MAD, 0.5×median)
+    const adaptiveThreshold = (values) => {
+        const s = [...values].sort((a, b) => a - b);
+        const med = s[Math.floor(s.length / 2)];
+        const mad = [...values].map(d => Math.abs(d - med)).sort((a, b) => a - b)[Math.floor(values.length / 2)];
+        return med + Math.max(mad * 3, med * 0.5);
+    };
+
+    // --- Coarse pass (0.1s steps, dual signals) ---
+    const coarseStep = 0.1;
+    const numCoarse = Math.floor(duration / coarseStep);
+
+    await seekTo(0);
+    const refFrame = grabFrame();   // Signal B reference (clean background)
+    let prevFrame = refFrame;
+    const coarseSamples = [];       // { time, consecDiff, refDiff }
+
+    for (let i = 1; i < numCoarse; i++) {
+        await seekTo(i * coarseStep);
+        const frame = grabFrame();
+        coarseSamples.push({
+            time: i * coarseStep,
+            consecDiff: frameDiff(frame, prevFrame),
+            refDiff:    centreWeightedDiff(frame, refFrame),
+        });
+        prevFrame = frame;
+        if (onProgress && i % 10 === 0) onProgress(Math.round(50 * i / numCoarse));
+    }
+
+    if (coarseSamples.length < 3) { video.src = ''; return null; }
+
+    // Independent thresholds for each signal
+    const threshA = adaptiveThreshold(coarseSamples.map(s => s.consecDiff));
+    const threshB = adaptiveThreshold(coarseSamples.map(s => s.refDiff));
+
+    // A sample is a spike if EITHER signal exceeds its threshold
+    const spikeIndices = [];
+    for (let i = 0; i < coarseSamples.length; i++) {
+        if (coarseSamples[i].consecDiff > threshA || coarseSamples[i].refDiff > threshB) {
+            spikeIndices.push(i);
+        }
+    }
+    if (spikeIndices.length === 0) { video.src = ''; return null; }
+
+    // Merge spikes into clusters (gap ≤ 5 coarse steps = 0.5s)
+    const clusters = [];
+    let cStart = spikeIndices[0], cEnd = spikeIndices[0];
+    let cPeak = Math.max(coarseSamples[cStart].consecDiff, coarseSamples[cStart].refDiff);
+    for (let k = 1; k < spikeIndices.length; k++) {
+        if (spikeIndices[k] - spikeIndices[k-1] <= 5) {
+            cEnd = spikeIndices[k];
+            const s = coarseSamples[cEnd];
+            cPeak = Math.max(cPeak, s.consecDiff, s.refDiff);
+        } else {
+            clusters.push({ start: coarseSamples[cStart].time, end: coarseSamples[cEnd].time, peak: cPeak });
+            cStart = cEnd = spikeIndices[k];
+            cPeak = Math.max(coarseSamples[cStart].consecDiff, coarseSamples[cStart].refDiff);
+        }
+    }
+    clusters.push({ start: coarseSamples[cStart].time, end: coarseSamples[cEnd].time, peak: cPeak });
+
+    // Pick the cluster with the highest peak
+    const bestCluster = clusters.reduce((a, b) => b.peak > a.peak ? b : a);
+
+    // --- Fine pass (~30fps around the candidate region) ---
+    // Reference-frame (centre-weighted) comparison flags every frame
+    // that contains the silhouette, whether it moved or not.
+    const margin = 0.5;
+    const fineStart = Math.max(0, bestCluster.start - margin);
+    const fineEnd = Math.min(duration, bestCluster.end + margin);
+    const fineStep = 0.033;
+    const numFine = Math.ceil((fineEnd - fineStart) / fineStep);
+
+    // Reference = first frame of the fine window (should be clean background)
+    await seekTo(fineStart);
+    const fineRef = grabFrame();
+    const fineSamples = [];
+
+    for (let i = 0; i < numFine; i++) {
+        const t = fineStart + i * fineStep;
+        await seekTo(t);
+        const frame = grabFrame();
+        fineSamples.push({ time: t, diff: centreWeightedDiff(frame, fineRef) });
+        if (onProgress && i % 5 === 0) onProgress(50 + Math.round(50 * i / numFine));
+    }
+
+    // Re-threshold on fine samples
+    const fineThreshold = adaptiveThreshold(fineSamples.map(s => s.diff));
+
+    let transitStart = null, transitEnd = null;
+    for (const s of fineSamples) {
+        if (s.diff > fineThreshold) {
+            if (transitStart === null) transitStart = s.time;
+            transitEnd = s.time;
+        }
+    }
+
+    video.src = ''; // free memory
+
+    if (transitStart === null) {
+        // Fall back to coarse cluster centre
+        const center = (bestCluster.start + bestCluster.end) / 2;
+        return { center, start: bestCluster.start, end: bestCluster.end,
+                 duration: bestCluster.end - bestCluster.start + coarseStep };
+    }
+
+    const center = (transitStart + transitEnd) / 2;
+    return { center, start: transitStart, end: transitEnd,
+             duration: transitEnd - transitStart + fineStep };
 }
 
 // ============================================================================
@@ -1937,12 +2426,14 @@ function startSimulatedPreview() {
         simulationVideo.autoplay = true;
         simulationVideo.loop = true;
         simulationVideo.muted = true;
-        simulationVideo.style.cssText = 'width:100%; height:auto; display:block; object-fit:contain;';
+        simulationVideo.style.cssText = 'display:block; flex-shrink:0; margin:auto;';
         simulationVideo.src = '/static/simulations/demo.mp4';
-        if (previewContainer) previewContainer.appendChild(simulationVideo);
+        simulationVideo.onloadedmetadata = () => applyZoom();
+        previewContainer.appendChild(simulationVideo);
     } else {
         simulationVideo.style.display = 'block';
         simulationVideo.play();
+        applyZoom();
     }
 
     if (previewStatusDot)  previewStatusDot.className = 'status-dot connected';

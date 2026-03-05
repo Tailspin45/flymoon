@@ -24,20 +24,21 @@ Environment Variables:
 """
 
 import argparse
-import asyncio
 import os
 import sys
 from datetime import datetime, timedelta
 from typing import List, Optional
+
 from dotenv import load_dotenv
 
 # Load environment first
 load_dotenv()
 
+from pushbullet import Pushbullet
+
 from src import logger
 from src.constants import PossibilityLevel
 from src.transit import get_transits
-from pushbullet import Pushbullet
 
 
 class TransitMonitor:
@@ -109,7 +110,7 @@ class TransitMonitor:
             result = get_transits(
                 self.latitude, self.longitude, self.elevation, self.target
             )
-            all_transits = result.get('flights', [])
+            all_transits = result.get("flights", [])
 
             # Filter for HIGH probability only
             high_prob = [
@@ -202,7 +203,9 @@ class TransitMonitor:
                 start_recording_at = transit_time - timedelta(seconds=pre_buffer)
                 stop_recording_at = transit_time + timedelta(seconds=post_buffer)
 
-                title = f"🚨 TRANSIT IMMINENT - {self.format_transit_time(time_minutes)}"
+                title = (
+                    f"🚨 TRANSIT IMMINENT - {self.format_transit_time(time_minutes)}"
+                )
                 body = (
                     f"Flight: {transit['id']}\n"
                     f"Route: {transit['origin']} → {transit['destination']}\n"
@@ -248,9 +251,12 @@ class TransitMonitor:
         )
 
         import time
+
         try:
             while True:
-                logger.info(f"\n[{datetime.now().strftime('%H:%M:%S')}] Checking for transits...")
+                logger.info(
+                    f"\n[{datetime.now().strftime('%H:%M:%S')}] Checking for transits..."
+                )
                 self.check_and_notify()
 
                 # Wait for next check

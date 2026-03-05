@@ -285,13 +285,11 @@ The system is designed to work **exactly the same way** whether automatic or man
 
 - **`transit_capture.py`** - Main production system (this guide)
 - **`monitor_transits.py`** - Manual-only version (if you want to force manual)
-- **`examples/seestar_transit_trigger.py`** - Test/development script
 
 ## Support
 
-- Development log: `SEESTAR_DEVELOPMENT_LOG.md`
-- Manual mode guide: `TRANSIT_MONITOR_GUIDE.md`
-- Integration docs: `SEESTAR_INTEGRATION.md`
+- Setup guide: `SETUP.md`
+- Telescope guide: `docs/TELESCOPE_GUIDE.md`
 
 ---
 

@@ -2,6 +2,17 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Agent Permissions
+
+You have full, standing permission to:
+- Read, edit, and create any file in this repository without asking
+- Execute any shell command necessary (curl, git, python, pip, make, etc.)
+- Install packages, run tests, start/stop servers, and make network requests
+- Make commits and push to the current branch
+- Take whatever action is needed to complete a task — do not ask for confirmation on individual steps
+
+When given a task, just do it. No need to present options or ask which approach to take unless the task is genuinely ambiguous at a high level.
+
 ## Project Overview
 
 Flymoon tracks aircraft transiting the Sun and Moon using real-time flight data and celestial calculations. It's a Flask-based web application with automatic telescope control (Seestar S50) for capturing transits.
@@ -97,9 +108,9 @@ python3 src/config_wizard.py --setup
    - Function: `check_transit()` → returns min separation time and angles
 
 5. **Probability Classification** (`src/transit.py:get_possibility_level()`)
-   - **HIGH** (🟢): ≤1° separation in both alt/az (direct transit very likely)
-   - **MEDIUM** (🟠): ≤2° separation (near miss, worth recording)
-   - **LOW** (⚪): ≤3° separation (possible distant transit)
+   - **HIGH** (🟢): ≤1.5° angular separation (direct transit very likely)
+   - **MEDIUM** (🟠): ≤2.5° angular separation (near miss, worth recording)
+   - **LOW** (⚪): ≤3.0° angular separation (possible distant transit)
    - **UNLIKELY**: >3° separation
 
 ### Flask Application Structure
@@ -223,7 +234,8 @@ logger.error("message")
 - **15-minute window** - Aircraft maintain constant velocity/heading (acceptable for short timeframes, accuracy degrades beyond 10 minutes)
 - **Transit brevity** - Aircraft transits last 0.5-2 seconds, automation is critical
 - **Pre-pointing required** - Telescope must already be tracking Sun/Moon before transit occurs
-- **1° target size** - Classification thresholds assume 0.5° for Sun/Moon + 0.5° margin
+- **Track prefetch** - HIGH-probability transits trigger automatic background FA track fetch to improve dead-reckoning velocity accuracy
+- **Angular separation** - Classification uses great-circle separation in alt-az space; azimuth differences are cosine-weighted by target altitude
 
 ### API Rate Limits
 
@@ -281,7 +293,7 @@ logger.error("message")
 │   └── leaflet*.js/css      # Self-hosted Leaflet library
 ├── templates/                # Jinja2 HTML
 │   ├── index.html           # Main interface
-│   └── telescope.html       # Telescope control page
+│   └── cost_models.html     # API cost calculator
 ├── data/                     # Flight logs, gallery images
 ├── tests/                    # Manual tests
 └── de421.bsp                 # JPL ephemeris (auto-downloaded)
@@ -301,7 +313,7 @@ logger.error("message")
 1. Add JSON-RPC method to `SeestarClient._send_command()` in `src/seestar_client.py`
 2. Add public method to `SeestarClient` class
 3. Add Flask endpoint to `src/telescope_routes.py`
-4. Add UI controls to `templates/telescope.html` and `static/telescope.js`
+4. Add UI controls to `static/telescope.js`
 5. Add mock implementation to `MockSeestarClient` for testing
 
 ### Modifying Transit Detection Thresholds

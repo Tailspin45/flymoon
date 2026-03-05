@@ -6,7 +6,8 @@ Handles first-run setup and configuration validation.
 import os
 import sys
 from pathlib import Path
-from dotenv import load_dotenv, set_key, find_dotenv
+
+from dotenv import find_dotenv, load_dotenv, set_key
 
 
 class ConfigWizard:
@@ -42,27 +43,33 @@ class ConfigWizard:
         key = os.getenv("AEROAPI_API_KEY")
         legacy_key = os.getenv("AEROAPI_KEY") or os.getenv("FLIGHTAWARE_API_KEY")
         if not key and not legacy_key:
-            self.errors.append({
-                "field": "AEROAPI_API_KEY",
-                "message": "FlightAware AeroAPI key is required for live flight data",
-                "severity": "ERROR",
-            })
+            self.errors.append(
+                {
+                    "field": "AEROAPI_API_KEY",
+                    "message": "FlightAware AeroAPI key is required for live flight data",
+                    "severity": "ERROR",
+                }
+            )
         if legacy_key and not key:
-            self.warnings.append({
-                "field": "AEROAPI_API_KEY",
-                "message": "Legacy API key detected (AEROAPI_KEY or FLIGHTAWARE_API_KEY). Rename to AEROAPI_API_KEY.",
-                "severity": "WARNING",
-            })
+            self.warnings.append(
+                {
+                    "field": "AEROAPI_API_KEY",
+                    "message": "Legacy API key detected (AEROAPI_KEY or FLIGHTAWARE_API_KEY). Rename to AEROAPI_API_KEY.",
+                    "severity": "WARNING",
+                }
+            )
 
     def _check_weather_key(self):
         """Check OpenWeather API key."""
         key = os.getenv("OPENWEATHER_API_KEY")
         if not key:
-            self.warnings.append({
-                "field": "OPENWEATHER_API_KEY",
-                "message": "OpenWeather API key missing (weather filtering disabled)",
-                "severity": "WARNING",
-            })
+            self.warnings.append(
+                {
+                    "field": "OPENWEATHER_API_KEY",
+                    "message": "OpenWeather API key missing (weather filtering disabled)",
+                    "severity": "WARNING",
+                }
+            )
 
     def _check_coordinates(self):
         """Check observer coordinates."""
@@ -70,46 +77,61 @@ class ConfigWizard:
         lon = os.getenv("OBSERVER_LONGITUDE")
 
         if not lat or not lon:
-            self.errors.append({
-                "field": "OBSERVER_COORDINATES",
-                "message": "Observer coordinates not set",
-                "severity": "ERROR",
-            })
+            self.errors.append(
+                {
+                    "field": "OBSERVER_COORDINATES",
+                    "message": "Observer coordinates not set",
+                    "severity": "ERROR",
+                }
+            )
         else:
             try:
                 lat_f = float(lat)
                 lon_f = float(lon)
                 if not (-90 <= lat_f <= 90):
-                    self.errors.append({
-                        "field": "OBSERVER_LATITUDE",
-                        "message": f"Invalid latitude: {lat} (must be -90 to 90)",
-                        "severity": "ERROR"
-                    })
+                    self.errors.append(
+                        {
+                            "field": "OBSERVER_LATITUDE",
+                            "message": f"Invalid latitude: {lat} (must be -90 to 90)",
+                            "severity": "ERROR",
+                        }
+                    )
                 if not (-180 <= lon_f <= 180):
-                    self.errors.append({
-                        "field": "OBSERVER_LONGITUDE",
-                        "message": f"Invalid longitude: {lon} (must be -180 to 180)",
-                        "severity": "ERROR"
-                    })
+                    self.errors.append(
+                        {
+                            "field": "OBSERVER_LONGITUDE",
+                            "message": f"Invalid longitude: {lon} (must be -180 to 180)",
+                            "severity": "ERROR",
+                        }
+                    )
             except ValueError:
-                self.errors.append({
-                    "field": "OBSERVER_COORDINATES",
-                    "message": "Coordinates must be numeric",
-                    "severity": "ERROR"
-                })
+                self.errors.append(
+                    {
+                        "field": "OBSERVER_COORDINATES",
+                        "message": "Coordinates must be numeric",
+                        "severity": "ERROR",
+                    }
+                )
 
     def _check_bounding_box(self):
         """Check flight search bounding box."""
-        fields = ["LAT_LOWER_LEFT", "LONG_LOWER_LEFT", "LAT_UPPER_RIGHT", "LONG_UPPER_RIGHT"]
+        fields = [
+            "LAT_LOWER_LEFT",
+            "LONG_LOWER_LEFT",
+            "LAT_UPPER_RIGHT",
+            "LONG_UPPER_RIGHT",
+        ]
         values = {f: os.getenv(f) for f in fields}
 
         missing = [f for f, v in values.items() if not v]
         if missing:
-            self.errors.append({
-                "field": "BOUNDING_BOX",
-                "message": f"Bounding box incomplete (missing: {', '.join(missing)})",
-                "severity": "ERROR",
-            })
+            self.errors.append(
+                {
+                    "field": "BOUNDING_BOX",
+                    "message": f"Bounding box incomplete (missing: {', '.join(missing)})",
+                    "severity": "ERROR",
+                }
+            )
 
     def _prompt(self, message, default=None, required=True):
         """Prompt user for input with optional default."""
@@ -152,17 +174,17 @@ class ConfigWizard:
             value = input(f"{message} [{default_str}]: ").strip().lower()
             if not value:
                 return default
-            if value in ('y', 'yes'):
+            if value in ("y", "yes"):
                 return True
-            if value in ('n', 'no'):
+            if value in ("n", "no"):
                 return False
             print("  Please enter 'y' or 'n'")
 
     def _run_interactive_setup(self):
         """Run interactive setup wizard."""
-        print("\n" + "="*60)
+        print("\n" + "=" * 60)
         print("  Flymoon Configuration Wizard")
-        print("="*60)
+        print("=" * 60)
         print("\nThis wizard will help you configure Flymoon step by step.")
         print("You can press Ctrl+C at any time to cancel.\n")
 
@@ -177,9 +199,9 @@ class ConfigWizard:
             print("\n\nSetup cancelled.")
             return False
 
-        print("\n" + "="*60)
+        print("\n" + "=" * 60)
         print("  Configuration Complete!")
-        print("="*60)
+        print("=" * 60)
         print(f"\nSettings saved to: {self.config_file}")
         print("\nTo start Flymoon:")
         print("  python3 app.py")
@@ -223,14 +245,20 @@ class ConfigWizard:
         current_elev = os.getenv("OBSERVER_ELEVATION", "0")
 
         if current_lat and current_lon:
-            print(f"\n  Current location: {current_lat}, {current_lon} (elev: {current_elev}m)")
+            print(
+                f"\n  Current location: {current_lat}, {current_lon} (elev: {current_elev}m)"
+            )
             if not self._prompt_yes_no("  Change location?", default=False):
                 return
 
         print("")
         lat = self._prompt_float("  Latitude (e.g., 33.12)", min_val=-90, max_val=90)
-        lon = self._prompt_float("  Longitude (e.g., -117.31)", min_val=-180, max_val=180)
-        elev = self._prompt_float("  Elevation in meters (e.g., 35)", default=0, min_val=0, max_val=10000)
+        lon = self._prompt_float(
+            "  Longitude (e.g., -117.31)", min_val=-180, max_val=180
+        )
+        elev = self._prompt_float(
+            "  Elevation in meters (e.g., 35)", default=0, min_val=0, max_val=10000
+        )
 
         set_key(self.config_file, "OBSERVER_LATITUDE", str(lat))
         set_key(self.config_file, "OBSERVER_LONGITUDE", str(lon))
@@ -251,8 +279,10 @@ class ConfigWizard:
         print("It should cover roughly a 15-minute flight radius from your location.")
 
         # Check if we have observer location for auto-calculation
-        obs_lat = getattr(self, '_observer_lat', None) or os.getenv("OBSERVER_LATITUDE")
-        obs_lon = getattr(self, '_observer_lon', None) or os.getenv("OBSERVER_LONGITUDE")
+        obs_lat = getattr(self, "_observer_lat", None) or os.getenv("OBSERVER_LATITUDE")
+        obs_lon = getattr(self, "_observer_lon", None) or os.getenv(
+            "OBSERVER_LONGITUDE"
+        )
 
         if obs_lat and obs_lon:
             try:
@@ -267,9 +297,15 @@ class ConfigWizard:
                     "LONG_UPPER_RIGHT": round(obs_lon + 2, 3),
                 }
 
-                print(f"\n  Suggested bounding box (based on your location ±2 degrees):")
-                print(f"    Lower-left:  ({suggested['LAT_LOWER_LEFT']}, {suggested['LONG_LOWER_LEFT']})")
-                print(f"    Upper-right: ({suggested['LAT_UPPER_RIGHT']}, {suggested['LONG_UPPER_RIGHT']})")
+                print(
+                    f"\n  Suggested bounding box (based on your location ±2 degrees):"
+                )
+                print(
+                    f"    Lower-left:  ({suggested['LAT_LOWER_LEFT']}, {suggested['LONG_LOWER_LEFT']})"
+                )
+                print(
+                    f"    Upper-right: ({suggested['LAT_UPPER_RIGHT']}, {suggested['LONG_UPPER_RIGHT']})"
+                )
 
                 if self._prompt_yes_no("\n  Use suggested bounding box?", default=True):
                     for key, value in suggested.items():
@@ -287,7 +323,9 @@ class ConfigWizard:
         lat_ll = self._prompt_float("  Lower-left latitude", min_val=-90, max_val=90)
         lon_ll = self._prompt_float("  Lower-left longitude", min_val=-180, max_val=180)
         lat_ur = self._prompt_float("  Upper-right latitude", min_val=-90, max_val=90)
-        lon_ur = self._prompt_float("  Upper-right longitude", min_val=-180, max_val=180)
+        lon_ur = self._prompt_float(
+            "  Upper-right longitude", min_val=-180, max_val=180
+        )
 
         set_key(self.config_file, "LAT_LOWER_LEFT", str(lat_ll))
         set_key(self.config_file, "LONG_LOWER_LEFT", str(lon_ll))
@@ -312,9 +350,15 @@ class ConfigWizard:
         print(f"\n  Current interval: {current_interval} minutes")
 
         if self._prompt_yes_no("  Change auto-refresh interval?", default=False):
-            interval = self._prompt_float("  Enter interval in minutes (e.g., 6)",
-                                         default=6, min_val=1, max_val=60)
-            set_key(self.config_file, "AUTO_REFRESH_INTERVAL_MINUTES", str(int(interval)))
+            interval = self._prompt_float(
+                "  Enter interval in minutes (e.g., 6)",
+                default=6,
+                min_val=1,
+                max_val=60,
+            )
+            set_key(
+                self.config_file, "AUTO_REFRESH_INTERVAL_MINUTES", str(int(interval))
+            )
             print("  Saved!")
         else:
             # Set default if not already set
@@ -347,10 +391,12 @@ class ConfigWizard:
         print("\nOpenSky Network credentials (optional)")
         print("  Provides last-mile position refinement for higher accuracy.")
         print("  Anonymous: 100 req/day  |  Registered (free): 400 req/day")
-        print("  Register free at: https://opensky-network.org/index.php?option=com_users&task=registration.register")
+        print(
+            "  Register free at: https://opensky-network.org/index.php?option=com_users&task=registration.register"
+        )
 
         current_id = os.getenv("OPENSKY_CLIENT_ID", "")
-        current_sec = os.getenv("OPENSKY_CLIENT_SECRET", "")
+        os.getenv("OPENSKY_CLIENT_SECRET", "")
         has_opensky = bool(current_id and current_id != "your_opensky_client_id_here")
         if has_opensky:
             print(f"  Current client ID: {current_id[:10]}...")
@@ -363,7 +409,9 @@ class ConfigWizard:
                     print("  Saved!")
         else:
             if self._prompt_yes_no("  Add OpenSky credentials?", default=False):
-                print("\n  Get OAuth2 credentials at: https://opensky-network.org/profile")
+                print(
+                    "\n  Get OAuth2 credentials at: https://opensky-network.org/profile"
+                )
                 cid = self._prompt("  OpenSky Client ID", required=False)
                 csec = self._prompt("  OpenSky Client Secret", required=False)
                 if cid:
@@ -407,10 +455,12 @@ class ConfigWizard:
         print("STEP 5: Telegram Notifications (optional)")
         print("-" * 40)
         print("\nTelegram lets Flymoon alert your phone when a transit is imminent.")
-        print("This is especially useful for the headless monitor (transit_capture.py).")
+        print(
+            "This is especially useful for the headless monitor (transit_capture.py)."
+        )
 
         current_token = os.getenv("TELEGRAM_BOT_TOKEN")
-        current_chat  = os.getenv("TELEGRAM_CHAT_ID")
+        current_chat = os.getenv("TELEGRAM_CHAT_ID")
 
         if current_token and current_chat:
             print(f"\n  Current bot token: {current_token[:10]}...")
@@ -435,7 +485,9 @@ class ConfigWizard:
         print("  1. Send any message to your new bot in Telegram")
         print(f"  2. Open this URL in a browser:")
         print(f"     https://api.telegram.org/bot{token}/getUpdates")
-        print('  3. Find the "id" field inside the "chat" object — that\'s your Chat ID\n')
+        print(
+            '  3. Find the "id" field inside the "chat" object — that\'s your Chat ID\n'
+        )
 
         chat_id = self._prompt("  Paste your Chat ID here")
         set_key(self.config_file, "TELEGRAM_CHAT_ID", chat_id)
@@ -450,8 +502,8 @@ class ConfigWizard:
         print("automatically start recording the moment a transit is detected.")
 
         current_enabled = os.getenv("ENABLE_SEESTAR", "false").lower() == "true"
-        current_host    = os.getenv("SEESTAR_HOST", "192.168.1.100")
-        current_port    = os.getenv("SEESTAR_PORT", "4700")
+        current_host = os.getenv("SEESTAR_HOST", "192.168.1.100")
+        current_port = os.getenv("SEESTAR_PORT", "4700")
 
         if current_enabled:
             print(f"\n  Currently enabled — host: {current_host}:{current_port}")
@@ -473,53 +525,57 @@ class ConfigWizard:
         set_key(self.config_file, "SEESTAR_HOST", host)
         set_key(self.config_file, "SEESTAR_PORT", port)
         print("  Seestar saved! ✅")
-    
+
     def get_status_report(self):
         """Get human-readable status report."""
         report = []
-        
+
         if not self.errors and not self.warnings:
             report.append("✅ Configuration is valid")
-        
+
         if self.errors:
             report.append(f"\n❌ {len(self.errors)} Error(s):")
             for err in self.errors:
                 report.append(f"  • {err['field']}: {err['message']}")
-        
+
         if self.warnings:
             report.append(f"\n⚠️  {len(self.warnings)} Warning(s):")
             for warn in self.warnings:
                 report.append(f"  • {warn['field']}: {warn['message']}")
-        
+
         return "\n".join(report)
 
 
 def quick_setup():
     """Quick setup for first-time users."""
     wizard = ConfigWizard()
-    
+
     if not wizard.validate(interactive=False):
         print("\n🔧 First-time setup required\n")
         wizard.validate(interactive=True)
     else:
         print("✅ Configuration OK")
-    
+
     return wizard
 
 
 def main():
     """CLI entry point for config wizard."""
     import argparse
-    
+
     parser = argparse.ArgumentParser(description="Flymoon Configuration Wizard")
-    parser.add_argument("--validate", action="store_true", help="Validate configuration without interactive setup")
+    parser.add_argument(
+        "--validate",
+        action="store_true",
+        help="Validate configuration without interactive setup",
+    )
     parser.add_argument("--setup", action="store_true", help="Run interactive setup")
     parser.add_argument("--config", help="Path to .env file")
-    
+
     args = parser.parse_args()
-    
+
     wizard = ConfigWizard(args.config)
-    
+
     if args.setup:
         wizard.validate(interactive=True)
     elif args.validate:

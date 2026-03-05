@@ -94,7 +94,21 @@ function toggleHeatmap() {
     }
 }
 
-/** Clear all accumulated heatmap data and remove the layer. */
+/** Toggle ghost trail (breadcrumb dots) visibility. */
+function toggleGhostTrail() {
+    if (!map || !ghostLayer) return;
+    const visible = map.hasLayer(ghostLayer);
+    const btn = document.getElementById('ghostToggle');
+    if (visible) {
+        map.removeLayer(ghostLayer);
+        if (btn) { btn.style.opacity = '0.45'; btn.title = 'Show ghost trail (breadcrumb dots)'; }
+    } else {
+        ghostLayer.addTo(map);
+        if (btn) { btn.style.opacity = '1'; btn.title = 'Hide ghost trail (breadcrumb dots)'; }
+    }
+}
+
+
 function clearHeatmap() {
     _heatPoints = [];
     localStorage.removeItem(HEATMAP_STORAGE_KEY);
@@ -123,38 +137,37 @@ let selectedRowId = null;
 
 // Flash a table row by flight ID and keep it highlighted
 function flashTableRow(flightId) {
-    const row = document.querySelector(`tr[data-flight-id="${flightId}"]`);
-    if (row) {
-        // Toggle off if clicking the already-selected row
-        if (selectedRowId === flightId) {
-            row.classList.remove('selected-row');
-            selectedRowId = null;
-            return;
-        }
+    // Target all matching rows (classic + rich tables)
+    const rows = document.querySelectorAll(`tr[data-flight-id="${flightId}"]`);
+    if (!rows.length) return;
 
-        // Remove highlight from previously selected row
-        if (selectedRowId) {
-            const prevRow = document.querySelector(`tr[data-flight-id="${selectedRowId}"]`);
-            if (prevRow) {
-                prevRow.classList.remove('selected-row');
-            }
-        }
+    // Toggle off if clicking the already-selected row
+    if (selectedRowId === flightId) {
+        document.querySelectorAll(`tr[data-flight-id="${flightId}"]`).forEach(r => r.classList.remove('selected-row'));
+        selectedRowId = null;
+        return;
+    }
 
-        // Flash animation
+    // Remove highlight from previously selected row (both tables)
+    if (selectedRowId) {
+        document.querySelectorAll(`tr[data-flight-id="${selectedRowId}"]`).forEach(r => r.classList.remove('selected-row'));
+    }
+
+    rows.forEach(row => {
         row.classList.remove('flash-row');
         void row.offsetWidth; // Trigger reflow
         row.classList.add('flash-row');
-
-        // Add persistent highlight
         row.classList.add('selected-row');
-        selectedRowId = flightId;
+    });
+    selectedRowId = flightId;
 
-        // Scroll within table container, not the entire page
-        row.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'nearest' });
+    // Scroll the visible row into view
+    const visibleRow = Array.from(rows).find(r => r.closest('table') && r.closest('table').style.display !== 'none');
+    const scrollRow = visibleRow || rows[0];
+    scrollRow.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'nearest' });
 
-        // Also flash the altitude bar
-        flashAltitudeBar(flightId);
-    }
+    // Also flash the altitude bar
+    flashAltitudeBar(flightId);
 }
 
 // Flash an aircraft marker by flight ID
@@ -1121,22 +1134,15 @@ function updateMapVisualization(data, observerLat, observerLon, observerElev, is
         );
     }
 
-    // Update azimuth arrows - one for each trackable target
+    // Update azimuth arrows — show for any target above the horizon,
+    // regardless of whether transit checking is active for that target.
     clearAzimuthArrows();
-    if (data.targetCoordinates && data.trackingTargets) {
-        console.log('Observer position for arrows:', observerLat, observerLon);
-        console.log('Observer marker position:', observerMarker ? observerMarker.getLatLng() : 'no marker');
-        // Show arrow for each target that is currently being tracked (above horizon)
-        data.trackingTargets.forEach(targetName => {
-            const coords = data.targetCoordinates[targetName];
-            if (coords && coords.azimuthal !== undefined && coords.altitude !== undefined) {
-                console.log(`Creating arrow for ${targetName} with azimuth ${coords.azimuthal}`);
+    if (data.targetCoordinates) {
+        Object.entries(data.targetCoordinates).forEach(([targetName, coords]) => {
+            if (coords && coords.azimuthal !== undefined && coords.altitude !== undefined && coords.altitude > 0) {
                 updateAzimuthArrow(observerLat, observerLon, coords.azimuthal, coords.altitude, targetName);
             }
         });
-    } else if (data.targetCoordinates && data.targetCoordinates.azimuthal !== undefined) {
-        // Single target mode (legacy)
-        updateAzimuthArrow(observerLat, observerLon, data.targetCoordinates.azimuthal, data.targetCoordinates.altitude || 0, target);
     }
 
     // Update aircraft markers (always call to clear stale markers even if empty)

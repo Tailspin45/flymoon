@@ -216,6 +216,366 @@ fetch('/config')
         console.error('Error loading config:', error);
     });
 
+// ─── Data Source Mode ─────────────────────────────────────────────────────────
+const DATA_SOURCES = {
+    'fa-only': {
+        icon: '☁️',
+        label: 'FlightAware Only',
+        cost: '$14–$87/month',
+        color: '#3b82f6',
+        note: 'Full metadata every refresh. Expensive — use min-angle masking and toggles to limit active hours.',
+    },
+    'opensky-only': {
+        icon: '🌐',
+        label: 'OpenSky Only',
+        cost: 'Free',
+        color: '#10b981',
+        note: 'Positions every 60s, no aircraft type or airline data. Zero FlightAware cost.',
+    },
+    'hybrid': {
+        icon: '⚡',
+        label: 'Hybrid (OpenSky + FA)',
+        cost: 'Free (within $5 credit)',
+        color: '#a78bfa',
+        note: 'OpenSky for continuous positions; FlightAware only on HIGH-probability transits. Typically <250 FA calls/month — covered by the free $5 credit.',
+    },
+    'adsb-local': {
+        icon: '📡',
+        label: 'ADS-B Receiver + FA',
+        cost: '~$0/month',
+        color: '#06b6d4',
+        note: 'Local RTL-SDR receiver for real-time positions. Near-zero ongoing cost. Requires hardware.',
+    },
+};
+
+function getDataSourceMode() {
+    return localStorage.getItem('flymoonDataSource') || 'hybrid';
+}
+
+function updateDataSourceButton() {
+    const mode = getDataSourceMode();
+    const ds = DATA_SOURCES[mode] || DATA_SOURCES['fa-only'];
+    const btn = document.getElementById('dataSourceBtn');
+    if (btn) {
+        btn.textContent = ds.icon + ' ' + ds.label;
+        btn.style.color = ds.color;
+        btn.style.borderColor = ds.color;
+        btn.title = ds.label + ' — ' + ds.cost + '\n' + ds.note + '\nClick to view cost analysis and change mode.';
+    }
+}
+
+// Show startup banner once per browser session (sessionStorage flag)
+(function showDataSourceBanner() {
+    if (sessionStorage.getItem('dsbDismissed')) return;
+    const mode = getDataSourceMode();
+    const ds = DATA_SOURCES[mode] || DATA_SOURCES['fa-only'];
+    const banner = document.getElementById('dataSourceBanner');
+    if (!banner) return;
+    document.getElementById('dsb-icon').textContent = ds.icon;
+    document.getElementById('dsb-mode').textContent = ds.label;
+    document.getElementById('dsb-cost').textContent = ds.cost;
+    document.getElementById('dsb-note').textContent = ds.note;
+    banner.style.borderColor = ds.color;
+    banner.style.display = 'flex';
+    const dismiss = () => {
+        banner.style.display = 'none';
+        sessionStorage.setItem('dsbDismissed', '1');
+    };
+    banner.querySelector('button').addEventListener('click', dismiss);
+})();
+
+document.addEventListener('DOMContentLoaded', updateDataSourceButton);
+
+// ─── Rich Table ───────────────────────────────────────────────────────────────
+
+const AIRCRAFT_CATEGORY = {
+    0:  { icon: '❓', label: 'Unknown',       desc: 'No information at all' },
+    1:  { icon: '✈️', label: 'No Cat Info',   desc: 'No ADS-B emitter category information' },
+    2:  { icon: '🛩️', label: 'Light',         desc: 'Light (< 15,500 lbs)' },
+    3:  { icon: '✈️', label: 'Small',         desc: 'Small (15,500 – 75,000 lbs)' },
+    4:  { icon: '✈️', label: 'Large',         desc: 'Large (75,000 – 300,000 lbs)' },
+    5:  { icon: '✈️', label: 'Hi-Vortex',     desc: 'High Vortex Large (e.g. B-757)' },
+    6:  { icon: '✈️', label: 'Heavy',         desc: 'Heavy (> 300,000 lbs)' },
+    7:  { icon: '⚡', label: 'Hi-Perf',       desc: 'High Performance (> 5g, > 400 kts)' },
+    8:  { icon: '🚁', label: 'Rotorcraft',    desc: 'Rotorcraft' },
+    9:  { icon: '⛵', label: 'Glider',        desc: 'Glider / sailplane' },
+    10: { icon: '🎈', label: 'Lighter-Air',   desc: 'Lighter-than-air' },
+    11: { icon: '🪂', label: 'Skydiver',      desc: 'Parachutist / skydiver' },
+    12: { icon: '🛩️', label: 'Ultralight',    desc: 'Ultralight / hang-glider / paraglider' },
+    13: { icon: '❓', label: 'Reserved',      desc: 'Reserved' },
+    14: { icon: '🛸', label: 'UAV',           desc: 'Unmanned Aerial Vehicle' },
+    15: { icon: '🚀', label: 'Space',         desc: 'Space / trans-atmospheric vehicle' },
+    16: { icon: '🚨', label: 'Emergency Veh', desc: 'Surface Vehicle – Emergency' },
+    17: { icon: '🚐', label: 'Service Veh',   desc: 'Surface Vehicle – Service' },
+    18: { icon: '🎯', label: 'Obstacle',      desc: 'Point obstacle (incl. tethered balloons)' },
+    19: { icon: '🎯', label: 'Cluster Obs',   desc: 'Cluster obstacle' },
+    20: { icon: '⎯',  label: 'Line Obs',      desc: 'Line obstacle' },
+};
+
+// Category row-tint CSS colours (null = no tint)
+const CATEGORY_TINT = {
+    9: 'rgba(160,130,220,0.10)',   // Glider
+    10: 'rgba(160,130,220,0.10)',  // LTA
+    11: 'rgba(30,100,220,0.12)',   // Skydiver
+    12: 'rgba(160,130,220,0.08)',  // Ultralight
+    14: 'rgba(255,180,0,0.10)',    // UAV
+    15: 'rgba(0,220,220,0.08)',    // Space
+    16: 'rgba(220,30,30,0.15)',    // Emergency vehicle
+};
+
+function buildSquawkBadges(squawk, spi, onGround) {
+    const parts = [];
+    if (squawk === '7700')
+        parts.push(`<span class="sq-badge sq-emrg sq-pulse" title="MAYDAY — aircraft in distress">🚨 MAYDAY</span>`);
+    else if (squawk === '7600')
+        parts.push(`<span class="sq-badge sq-warn" title="NORDO — lost radio contact">📻 NORDO</span>`);
+    else if (squawk === '7500')
+        parts.push(`<span class="sq-badge sq-emrg" title="HIJACK in progress">⚠️ HIJACK</span>`);
+    else if (squawk >= '4000' && squawk <= '4777')
+        parts.push(`<span class="sq-badge sq-mil" title="Military squawk ${squawk}">⚔️ MIL</span>`);
+    else if (squawk === '1200')
+        parts.push(`<span class="sq-badge sq-vfr" title="VFR flight — squawk 1200">VFR</span>`);
+    if (spi)
+        parts.push(`<span class="sq-badge sq-ident" title="Pilot has pressed IDENT button">💡 IDENT</span>`);
+    if (onGround)
+        parts.push(`<span class="sq-badge sq-gnd" title="Aircraft is on the ground">⬛ GND</span>`);
+    return parts.join(' ');
+}
+
+const COMPASS = ['N','NNE','NE','ENE','E','ESE','SE','SSE','S','SSW','SW','WSW','W','WNW','NW','NNW'];
+function headingWord(deg) {
+    return COMPASS[Math.round(((deg % 360) + 360) % 360 / 22.5) % 16];
+}
+
+function renderRichFlightRow(item, bodyTable) {
+    const row = document.createElement('tr');
+    const normalizedId = String(item.id).trim().toUpperCase();
+    const possibilityLevel = item.is_possible_transit === 1 ? parseInt(item.possibility_level) : 0;
+    row.setAttribute('data-flight-id', normalizedId);
+    row.setAttribute('data-possibility', possibilityLevel);
+    if (item.time != null) row.setAttribute('data-transit-time', item.time);
+
+    // Category tint
+    const catTint = CATEGORY_TINT[item.category];
+    if (catTint) row.style.backgroundColor = catTint;
+
+    // Emergency row styling
+    const sq = item.squawk || '';
+    if (sq === '7700' || sq === '7500') {
+        row.style.outline = '1px solid #ff2020';
+        row.classList.add('sq-emergency-row');
+    } else if (sq === '7600') {
+        row.style.outline = '1px solid #ffa500';
+    }
+
+    // Click handler — same behaviour as classic table
+    row.addEventListener('click', function(e) {
+        if (e.metaKey || e.ctrlKey) {
+            if (trackingFlightId === normalizedId) {
+                stopTracking();
+            } else {
+                if (possibilityLevel < MEDIUM_LEVEL) {
+                    alert('Track Mode requires medium or high probability transit.');
+                    return;
+                }
+                startTracking(normalizedId);
+            }
+        } else {
+            if (typeof flashAircraftMarker === 'function') flashAircraftMarker(normalizedId);
+            if (typeof flashTableRow === 'function') flashTableRow(normalizedId);
+            if (typeof toggleFlightRouteTrack === 'function') toggleFlightRouteTrack(item.fa_flight_id, normalizedId);
+        }
+    });
+
+    // Col 1 — Status badges
+    const statusCell = document.createElement('td');
+    statusCell.style.whiteSpace = 'nowrap';
+    statusCell.innerHTML = buildSquawkBadges(sq, item.spi, item.on_ground) || '<span style="color:#444">—</span>';
+    row.appendChild(statusCell);
+
+    // Col 2 — Transit
+    const transitCell = document.createElement('td');
+    transitCell.style.whiteSpace = 'nowrap';
+    if (possibilityLevel >= HIGH_LEVEL) {
+        const eta = item.transit_eta_seconds || (item.time * 60);
+        const min = Math.floor(eta / 60), sec = Math.floor(eta % 60);
+        transitCell.innerHTML = `<span style="color:#4caf50;font-weight:bold">🟢 T-${min}:${String(sec).padStart(2,'0')}</span>`;
+    } else if (possibilityLevel === MEDIUM_LEVEL) {
+        const eta = item.transit_eta_seconds || (item.time * 60);
+        const min = Math.floor(eta / 60), sec = Math.floor(eta % 60);
+        transitCell.innerHTML = `<span style="color:#ff9800;font-weight:bold">🟠 T-${min}:${String(sec).padStart(2,'0')}</span>`;
+    } else if (possibilityLevel === LOW_LEVEL) {
+        transitCell.innerHTML = `<span style="color:#888">⚪ Low</span>`;
+    } else {
+        transitCell.innerHTML = `<span style="color:#444">—</span>`;
+    }
+    row.appendChild(transitCell);
+
+    // Col 3 — Target
+    const tgtCell = document.createElement('td');
+    tgtCell.textContent = item.target === 'sun' ? '☀️' : item.target === 'moon' ? '🌙' : '';
+    row.appendChild(tgtCell);
+
+    // Col 4 — Aircraft (callsign + type)
+    const acCell = document.createElement('td');
+    const type = (item.aircraft_type && item.aircraft_type !== 'N/A') ? item.aircraft_type : '';
+    const country = item.origin_country || '';
+    const acSub = [type, country].filter(Boolean).map(t => `<span style="font-size:0.78em;color:#888">${t}</span>`).join(' ');
+    acCell.innerHTML = `<strong style="color:#e0e0e0">${item.id}</strong>${acSub ? `<br>${acSub}` : ''}`;
+    row.appendChild(acCell);
+
+    // Col 5 — Category (text only, no emoji; blank for 0/1/13 = no useful info)
+    const catCell = document.createElement('td');
+    catCell.style.whiteSpace = 'nowrap';
+    const cat = AIRCRAFT_CATEGORY[item.category] || AIRCRAFT_CATEGORY[0];
+    const catBlank = item.category == null || item.category <= 1 || item.category === 13;
+    catCell.innerHTML = !catBlank
+        ? `<span title="${cat.desc}" style="font-size:0.85em;color:#ccc">${cat.label}</span>`
+        : '<span style="color:#444">—</span>';
+    row.appendChild(catCell);
+
+    // Col 6 — Altitude
+    const altCell = document.createElement('td');
+    altCell.style.whiteSpace = 'nowrap';
+    if (item.aircraft_elevation_feet != null) {
+        const ft = Math.round(item.aircraft_elevation_feet);
+        altCell.textContent = ft > 18000 ? `FL${Math.round(ft/100)}` : ft.toLocaleString('en-US');
+    } else {
+        altCell.innerHTML = '<span style="color:#444">—</span>';
+    }
+    row.appendChild(altCell);
+
+    // Col 7 — Vertical speed
+    const vsCell = document.createElement('td');
+    vsCell.style.whiteSpace = 'nowrap';
+    if (item.vertical_rate != null) {
+        const fpm = Math.round(item.vertical_rate * 196.85);
+        if (fpm > 64) vsCell.innerHTML = `<span style="color:#4caf50">▲ +${fpm.toLocaleString()}</span>`;
+        else if (fpm < -64) vsCell.innerHTML = `<span style="color:#f44336">▼ ${fpm.toLocaleString()}</span>`;
+        else vsCell.innerHTML = `<span style="color:#888">▶ level</span>`;
+    } else if (item.elevation_change === 'climbing') {
+        vsCell.innerHTML = `<span style="color:#4caf50">▲</span>`;
+    } else if (item.elevation_change === 'descending') {
+        vsCell.innerHTML = `<span style="color:#f44336">▼</span>`;
+    } else {
+        vsCell.innerHTML = '<span style="color:#444">—</span>';
+    }
+    row.appendChild(vsCell);
+
+    // Col 8 — Sky Δ
+    const skyCell = document.createElement('td');
+    skyCell.style.whiteSpace = 'nowrap';
+    if (item.alt_diff != null && item.az_diff != null) {
+        const ad = Math.round(item.alt_diff), azd = Math.round(item.az_diff);
+        const altAbs = Math.abs(item.alt_diff), azAbs = Math.abs(item.az_diff);
+        const c = (altAbs <= 1.5 && azAbs <= 1.5) ? '#4caf50' : (altAbs <= 2.5 && azAbs <= 2.5) ? '#ff9800' : '#888';
+        skyCell.innerHTML = `<span style="color:${c}">↕${ad}° ↔${azd}°</span>`;
+    } else {
+        skyCell.innerHTML = '<span style="color:#444">—</span>';
+    }
+    row.appendChild(skyCell);
+
+    // Col 9 — Track (heading degrees only)
+    const trackCell = document.createElement('td');
+    trackCell.style.whiteSpace = 'nowrap';
+    if (item.direction != null) {
+        trackCell.textContent = `${Math.round(item.direction)}°`;
+    } else {
+        trackCell.innerHTML = '<span style="color:#444">—</span>';
+    }
+    row.appendChild(trackCell);
+
+    // Col 10 — Ground speed (kph / mph / kts)
+    const spdCell = document.createElement('td');
+    spdCell.style.whiteSpace = 'nowrap';
+    spdCell.style.textAlign = 'center';
+    if (item.speed != null && item.speed > 0) {
+        const kph = Math.round(item.speed);
+        const mph = Math.round(item.speed * 0.621371);
+        const kts = Math.round(item.speed * 0.539957);
+        spdCell.textContent = `${kph}/${mph}/${kts}`;
+    } else {
+        spdCell.innerHTML = '<span style="color:#444">—</span>';
+    }
+    row.appendChild(spdCell);
+
+    // Col 11 — Route
+    const routeCell = document.createElement('td');
+    routeCell.style.whiteSpace = 'nowrap';
+    const _clean = v => (v && v !== 'N/A' && v !== 'N/D') ? v : '';
+    const orig = _clean(item.origin), dest = _clean(item.destination);
+    if (orig && dest) {
+        routeCell.innerHTML = `<span title="${orig} → ${dest}" style="font-family:monospace;font-size:0.88em">${orig} → ${dest}</span>`;
+    } else if (sq === '1200') {
+        routeCell.innerHTML = '<span style="color:#4caf50;font-size:0.85em">VFR local</span>';
+    } else if (orig) {
+        routeCell.innerHTML = `<span style="font-family:monospace;font-size:0.88em">${orig} →?</span>`;
+    } else {
+        routeCell.innerHTML = '<span style="color:#444">—</span>';
+    }
+    row.appendChild(routeCell);
+
+    // Col 12 — Src / Age
+    const srcCell = document.createElement('td');
+    srcCell.style.whiteSpace = 'nowrap';
+    const srcMap = {
+        'opensky':     { label: 'OS',      color: '#4caf50', title: 'OpenSky' },
+        'flightaware': { label: 'FA',      color: '#5b9bd5', title: 'FlightAware' },
+        'adsb':        { label: 'ADS-B',   color: '#00e5ff', title: 'Direct ADS-B' },
+        'mlat':        { label: 'MLAT',    color: '#ffeb3b', title: 'Multilateration' },
+        'flarm':       { label: 'FLARM',   color: '#66bb6a', title: 'FLARM' },
+        'asterix':     { label: 'ASTERIX', color: '#ce93d8', title: 'ASTERIX surveillance' },
+        'track':       { label: 'TRK',     color: '#2196f3', title: 'Track-derived' },
+    };
+    const src = (item.position_source || 'flightaware').toLowerCase();
+    const si = srcMap[src] || { label: src.toUpperCase(), color: '#888', title: src };
+    const age = item.position_age_s;
+    let ageColor = '#4caf50';
+    if (age > 60) ageColor = '#f44336';
+    else if (age > 30) ageColor = '#ff9800';
+    else if (age > 5) ageColor = '#ffeb3b';
+    const ageStr = age != null ? ` <span style="color:${ageColor};font-size:0.8em">${age}s</span>` : '';
+    srcCell.innerHTML = `<span style="font-size:0.7em;padding:1px 4px;border-radius:3px;background:${si.color};color:#000" title="${si.title}">${si.label}</span>${ageStr}`;
+    row.appendChild(srcCell);
+
+    // Highlight transit rows
+    if (item.is_possible_transit === 1) {
+        highlightPossibleTransit(possibilityLevel, row);
+    }
+
+    bodyTable.appendChild(row);
+}
+
+// Table view toggle (classic ↔ rich)
+function getTableView() {
+    return localStorage.getItem('flymoonTableView') || 'rich';
+}
+
+function initTableView() {
+    const view = getTableView();
+    const classic = document.getElementById('resultsTable');
+    const rich = document.getElementById('resultsTableRich');
+    const btn = document.getElementById('tableViewToggle');
+    if (!classic || !rich) return;
+    if (view === 'rich') {
+        classic.style.display = 'none';
+        rich.style.display = '';
+        if (btn) { btn.textContent = '⊟ Classic View'; btn.style.color = '#7ab8d4'; }
+    } else {
+        classic.style.display = '';
+        rich.style.display = 'none';
+        if (btn) { btn.textContent = '⊞ Rich View'; btn.style.color = '#a78bfa'; }
+    }
+}
+
+function toggleTableView() {
+    const current = getTableView();
+    localStorage.setItem('flymoonTableView', current === 'rich' ? 'classic' : 'rich');
+    initTableView();
+}
+
+document.addEventListener('DOMContentLoaded', initTableView);
+
 // Page visibility detection - optionally pause polling when page is hidden
 document.addEventListener('visibilitychange', function() {
     const pauseWhenHidden = localStorage.getItem("pauseWhenHidden") !== "false"; // Default true
@@ -280,7 +640,10 @@ async function softRefresh() {
         return updated;
     });
 
-    // Recalculate transit predictions with updated positions
+    // Recalculate transit predictions with updated positions.
+    // Only send flights that already have some transit potential — UNLIKELY
+    // flights just get position extrapolation on the client, no server round-trip.
+    const recalcFlights = updatedFlights.filter(f => f.is_possible_transit === 1);
     try {
         const latitude = parseFloat(document.getElementById("latitude").value);
         const longitude = parseFloat(document.getElementById("longitude").value);
@@ -296,12 +659,20 @@ async function softRefresh() {
             }
             return;
         }
+
+        if (recalcFlights.length === 0) {
+            // Nothing to recalculate — just update map positions
+            if (mapVisible && typeof updateAircraftMarkers === 'function') {
+                updateAircraftMarkers(updatedFlights, latitude, longitude);
+            }
+            return;
+        }
         
         const response = await fetch('/transits/recalculate', {
             method: 'POST',
             headers: {'Content-Type': 'application/json'},
             body: JSON.stringify({
-                flights: updatedFlights,
+                flights: recalcFlights,
                 latitude: latitude,
                 longitude: longitude,
                 elevation: elevation,
@@ -315,12 +686,18 @@ async function softRefresh() {
             // Update table cells in-place — no scroll save/restore needed
             updateFlightTableFull(recalcData.flights);
             
-            // Update map markers
+            // Merge recalculated transit candidates back into the full flight list
+            // so non-transit aircraft remain visible on the map with updated positions
+            const recalcById = {};
+            recalcData.flights.forEach(f => { recalcById[String(f.id).trim().toUpperCase()] = f; });
+            const mergedFlights = updatedFlights.map(f => recalcById[String(f.id).trim().toUpperCase()] || f);
+
+            // Update map markers (full set including non-transit for display)
             if (mapVisible && typeof updateAircraftMarkers === 'function') {
-                updateAircraftMarkers(recalcData.flights, latitude, longitude);
+                updateAircraftMarkers(mergedFlights, latitude, longitude);
             }
             
-            console.log(`Soft refresh: Updated ${updatedFlights.length} flights with transit recalculation (+${Math.floor(secondsElapsed)}s)`);
+            console.log(`Soft refresh: Recalculated ${recalcFlights.length}/${updatedFlights.length} transit-candidate flights (+${Math.floor(secondsElapsed)}s)`);
         } else {
             // Fallback to position-only update if recalculation fails
             updateFlightTable(updatedFlights);
@@ -421,10 +798,13 @@ function updateFlightTableFull(flights) {
         // Update source badge (cell 16) if position_source changed (e.g. OS→ADS-B)
         if (flight.position_source && cells[16]) {
             const srcMap = {
-                "opensky":     { label: "OS",    color: "#4caf50", title: "OpenSky (~10s latency)" },
-                "flightaware": { label: "FA",    color: "#888",    title: "FlightAware (60–300s latency)" },
-                "track":       { label: "TRK",   color: "#2196f3", title: "Track-derived velocity" },
-                "adsb":        { label: "ADS-B", color: "#00e5ff", title: "Direct ADS-B (<5s latency)" },
+                "opensky":     { label: "OS",      color: "#4caf50", title: "OpenSky (~10s latency)" },
+                "flightaware": { label: "FA",       color: "#888",    title: "FlightAware (60–300s latency)" },
+                "track":       { label: "TRK",      color: "#2196f3", title: "Track-derived velocity" },
+                "adsb":        { label: "ADS-B",    color: "#00e5ff", title: "Direct ADS-B (<5s latency)" },
+                "mlat":        { label: "MLAT",     color: "#ffeb3b", title: "Multilateration" },
+                "flarm":       { label: "FLARM",    color: "#66bb6a", title: "FLARM" },
+                "asterix":     { label: "ASTERIX",  color: "#ce93d8", title: "ASTERIX surveillance" },
             };
             const si = srcMap[flight.position_source] || { label: flight.position_source.toUpperCase(), color: "#888", title: flight.position_source };
             const age = flight.position_age_s != null ? ` (${flight.position_age_s}s)` : "";
@@ -450,6 +830,7 @@ function updateFlightTableFull(flights) {
 // State tracking for toggles
 var resultsVisible = false;
 var mapVisible = false;
+var _freshFetchThisSession = false; // true only after a successful API response this page load
 
 // Track mode state
 var trackingFlightId = null;
@@ -710,12 +1091,21 @@ function updateFlightRow(row, flight) {
             cell.textContent = value === "N/A" ? "" : value;
         } else if (column === "aircraft_elevation_feet") {
             const altitude = Math.round(value);
-            if (altitude > 18000) {
-                const flightLevel = Math.round(altitude / 100);
-                cell.textContent = `FL${flightLevel}`;
-            } else {
-                cell.textContent = altitude.toLocaleString('en-US');
+            const altStr = altitude > 18000
+                ? `FL${Math.round(altitude / 100)}`
+                : altitude.toLocaleString('en-US');
+            let vsStr = '';
+            if (flight.vertical_rate != null) {
+                const fpm = Math.round(flight.vertical_rate * 196.85);
+                if (fpm > 64) vsStr = ` <span style="color:#4caf50">▲ +${fpm.toLocaleString()}fpm</span>`;
+                else if (fpm < -64) vsStr = ` <span style="color:#f44336">▼ ${fpm.toLocaleString()}fpm</span>`;
+                else vsStr = ` <span style="color:#888">▶</span>`;
+            } else if (flight.elevation_change === 'C' || flight.elevation_change === 'climbing') {
+                vsStr = ` <span style="color:#4caf50">▲</span>`;
+            } else if (flight.elevation_change === 'D' || flight.elevation_change === 'descending') {
+                vsStr = ` <span style="color:#f44336">▼</span>`;
             }
+            cell.innerHTML = altStr + vsStr;
         } else if (column === "distance_nm") {
             const km = (value * 1.852).toFixed(1);
             const miles = (value * 1.15078).toFixed(1);
@@ -1157,6 +1547,23 @@ const HELP_CONTENT = {
 <p>The Sun and Moon each subtend about <strong>0.5°</strong> of arc. An aircraft crossing within that cone produces a true silhouette transit lasting 0.5–2 seconds.</p>
 <p>Thresholds are configurable via <code>ALT_THRESHOLD</code> / <code>AZ_THRESHOLD</code> in the server <code>.env</code> file.</p>`
     },
+    'table-columns-rich': {
+        title: 'Rich Table — Column Guide',
+        body: `<table style="width:100%;border-collapse:collapse;font-size:0.88em;">
+<tr><td style="padding:4px 8px;color:#7eb8f7;white-space:nowrap"><strong>⚠ Status</strong></td><td style="padding:4px 8px">Emergency squawk badges: 🚨 MAYDAY (7700), 📻 NORDO (7600), ⚠️ HIJACK (7500), ⚔️ MIL (4000-4777), VFR (1200). Also: 💡 IDENT (pilot pressed IDENT), ⬛ GND (on ground). Silent when normal.</td></tr>
+<tr><td style="padding:4px 8px;color:#7eb8f7;white-space:nowrap"><strong>transit</strong></td><td style="padding:4px 8px">🟢 HIGH / 🟠 MEDIUM / ⚪ LOW probability, with countdown to closest approach (T-mm:ss).</td></tr>
+<tr><td style="padding:4px 8px;color:#7eb8f7;white-space:nowrap"><strong>☀️🌙</strong></td><td style="padding:4px 8px">Which celestial body this aircraft may transit.</td></tr>
+<tr><td style="padding:4px 8px;color:#7eb8f7;white-space:nowrap"><strong>aircraft</strong></td><td style="padding:4px 8px">Callsign and ICAO type code (e.g. B738 = Boeing 737-800). Click to flash on map and show route.</td></tr>
+<tr><td style="padding:4px 8px;color:#7eb8f7;white-space:nowrap"><strong>category</strong></td><td style="padding:4px 8px">ADS-B emitter category from transponder: 🛩️ Light, ✈️ Small / Large / Hi-Vortex / Heavy, ⚡ Hi-Perf, 🚁 Rotorcraft, ⛵ Glider/sailplane, 🎈 Lighter-than-air, 🪂 Parachutist/skydiver, 🛩️ Ultralight/hang-glider, 🛸 UAV, 🚀 Space, 🚨 Emergency veh, 🚐 Service veh, 🎯 Obstacle. Hover cell for full description. Row tinted for unusual categories. Requires OpenSky with <code>extended=1</code>.</td></tr>
+<tr><td style="padding:4px 8px;color:#7eb8f7;white-space:nowrap"><strong>alt / v/s</strong></td><td style="padding:4px 8px">Altitude (FL350 above 18,000ft, otherwise feet). Vertical speed: ▲ climbing (green), ▼ descending (red), ▶ level (grey). V/S in ft/min from ADS-B vertical rate; ▲/▼ only from FlightAware elevation_change flag.</td></tr>
+<tr><td style="padding:4px 8px;color:#7eb8f7;white-space:nowrap"><strong>sky Δ</strong></td><td style="padding:4px 8px">Angular separation at closest approach: ↕ altitude diff, ↔ azimuth diff. Green ≤1°, orange ≤2°, grey ≥3°.</td></tr>
+<tr><td style="padding:4px 8px;color:#7eb8f7;white-space:nowrap"><strong>track</strong></td><td style="padding:4px 8px">Compass direction (NNW etc.), true heading in degrees, and ground speed in knots.</td></tr>
+<tr><td style="padding:4px 8px;color:#7eb8f7;white-space:nowrap"><strong>route</strong></td><td style="padding:4px 8px">Origin → Destination as city names (FlightAware) or ICAO codes (OpenSky FlightData). VFR label shown for squawk 1200.</td></tr>
+<tr><td style="padding:4px 8px;color:#7eb8f7;white-space:nowrap"><strong>src / age</strong></td><td style="padding:4px 8px">Position source badge (ADS-B / MLAT / FLARM / OS / FA) and data age in seconds. Age colour: green ≤5s, yellow ≤30s, orange ≤60s, red >60s.</td></tr>
+</table>
+<p style="margin-top:10px;font-size:0.82em;color:#aaa">Category, vertical rate, squawk, SPI, and on-ground fields require OpenSky Network or ADS-B Receiver mode. In FlightAware-only mode these columns show — gracefully.</p>
+<p style="font-size:0.82em;color:#aaa">Switch between Classic (17-column FA view) and Rich view with the <strong>⊞ Rich View</strong> / <strong>⊟ Classic View</strong> button in the toolbar. Preference is saved between sessions.</p>`
+    },
     'table-columns': {
         title: 'Results Table — Column Guide',
         body: `<table style="width:100%;border-collapse:collapse;font-size:0.88em;">
@@ -1173,7 +1580,7 @@ const HELP_CONTENT = {
 <tr><td style="padding:4px 8px;color:#7eb8f7;white-space:nowrap"><strong>GPS alt (ft)</strong></td><td style="padding:4px 8px">GPS altitude in feet above sea level from ADS-B transponder</td></tr>
 <tr><td style="padding:4px 8px;color:#7eb8f7;white-space:nowrap"><strong>Hdg (T)</strong></td><td style="padding:4px 8px">True heading — degrees clockwise from true North (not magnetic). Used to project the flight path forward.</td></tr>
 <tr><td style="padding:4px 8px;color:#7eb8f7;white-space:nowrap"><strong>dist</strong></td><td style="padding:4px 8px">Straight-line distance from your observer position to the aircraft</td></tr>
-<tr><td style="padding:4px 8px;color:#7eb8f7;white-space:nowrap"><strong>Grnd Spd</strong></td><td style="padding:4px 8px">Aircraft ground speed in mph (converted from knots)</td></tr>
+<tr><td style="padding:4px 8px;color:#7eb8f7;white-space:nowrap"><strong>Grnd Spd</strong></td><td style="padding:4px 8px">Aircraft ground speed in kph / mph / knots</td></tr>
 <tr><td style="padding:4px 8px;color:#7eb8f7;white-space:nowrap"><strong>src</strong></td><td style="padding:4px 8px">Data source: FA=FlightAware, OS=OpenSky, ADS-B=direct receiver</td></tr>
 </table>`
     },
@@ -1293,8 +1700,8 @@ function go() {
     const cacheValidSeconds = 600; // 10 minutes - matches backend cache
     const secondsSinceUpdate = (Date.now() - window.lastFlightUpdateTime) / 1000;
     
-    // Always show warning if we have recent data
-    if (window.lastFlightUpdateTime > 0 && secondsSinceUpdate < cacheValidSeconds) {
+    // Only warn about cost if a fresh fetch has already succeeded this session (i.e. this is a re-refresh, not the initial load)
+    if (_freshFetchThisSession && window.lastFlightUpdateTime > 0 && secondsSinceUpdate < cacheValidSeconds) {
         const minutesRemaining = Math.ceil((cacheValidSeconds - secondsSinceUpdate) / 60);
         const secondsRemaining = Math.floor(cacheValidSeconds - secondsSinceUpdate);
         
@@ -1394,6 +1801,7 @@ function fetchFlights() {
     let transitDetails = []; // Collect high-priority transits for notification
 
     const bodyTable = document.getElementById('flightData');
+    const richBodyTable = document.getElementById('richFlightData');
     let alertNoResults = document.getElementById("noResults");
     let alertTargetUnderHorizon = document.getElementById("targetUnderHorizon");
     alertNoResults.innerHTML = '';
@@ -1414,6 +1822,7 @@ function fetchFlights() {
         + `&alt_threshold=${encodeURIComponent(altThreshold)}`
         + `&az_threshold=${encodeURIComponent(azThreshold)}`
         + `&send-notification=true`
+        + `&data_source=${encodeURIComponent(localStorage.getItem('flymoonDataSource') || 'hybrid')}`
     );
 
     // Pass any user-disabled targets so the server skips them (saves API calls)
@@ -1436,8 +1845,12 @@ function fetchFlights() {
     document.getElementById("loadingSpinner").style.display = "block";
     document.getElementById("results").style.display = "none";
 
-    fetch(endpoint_url)
+    const fetchController = new AbortController();
+    const fetchTimeout = setTimeout(() => fetchController.abort(), 55000); // 55s hard timeout
+
+    fetch(endpoint_url, { signal: fetchController.signal })
     .then(response => {
+        clearTimeout(fetchTimeout);
         if (!response.ok) {
             return response.json().then(err => {
                 throw new Error(err.error || `Server error: ${response.status}`);
@@ -1457,9 +1870,11 @@ function fetchFlights() {
 
         // Clear table here (inside async callback) to prevent duplicate rows from concurrent fetches
         bodyTable.innerHTML = '';
+        if (richBodyTable) richBodyTable.innerHTML = '';
 
         // Record update time and cache data
         clearErrorBanner();
+        _freshFetchThisSession = true;
         window.lastFlightUpdateTime = Date.now();
         sessionStorage.setItem('lastFlightUpdateTime', String(window.lastFlightUpdateTime));
         lastFlightData = data;
@@ -1580,32 +1995,10 @@ function fetchFlights() {
                 }
             }
         });
-        const uniqueFlights = Object.values(seenFlights);
-        console.log(`Dedupe: ${data.flights.length} flights -> ${uniqueFlights.length} unique`);
-        
-        // Filter flights to only show those within bounding box
-        const filteredFlights = window.lastBoundingBox ? uniqueFlights.filter(flight => {
-            if (!flight.latitude || !flight.longitude) return false;
-            const bbox = window.lastBoundingBox;
-            const inBounds = (
-                flight.latitude >= bbox.latLowerLeft &&
-                flight.latitude <= bbox.latUpperRight &&
-                flight.longitude >= bbox.lonLowerLeft &&
-                flight.longitude <= bbox.lonUpperRight
-            );
-            if (!inBounds) {
-                console.log(`❌ Filtering out ${flight.id} at (${flight.latitude.toFixed(2)}, ${flight.longitude.toFixed(2)}) - outside bbox [${bbox.latLowerLeft.toFixed(2)},${bbox.lonLowerLeft.toFixed(2)} to ${bbox.latUpperRight.toFixed(2)},${bbox.lonUpperRight.toFixed(2)}]`);
-            }
-            return inBounds;
-        }) : uniqueFlights;
-        
-        if (window.lastBoundingBox && filteredFlights.length < uniqueFlights.length) {
-            console.log(`🔍 Bbox filter: ${uniqueFlights.length} flights -> ${filteredFlights.length} in bounds`);
-        } else if (!window.lastBoundingBox) {
-            console.warn('⚠️ No bounding box set - showing all flights');
-        }
-        
-        // Debug: show final dedupe results
+        const filteredFlights = Object.values(seenFlights);
+        console.log(`Dedupe: ${data.flights.length} flights -> ${filteredFlights.length} unique`);
+
+        // Debug: show transit candidates
         filteredFlights.forEach(f => {
             if (f.is_possible_transit) {
                 console.log(`  ${f.id} (${f.target}): level=${f.possibility_level}, is_transit=${f.is_possible_transit}`);
@@ -1645,7 +2038,24 @@ function fetchFlights() {
         // Check for medium/high transits and alert user about filter changes
         checkAndAlertFilterChange(filteredFlights, data.targetCoordinates);
 
-        filteredFlights.forEach(item => {
+        // Show all flights in the table on hard refresh.
+        // Transit candidates (LOW/MEDIUM/HIGH) get full detail; non-transit rows are static
+        // between refreshes (positions update on the map via soft refresh, not in the table).
+        const tableFlights = filteredFlights;
+        const unlikelyCount = filteredFlights.filter(f => f.is_possible_transit !== 1).length;
+        if (tableFlights.length === 0) {
+            alertNoResults.innerHTML = "No flights in area";
+        } else if (unlikelyCount > 0 && tableFlights.filter(f => f.is_possible_transit === 1).length === 0) {
+            alertNoResults.innerHTML = `${unlikelyCount} flight${unlikelyCount !== 1 ? 's' : ''} in area — none within transit range`;
+        } else if (unlikelyCount > 0) {
+            alertNoResults.innerHTML = `+${unlikelyCount} flight${unlikelyCount !== 1 ? 's' : ''} in area outside transit range`;
+        }
+
+        // Build both tables off-DOM using DocumentFragment to avoid per-row reflow
+        const classicFrag = document.createDocumentFragment();
+        const richFrag = document.createDocumentFragment();
+
+        tableFlights.forEach(item => {
             const row = document.createElement('tr');
 
             // Store normalized flight ID, possibility level, and transit time for cross-referencing
@@ -1713,15 +2123,20 @@ function fetchFlights() {
                     val.textContent = value === "N/A" ? "" : value;
                 } else if (column === "origin" || column === "destination") {
                     // Scrunch origin/destination with max-width and ellipsis
-                    val.textContent = value;
+                    const display = (value === "N/A" || value === "N/D") ? "" : value;
+                    val.textContent = display;
                     val.style.maxWidth = "60px";
                     val.style.overflow = "hidden";
                     val.style.textOverflow = "ellipsis";
                     val.style.whiteSpace = "nowrap";
-                    val.title = value;  // Show full name on hover
+                    val.title = display;
                 } else if (column === "speed") {
-                    // Show speed in MPH (value is in km/h from backend)
-                    val.textContent = Math.round(value / 1.60934);  // Convert km/h to MPH
+                    // Show speed in kph / mph / kts
+                    const kph = Math.round(value);
+                    const mph = Math.round(value * 0.621371);
+                    const kts = Math.round(value * 0.539957);
+                    val.textContent = `${kph}/${mph}/${kts}`;
+                    val.style.textAlign = 'center';
                 } else if (column === "aircraft_elevation_feet") {
                     // Show GPS altitude in feet with comma formatting, or as flight level if > 18000
                     const altitude = Math.round(value);
@@ -1743,10 +2158,10 @@ function fetchFlights() {
                     val.textContent = Math.round(magHeading) + "°";
                     val.title = `True: ${Math.round(trueHeading)}°, Magnetic: ${Math.round(magHeading)}°`;
                 } else if (column === "alt_diff" || column === "az_diff") {
-                    const roundedValue = Math.round(value);
-                    val.textContent = roundedValue + "º";
-                    // Black if within 3°, grey otherwise
-                    if (Math.abs(roundedValue) >= 3) {
+                    const displayValue = value.toFixed(1);
+                    val.textContent = displayValue + "º";
+                    // Grey if >= 3°
+                    if (Math.abs(value) >= 3) {
                         val.style.color = "#888";
                     }
                 } else if (column === "target_alt" || column === "target_az") {
@@ -1765,8 +2180,10 @@ function fetchFlights() {
                         val.style.color = "#888"; // Gray for negative angles
                         val.style.fontStyle = "italic";
                     }
+                } else if (value === "N/A") {
+                    val.textContent = "";
                 } else if (value === "N/D") {
-                    val.textContent = value + " ⚠️";
+                    val.textContent = "";
                 } else {
                     val.textContent = value;
                 }
@@ -1779,10 +2196,13 @@ function fetchFlights() {
             const src = item["position_source"] || "fa";
             const srcAge = item["position_age_s"];
             const srcMap = {
-                "opensky":      { label: "OS",    color: "#4caf50", title: "OpenSky (~10s latency)" },
-                "flightaware":  { label: "FA",    color: "#888",    title: "FlightAware (60–300s latency)" },
-                "track":        { label: "TRK",   color: "#2196f3", title: "Track-derived velocity" },
-                "adsb":         { label: "ADS-B", color: "#00e5ff", title: "Direct ADS-B (<5s latency)" },
+                "opensky":      { label: "OS",      color: "#4caf50", title: "OpenSky (~10s latency)" },
+                "flightaware":  { label: "FA",       color: "#888",    title: "FlightAware (60–300s latency)" },
+                "track":        { label: "TRK",      color: "#2196f3", title: "Track-derived velocity" },
+                "adsb":         { label: "ADS-B",    color: "#00e5ff", title: "Direct ADS-B (<5s latency)" },
+                "mlat":         { label: "MLAT",     color: "#ffeb3b", title: "Multilateration" },
+                "flarm":        { label: "FLARM",    color: "#66bb6a", title: "FLARM" },
+                "asterix":      { label: "ASTERIX",  color: "#ce93d8", title: "ASTERIX surveillance" },
             };
             const srcInfo = srcMap[src] || { label: src.toUpperCase(), color: "#888", title: src };
             const ageStr = srcAge != null ? ` (${srcAge}s)` : "";
@@ -1806,8 +2226,15 @@ function fetchFlights() {
                 }
             }
 
-            bodyTable.appendChild(row);
+            classicFrag.appendChild(row);
+
+            // Also render into rich table fragment
+            renderRichFlightRow(item, richFrag);
         });
+
+        // Single DOM write for both tables — no per-row reflow
+        bodyTable.appendChild(classicFrag);
+        if (richBodyTable) richBodyTable.appendChild(richFrag);
 
         // renderTargetCoordinates(data.targetCoordinates); // Disabled - now using inline display above
         if (hasVeryPossibleTransits == true) soundAlert(transitDetails);
@@ -1829,8 +2256,15 @@ function fetchFlights() {
         // Hide spinner only after all rendering is complete
         document.getElementById("loadingSpinner").style.display = "none";
         document.getElementById("results").style.display = "block";
+        // Slide up hero image after first data load
+        const hero = document.getElementById("heroImageWrap");
+        if (hero) {
+            hero.style.opacity = "0";
+            hero.style.maxHeight = "0";
+        }
     })
     .catch(error => {
+        clearTimeout(fetchTimeout);
         // Hide loading spinner on error
         document.getElementById("loadingSpinner").style.display = "none";
         document.getElementById("results").style.display = "block";
@@ -1838,7 +2272,9 @@ function fetchFlights() {
         const errorMsg = error.message || error.toString() || "Unknown error";
         const stack = error.stack ? `\n\n${error.stack}` : "";
         let displayMsg;
-        if (errorMsg.includes("AEROAPI") || errorMsg.includes("API key")) {
+        if (error.name === 'AbortError') {
+            displayMsg = "⚠️ Request timed out after 55 seconds.\n\nThe server may be overloaded or the FlightAware API is slow. Try again in a moment.";
+        } else if (errorMsg.includes("AEROAPI") || errorMsg.includes("API key")) {
             displayMsg = "⚠️ FlightAware API key not configured.\n\nPlease set AEROAPI_API_KEY in your .env file.\nSee SETUP.md for instructions.";
         } else if (errorMsg.includes("Failed to fetch") || errorMsg.includes("ERR_EMPTY_RESPONSE") || errorMsg === "") {
             displayMsg = "⚠️ Server not responding (ERR_EMPTY_RESPONSE)\n\nThe Flask server may have crashed. Check the terminal running app.py for the Python traceback.";
@@ -1954,6 +2390,8 @@ function displayTarget() {
 
 function resetResultsTable() {
     document.getElementById("flightData").innerHTML = "";
+    const rich = document.getElementById("richFlightData");
+    if (rich) rich.innerHTML = "";
 }
 
 function soundAlert(transitDetails = []) {
@@ -2204,23 +2642,69 @@ function updateLastUpdateDisplay() {
 // Update display every second
 setInterval(updateLastUpdateDisplay, 1000);
 
-// Telescope status indicator
+// Telescope status indicator + disconnect banner
+let _scopeWasConnected = null;   // null = unknown (first poll)
+let _scopeBannerDismissed = false;
+let _disconnectPollCount = 0;    // consecutive polls where scope is disconnected
+
+function dismissTelescopeBanner() {
+    _scopeBannerDismissed = true;
+    const banner = document.getElementById('telescopeDisconnectBanner');
+    if (banner) banner.style.display = 'none';
+}
+
 function updateTelescopeStatus() {
     fetch('/telescope/status')
         .then(response => response.json())
         .then(data => {
             const statusLight = document.getElementById('telescopeStatusLight');
+            const banner      = document.getElementById('telescopeDisconnectBanner');
+            const detail      = document.getElementById('telescopeBannerDetail');
+            const isEnabled   = data.enabled;
+            const isConnected = data.connected;
+
+            // Status light
             if (statusLight) {
-                if (data.connected) {
+                if (isConnected) {
                     statusLight.style.backgroundColor = '#00ff00';
                     statusLight.title = 'Telescope connected';
+                } else if (!isEnabled) {
+                    statusLight.style.backgroundColor = '#555';
+                    statusLight.title = 'Telescope disabled';
                 } else {
                     statusLight.style.backgroundColor = '#ff0000';
                     statusLight.title = 'Telescope disconnected';
                 }
             }
+
+            // Disconnect banner — only show if telescope is enabled and was previously
+            // connected (i.e. we lost a live connection, not just startup with no scope)
+            if (banner && isEnabled) {
+                if (!isConnected) {
+                    _disconnectPollCount++;
+                    // Phase 2: after ~1 minute of failed reconnects, suggest scope is offline
+                    if (detail) {
+                        if (_disconnectPollCount > 30) {
+                            detail.textContent = 'Scope may be offline — will keep checking.';
+                        } else {
+                            detail.textContent = 'Reconnecting automatically — transit recording suspended.';
+                        }
+                    }
+                    // Was connected before → show banner (unless user dismissed this drop)
+                    if (_scopeWasConnected === true && !_scopeBannerDismissed) {
+                        banner.style.display = 'flex';
+                    }
+                } else {
+                    // Reconnected — hide banner and reset counters
+                    _disconnectPollCount = 0;
+                    banner.style.display = 'none';
+                    _scopeBannerDismissed = false;
+                }
+            }
+
+            _scopeWasConnected = isConnected;
         })
-        .catch(error => {
+        .catch(() => {
             const statusLight = document.getElementById('telescopeStatusLight');
             if (statusLight) {
                 statusLight.style.backgroundColor = '#999';

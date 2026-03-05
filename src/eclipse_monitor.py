@@ -47,13 +47,14 @@ Observer location must be set via environment variables:
 
 import math
 import os
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 from src import logger
 
 # ── Skyfield resources (already loaded by constants.py) ──────────────────────
-from src.constants import ASTRO_EPHEMERIS as eph, EARTH_TIMESCALE as ts
+from src.constants import ASTRO_EPHEMERIS as eph
+from src.constants import EARTH_TIMESCALE as ts
 
 # Moon's mean angular speed relative to Earth's shadow centre (rad / hour).
 # Derived from sidereal orbital period: 360° / (27.32 days * 24 h) ≈ 0.549°/h
@@ -67,19 +68,23 @@ _V_MOON_RAD_PER_HOUR = 0.00959
 def _observer_topos(lat: float, lon: float, elevation_m: float):
     """Return a Skyfield Topos (observer on Earth's surface)."""
     from skyfield.api import wgs84
+
     return wgs84.latlon(lat, lon, elevation_m=elevation_m)
 
 
 def _angular_separation_rad(pos_a, pos_b) -> float:
     """Angular separation in radians between two Skyfield astrometric positions."""
     import numpy as np
+
     a = pos_a.position.au
     b = pos_b.position.au
     cos_angle = float(np.dot(a, b) / (np.linalg.norm(a) * np.linalg.norm(b)))
     return math.acos(max(-1.0, min(1.0, cos_angle)))
 
 
-def _angular_radius_rad(body_pos, observer_pos, body_name: Optional[str] = None) -> float:
+def _angular_radius_rad(
+    body_pos, observer_pos, body_name: Optional[str] = None
+) -> float:
     """
     Angular radius of a solar-system body in radians.
 
@@ -110,7 +115,9 @@ def _angular_radius_rad(body_pos, observer_pos, body_name: Optional[str] = None)
 
     if not isinstance(name, str):
         logger.warning("Unable to determine body name for angular radius computation.")
-        raise ValueError("Unknown body for angular radius computation (no name provided).")
+        raise ValueError(
+            "Unknown body for angular radius computation (no name provided)."
+        )
 
     name_key = name.lower()
     if name_key not in RADII_KM:
@@ -125,6 +132,7 @@ def _angular_radius_rad(body_pos, observer_pos, body_name: Optional[str] = None)
 #  Lunar eclipse detection
 # ─────────────────────────────────────────────────────────────────────────────
 
+
 def _lunar_eclipse_contacts(t_max, details: dict) -> dict:
     """
     Derive U1, U2, U3, U4 from skyfield lunar_eclipses() details.
@@ -132,13 +140,13 @@ def _lunar_eclipse_contacts(t_max, details: dict) -> dict:
     Returns a dict with keys: u1, u2, u3, u4 as Python UTC datetimes.
     u2 / u3 are None for partial eclipses.
     """
-    d    = float(details["closest_approach_radians"])
-    R_u  = float(details["umbra_radius_radians"])
-    R_m  = float(details["moon_radius_radians"])
-    v    = _V_MOON_RAD_PER_HOUR  # rad / hour
+    d = float(details["closest_approach_radians"])
+    R_u = float(details["umbra_radius_radians"])
+    R_m = float(details["moon_radius_radians"])
+    v = _V_MOON_RAD_PER_HOUR  # rad / hour
 
     # Umbral half-duration (hours): Moon entering/exiting umbra
-    inner = (R_u + R_m) ** 2 - d ** 2
+    inner = (R_u + R_m) ** 2 - d**2
     if inner < 0:
         raise ValueError("Geometry inconsistency: umbra half-duration imaginary")
     hd_umbra = math.sqrt(inner) / v  # hours
@@ -151,7 +159,7 @@ def _lunar_eclipse_contacts(t_max, details: dict) -> dict:
     umbral_mag = float(details["umbral_magnitude"])
     u2 = u3 = None
     if umbral_mag >= 1.0:
-        inner_t = (R_u - R_m) ** 2 - d ** 2
+        inner_t = (R_u - R_m) ** 2 - d**2
         if inner_t >= 0:
             hd_total = math.sqrt(inner_t) / v
             u2 = t_max_utc - timedelta(hours=hd_total)
@@ -160,7 +168,9 @@ def _lunar_eclipse_contacts(t_max, details: dict) -> dict:
     return {"u1": u1, "u2": u2, "u3": u3, "u4": u4}
 
 
-def _find_lunar_eclipse(hours_ahead: float, lat: float, lon: float, elev: float) -> Optional[dict]:
+def _find_lunar_eclipse(
+    hours_ahead: float, lat: float, lon: float, elev: float
+) -> Optional[dict]:
     """
     Return the next lunar eclipse starting within `hours_ahead` hours, or None.
 
@@ -194,14 +204,14 @@ def _find_lunar_eclipse(hours_ahead: float, lat: float, lon: float, elev: float)
             t_max_utc = times[i].utc_datetime()
 
             return {
-                "type":          "lunar",
+                "type": "lunar",
                 "eclipse_class": eclipse_class,
-                "target":        "Moon",
-                "c1":            contacts["u1"].isoformat(),
-                "c2":            contacts["u2"].isoformat() if contacts["u2"] else None,
-                "c3":            contacts["u3"].isoformat() if contacts["u3"] else None,
-                "c4":            contacts["u4"].isoformat(),
-                "max":           t_max_utc.isoformat(),
+                "target": "Moon",
+                "c1": contacts["u1"].isoformat(),
+                "c2": contacts["u2"].isoformat() if contacts["u2"] else None,
+                "c3": contacts["u3"].isoformat() if contacts["u3"] else None,
+                "c4": contacts["u4"].isoformat(),
+                "max": t_max_utc.isoformat(),
                 "seconds_to_c1": int((contacts["u1"] - now_utc).total_seconds()),
             }
 
@@ -215,30 +225,33 @@ def _find_lunar_eclipse(hours_ahead: float, lat: float, lon: float, elev: float)
 #  Solar eclipse detection
 # ─────────────────────────────────────────────────────────────────────────────
 
+
 def _sun_moon_separation(t_sky, observer_topos):
     """
     Returns (separation_rad, r_sun_rad, r_moon_rad) at Skyfield time t_sky.
     """
     earth = eph["earth"]
-    sun   = eph["sun"]
-    moon  = eph["moon"]
+    sun = eph["sun"]
+    moon = eph["moon"]
 
     observer = earth + observer_topos
-    astr_sun  = observer.at(t_sky).observe(sun).apparent()
+    astr_sun = observer.at(t_sky).observe(sun).apparent()
     astr_moon = observer.at(t_sky).observe(moon).apparent()
 
     sep = _angular_separation_rad(astr_sun, astr_moon)
 
     AU_KM = 149_597_870.7
-    dist_sun  = float(astr_sun.distance().au)
+    dist_sun = float(astr_sun.distance().au)
     dist_moon = float(astr_moon.distance().au)
-    r_sun  = math.atan(696_000.0  / (dist_sun  * AU_KM))
-    r_moon = math.atan(1_737.4    / (dist_moon * AU_KM))
+    r_sun = math.atan(696_000.0 / (dist_sun * AU_KM))
+    r_moon = math.atan(1_737.4 / (dist_moon * AU_KM))
 
     return sep, r_sun, r_moon
 
 
-def _find_solar_eclipse(hours_ahead: float, lat: float, lon: float, elev: float) -> Optional[dict]:
+def _find_solar_eclipse(
+    hours_ahead: float, lat: float, lon: float, elev: float
+) -> Optional[dict]:
     """
     Return the next solar eclipse visible at observer within `hours_ahead` hours, or None.
 
@@ -257,7 +270,7 @@ def _find_solar_eclipse(hours_ahead: float, lat: float, lon: float, elev: float)
         # Solar eclipses ONLY happen at new moon.  Find new moons in the window
         # (expanded ±6 h so we don't miss eclipses whose C1 falls at the edge).
         t_search_start = ts.from_datetime(now_utc - timedelta(hours=6))
-        t_search_end   = ts.from_datetime(now_utc + timedelta(hours=hours_ahead + 6))
+        t_search_end = ts.from_datetime(now_utc + timedelta(hours=hours_ahead + 6))
         moon_times, moon_phases_arr = almanac.find_discrete(
             t_search_start, t_search_end, almanac.moon_phases(eph)
         )
@@ -267,16 +280,18 @@ def _find_solar_eclipse(hours_ahead: float, lat: float, lon: float, elev: float)
             return None
 
         # --- Phase 1: coarse scan ±6 h around each new moon (≤72 steps) --
-        step_minutes     = 10
+        step_minutes = 10
         eclipse_start_jd = None
-        eclipse_end_jd   = None
-        min_sep          = float("inf")
-        min_sep_jd       = None
+        eclipse_end_jd = None
+        min_sep = float("inf")
+        min_sep_jd = None
 
         for new_moon_t in new_moons:
             prev_in_eclipse = False
             for i in range(-36, 37):  # ±6 h in 10-min steps
-                t_check = new_moon_t.utc_datetime() + timedelta(minutes=i * step_minutes)
+                t_check = new_moon_t.utc_datetime() + timedelta(
+                    minutes=i * step_minutes
+                )
                 if t_check < now_utc - timedelta(minutes=step_minutes):
                     continue
                 if t_check > now_utc + timedelta(hours=hours_ahead + 1):
@@ -286,7 +301,7 @@ def _find_solar_eclipse(hours_ahead: float, lat: float, lon: float, elev: float)
                 in_eclipse = sep < r_sun + r_moon
 
                 if in_eclipse and sep < min_sep:
-                    min_sep    = sep
+                    min_sep = sep
                     min_sep_jd = t_sky.tt
                 if in_eclipse and not prev_in_eclipse:
                     eclipse_start_jd = t_sky.tt
@@ -302,9 +317,7 @@ def _find_solar_eclipse(hours_ahead: float, lat: float, lon: float, elev: float)
 
         # If we never saw the end, approximate
         if eclipse_end_jd is None:
-            eclipse_end_jd = ts.from_datetime(
-                now_utc + timedelta(hours=hours_ahead)
-            ).tt
+            eclipse_end_jd = ts.from_datetime(now_utc + timedelta(hours=hours_ahead)).tt
 
         # --- Phase 2: binary-search for precise C1 and C4 ---------------
         def _bisect_contact(jd_before, jd_after, want_in_eclipse: bool, tol_sec=10):
@@ -325,13 +338,13 @@ def _find_solar_eclipse(hours_ahead: float, lat: float, lon: float, elev: float)
         c1_jd = _bisect_contact(
             eclipse_start_jd - step_minutes / 1440.0,
             eclipse_start_jd,
-            want_in_eclipse=True
+            want_in_eclipse=True,
         )
         # C4: transition from inside → outside eclipse
         c4_jd = _bisect_contact(
             eclipse_end_jd - step_minutes / 1440.0,
             eclipse_end_jd,
-            want_in_eclipse=False
+            want_in_eclipse=False,
         )
 
         def jd_to_utc(jd: float) -> datetime:
@@ -354,7 +367,7 @@ def _find_solar_eclipse(hours_ahead: float, lat: float, lon: float, elev: float)
             # C2: Moon fully covers Sun (inner contact, ingress)
             # C3: Moon starts to uncover Sun (inner contact, egress)
             # Binary-search for inner contact (sep < |r_sun - r_moon|)
-            inner_thresh = abs(r_sun_max - r_moon_max)
+            abs(r_sun_max - r_moon_max)
 
             def _inside_totality(jd):
                 t = ts.tt_jd(jd)
@@ -389,14 +402,14 @@ def _find_solar_eclipse(hours_ahead: float, lat: float, lon: float, elev: float)
             return None
 
         return {
-            "type":          "solar",
+            "type": "solar",
             "eclipse_class": eclipse_class,
-            "target":        "Sun",
-            "c1":            c1_utc.isoformat(),
-            "c2":            c2_utc.isoformat() if c2_utc else None,
-            "c3":            c3_utc.isoformat() if c3_utc else None,
-            "c4":            c4_utc.isoformat(),
-            "max":           t_max_utc.isoformat(),
+            "target": "Sun",
+            "c1": c1_utc.isoformat(),
+            "c2": c2_utc.isoformat() if c2_utc else None,
+            "c3": c3_utc.isoformat() if c3_utc else None,
+            "c4": c4_utc.isoformat(),
+            "max": t_max_utc.isoformat(),
             "seconds_to_c1": int((c1_utc - now_utc).total_seconds()),
         }
 
@@ -409,6 +422,7 @@ def _find_solar_eclipse(hours_ahead: float, lat: float, lon: float, elev: float)
 # ─────────────────────────────────────────────────────────────────────────────
 #  Public API
 # ─────────────────────────────────────────────────────────────────────────────
+
 
 class EclipseMonitor:
     """
@@ -426,8 +440,8 @@ class EclipseMonitor:
 
     def get_upcoming_eclipse(
         self,
-        lat:  Optional[float] = None,
-        lon:  Optional[float] = None,
+        lat: Optional[float] = None,
+        lon: Optional[float] = None,
         elev: Optional[float] = None,
     ) -> Optional[dict]:
         """
@@ -457,9 +471,9 @@ class EclipseMonitor:
             now > c4 (within 30 min)    → 'cleared'  (post-event summary)
         """
         if lat is None:
-            lat  = float(os.getenv("OBSERVER_LATITUDE",  "0"))
+            lat = float(os.getenv("OBSERVER_LATITUDE", "0"))
         if lon is None:
-            lon  = float(os.getenv("OBSERVER_LONGITUDE", "0"))
+            lon = float(os.getenv("OBSERVER_LONGITUDE", "0"))
         if elev is None:
             elev = float(os.getenv("OBSERVER_ELEVATION", "0"))
 
