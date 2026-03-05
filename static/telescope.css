@@ -1126,6 +1126,39 @@ canvas.video-thumb-canvas {
     display: block;
 }
 
+/* Fixed-position toast for status messages (visible above modals) */
+.status-toast {
+    position: fixed;
+    top: 16px;
+    left: 50%;
+    transform: translateX(-50%);
+    padding: 10px 24px;
+    border-radius: 8px;
+    font-weight: 500;
+    font-size: 0.9em;
+    z-index: 10000;
+    display: none;
+    pointer-events: none;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.5);
+    white-space: nowrap;
+}
+.status-toast-success {
+    background: rgba(50, 205, 50, 0.9);
+    color: #fff;
+}
+.status-toast-error {
+    background: rgba(220, 30, 30, 0.9);
+    color: #fff;
+}
+.status-toast-info {
+    background: rgba(3, 156, 156, 0.9);
+    color: #fff;
+}
+.status-toast-warning {
+    background: rgba(255, 153, 0, 0.9);
+    color: #fff;
+}
+
 /* Responsive Design */
 @media (max-width: 1400px) {
     .telescope-layout {
