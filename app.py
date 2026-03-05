@@ -935,4 +935,19 @@ if __name__ == "__main__":
     log = logging.getLogger("werkzeug")
     log.setLevel(logging.WARNING)
 
-    app.run(host="0.0.0.0", port=port, debug=False)
+    # Allow immediate port reuse and clean shutdown on Ctrl-C / SIGTERM
+    import signal
+    import threading
+    from werkzeug.serving import make_server
+
+    server = make_server("0.0.0.0", port, app)
+    server.socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+
+    def _shutdown(sig, frame):
+        print("\n🛑 Shutting down…")
+        threading.Thread(target=server.shutdown, daemon=True).start()
+
+    signal.signal(signal.SIGINT, _shutdown)
+    signal.signal(signal.SIGTERM, _shutdown)
+
+    server.serve_forever()
