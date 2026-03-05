@@ -1764,8 +1764,10 @@ function generateVideoThumbnail(canvas) {
 
 // Track viewer state for navigation
 var _viewerIndex = -1;
+var _loopSegment = null; // { start, end } for segment looping, or true for full loop
 
-function viewFile(path, name) {
+function viewFile(path, name, opts) {
+    opts = opts || {};
     name = name || path.split('/').pop();
     const files = window.currentFiles || [];
     _viewerIndex = files.findIndex(f => (f.url || f.path) === path || f.path === path);
@@ -1778,10 +1780,12 @@ function viewFile(path, name) {
 
     nameEl.textContent = name;
     _setScanBanner(null); // clear any previous scan result
+    _loopSegment = null;
     if (isVideo) {
+        const loopAttr = opts.loop ? ' loop' : '';
         body.innerHTML =
             `<div style="position:relative; display:inline-block;">` +
-            `<video src="${path}" controls autoplay style="max-width:90vw; max-height:80vh;"></video>` +
+            `<video src="${path}" controls autoplay${loopAttr} style="max-width:90vw; max-height:80vh;"></video>` +
             `<div id="videoPreciseTime" class="video-precise-time">0.00 / 0.00</div>` +
             `</div>`;
         const vid = body.querySelector('video');
@@ -1790,6 +1794,10 @@ function viewFile(path, name) {
             const cur = (vid.currentTime || 0).toFixed(2);
             const dur = (vid.duration || 0).toFixed(2);
             timeEl.textContent = `${cur} / ${dur}`;
+            // Segment loop: re-seek when past end
+            if (_loopSegment && _loopSegment.start != null && vid.currentTime >= _loopSegment.end) {
+                vid.currentTime = _loopSegment.start;
+            }
         };
         vid.addEventListener('timeupdate', updateTime);
         vid.addEventListener('seeked', updateTime);
@@ -1825,6 +1833,7 @@ function closeFileViewer() {
     body.innerHTML = '';  // Stop video playback
     _setScanBanner(null);
     _viewerIndex = -1;
+    _loopSegment = null;
 }
 
 var _frameStepTimer = null;
@@ -1934,14 +1943,17 @@ async function scanTransit() {
         });
 
         if (result) {
-            playerVideo.currentTime = result.center;
-            playerVideo.pause();
+            const loopStart = Math.max(0, result.start - 0.5);
+            const loopEnd = result.end + 0.5;
+            _loopSegment = { start: loopStart, end: loopEnd };
+            playerVideo.currentTime = loopStart;
+            playerVideo.play();
             const durMs = Math.round(result.duration * 1000);
             const ts = _formatTimestamp(result.center);
             _setScanBanner('found',
                 `🎯 Transit detected at ${ts} (~${durMs}ms)` +
-                `  —  click to replay`,
-                () => { playerVideo.currentTime = Math.max(0, result.start - 0.2); playerVideo.play(); }
+                `  —  looping segment · click to stop loop`,
+                () => { _loopSegment = null; _setScanBanner('found', `🎯 Transit at ${ts} (~${durMs}ms) — loop stopped`); }
             );
         } else {
             _setScanBanner('none', 'No transit detected in this video');
@@ -3049,7 +3061,7 @@ function appendDetectionEvent(event) {
         row.onclick = () => {
             const url = '/' + event.recording_file;
             const name = event.recording_file.split('/').pop();
-            viewFile({ path: url, name: name });
+            viewFile(url, name, { loop: true });
         };
     }
 
