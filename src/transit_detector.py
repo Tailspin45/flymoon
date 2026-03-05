@@ -581,9 +581,11 @@ class TransitDetector:
                 # Find the flight closest to the observer's target line-of-sight
                 from src.astro import CelestialObject
                 from src.position import geographic_to_altaz, get_my_pos
+                from src.constants import ASTRO_EPHEMERIS
 
                 my_pos = get_my_pos(
-                    lat, lon, float(os.getenv("OBSERVER_ELEVATION", "0"))
+                    lat, lon, float(os.getenv("OBSERVER_ELEVATION", "0")),
+                    base_ref=ASTRO_EPHEMERIS["earth"]
                 )
                 ref_dt = event.timestamp
 
