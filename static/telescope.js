@@ -37,6 +37,31 @@ function toggleFavorite(path, event) {
         btn.textContent = favs.has(path) ? '❤️' : '🤍';
         btn.title = favs.has(path) ? 'Unfavorite' : 'Favorite';
     });
+    // Sync delete button states everywhere
+    _updateDeleteBtnState(path, favs.has(path));
+}
+
+function _updateDeleteBtnState(path, isFav) {
+    // Filmstrip + grid thumbnail delete buttons
+    document.querySelectorAll(`[data-fav-path="${CSS.escape(path)}"]`).forEach(favBtn => {
+        const actions = favBtn.closest('.filmstrip-actions, .file-actions');
+        if (!actions) return;
+        const delBtn = actions.querySelector('.btn-danger');
+        if (!delBtn) return;
+        delBtn.disabled = isFav;
+        delBtn.title = isFav ? 'Remove favorite first' : 'Delete';
+    });
+    // Viewer delete button
+    const viewerDelBtn = document.getElementById('viewerDeleteBtn');
+    if (viewerDelBtn) {
+        viewerDelBtn.disabled = isFav;
+        viewerDelBtn.title = isFav ? 'Remove favorite first' : 'Delete (⌘/Ctrl+click to skip confirm)';
+    }
+    // Viewer fav button text
+    const viewerFavBtn = document.getElementById('viewerFavBtn');
+    if (viewerFavBtn) {
+        viewerFavBtn.textContent = isFav ? '❤️' : '🤍';
+    }
 }
 let zoomStep = 0.1;
 let _previewLastError = 0; // timestamp of last preview onerror (ms)
@@ -1534,7 +1559,7 @@ function updateFilmstrip(files) {
                 <div class="filmstrip-actions">
                     <button class="btn-icon btn-fav" data-fav-path="${file.path}" onclick="toggleFavorite('${file.path}', event)" title="${getFavorites().has(file.path) ? 'Unfavorite' : 'Favorite'}">${getFavorites().has(file.path) ? '❤️' : '🤍'}</button>
                     <button class="btn-icon" onclick="event.stopPropagation(); downloadFile('${file.path}', '${file.name}')" title="Download" ${isTemp ? 'disabled' : ''}>⬇️</button>
-                    <button class="btn-icon btn-danger" onclick="event.stopPropagation(); deleteFile('${file.path}', '${file.name}')" title="Delete" ${isTemp ? 'disabled' : ''}>🗑️</button>
+                    <button class="btn-icon btn-danger" onclick="event.stopPropagation(); deleteFile('${file.path}', '${file.name}')" title="${getFavorites().has(file.path) ? 'Remove favorite first' : 'Delete'}" ${isTemp || getFavorites().has(file.path) ? 'disabled' : ''}>🗑️</button>
                 </div>
             </div>
         </div>
@@ -1595,9 +1620,19 @@ async function gridDeleteSelected() {
     const paths = [...gridSelection.selected];
     const n = paths.length;
     if (n === 0) return;
-    if (!confirm(`Delete ${n} file${n > 1 ? 's' : ''}?`)) return;
+    const favs = getFavorites();
+    const protected_ = paths.filter(p => favs.has(p));
+    const deletable = paths.filter(p => !favs.has(p));
+    if (protected_.length > 0 && deletable.length === 0) {
+        showStatus(`${protected_.length} file${protected_.length > 1 ? 's are' : ' is'} favorited — remove ❤️ first`, 'warning', 4000);
+        return;
+    }
+    const msg = protected_.length > 0
+        ? `Delete ${deletable.length} file${deletable.length > 1 ? 's' : ''}? (${protected_.length} favorited file${protected_.length > 1 ? 's' : ''} will be skipped)`
+        : `Delete ${deletable.length} file${deletable.length > 1 ? 's' : ''}?`;
+    if (!confirm(msg)) return;
     let deleted = 0;
-    for (const filePath of paths) {
+    for (const filePath of deletable) {
         try {
             const p = filePath.replace('/static/', '');
             const response = await fetch('/telescope/files/delete', {
@@ -1730,7 +1765,7 @@ function updateFilesGrid() {
                 <div class="file-actions">
                     <button class="btn-icon btn-fav" data-fav-path="${file.path}" onclick="toggleFavorite('${file.path}', event)" title="${getFavorites().has(file.path) ? 'Unfavorite' : 'Favorite'}">${getFavorites().has(file.path) ? '❤️' : '🤍'}</button>
                     <button class="btn-icon" onclick="event.stopPropagation(); downloadFile('${file.path}', '${file.name}')" title="Download">⬇️</button>
-                    <button class="btn-icon btn-danger" onclick="event.stopPropagation(); deleteFile('${file.path}', '${file.name}')" title="Delete">🗑️</button>
+                    <button class="btn-icon btn-danger" onclick="event.stopPropagation(); deleteFile('${file.path}', '${file.name}')" title="${getFavorites().has(file.path) ? 'Remove favorite first' : 'Delete'}" ${getFavorites().has(file.path) ? 'disabled' : ''}>🗑️</button>
                 </div>
             </div>
             ${thumbnail}
@@ -1827,13 +1862,14 @@ function viewFile(path, name, opts) {
               `<button class="btn-viewer" onmousedown="frameStepStart(1)" onmouseup="frameStepStop()" onmouseleave="frameStepStop()" title="Forward 1 frame (hold to repeat)">▷</button>`
             : '';
         const isFav = getFavorites().has(path);
-        const favBtn = `<button class="btn-viewer" onclick="toggleFavorite('${path}', event); this.textContent = getFavorites().has('${path}') ? '❤️' : '🤍'" title="Favorite">${isFav ? '❤️' : '🤍'}</button>`;
+        const favBtn = `<button class="btn-viewer" id="viewerFavBtn" onclick="toggleFavorite('${path}', event); _updateViewerFavState('${path}')" title="Favorite">${isFav ? '❤️' : '🤍'}</button>`;
+        const delDisabled = isFav ? 'disabled title="Remove favorite first"' : 'title="Delete (⌘/Ctrl+click to skip confirm)"';
         actionsEl.innerHTML =
             `<button class="btn-viewer" onclick="viewerNav(-1)" title="Previous" ${hasPrev ? '' : 'disabled'}>◀</button>` +
             scanBtn +
             favBtn +
             `<button class="btn-viewer" onclick="viewerDownload()" title="Download">⬇️ Download</button>` +
-            `<button class="btn-viewer btn-viewer-danger" onclick="viewerDelete(event)" title="Delete (⌘/Ctrl+click to skip confirm)">🗑️ Delete</button>` +
+            `<button class="btn-viewer btn-viewer-danger" id="viewerDeleteBtn" onclick="viewerDelete(event)" ${delDisabled}>🗑️ Delete</button>` +
             `<button class="btn-viewer" onclick="viewerNav(1)" title="Next" ${hasNext ? '' : 'disabled'}>▶</button>`;
     }
 
@@ -1894,6 +1930,10 @@ async function viewerDelete(e) {
     const files = window.currentFiles || [];
     if (_viewerIndex < 0 || _viewerIndex >= files.length) return;
     const f = files[_viewerIndex];
+    if (getFavorites().has(f.path)) {
+        showStatus('Remove favorite ❤️ first before deleting', 'warning', 3000);
+        return;
+    }
     const skipConfirm = e && (e.metaKey || e.ctrlKey);
     if (!skipConfirm && !confirm(`Delete ${f.name}?`)) return;
 
