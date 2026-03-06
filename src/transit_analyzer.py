@@ -54,6 +54,7 @@ class BlobDetection:
     disk_x_norm: float    # x relative to disk centre, normalised by radius (-1..1)
     disk_y_norm: float
     confidence: str       # "high" | "medium" | "low"
+    is_static: bool = False   # True = likely sunspot/static feature (filtered out)
 
 
 @dataclass
@@ -236,7 +237,7 @@ def analyze_video(
         fourcc = cv2.VideoWriter_fourcc(*"mp4v")
         out = cv2.VideoWriter(str(temp_path), fourcc, fps, (w, h))
 
-    # ── Main loop ─────────────────────────────────────────────────────────────
+    # ── Main detection loop (no annotation yet) ─────────────────────────────
     detections: List[BlobDetection] = []
     frame_idx = 0
 
@@ -253,97 +254,90 @@ def analyze_video(
             if len(ref_buffer) >= ref_window:
                 reference = np.median(np.stack(ref_buffer), axis=0).astype(np.uint8)
                 logger.info(f"[Analyzer] Reference locked at frame {frame_idx}")
-            # Write plain frame while still accumulating reference
-            if out is not None:
-                out.write(frame)
             frame_idx += 1
             continue
 
-        if True:  # reference is always set here (frozen above)
-            # Difference inside disk only
-            diff = cv2.absdiff(gray, reference)
-            diff_masked = cv2.bitwise_and(diff, diff, mask=mask)
+        # Difference inside disk only
+        diff = cv2.absdiff(gray, reference)
+        diff_masked = cv2.bitwise_and(diff, diff, mask=mask)
 
-            # Threshold
-            _, binary = cv2.threshold(diff_masked, DIFF_THRESHOLD, 255, cv2.THRESH_BINARY)
+        # Threshold
+        _, binary = cv2.threshold(diff_masked, DIFF_THRESHOLD, 255, cv2.THRESH_BINARY)
 
-            # Morphological cleanup
-            kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
-            binary = cv2.morphologyEx(binary, cv2.MORPH_OPEN, kernel)
-            binary = cv2.morphologyEx(binary, cv2.MORPH_CLOSE, kernel)
+        # Morphological cleanup
+        kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
+        binary = cv2.morphologyEx(binary, cv2.MORPH_OPEN, kernel)
+        binary = cv2.morphologyEx(binary, cv2.MORPH_CLOSE, kernel)
 
-            # Blob analysis
-            num_labels, labels, stats, centroids = cv2.connectedComponentsWithStats(
-                binary, connectivity=8
+        # Blob analysis
+        num_labels, labels, stats, centroids = cv2.connectedComponentsWithStats(
+            binary, connectivity=8
+        )
+
+        for lbl in range(1, num_labels):  # skip background (0)
+            area = int(stats[lbl, cv2.CC_STAT_AREA])
+            if area < MIN_BLOB_PIXELS:
+                continue
+
+            bx = int(stats[lbl, cv2.CC_STAT_LEFT])
+            by = int(stats[lbl, cv2.CC_STAT_TOP])
+            bw = int(stats[lbl, cv2.CC_STAT_WIDTH])
+            bh = int(stats[lbl, cv2.CC_STAT_HEIGHT])
+            bcx = bx + bw // 2
+            bcy = by + bh // 2
+
+            ar = bw / max(1, bh)
+            conf = _confidence(area, disk_radius)
+
+            dx_norm = (bcx - disk_cx) / max(1, disk_radius)
+            dy_norm = (bcy - disk_cy) / max(1, disk_radius)
+
+            det = BlobDetection(
+                frame_index=frame_idx,
+                time_seconds=round(frame_idx / fps, 3),
+                x=bcx, y=bcy,
+                width=bw, height=bh,
+                area_px=area,
+                aspect_ratio=round(ar, 2),
+                disk_x_norm=round(dx_norm, 3),
+                disk_y_norm=round(dy_norm, 3),
+                confidence=conf,
             )
-
-            annotated = frame.copy()
-
-            for lbl in range(1, num_labels):  # skip background (0)
-                area = int(stats[lbl, cv2.CC_STAT_AREA])
-                if area < MIN_BLOB_PIXELS:
-                    continue
-
-                bx = int(stats[lbl, cv2.CC_STAT_LEFT])
-                by = int(stats[lbl, cv2.CC_STAT_TOP])
-                bw = int(stats[lbl, cv2.CC_STAT_WIDTH])
-                bh = int(stats[lbl, cv2.CC_STAT_HEIGHT])
-                bcx = bx + bw // 2
-                bcy = by + bh // 2
-
-                ar = bw / max(1, bh)
-                conf = _confidence(area, disk_radius)
-                color = CONFIDENCE_COLORS.get(conf, ANNOTATION_COLOR)
-
-                dx_norm = (bcx - disk_cx) / max(1, disk_radius)
-                dy_norm = (bcy - disk_cy) / max(1, disk_radius)
-
-                det = BlobDetection(
-                    frame_index=frame_idx,
-                    time_seconds=round(frame_idx / fps, 3),
-                    x=bcx, y=bcy,
-                    width=bw, height=bh,
-                    area_px=area,
-                    aspect_ratio=round(ar, 2),
-                    disk_x_norm=round(dx_norm, 3),
-                    disk_y_norm=round(dy_norm, 3),
-                    confidence=conf,
-                )
-                detections.append(det)
-
-                if out is not None:
-                    # Draw a thick red ellipse (oval) around the blob — much more visible than a rectangle
-                    half_w = max(bw // 2 + 4, 8)
-                    half_h = max(bh // 2 + 4, 8)
-                    cv2.ellipse(annotated, (bcx, bcy), (half_w, half_h), 0, 0, 360, color, 3)
-                    label_txt = f"{conf[0].upper()} {area}px"
-                    cv2.putText(annotated, label_txt, (bx, max(12, by - 6)),
-                                cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2, cv2.LINE_AA)
-
-            if out is not None:
-                # Draw disk outline in yellow so the analyzed region is clear
-                cv2.circle(annotated, (disk_cx, disk_cy), disk_radius,
-                           (0, 200, 200), 2)
-                # Timestamp in corner
-                ts = f"{frame_idx / fps:.2f}s"
-                cv2.putText(annotated, ts, (8, h - 8),
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.5, (180, 180, 180), 1, cv2.LINE_AA)
-                out.write(annotated)
+            detections.append(det)
 
         frame_idx += 1
 
         if progress_cb and frame_idx % 30 == 0:
-            progress_cb(frame_idx / max(1, total_frames))
+            progress_cb(frame_idx / max(1, total_frames) * 0.7)  # 70% for detection
 
     cap.release()
-    if out is not None:
-        out.release()
-        # Re-encode to H.264 so browsers can play the annotated video
-        _reencode_h264(temp_path, out_path)
-        logger.info(f"[Analyzer] Annotated video → {out_path.name}")
+
+    # ── Filter out static blobs (sunspots) ───────────────────────────────────
+    # Sunspots appear at the same position across many frames.  A real transit
+    # moves across the disk.  Cluster detections by spatial proximity and mark
+    # clusters present in >50% of detection frames as static.
+    detections = _filter_static_blobs(detections, proximity_px=8)
+    moving_detections = [d for d in detections if not d.is_static]
+    n_static = sum(1 for d in detections if d.is_static)
+    if n_static:
+        logger.info(f"[Analyzer] Filtered {n_static} static-blob detections (sunspots)")
 
     # ── Group detections into transit events ───────────────────────────────────
-    transit_events = _group_detections(detections, fps)
+    transit_events = _group_detections(moving_detections, fps)
+
+    # ── Annotation pass (second read of video) ────────────────────────────────
+    # Now that we know which blobs are static vs transit, re-read and annotate
+    # with correct colors: red/orange for transits, gray for filtered sunspots.
+    temp_path = path.with_name(path.stem + "_analyzed_tmp.mp4")
+    out_path   = path.with_name(path.stem + "_analyzed.mp4")
+    if output_annotated:
+        _write_annotated_video(
+            path, temp_path, fps, w, h, total_frames,
+            detections, disk_cx, disk_cy, disk_radius,
+            progress_cb, 0.7,  # start at 70% progress
+        )
+        _reencode_h264(temp_path, out_path)
+        logger.info(f"[Analyzer] Annotated video → {out_path.name}")
 
     result = AnalysisResult(
         source_file=str(path),
@@ -367,6 +361,116 @@ def analyze_video(
         f"{len(detections)} blob detection(s) → {sidecar.name}"
     )
     return result
+
+
+STATIC_COLOR = (140, 140, 140)  # gray for sunspots/static features
+
+
+def _write_annotated_video(
+    src: Path, dst: Path, fps: float, w: int, h: int, total_frames: int,
+    detections: List[BlobDetection],
+    disk_cx: int, disk_cy: int, disk_radius: int,
+    progress_cb=None, progress_offset: float = 0.0,
+):
+    """Second pass: re-read source video and overlay annotations."""
+    # Index detections by frame for fast lookup
+    from collections import defaultdict
+    by_frame: dict = defaultdict(list)
+    for d in detections:
+        by_frame[d.frame_index].append(d)
+
+    cap = cv2.VideoCapture(str(src))
+    fourcc = cv2.VideoWriter_fourcc(*"mp4v")
+    out = cv2.VideoWriter(str(dst), fourcc, fps, (w, h))
+    frame_idx = 0
+
+    while True:
+        ok, frame = cap.read()
+        if not ok:
+            break
+
+        annotated = frame
+        dets = by_frame.get(frame_idx)
+        if dets:
+            annotated = frame.copy()
+            for d in dets:
+                if d.is_static:
+                    color = STATIC_COLOR
+                    label = f"S {d.area_px}px"  # S = sunspot/static
+                    thickness = 1
+                else:
+                    color = CONFIDENCE_COLORS.get(d.confidence, ANNOTATION_COLOR)
+                    label = f"{d.confidence[0].upper()} {d.area_px}px"
+                    thickness = 3
+                half_w = max(d.width // 2 + 4, 8)
+                half_h = max(d.height // 2 + 4, 8)
+                cv2.ellipse(annotated, (d.x, d.y), (half_w, half_h),
+                            0, 0, 360, color, thickness)
+                cv2.putText(annotated, label,
+                            (d.x - d.width // 2, max(12, d.y - d.height // 2 - 6)),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2, cv2.LINE_AA)
+
+            # Disk outline
+            cv2.circle(annotated, (disk_cx, disk_cy), disk_radius, (0, 200, 200), 2)
+
+        # Timestamp
+        ts = f"{frame_idx / fps:.2f}s"
+        cv2.putText(annotated, ts, (8, h - 8),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, (180, 180, 180), 1, cv2.LINE_AA)
+
+        out.write(annotated)
+        frame_idx += 1
+
+        if progress_cb and frame_idx % 30 == 0:
+            frac = progress_offset + (1.0 - progress_offset) * (frame_idx / max(1, total_frames))
+            progress_cb(frac)
+
+    cap.release()
+    out.release()
+
+
+def _filter_static_blobs(detections: List[BlobDetection],
+                        proximity_px: int = 8) -> List[BlobDetection]:
+    """Mark blobs that stay at the same position across many frames as static (sunspots).
+
+    Algorithm: group all detections by spatial proximity.  If a spatial cluster
+    spans more than 50% of the frames that contain *any* detection, it's a
+    static feature — sunspot, crater, sensor hot-spot — not a transit.
+    """
+    if not detections:
+        return detections
+
+    # Unique frames that contain at least one detection
+    det_frames = set(d.frame_index for d in detections)
+    n_det_frames = len(det_frames)
+    if n_det_frames < 3:
+        return detections  # too few frames to judge
+
+    # Simple greedy spatial clustering by centroid proximity
+    clusters: List[List[int]] = []  # each cluster = list of indices into detections
+    assigned = set()
+    for i, d in enumerate(detections):
+        if i in assigned:
+            continue
+        cluster = [i]
+        assigned.add(i)
+        for j in range(i + 1, len(detections)):
+            if j in assigned:
+                continue
+            if abs(detections[j].x - d.x) <= proximity_px and abs(detections[j].y - d.y) <= proximity_px:
+                cluster.append(j)
+                assigned.add(j)
+        clusters.append(cluster)
+
+    # Mark clusters that appear in >50% of detection-containing frames as static
+    threshold = n_det_frames * 0.5
+    for cluster in clusters:
+        unique_frames = set(detections[i].frame_index for i in cluster)
+        if len(unique_frames) > threshold:
+            for i in cluster:
+                detections[i].is_static = True
+
+    return detections
 
 
 def _group_detections(detections: List[BlobDetection], fps: float,

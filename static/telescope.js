@@ -875,49 +875,6 @@ function downloadFile(url, filename) {
     showStatus(`Downloading ${filename}...`, 'info', 3000);
 }
 
-async function analyzeFile(path) {
-    const name = path.split('/').pop();
-    showStatus(`🔍 Analyzing ${name} for transits…`, 'info', 0);
-    // Strip /static/ prefix — backend expects path relative to static/
-    const apiPath = path.replace(/^\/static\//, '');
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 5 * 60 * 1000); // 5-min hard limit
-    try {
-        const resp = await fetch('/telescope/files/analyze', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ path: apiPath }),
-            signal: controller.signal,
-        });
-        const data = await resp.json();
-        if (!resp.ok || data.error) {
-            showStatus(`❌ Analysis failed: ${data.error || resp.statusText}`, 'error', 8000);
-            return;
-        }
-        const n = data.transit_events ? data.transit_events.length : 0;
-        const diskMsg = data.disk_detected ? 'sun/moon disk found' : 'disk not found — full frame scanned';
-        const evtMsg  = n > 0 ? `${n} transit object${n !== 1 ? 's' : ''} detected` : 'no transiting objects detected';
-        showStatus(`🔍 ${evtMsg} (${diskMsg})`, n > 0 ? 'success' : 'info', 10000);
-        console.log('[Analyzer]', evtMsg, data.transit_events);
-        // Refresh file list so annotated video appears
-        await refreshFiles();
-        updateFilesGrid();
-        // Auto-open the annotated video so user can see the red ovals
-        if (data.annotated_file) {
-            const annotatedPath = '/static/' + data.annotated_file;
-            const annotatedName = data.annotated_file.split('/').pop();
-            viewFile(annotatedPath, annotatedName, {});
-        }
-    } catch (err) {
-        const msg = controller.signal.aborted
-            ? '❌ Analysis timed out (5 min limit)'
-            : `❌ Analysis error: ${err.message}`;
-        showStatus(msg, 'error', 8000);
-    } finally {
-        clearTimeout(timeoutId);
-    }
-}
-
 async function deleteFile(url, filename) {
     console.log('[Telescope] deleteFile called:', url, filename);
     if (!confirm(`Delete ${filename}?`)) {
@@ -1671,7 +1628,6 @@ function updateFilmstrip(files) {
                 <div class="filmstrip-actions">
                     <button class="btn-icon btn-fav" data-fav-path="${file.path}" onclick="toggleFavorite('${file.path}', event)" title="${getFavorites().has(file.path) ? 'Unfavorite' : 'Favorite'}">${getFavorites().has(file.path) ? '❤️' : '🤍'}</button>
                     <button class="btn-icon" onclick="event.stopPropagation(); downloadFile('${file.path}', '${file.name}')" title="Download" ${isTemp ? 'disabled' : ''}>⬇️</button>
-                    ${file.name.toLowerCase().endsWith('.mp4') ? `<button class="btn-icon" onclick="event.stopPropagation(); analyzeFile('${file.path}')" title="Analyze for transits">🔍</button>` : ''}
                     <button class="btn-icon btn-danger" onclick="event.stopPropagation(); deleteFile('${file.path}', '${file.name}')" title="${getFavorites().has(file.path) ? 'Remove favorite first' : 'Delete'}" ${isTemp || getFavorites().has(file.path) ? 'disabled' : ''}>🗑️</button>
                 </div>
             </div>
@@ -1878,7 +1834,6 @@ function updateFilesGrid() {
                 <div class="file-actions">
                     <button class="btn-icon btn-fav" data-fav-path="${file.path}" onclick="toggleFavorite('${file.path}', event)" title="${getFavorites().has(file.path) ? 'Unfavorite' : 'Favorite'}">${getFavorites().has(file.path) ? '❤️' : '🤍'}</button>
                     <button class="btn-icon" onclick="event.stopPropagation(); downloadFile('${file.path}', '${file.name}')" title="Download">⬇️</button>
-                    ${file.name.toLowerCase().endsWith('.mp4') ? `<button class="btn-icon" onclick="event.stopPropagation(); analyzeFile('${file.path}')" title="Analyze for transits">🔍</button>` : ''}
                     <button class="btn-icon btn-danger" onclick="event.stopPropagation(); deleteFile('${file.path}', '${file.name}')" title="${getFavorites().has(file.path) ? 'Remove favorite first' : 'Delete'}" ${getFavorites().has(file.path) ? 'disabled' : ''}>🗑️</button>
                 </div>
             </div>
@@ -1972,21 +1927,24 @@ function viewFile(path, name, opts) {
         const hasNext = _viewerIndex >= 0 && _viewerIndex < files.length - 1;
         const scanBtn = isVideo
             ? `<button class="btn-viewer" onmousedown="frameStepStart(-1)" onmouseup="frameStepStop()" onmouseleave="frameStepStop()" title="Back 1 frame (hold to repeat)">◁</button>` +
-              `<button class="btn-viewer btn-viewer-scan" id="scanTransitBtn" onclick="scanTransit()" title="Scan for transit frame">🎯 Find Transit</button>` +
+              `<button class="btn-viewer btn-viewer-scan" id="scanTransitBtn" onclick="scanTransit()" title="Analyze video for transits (OpenCV)">🎯 Find Transit</button>` +
               `<button class="btn-viewer" onmousedown="frameStepStart(1)" onmouseup="frameStepStop()" onmouseleave="frameStepStop()" title="Forward 1 frame (hold to repeat)">▷</button>`
+            : '';
+        // Show Replay button if an _analyzed.mp4 already exists for this file
+        const hasAnalyzed = isVideo && !name.includes('_analyzed') && window.currentFiles &&
+            window.currentFiles.some(f => f.path === path.replace('.mp4', '_analyzed.mp4'));
+        const replayBtn = hasAnalyzed
+            ? `<button class="btn-viewer" onclick="viewFile('${path.replace('.mp4', '_analyzed.mp4')}', '${name.replace('.mp4', '_analyzed.mp4')}', {})">🔄 Replay</button>`
             : '';
         const isFav = getFavorites().has(path);
         const favBtn = `<button class="btn-viewer" id="viewerFavBtn" onclick="toggleFavorite('${path}', event); _updateViewerFavState('${path}')" title="Favorite">${isFav ? '❤️' : '🤍'}</button>`;
         const delDisabled = isFav ? 'disabled title="Remove favorite first"' : 'title="Delete (⌘/Ctrl+click to skip confirm)"';
-        const analyzeBtn = isVideo
-            ? `<button class="btn-viewer" onclick="analyzeFile('${path}')" title="Analyze video for transits">🔍 Analyze</button>`
-            : '';
         actionsEl.innerHTML =
             `<button class="btn-viewer" onclick="viewerNav(-1)" title="Previous" ${hasPrev ? '' : 'disabled'}>◀</button>` +
             scanBtn +
+            replayBtn +
             favBtn +
             `<button class="btn-viewer" onclick="viewerDownload()" title="Download">⬇️ Download</button>` +
-            analyzeBtn +
             `<button class="btn-viewer btn-viewer-danger" id="viewerDeleteBtn" onclick="viewerDelete(event)" ${delDisabled}>🗑️ Delete</button>` +
             `<button class="btn-viewer" onclick="viewerNav(1)" title="Next" ${hasNext ? '' : 'disabled'}>▶</button>`;
     }
@@ -2107,35 +2065,93 @@ async function scanTransit() {
     const playerVideo = document.querySelector('#fileViewerBody video');
     if (!playerVideo) return;
 
-    if (btn) { btn.disabled = true; btn.textContent = '🔍 0%'; }
-    _setScanBanner(null); // clear previous result
+    if (btn) { btn.disabled = true; btn.textContent = '🔍 Analyzing…'; }
+    _setScanBanner(null);
+
+    const apiPath = videoPath.replace(/^\/static\//, '');
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 5 * 60 * 1000);
 
     try {
-        const result = await _scanVideoForTransit(videoPath, pct => {
-            if (btn) btn.textContent = `🔍 ${pct}%`;
+        const resp = await fetch('/telescope/files/analyze', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ path: apiPath }),
+            signal: controller.signal,
         });
+        const data = await resp.json();
+        if (!resp.ok || data.error) {
+            _setScanBanner('error', `Analysis failed: ${data.error || resp.statusText}`);
+            return;
+        }
 
-        if (result) {
-            const loopStart = Math.max(0, result.start - 0.5);
-            const loopEnd = result.end + 0.5;
+        const events = data.transit_events || [];
+        const staticCount = data.static_detections || 0;
+
+        if (events.length > 0) {
+            // Seek to first transit event and set up loop
+            const evt = events[0];
+            const loopStart = Math.max(0, evt.start_seconds - 0.5);
+            const loopEnd = evt.end_seconds + 0.5;
             _loopSegment = { start: loopStart, end: loopEnd };
             playerVideo.currentTime = loopStart;
             playerVideo.play();
-            const durMs = Math.round(result.duration * 1000);
-            const ts = _formatTimestamp(result.center);
+            const durMs = evt.duration_ms;
+            const ts = _formatTimestamp((evt.start_seconds + evt.end_seconds) / 2);
+            const evtSummary = events.length > 1
+                ? `${events.length} transits detected — first at ${ts} (~${durMs}ms)`
+                : `Transit detected at ${ts} (~${durMs}ms)`;
+            const staticNote = staticCount > 0 ? ` · ${staticCount} sunspot(s) filtered` : '';
             _setScanBanner('found',
-                `🎯 Transit detected at ${ts} (~${durMs}ms)` +
-                `  —  looping segment · click to stop loop`,
-                () => { _loopSegment = null; _setScanBanner('found', `🎯 Transit at ${ts} (~${durMs}ms) — loop stopped`); }
+                `🎯 ${evtSummary}${staticNote}  —  click to stop loop`,
+                () => { _loopSegment = null; _setScanBanner('found', `🎯 ${evtSummary}${staticNote} — loop stopped`); }
             );
         } else {
-            _setScanBanner('none', 'No transit detected in this video');
+            const staticNote = staticCount > 0 ? ` (${staticCount} sunspot(s) filtered)` : '';
+            _setScanBanner('none', `No transit detected in this video${staticNote}`);
         }
-    } catch (e) {
-        _setScanBanner('error', `Scan failed: ${e.message}`);
-    }
 
-    if (btn) { btn.disabled = false; btn.textContent = '🎯 Find Transit'; }
+        // Refresh files and show annotated video if available
+        await refreshFiles();
+        updateFilesGrid();
+        if (data.annotated_file) {
+            // Show legend with analyzed video link
+            _showAnalysisLegend(data, videoPath);
+        }
+    } catch (err) {
+        const msg = controller.signal.aborted
+            ? 'Analysis timed out (5 min limit)'
+            : `Analysis error: ${err.message}`;
+        _setScanBanner('error', msg);
+    } finally {
+        clearTimeout(timeoutId);
+        if (btn) { btn.disabled = false; btn.textContent = '🎯 Find Transit'; }
+    }
+}
+
+function _showAnalysisLegend(data, originalPath) {
+    const banner = document.getElementById('scanResultBanner');
+    if (!banner) return;
+    const events = data.transit_events || [];
+    const annotatedPath = '/static/' + data.annotated_file;
+    const annotatedName = data.annotated_file.split('/').pop();
+
+    // Build legend HTML
+    let html = banner.textContent ? `<div style="margin-bottom:6px">${banner.textContent}</div>` : '';
+    html += `<div style="display:flex; gap:12px; flex-wrap:wrap; align-items:center; font-size:0.85em; margin-top:4px;">`;
+    html += `<span style="color:#ff4444;">● Red oval = transit</span>`;
+    html += `<span style="color:#ff8800;">● Orange oval = medium</span>`;
+    html += `<span style="color:#888;">● Gray oval = sunspot (filtered)</span>`;
+    html += `<span style="color:#00c8c8;">○ Yellow circle = disk boundary</span>`;
+    html += `</div>`;
+    html += `<div style="margin-top:6px;">`;
+    html += `<button class="btn-viewer" onclick="viewFile('${annotatedPath}', '${annotatedName}', {})" style="font-size:0.85em; padding:3px 10px;">▶ View annotated video</button>`;
+    html += `</div>`;
+
+    banner.innerHTML = html;
+    banner.style.display = 'block';
+    banner.onclick = null;
+    banner.style.cursor = 'default';
 }
 
 function _formatTimestamp(secs) {
