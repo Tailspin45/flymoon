@@ -2054,6 +2054,8 @@ async function viewerDelete(e) {
 // then seeks the player to the centre of the transit.
 // ============================================================================
 
+var _analyzeController = null;  // AbortController for in-flight analysis
+
 async function scanTransit() {
     const files = window.currentFiles || [];
     if (_viewerIndex < 0 || _viewerIndex >= files.length) return;
@@ -2066,6 +2068,8 @@ async function scanTransit() {
     if (!playerVideo) return;
 
     if (btn) { btn.disabled = true; btn.textContent = '🔍 Analyzing…'; }
+    // Show stop button
+    _showStopAnalysisBtn(true);
     // Pulse the button text with frame count estimate
     let _analyzeTimer = setInterval(() => {
         if (btn && btn.disabled) {
@@ -2077,6 +2081,7 @@ async function scanTransit() {
 
     const apiPath = videoPath.replace(/^\/static\//, '');
     const controller = new AbortController();
+    _analyzeController = controller;
     const timeoutId = setTimeout(() => controller.abort(), 5 * 60 * 1000);
 
     // Read tuning slider values (if panel exists)
@@ -2119,14 +2124,41 @@ async function scanTransit() {
         updateFilesGrid();
         _showAnalysisLegend(data, videoPath);
     } catch (err) {
-        const msg = controller.signal.aborted
-            ? 'Analysis timed out (5 min limit)'
-            : `Analysis error: ${err.message}`;
-        _setScanBanner('error', msg);
+        if (controller.signal.aborted) {
+            _setScanBanner('error', 'Analysis stopped');
+        } else {
+            _setScanBanner('error', `Analysis error: ${err.message}`);
+        }
     } finally {
         clearTimeout(timeoutId);
         clearInterval(_analyzeTimer);
+        _analyzeController = null;
+        _showStopAnalysisBtn(false);
         if (btn) { btn.disabled = false; btn.textContent = '🎯 Find Transit'; }
+    }
+}
+
+function stopAnalysis() {
+    if (_analyzeController) { _analyzeController.abort(); _analyzeController = null; }
+}
+
+function _showStopAnalysisBtn(show) {
+    let stopBtn = document.getElementById('stopAnalysisBtn');
+    if (show) {
+        if (!stopBtn) {
+            const scanBtn = document.getElementById('scanTransitBtn');
+            if (!scanBtn) return;
+            stopBtn = document.createElement('button');
+            stopBtn.id = 'stopAnalysisBtn';
+            stopBtn.className = 'btn-viewer btn-viewer-danger';
+            stopBtn.style.cssText = 'font-size:0.8em; padding:2px 8px;';
+            stopBtn.textContent = '⏹ Stop';
+            stopBtn.onclick = (e) => { e.stopPropagation(); stopAnalysis(); };
+            scanBtn.parentNode.insertBefore(stopBtn, scanBtn.nextSibling);
+        }
+        stopBtn.style.display = '';
+    } else if (stopBtn) {
+        stopBtn.remove();
     }
 }
 
@@ -2191,7 +2223,10 @@ function _showAnalysisLegend(data, originalPath) {
     html += _sliderRow('sliderDiskMargin', 'Edge Margin %', 0, 15, 5,
         'Percentage of disk edge to ignore (trims atmospheric distortion)');
 
-    html += `<button class="btn-viewer" id="legendReanalyzeBtn" style="font-size:0.85em; padding:4px 10px; width:100%; margin-top:6px;">🔄 Re-analyze</button>`;
+    html += `<div style="display:flex; gap:6px; margin-top:6px;">`;
+    html += `<button class="btn-viewer" id="legendReanalyzeBtn" style="font-size:0.85em; padding:4px 10px; flex:1;">🔄 Re-analyze</button>`;
+    html += `<button class="btn-viewer" id="legendResetBtn" style="font-size:0.85em; padding:4px 10px;" title="Reset sliders to defaults">↩ Reset</button>`;
+    html += `</div>`;
     html += `</div>`;
 
     panel.innerHTML = html;
@@ -2202,6 +2237,11 @@ function _showAnalysisLegend(data, originalPath) {
     if (viewBtn) viewBtn.onclick = (e) => { e.stopPropagation(); viewFile(annotatedPath, annotatedName, {}); };
     const reBtn = document.getElementById('legendReanalyzeBtn');
     if (reBtn) reBtn.onclick = (e) => { e.stopPropagation(); scanTransit(); };
+    const resetBtn = document.getElementById('legendResetBtn');
+    if (resetBtn) resetBtn.onclick = (e) => {
+        e.stopPropagation();
+        _resetSliders();
+    };
 
     // Hide the top banner (legend panel replaces it)
     _setScanBanner(null);
@@ -2212,9 +2252,21 @@ function _sliderRow(id, label, min, max, defaultVal, tooltip) {
         `<div style="display:flex; justify-content:space-between; font-size:0.85em;">` +
         `<span>${label}</span><span id="${id}Val">${defaultVal}</span></div>` +
         `<input type="range" id="${id}" min="${min}" max="${max}" value="${defaultVal}" ` +
+        `data-default="${defaultVal}" ` +
         `style="width:100%; accent-color:#4dff88;" ` +
         `oninput="document.getElementById('${id}Val').textContent=this.value">` +
         `</div>`;
+}
+
+function _resetSliders() {
+    ['sliderDiffThreshold', 'sliderMinBlob', 'sliderDiskMargin'].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) {
+            el.value = el.dataset.default;
+            const valEl = document.getElementById(id + 'Val');
+            if (valEl) valEl.textContent = el.dataset.default;
+        }
+    });
 }
 
 function _formatTimestamp(secs) {
