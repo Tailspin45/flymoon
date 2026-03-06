@@ -295,6 +295,47 @@ def handle_error(e: Exception, default_code: int = 500) -> tuple:
 # Connection Management Endpoints
 
 
+def discover_seestar():
+    """GET /telescope/discover - Scan local subnet for Seestar (port 4700)."""
+    import concurrent.futures
+    import ipaddress
+    import socket as _socket
+
+    port = int(os.getenv("SEESTAR_PORT", "4700"))
+    timeout = 0.4  # seconds per host
+
+    # Determine local subnet from the machine's own IP
+    try:
+        # Connect to a dummy address to find the default outbound interface IP
+        s = _socket.socket(_socket.AF_INET, _socket.SOCK_DGRAM)
+        s.connect(("8.8.8.8", 80))
+        local_ip = s.getsockname()[0]
+        s.close()
+    except Exception:
+        return jsonify({"error": "Cannot determine local IP"}), 500
+
+    # Build the /24 subnet to scan (covers most home networks)
+    parts = local_ip.rsplit(".", 1)
+    base = parts[0]  # e.g. "192.168.7"
+    hosts = [f"{base}.{i}" for i in range(1, 255)]
+
+    found = []
+
+    def _probe(ip):
+        try:
+            with _socket.create_connection((ip, port), timeout=timeout):
+                return ip
+        except Exception:
+            return None
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=64) as pool:
+        results = pool.map(_probe, hosts)
+
+    found = [ip for ip in results if ip]
+    logger.info(f"[Discover] Found Seestar candidates: {found}")
+    return jsonify({"found": found, "port": port, "subnet": f"{base}.0/24"}), 200
+
+
 def connect_telescope():
     """POST /telescope/connect - Connect to Seestar telescope."""
     logger.info("[Telescope] POST /telescope/connect")
@@ -1372,6 +1413,9 @@ def register_routes(app):
         app: Flask application instance
     """
     # Connection management
+    app.add_url_rule(
+        "/telescope/discover", "telescope_discover", discover_seestar, methods=["GET"]
+    )
     app.add_url_rule(
         "/telescope/connect", "telescope_connect", connect_telescope, methods=["POST"]
     )

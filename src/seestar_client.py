@@ -415,7 +415,13 @@ class SeestarClient:
             if self.socket:
                 self.socket.close()
                 self.socket = None
-            raise RuntimeError(f"Connection failed: {e}")
+            # Errno 64 = EHOSTDOWN — ARP resolved but host is not responding.
+            # Usually means the Seestar's IP has changed since .env was last set.
+            import errno as _errno
+            hint = ""
+            if hasattr(e, "errno") and e.errno in (_errno.EHOSTDOWN, _errno.EHOSTUNREACH, 64):
+                hint = " (Seestar IP may have changed — use Find to scan the network)"
+            raise RuntimeError(f"Connection failed: {e}{hint}")
 
     def disconnect(self) -> bool:
         """

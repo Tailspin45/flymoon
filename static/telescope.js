@@ -171,6 +171,31 @@ async function connect() {
     }
 }
 
+async function findSeestar() {
+    const btn = document.getElementById('findSeestarBtn');
+    if (btn) { btn.disabled = true; btn.textContent = '⏳ Scanning…'; }
+    showStatus('Scanning network for Seestar…', 'info', 0);
+    try {
+        const resp = await fetch('/telescope/discover');
+        const data = await resp.json();
+        if (btn) { btn.disabled = false; btn.textContent = '🔍 Find'; }
+        if (!data.found || data.found.length === 0) {
+            showStatus('No Seestar found on ' + data.subnet + ' — is it powered on?', 'warning', 8000);
+            return;
+        }
+        const ip = data.found[0];
+        const others = data.found.slice(1);
+        let msg = `Found Seestar at ${ip}`;
+        if (others.length) msg += ` (also: ${others.join(', ')})`;
+        msg += ` — update SEESTAR_HOST in .env and restart`;
+        showStatus(msg, 'success', 12000);
+        console.log('[Discover]', msg, '— found:', data.found);
+    } catch (err) {
+        if (btn) { btn.disabled = false; btn.textContent = '🔍 Find'; }
+        showStatus('Scan error: ' + err.message, 'error', 6000);
+    }
+}
+
 async function disconnect() {
     console.log('[Telescope] Disconnecting...');
     showStatus('Disconnecting...', 'info');
