@@ -844,6 +844,37 @@ function downloadFile(url, filename) {
     showStatus(`Downloading ${filename}...`, 'info', 3000);
 }
 
+async function analyzeFile(path) {
+    const name = path.split('/').pop();
+    showStatus(`🔍 Analyzing ${name} for transits…`, 'info', 0);
+    try {
+        const resp = await fetch('/telescope/files/analyze', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ path }),
+        });
+        const data = await resp.json();
+        if (!resp.ok || data.error) {
+            showStatus(`❌ Analysis failed: ${data.error || resp.statusText}`, 'error', 6000);
+            return;
+        }
+        const n = data.transit_events ? data.transit_events.length : 0;
+        const disk = data.disk_detected ? '✅ disk' : '⚠️ no disk';
+        const detail = n > 0
+            ? data.transit_events.map(e =>
+                `  • t=${e.start_seconds.toFixed(2)}s, ${e.duration_ms}ms, ${e.confidence}, peak=${e.peak_area_px}px`
+              ).join('\n')
+            : '  (no transiting objects detected)';
+        const msg = `🔍 Analysis done (${disk}): ${n} event${n !== 1 ? 's' : ''}\n${detail}`;
+        showStatus(msg.split('\n')[0], n > 0 ? 'success' : 'info', 8000);
+        console.log('[Analyzer]', msg);
+        // Refresh file list so annotated video appears
+        loadFiles();
+    } catch (err) {
+        showStatus(`❌ Analysis error: ${err.message}`, 'error', 6000);
+    }
+}
+
 async function deleteFile(url, filename) {
     console.log('[Telescope] deleteFile called:', url, filename);
     if (!confirm(`Delete ${filename}?`)) {
@@ -1077,7 +1108,7 @@ function formatCountdown(seconds) {
     return `${mins}:${secs.toString().padStart(2, '0')}`;
 }
 
-function checkAutoCapture() {
+async function checkAutoCapture() {
     const autoCapture = document.getElementById('autoCaptureToggle').checked;
     if (!autoCapture || !isConnected) return;
 
@@ -1091,6 +1122,11 @@ function checkAutoCapture() {
 
     imminent.handled = true;           // prevent re-triggering on per-second tick
     capturedTransits.add(imminent.flight); // persist across array replacements from server poll
+
+    // Force-sync recording state before deciding — guards against the backend
+    // TransitRecorder having already started Seestar's internal recording, which
+    // would otherwise be invisible to the 2 s background poll.
+    await updateStatus();
 
     const isSimFlight = imminent.flight === SIM_TRANSIT.flight ||
                         imminent.flight === SIM_ECLIPSE_TRANSIT.flight;
@@ -1581,6 +1617,7 @@ function updateFilmstrip(files) {
                 <div class="filmstrip-actions">
                     <button class="btn-icon btn-fav" data-fav-path="${file.path}" onclick="toggleFavorite('${file.path}', event)" title="${getFavorites().has(file.path) ? 'Unfavorite' : 'Favorite'}">${getFavorites().has(file.path) ? '❤️' : '🤍'}</button>
                     <button class="btn-icon" onclick="event.stopPropagation(); downloadFile('${file.path}', '${file.name}')" title="Download" ${isTemp ? 'disabled' : ''}>⬇️</button>
+                    ${file.name.toLowerCase().endsWith('.mp4') ? `<button class="btn-icon" onclick="event.stopPropagation(); analyzeFile('${file.path}')" title="Analyze for transits">🔍</button>` : ''}
                     <button class="btn-icon btn-danger" onclick="event.stopPropagation(); deleteFile('${file.path}', '${file.name}')" title="${getFavorites().has(file.path) ? 'Remove favorite first' : 'Delete'}" ${isTemp || getFavorites().has(file.path) ? 'disabled' : ''}>🗑️</button>
                 </div>
             </div>
@@ -1787,6 +1824,7 @@ function updateFilesGrid() {
                 <div class="file-actions">
                     <button class="btn-icon btn-fav" data-fav-path="${file.path}" onclick="toggleFavorite('${file.path}', event)" title="${getFavorites().has(file.path) ? 'Unfavorite' : 'Favorite'}">${getFavorites().has(file.path) ? '❤️' : '🤍'}</button>
                     <button class="btn-icon" onclick="event.stopPropagation(); downloadFile('${file.path}', '${file.name}')" title="Download">⬇️</button>
+                    ${file.name.toLowerCase().endsWith('.mp4') ? `<button class="btn-icon" onclick="event.stopPropagation(); analyzeFile('${file.path}')" title="Analyze for transits">🔍</button>` : ''}
                     <button class="btn-icon btn-danger" onclick="event.stopPropagation(); deleteFile('${file.path}', '${file.name}')" title="${getFavorites().has(file.path) ? 'Remove favorite first' : 'Delete'}" ${getFavorites().has(file.path) ? 'disabled' : ''}>🗑️</button>
                 </div>
             </div>
@@ -1886,11 +1924,15 @@ function viewFile(path, name, opts) {
         const isFav = getFavorites().has(path);
         const favBtn = `<button class="btn-viewer" id="viewerFavBtn" onclick="toggleFavorite('${path}', event); _updateViewerFavState('${path}')" title="Favorite">${isFav ? '❤️' : '🤍'}</button>`;
         const delDisabled = isFav ? 'disabled title="Remove favorite first"' : 'title="Delete (⌘/Ctrl+click to skip confirm)"';
+        const analyzeBtn = isVideo
+            ? `<button class="btn-viewer" onclick="analyzeFile('${path}')" title="Analyze video for transits">🔍 Analyze</button>`
+            : '';
         actionsEl.innerHTML =
             `<button class="btn-viewer" onclick="viewerNav(-1)" title="Previous" ${hasPrev ? '' : 'disabled'}>◀</button>` +
             scanBtn +
             favBtn +
             `<button class="btn-viewer" onclick="viewerDownload()" title="Download">⬇️ Download</button>` +
+            analyzeBtn +
             `<button class="btn-viewer btn-viewer-danger" id="viewerDeleteBtn" onclick="viewerDelete(event)" ${delDisabled}>🗑️ Delete</button>` +
             `<button class="btn-viewer" onclick="viewerNav(1)" title="Next" ${hasNext ? '' : 'disabled'}>▶</button>`;
     }

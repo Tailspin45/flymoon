@@ -424,8 +424,10 @@ def get_telescope_status():
         status["mock_mode"] = is_mock_mode()
         status["eclipse"] = _get_eclipse_data()
 
-        # Override recording state with RTSP _recording_state (authoritative for manual recordings)
-        status["recording"] = _recording_state["active"]
+        # Recording is active if either the RTSP recorder or the
+        # backend TransitRecorder (Seestar internal) is running.
+        backend_recording = bool(getattr(client, "_recording", False))
+        status["recording"] = _recording_state["active"] or backend_recording
         if _recording_state["active"] and _recording_state["start_time"]:
             status["recording_duration"] = (
                 datetime.now() - _recording_state["start_time"]
@@ -837,6 +839,63 @@ def delete_telescope_file():
 
     except Exception as e:
         logger.error(f"[Telescope] Error deleting file: {e}")
+        return handle_error(e)
+
+
+# Video Analysis Endpoint
+
+
+def analyze_file():
+    """POST /telescope/files/analyze - Run transit analyzer on a saved MP4."""
+    logger.info("[Telescope] POST /telescope/files/analyze")
+
+    try:
+        if not request.is_json:
+            return jsonify({"error": "Request must be JSON"}), 400
+
+        file_path = request.json.get("path")
+        if not file_path:
+            return jsonify({"error": "Missing 'path' parameter"}), 400
+
+        # Security: only allow files inside static/captures
+        full_path = os.path.join("static", file_path)
+        abs_path = os.path.abspath(full_path)
+        captures_abs = os.path.abspath("static/captures")
+
+        if not abs_path.startswith(captures_abs):
+            return jsonify({"error": "Invalid file path"}), 403
+
+        if not os.path.exists(abs_path):
+            return jsonify({"error": "File not found"}), 404
+
+        if not abs_path.lower().endswith(".mp4"):
+            return jsonify({"error": "Only MP4 files can be analyzed"}), 400
+
+        from src.transit_analyzer import analyze_video
+
+        def _run():
+            try:
+                result = analyze_video(abs_path, output_annotated=True)
+                return result
+            except Exception as exc:
+                logger.error(f"[Analyzer] Error: {exc}")
+                raise
+
+        result = _run()
+
+        return jsonify({
+            "success":        True,
+            "disk_detected":  result.disk_detected,
+            "duration":       result.duration_seconds,
+            "transit_events": result.transit_events,
+            "detection_count": len(result.detections),
+            "annotated_file": os.path.splitext(file_path)[0] + "_analyzed.mp4",
+            "sidecar_file":   os.path.splitext(file_path)[0] + "_analysis.json",
+            "error":          result.error,
+        }), 200
+
+    except Exception as e:
+        logger.error(f"[Telescope] Analysis error: {e}")
         return handle_error(e)
 
 
@@ -1390,6 +1449,12 @@ def register_routes(app):
         "/telescope/files/delete",
         "telescope_files_delete",
         delete_telescope_file,
+        methods=["POST"],
+    )
+    app.add_url_rule(
+        "/telescope/files/analyze",
+        "telescope_files_analyze",
+        analyze_file,
         methods=["POST"],
     )
 

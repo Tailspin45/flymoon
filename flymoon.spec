@@ -36,6 +36,7 @@ a = Analysis(
         'requests',
         'telegram',
         'aiofiles',
+        'cv2',
     ],
     hookspath=[],
     hooksconfig={},
