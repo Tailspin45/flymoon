@@ -306,6 +306,9 @@ async function updateStatus() {
         if (justDisconnected) {
             console.warn('[Scope] Disconnected — prior connected state:', JSON.stringify(_lastConnectedStatus || {}));
             if (result.error) console.warn('[Scope] Server error:', result.error);
+            // Immediately clear transit cards — nothing to capture with
+            upcomingTransits = [];
+            updateTransitList();
         }
         // Cache last connected response for diagnostics
         if (isConnected) {
@@ -1027,6 +1030,9 @@ async function apiCall(endpoint, method = 'GET', body = null) {
 // ============================================================================
 
 async function checkTransits() {
+    // Don't poll or populate transit list when scope is disconnected
+    if (!isConnected) return;
+
     try {
         const response = await fetch('/telescope/transit/status');
         if (!response.ok) return;
@@ -1066,6 +1072,14 @@ function _transitStateFor(s) {
 function updateTransitList() {
     const list = document.getElementById('transitList');
     if (!list) return;
+
+    // Never show predicted transits when the scope isn't connected —
+    // there's nothing to capture with, so the alert is misleading.
+    if (!isConnected) {
+        upcomingTransits = [];
+        list.innerHTML = '<p class="empty-state">Connect telescope to monitor transits</p>';
+        return;
+    }
 
     // Auto-remove transits that are more than POST seconds past (recording done)
     const POST = 10;
