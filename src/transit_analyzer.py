@@ -117,6 +117,25 @@ def _disk_mask(shape: Tuple[int, int], cx: int, cy: int, radius: int,
     return mask
 
 
+def _reencode_h264(src: Path, dst: Path) -> None:
+    """Re-encode an OpenCV mp4v video to H.264 using FFmpeg so browsers can play it."""
+    import subprocess
+    try:
+        subprocess.run(
+            ["ffmpeg", "-y", "-i", str(src),
+             "-c:v", "libx264", "-preset", "fast", "-crf", "23",
+             "-movflags", "+faststart",
+             str(dst)],
+            check=True,
+            capture_output=True,
+        )
+        src.unlink(missing_ok=True)  # remove temp file
+    except Exception as exc:
+        logger.warning(f"[Analyzer] FFmpeg re-encode failed ({exc}), keeping mp4v file")
+        # Fall back: just rename temp to final
+        src.rename(dst)
+
+
 def _confidence(blob_area: int, disk_radius: int) -> str:
     frac = blob_area / max(1, np.pi * disk_radius ** 2)
     if frac > 0.002:
@@ -209,12 +228,13 @@ def analyze_video(
     reference = None          # frozen once buffer is full
     mask = _disk_mask((h, w), disk_cx, disk_cy, disk_radius)
 
-    # ── Output writer ──────────────────────────────────────────────────────────
+    # ── Output writer — write to temp file, re-encode to H.264 via FFmpeg ────
     out = None
-    out_path = path.with_name(path.stem + "_analyzed.mp4")
+    temp_path = path.with_name(path.stem + "_analyzed_tmp.mp4")
+    out_path   = path.with_name(path.stem + "_analyzed.mp4")
     if output_annotated:
         fourcc = cv2.VideoWriter_fourcc(*"mp4v")
-        out = cv2.VideoWriter(str(out_path), fourcc, fps, (w, h))
+        out = cv2.VideoWriter(str(temp_path), fourcc, fps, (w, h))
 
     # ── Main loop ─────────────────────────────────────────────────────────────
     detections: List[BlobDetection] = []
@@ -318,6 +338,8 @@ def analyze_video(
     cap.release()
     if out is not None:
         out.release()
+        # Re-encode to H.264 so browsers can play the annotated video
+        _reencode_h264(temp_path, out_path)
         logger.info(f"[Analyzer] Annotated video → {out_path.name}")
 
     # ── Group detections into transit events ───────────────────────────────────
