@@ -292,15 +292,22 @@ def analyze_video(
                 detections.append(det)
 
                 if out is not None:
-                    cv2.rectangle(annotated, (bx, by), (bx + bw, by + bh), color, 2)
+                    # Draw a thick red ellipse (oval) around the blob — much more visible than a rectangle
+                    half_w = max(bw // 2 + 4, 8)
+                    half_h = max(bh // 2 + 4, 8)
+                    cv2.ellipse(annotated, (bcx, bcy), (half_w, half_h), 0, 0, 360, color, 3)
                     label_txt = f"{conf[0].upper()} {area}px"
-                    cv2.putText(annotated, label_txt, (bx, max(0, by - 4)),
-                                cv2.FONT_HERSHEY_SIMPLEX, 0.45, color, 1, cv2.LINE_AA)
+                    cv2.putText(annotated, label_txt, (bx, max(12, by - 6)),
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2, cv2.LINE_AA)
 
             if out is not None:
-                # Draw disk outline
+                # Draw disk outline in yellow so the analyzed region is clear
                 cv2.circle(annotated, (disk_cx, disk_cy), disk_radius,
-                           (80, 80, 80), 1)
+                           (0, 200, 200), 2)
+                # Timestamp in corner
+                ts = f"{frame_idx / fps:.2f}s"
+                cv2.putText(annotated, ts, (8, h - 8),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.5, (180, 180, 180), 1, cv2.LINE_AA)
                 out.write(annotated)
 
         frame_idx += 1

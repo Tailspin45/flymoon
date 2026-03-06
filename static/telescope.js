@@ -895,13 +895,19 @@ async function analyzeFile(path) {
             return;
         }
         const n = data.transit_events ? data.transit_events.length : 0;
-        const disk = data.disk_detected ? '✅ disk' : '⚠️ no disk';
-        const msg = `🔍 Analysis done (${disk}): ${n} event${n !== 1 ? 's' : ''}`;
-        showStatus(msg, n > 0 ? 'success' : 'info', 8000);
-        console.log('[Analyzer]', msg, data.transit_events);
+        const diskMsg = data.disk_detected ? 'sun/moon disk found' : 'disk not found — full frame scanned';
+        const evtMsg  = n > 0 ? `${n} transit object${n !== 1 ? 's' : ''} detected` : 'no transiting objects detected';
+        showStatus(`🔍 ${evtMsg} (${diskMsg})`, n > 0 ? 'success' : 'info', 10000);
+        console.log('[Analyzer]', evtMsg, data.transit_events);
         // Refresh file list so annotated video appears
         await refreshFiles();
         updateFilesGrid();
+        // Auto-open the annotated video so user can see the red ovals
+        if (data.annotated_file) {
+            const annotatedPath = '/static/' + data.annotated_file;
+            const annotatedName = data.annotated_file.split('/').pop();
+            viewFile(annotatedPath, annotatedName, {});
+        }
     } catch (err) {
         const msg = controller.signal.aborted
             ? '❌ Analysis timed out (5 min limit)'
