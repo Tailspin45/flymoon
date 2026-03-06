@@ -159,7 +159,7 @@ async function connect() {
     const result = await apiCall('/telescope/connect', 'POST');
     if (result && result.success) {
         isConnected = true;
-        showStatus('Connected successfully!', 'success');
+        showStatus('Connected successfully!', 'success', 5000);
         
         // Start status polling
         if (statusPollInterval) clearInterval(statusPollInterval);
@@ -2263,12 +2263,13 @@ async function _scanVideoForTransit(src, onProgress) {
         return sum;
     };
 
-    // Helper: adaptive threshold = median + max(3×MAD, 0.5×median)
+    // Helper: adaptive threshold = median + max(2×MAD, 0.3×median)
+    // Less conservative than 3×MAD so subtle transits aren't missed.
     const adaptiveThreshold = (values) => {
         const s = [...values].sort((a, b) => a - b);
         const med = s[Math.floor(s.length / 2)];
         const mad = [...values].map(d => Math.abs(d - med)).sort((a, b) => a - b)[Math.floor(values.length / 2)];
-        return med + Math.max(mad * 3, med * 0.5);
+        return med + Math.max(mad * 2, med * 0.3);
     };
 
     // --- Coarse pass (0.1s steps, dual signals) ---
@@ -2305,20 +2306,32 @@ async function _scanVideoForTransit(src, onProgress) {
             spikeIndices.push(i);
         }
     }
-    if (spikeIndices.length === 0) { video.src = ''; return null; }
+
+    // If nothing exceeds threshold, fall back to the single highest-scoring frame
+    // (a real transit might score highest even if it doesn't cross the threshold)
+    let effectiveSpikes = spikeIndices;
+    if (spikeIndices.length === 0) {
+        const best = coarseSamples.reduce((a, b, i) =>
+            (b.consecDiff / threshA + b.refDiff / threshB) > (a.val) 
+                ? { idx: i, val: b.consecDiff / threshA + b.refDiff / threshB }
+                : a,
+            { idx: 0, val: 0 }
+        );
+        effectiveSpikes = [best.idx];
+    }
 
     // Merge spikes into clusters (gap ≤ 5 coarse steps = 0.5s)
     const clusters = [];
-    let cStart = spikeIndices[0], cEnd = spikeIndices[0];
+    let cStart = effectiveSpikes[0], cEnd = effectiveSpikes[0];
     let cPeak = Math.max(coarseSamples[cStart].consecDiff, coarseSamples[cStart].refDiff);
-    for (let k = 1; k < spikeIndices.length; k++) {
-        if (spikeIndices[k] - spikeIndices[k-1] <= 5) {
-            cEnd = spikeIndices[k];
+    for (let k = 1; k < effectiveSpikes.length; k++) {
+        if (effectiveSpikes[k] - effectiveSpikes[k-1] <= 5) {
+            cEnd = effectiveSpikes[k];
             const s = coarseSamples[cEnd];
             cPeak = Math.max(cPeak, s.consecDiff, s.refDiff);
         } else {
             clusters.push({ start: coarseSamples[cStart].time, end: coarseSamples[cEnd].time, peak: cPeak });
-            cStart = cEnd = spikeIndices[k];
+            cStart = cEnd = effectiveSpikes[k];
             cPeak = Math.max(coarseSamples[cStart].consecDiff, coarseSamples[cStart].refDiff);
         }
     }
@@ -2336,9 +2349,9 @@ async function _scanVideoForTransit(src, onProgress) {
     const fineStep = 0.033;
     const numFine = Math.ceil((fineEnd - fineStart) / fineStep);
 
-    // Reference = first frame of the fine window (should be clean background)
-    await seekTo(fineStart);
-    const fineRef = grabFrame();
+    // Reference = frame 0 (cleanest background — avoids using a frame that
+    // might already contain the transit object as the reference)
+    const fineRef = refFrame;
     const fineSamples = [];
 
     for (let i = 0; i < numFine; i++) {
