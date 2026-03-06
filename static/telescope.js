@@ -1937,7 +1937,7 @@ function viewFile(path, name, opts) {
             ? `<button class="btn-viewer" onclick="viewFile('${path.replace('.mp4', '_analyzed.mp4')}', '${name.replace('.mp4', '_analyzed.mp4')}', {})">🔄 Replay</button>`
             : '';
         const isFav = getFavorites().has(path);
-        const favBtn = `<button class="btn-viewer" id="viewerFavBtn" onclick="toggleFavorite('${path}', event); _updateViewerFavState('${path}')" title="Favorite">${isFav ? '❤️' : '🤍'}</button>`;
+        const favBtn = `<button class="btn-viewer" id="viewerFavBtn" data-fav-path="${path}" onclick="toggleFavorite('${path}', event)" title="Favorite">${isFav ? '❤️' : '🤍'}</button>`;
         const delDisabled = isFav ? 'disabled title="Remove favorite first"' : 'title="Delete (⌘/Ctrl+click to skip confirm)"';
         actionsEl.innerHTML =
             `<button class="btn-viewer" onclick="viewerNav(-1)" title="Previous" ${hasPrev ? '' : 'disabled'}>◀</button>` +
@@ -2060,12 +2060,20 @@ async function scanTransit() {
     const files = window.currentFiles || [];
     if (_viewerIndex < 0 || _viewerIndex >= files.length) return;
     const f = files[_viewerIndex];
-    const videoPath = f.path;
+    // If viewing an analyzed file, re-analyze the original
+    let videoPath = f.path;
+    if (videoPath.includes('_analyzed')) {
+        videoPath = videoPath.replace('_analyzed', '');
+    }
     if (!/\.(mp4|avi|mov|mkv|webm)$/i.test(f.name)) return;
 
     const btn = document.getElementById('scanTransitBtn');
     const playerVideo = document.querySelector('#fileViewerBody video');
     if (!playerVideo) return;
+
+    // Remove previous legend panel so user sees the UI change
+    const oldPanel = document.getElementById('analysisLegendPanel');
+    if (oldPanel) oldPanel.remove();
 
     if (btn) { btn.disabled = true; btn.textContent = '🔍 Analyzing…'; }
     // Show stop button
