@@ -27,10 +27,10 @@ import numpy as np
 from src import logger
 
 # ── Tunable parameters ────────────────────────────────────────────────────────
-REFERENCE_WINDOW = 30       # frames in rolling reference (≈1 s at 30 fps)
-MIN_BLOB_PIXELS  = 4        # ignore single hot pixels / sub-pixel noise
-DIFF_THRESHOLD   = 20       # pixel intensity difference to flag as changed
-DISK_MARGIN_PCT  = 0.05     # fraction of radius to trim from limb (jitter margin)
+REFERENCE_WINDOW = 90       # frames in rolling reference (≈3 s at 30 fps)
+MIN_BLOB_PIXELS  = 3        # ignore single hot pixels / sub-pixel noise
+DIFF_THRESHOLD   = 12       # pixel intensity difference to flag as changed
+DISK_MARGIN_PCT  = 0.03     # fraction of radius to trim from limb (jitter margin)
 ANNOTATION_COLOR = (0, 0, 255)   # red (BGR)
 CONFIDENCE_COLORS = {           # BGR by confidence tier
     "high":   (0,  0, 255),
@@ -171,7 +171,10 @@ def analyze_video(
     h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
     duration = total_frames / fps
 
-    logger.info(f"[Analyzer] {path.name}: {total_frames} frames @ {fps:.1f} fps, {w}x{h}")
+    # For short clips, use fewer reference frames (min 10, or half the clip)
+    ref_window = min(REFERENCE_WINDOW, max(10, total_frames // 2))
+
+    logger.info(f"[Analyzer] {path.name}: {total_frames} frames @ {fps:.1f} fps, {w}x{h}, ref_window={ref_window}")
 
     # ── Probe for disk in first 30 frames ─────────────────────────────────────
     disk = None
@@ -197,9 +200,13 @@ def analyze_video(
         disk_cy, disk_cx = h // 2, w // 2
         disk_radius = min(h, w) // 2
 
-    # ── Rolling reference (deque of grayscale frames) ─────────────────────────
+    # ── Build reference from first REFERENCE_WINDOW frames ───────────────────
+    # We freeze the reference after the initial window rather than rolling it,
+    # so that a transit happening early in the clip doesn't contaminate the
+    # baseline and become invisible.
     from collections import deque
-    ref_buffer: deque = deque(maxlen=REFERENCE_WINDOW)
+    ref_buffer: deque = deque(maxlen=ref_window)
+    reference = None          # frozen once buffer is full
     mask = _disk_mask((h, w), disk_cx, disk_cy, disk_radius)
 
     # ── Output writer ──────────────────────────────────────────────────────────
@@ -220,10 +227,19 @@ def analyze_video(
 
         gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
 
-        if len(ref_buffer) >= 5:
-            # Reference = median of buffer
-            reference = np.median(np.stack(ref_buffer), axis=0).astype(np.uint8)
+        # Build reference from early frames, then freeze it
+        if reference is None:
+            ref_buffer.append(gray)
+            if len(ref_buffer) >= ref_window:
+                reference = np.median(np.stack(ref_buffer), axis=0).astype(np.uint8)
+                logger.info(f"[Analyzer] Reference locked at frame {frame_idx}")
+            # Write plain frame while still accumulating reference
+            if out is not None:
+                out.write(frame)
+            frame_idx += 1
+            continue
 
+        if True:  # reference is always set here (frozen above)
             # Difference inside disk only
             diff = cv2.absdiff(gray, reference)
             diff_masked = cv2.bitwise_and(diff, diff, mask=mask)
@@ -286,11 +302,7 @@ def analyze_video(
                 cv2.circle(annotated, (disk_cx, disk_cy), disk_radius,
                            (80, 80, 80), 1)
                 out.write(annotated)
-        else:
-            if out is not None:
-                out.write(frame)
 
-        ref_buffer.append(gray)
         frame_idx += 1
 
         if progress_cb and frame_idx % 30 == 0:

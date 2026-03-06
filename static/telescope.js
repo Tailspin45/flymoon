@@ -570,7 +570,12 @@ async function stopRecording() {
         // Refresh file list after a short delay
         setTimeout(refreshFiles, 2000);
     } else {
-        showStatus('⚠️ Could not stop recording — telescope may be disconnected', 'warning', 6000);
+        // Backend says nothing is recording — treat as already stopped so
+        // subsequent calls don't keep hammering the endpoint.
+        isRecording = false;
+        stopRecordingTimer();
+        updateRecordingUI();
+        showStatus('⚠️ Could not stop recording — telescope may be disconnected', 'warning', 4000);
     }
 }
 
@@ -877,31 +882,34 @@ async function analyzeFile(path) {
     showStatus(`🔍 Analyzing ${name} for transits…`, 'info', 0);
     // Strip /static/ prefix — backend expects path relative to static/
     const apiPath = path.replace(/^\/static\//, '');
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 5 * 60 * 1000); // 5-min hard limit
     try {
         const resp = await fetch('/telescope/files/analyze', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ path: apiPath }),
+            signal: controller.signal,
         });
         const data = await resp.json();
         if (!resp.ok || data.error) {
-            showStatus(`❌ Analysis failed: ${data.error || resp.statusText}`, 'error', 6000);
+            showStatus(`❌ Analysis failed: ${data.error || resp.statusText}`, 'error', 8000);
             return;
         }
         const n = data.transit_events ? data.transit_events.length : 0;
         const disk = data.disk_detected ? '✅ disk' : '⚠️ no disk';
-        const detail = n > 0
-            ? data.transit_events.map(e =>
-                `  • t=${e.start_seconds.toFixed(2)}s, ${e.duration_ms}ms, ${e.confidence}, peak=${e.peak_area_px}px`
-              ).join('\n')
-            : '  (no transiting objects detected)';
-        const msg = `🔍 Analysis done (${disk}): ${n} event${n !== 1 ? 's' : ''}\n${detail}`;
-        showStatus(msg.split('\n')[0], n > 0 ? 'success' : 'info', 8000);
-        console.log('[Analyzer]', msg);
+        const msg = `🔍 Analysis done (${disk}): ${n} event${n !== 1 ? 's' : ''}`;
+        showStatus(msg, n > 0 ? 'success' : 'info', 8000);
+        console.log('[Analyzer]', msg, data.transit_events);
         // Refresh file list so annotated video appears
         loadFiles();
     } catch (err) {
-        showStatus(`❌ Analysis error: ${err.message}`, 'error', 6000);
+        const msg = controller.signal.aborted
+            ? '❌ Analysis timed out (5 min limit)'
+            : `❌ Analysis error: ${err.message}`;
+        showStatus(msg, 'error', 8000);
+    } finally {
+        clearTimeout(timeoutId);
     }
 }
 
