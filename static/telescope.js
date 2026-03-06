@@ -847,11 +847,13 @@ function downloadFile(url, filename) {
 async function analyzeFile(path) {
     const name = path.split('/').pop();
     showStatus(`🔍 Analyzing ${name} for transits…`, 'info', 0);
+    // Strip /static/ prefix — backend expects path relative to static/
+    const apiPath = path.replace(/^\/static\//, '');
     try {
         const resp = await fetch('/telescope/files/analyze', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ path }),
+            body: JSON.stringify({ path: apiPath }),
         });
         const data = await resp.json();
         if (!resp.ok || data.error) {

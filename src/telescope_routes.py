@@ -280,7 +280,7 @@ def handle_error(e: Exception, default_code: int = 500) -> tuple:
     elif "timeout" in error_msg.lower():
         status_code = 504
     elif "connection failed" in error_msg.lower():
-        status_code = 500
+        status_code = 503
     elif "already in progress" in error_msg.lower():
         status_code = 409
     elif "no recording" in error_msg.lower():

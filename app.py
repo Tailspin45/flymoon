@@ -351,6 +351,10 @@ def get_all_flights():
                 logger.info(
                     f"Checking transits for {target} (altitude: {coords['altitude']:.1f}°, thresholds: alt={alt_threshold}°, az={az_threshold}°)"
                 )
+                # Only enrich HIGH transits via FA when the telescope is
+                # connected and can actually act on the data.
+                tc = telescope_routes.get_telescope_client()
+                enrich = bool(tc and tc.is_connected())
                 data = get_transits(
                     latitude,
                     longitude,
@@ -361,6 +365,7 @@ def get_all_flights():
                     az_threshold,
                     custom_bbox,
                     data_source,
+                    enrich=enrich,
                 )
                 if data.get("bbox_used"):
                     all_bboxes_used.append(data["bbox_used"])
