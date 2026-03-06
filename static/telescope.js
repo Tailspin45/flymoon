@@ -2066,6 +2066,13 @@ async function scanTransit() {
     if (!playerVideo) return;
 
     if (btn) { btn.disabled = true; btn.textContent = '🔍 Analyzing…'; }
+    // Pulse the button text with frame count estimate
+    let _analyzeTimer = setInterval(() => {
+        if (btn && btn.disabled) {
+            const dots = '.'.repeat((Date.now() / 500 | 0) % 4);
+            btn.textContent = `🔍 Analyzing${dots}`;
+        }
+    }, 500);
     _setScanBanner(null);
 
     const apiPath = videoPath.replace(/^\/static\//, '');
@@ -2096,28 +2103,12 @@ async function scanTransit() {
             _loopSegment = { start: loopStart, end: loopEnd };
             playerVideo.currentTime = loopStart;
             playerVideo.play();
-            const durMs = evt.duration_ms;
-            const ts = _formatTimestamp((evt.start_seconds + evt.end_seconds) / 2);
-            const evtSummary = events.length > 1
-                ? `${events.length} transits detected — first at ${ts} (~${durMs}ms)`
-                : `Transit detected at ${ts} (~${durMs}ms)`;
-            const staticNote = staticCount > 0 ? ` · ${staticCount} sunspot(s) filtered` : '';
-            _setScanBanner('found',
-                `🎯 ${evtSummary}${staticNote}  —  click to stop loop`,
-                () => { _loopSegment = null; _setScanBanner('found', `🎯 ${evtSummary}${staticNote} — loop stopped`); }
-            );
-        } else {
-            const staticNote = staticCount > 0 ? ` (${staticCount} sunspot(s) filtered)` : '';
-            _setScanBanner('none', `No transit detected in this video${staticNote}`);
         }
 
-        // Refresh files and show annotated video if available
+        // Refresh files and show legend (handles both found/not-found)
         await refreshFiles();
         updateFilesGrid();
-        if (data.annotated_file) {
-            // Show legend with analyzed video link
-            _showAnalysisLegend(data, videoPath);
-        }
+        _showAnalysisLegend(data, videoPath);
     } catch (err) {
         const msg = controller.signal.aborted
             ? 'Analysis timed out (5 min limit)'
@@ -2125,6 +2116,7 @@ async function scanTransit() {
         _setScanBanner('error', msg);
     } finally {
         clearTimeout(timeoutId);
+        clearInterval(_analyzeTimer);
         if (btn) { btn.disabled = false; btn.textContent = '🎯 Find Transit'; }
     }
 }
@@ -2133,24 +2125,39 @@ function _showAnalysisLegend(data, originalPath) {
     const banner = document.getElementById('scanResultBanner');
     if (!banner) return;
     const events = data.transit_events || [];
+    const staticCount = data.static_detections || 0;
     const annotatedPath = '/static/' + data.annotated_file;
     const annotatedName = data.annotated_file.split('/').pop();
 
+    // Build summary line
+    let summary = '';
+    if (events.length > 0) {
+        const evt = events[0];
+        const ts = _formatTimestamp((evt.start_seconds + evt.end_seconds) / 2);
+        summary = events.length > 1
+            ? `🎯 ${events.length} transits — first at ${ts} (~${evt.duration_ms}ms)`
+            : `🎯 Transit at ${ts} (~${evt.duration_ms}ms)`;
+    } else {
+        summary = 'No transit detected';
+    }
+    if (staticCount > 0) summary += ` · ${staticCount} sunspot(s) filtered`;
+
     // Build legend HTML
-    let html = banner.textContent ? `<div style="margin-bottom:6px">${banner.textContent}</div>` : '';
-    html += `<div style="display:flex; gap:12px; flex-wrap:wrap; align-items:center; font-size:0.85em; margin-top:4px;">`;
-    html += `<span style="color:#ff4444;">● Red oval = transit</span>`;
-    html += `<span style="color:#ff8800;">● Orange oval = medium</span>`;
-    html += `<span style="color:#888;">● Gray oval = sunspot (filtered)</span>`;
-    html += `<span style="color:#00c8c8;">○ Yellow circle = disk boundary</span>`;
+    let html = `<div style="margin-bottom:6px; font-weight:bold;">${summary}</div>`;
+    html += `<div style="display:flex; gap:12px; flex-wrap:wrap; align-items:center; font-size:0.85em;">`;
+    html += `<span style="color:#ff4444;">● Red = transit</span>`;
+    html += `<span style="color:#ff8800;">● Orange = medium</span>`;
+    html += `<span style="color:#888;">● Gray = sunspot</span>`;
+    html += `<span style="color:#00c8c8;">○ Yellow = disk</span>`;
     html += `</div>`;
     html += `<div style="margin-top:6px;">`;
-    html += `<button class="btn-viewer" onclick="viewFile('${annotatedPath}', '${annotatedName}', {})" style="font-size:0.85em; padding:3px 10px;">▶ View annotated video</button>`;
+    html += `<button class="btn-viewer" onclick="event.stopPropagation(); viewFile('${annotatedPath}', '${annotatedName}', {})" style="font-size:0.85em; padding:3px 10px;">▶ View annotated video</button>`;
     html += `</div>`;
 
     banner.innerHTML = html;
+    banner.className = events.length > 0 ? 'scan-found' : 'scan-none';
     banner.style.display = 'block';
-    banner.onclick = null;
+    banner.onclick = null;  // prevent _setScanBanner onclick from wiping HTML
     banner.style.cursor = 'default';
 }
 

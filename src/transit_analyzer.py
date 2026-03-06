@@ -29,8 +29,8 @@ from src import logger
 # ── Tunable parameters ────────────────────────────────────────────────────────
 REFERENCE_WINDOW = 90       # frames in rolling reference (≈3 s at 30 fps)
 MIN_BLOB_PIXELS  = 3        # ignore single hot pixels / sub-pixel noise
-DIFF_THRESHOLD   = 12       # pixel intensity difference to flag as changed
-DISK_MARGIN_PCT  = 0.03     # fraction of radius to trim from limb (jitter margin)
+DIFF_THRESHOLD   = 8        # pixel intensity difference to flag as changed
+DISK_MARGIN_PCT  = 0.02     # fraction of radius to trim from limb (jitter margin)
 ANNOTATION_COLOR = (0, 0, 255)   # red (BGR)
 CONFIDENCE_COLORS = {           # BGR by confidence tier
     "high":   (0,  0, 255),
@@ -257,17 +257,21 @@ def analyze_video(
             frame_idx += 1
             continue
 
+        # Blur both to suppress sensor noise while preserving real transit blobs
+        gray_blur = cv2.GaussianBlur(gray, (5, 5), 0)
+        ref_blur = cv2.GaussianBlur(reference, (5, 5), 0)
+
         # Difference inside disk only
-        diff = cv2.absdiff(gray, reference)
+        diff = cv2.absdiff(gray_blur, ref_blur)
         diff_masked = cv2.bitwise_and(diff, diff, mask=mask)
 
         # Threshold
         _, binary = cv2.threshold(diff_masked, DIFF_THRESHOLD, 255, cv2.THRESH_BINARY)
 
-        # Morphological cleanup
-        kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
-        binary = cv2.morphologyEx(binary, cv2.MORPH_OPEN, kernel)
-        binary = cv2.morphologyEx(binary, cv2.MORPH_CLOSE, kernel)
+        # Morphological cleanup — use small kernel to preserve tiny transit blobs
+        kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (2, 2))
+        binary = cv2.morphologyEx(binary, cv2.MORPH_CLOSE, kernel)  # fill gaps first
+        binary = cv2.morphologyEx(binary, cv2.MORPH_OPEN, kernel)   # then remove noise
 
         # Blob analysis
         num_labels, labels, stats, centroids = cv2.connectedComponentsWithStats(
