@@ -66,6 +66,7 @@ class SeestarClient:
         self._heartbeat_thread: Optional[threading.Thread] = None
         self._heartbeat_running = False
         self._socket_lock = threading.Lock()  # Prevent concurrent socket access
+        self._above_horizon_check = None  # Optional[Callable[[], bool]] — set by app startup
 
         logger.info(f"Initialized Seestar client for {host}:{port}")
 
@@ -252,6 +253,15 @@ class SeestarClient:
         while self._heartbeat_running:
             # Auto-reconnect when connection has dropped
             if not self._connected:
+                # Don't attempt reconnect when Sun and Moon are both below the horizon —
+                # the scope won't be in use and the warnings would be noise.
+                if self._above_horizon_check is not None:
+                    try:
+                        if not self._above_horizon_check():
+                            time.sleep(60)  # check again in a minute
+                            continue
+                    except Exception:
+                        pass  # fail open
                 reconnect_wait += 1
                 if reconnect_wait >= RECONNECT_INTERVAL:
                     reconnect_wait = 0

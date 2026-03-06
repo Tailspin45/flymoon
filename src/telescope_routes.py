@@ -245,6 +245,15 @@ def get_telescope_client() -> Optional[SeestarClient]:
             _telescope_client = SeestarClient(
                 host=host, port=port, timeout=timeout, heartbeat_interval=heartbeat
             )
+            # Gate reconnect attempts on Sun/Moon visibility
+            try:
+                from src.astro import targets_above_horizon
+                lat = float(os.getenv("OBSERVER_LATITUDE", "0"))
+                lon = float(os.getenv("OBSERVER_LONGITUDE", "0"))
+                elev = float(os.getenv("OBSERVER_ELEVATION", "0"))
+                _telescope_client._above_horizon_check = lambda: targets_above_horizon(lat, lon, elev)
+            except Exception as _e:
+                logger.warning(f"[Telescope] Could not set horizon check: {_e}")
         except Exception as e:
             logger.error(f"[Telescope] Failed to create client: {e}")
             return None
