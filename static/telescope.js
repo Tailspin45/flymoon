@@ -552,6 +552,12 @@ async function startRecording() {
 
 async function stopRecording() {
     console.log('[Telescope] Stopping recording');
+    // Immediately mark as not recording so concurrent calls (e.g. timer + recordTransit)
+    // don't both try to stop an already-stopped recording.
+    if (!isRecording && !isSimulating) return;
+    isRecording = false;
+    stopRecordingTimer();
+    updateRecordingUI();
     showStatus('Stopping recording...', 'info');
     
     // Handle simulation mode
@@ -562,20 +568,12 @@ async function stopRecording() {
     
     const result = await apiCall('/telescope/recording/stop', 'POST');
     if (result && result.success) {
-        isRecording = false;
-        stopRecordingTimer();
-        updateRecordingUI();
         showStatus('Recording stopped', 'success', 5000);
-        
         // Refresh file list after a short delay
         setTimeout(refreshFiles, 2000);
     } else {
-        // Backend says nothing is recording — treat as already stopped so
-        // subsequent calls don't keep hammering the endpoint.
-        isRecording = false;
-        stopRecordingTimer();
-        updateRecordingUI();
-        showStatus('⚠️ Could not stop recording — telescope may be disconnected', 'warning', 4000);
+        // Backend already stopped (400) — state already reset above, just warn quietly
+        showStatus('⚠️ Recording already stopped', 'warning', 3000);
     }
 }
 
@@ -902,7 +900,8 @@ async function analyzeFile(path) {
         showStatus(msg, n > 0 ? 'success' : 'info', 8000);
         console.log('[Analyzer]', msg, data.transit_events);
         // Refresh file list so annotated video appears
-        loadFiles();
+        await refreshFiles();
+        updateFilesGrid();
     } catch (err) {
         const msg = controller.signal.aborted
             ? '❌ Analysis timed out (5 min limit)'
