@@ -2062,9 +2062,7 @@ async function scanTransit() {
     const f = files[_viewerIndex];
     // If viewing an analyzed file, re-analyze the original
     let videoPath = f.path;
-    if (videoPath.includes('_analyzed')) {
-        videoPath = videoPath.replace('_analyzed', '');
-    }
+    videoPath = videoPath.replace(/_analyzed/g, '');
     if (!/\.(mp4|avi|mov|mkv|webm)$/i.test(f.name)) return;
 
     const btn = document.getElementById('scanTransitBtn');

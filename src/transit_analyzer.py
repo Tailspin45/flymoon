@@ -241,8 +241,9 @@ def analyze_video(
 
     # ── Output writer — write to temp file, re-encode to H.264 via FFmpeg ────
     out = None
-    temp_path = path.with_name(path.stem + "_analyzed_tmp.mp4")
-    out_path   = path.with_name(path.stem + "_analyzed.mp4")
+    base_stem = path.stem.replace("_analyzed", "")  # always derive from original name
+    temp_path = path.with_name(base_stem + "_analyzed_tmp.mp4")
+    out_path   = path.with_name(base_stem + "_analyzed.mp4")
     if output_annotated:
         fourcc = cv2.VideoWriter_fourcc(*"mp4v")
         out = cv2.VideoWriter(str(temp_path), fourcc, fps, (w, h))
@@ -342,8 +343,8 @@ def analyze_video(
     # ── Annotation pass (second read of video) ────────────────────────────────
     # Now that we know which blobs are static vs transit, re-read and annotate
     # with correct colors: red/orange for transits, gray for filtered sunspots.
-    temp_path = path.with_name(path.stem + "_analyzed_tmp.mp4")
-    out_path   = path.with_name(path.stem + "_analyzed.mp4")
+    temp_path = path.with_name(base_stem + "_analyzed_tmp.mp4")
+    out_path   = path.with_name(base_stem + "_analyzed.mp4")
     if output_annotated:
         _write_annotated_video(
             path, temp_path, fps, w, h, total_frames,

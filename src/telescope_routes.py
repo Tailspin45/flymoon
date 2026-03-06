@@ -942,8 +942,8 @@ def analyze_file():
             "transit_events": result.transit_events,
             "detection_count": len(result.detections),
             "static_detections": sum(1 for d in result.detections if d.is_static),
-            "annotated_file": os.path.splitext(file_path)[0] + "_analyzed.mp4",
-            "sidecar_file":   os.path.splitext(file_path)[0] + "_analysis.json",
+            "annotated_file": os.path.splitext(file_path)[0].replace("_analyzed", "") + "_analyzed.mp4",
+            "sidecar_file":   os.path.splitext(file_path)[0].replace("_analyzed", "") + "_analysis.json",
             "error":          result.error,
         }), 200
 
