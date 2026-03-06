@@ -2079,11 +2079,20 @@ async function scanTransit() {
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 5 * 60 * 1000);
 
+    // Read tuning slider values (if panel exists)
+    const sliderBody = {};
+    const dtEl = document.getElementById('sliderDiffThreshold');
+    const mbEl = document.getElementById('sliderMinBlob');
+    const dmEl = document.getElementById('sliderDiskMargin');
+    if (dtEl) sliderBody.diff_threshold = parseInt(dtEl.value);
+    if (mbEl) sliderBody.min_blob_pixels = parseInt(mbEl.value);
+    if (dmEl) sliderBody.disk_margin_pct = parseFloat(dmEl.value) / 100;
+
     try {
         const resp = await fetch('/telescope/files/analyze', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ path: apiPath }),
+            body: JSON.stringify({ path: apiPath, ...sliderBody }),
             signal: controller.signal,
         });
         const data = await resp.json();
@@ -2122,43 +2131,90 @@ async function scanTransit() {
 }
 
 function _showAnalysisLegend(data, originalPath) {
-    const banner = document.getElementById('scanResultBanner');
-    if (!banner) return;
+    // Remove any previous legend panel
+    const old = document.getElementById('analysisLegendPanel');
+    if (old) old.remove();
+
+    const body = document.getElementById('fileViewerBody');
+    if (!body) return;
+
     const events = data.transit_events || [];
     const staticCount = data.static_detections || 0;
-    const annotatedPath = '/static/' + data.annotated_file;
-    const annotatedName = data.annotated_file.split('/').pop();
+    const annotatedFile = data.annotated_file;
+    const annotatedPath = annotatedFile ? '/static/' + annotatedFile : null;
+    const annotatedName = annotatedFile ? annotatedFile.split('/').pop() : '';
 
-    // Build summary line
+    // Summary
     let summary = '';
     if (events.length > 0) {
         const evt = events[0];
         const ts = _formatTimestamp((evt.start_seconds + evt.end_seconds) / 2);
         summary = events.length > 1
-            ? `🎯 ${events.length} transits — first at ${ts} (~${evt.duration_ms}ms)`
-            : `🎯 Transit at ${ts} (~${evt.duration_ms}ms)`;
+            ? `${events.length} transits — first at ${ts} (~${evt.duration_ms}ms)`
+            : `Transit at ${ts} (~${evt.duration_ms}ms)`;
     } else {
         summary = 'No transit detected';
     }
-    if (staticCount > 0) summary += ` · ${staticCount} sunspot(s) filtered`;
+    if (staticCount > 0) summary += `<br>${staticCount} sunspot(s) filtered`;
 
-    // Build legend HTML
-    let html = `<div style="margin-bottom:6px; font-weight:bold;">${summary}</div>`;
-    html += `<div style="display:flex; gap:12px; flex-wrap:wrap; align-items:center; font-size:0.85em;">`;
-    html += `<span style="color:#ff4444;">● Red = transit</span>`;
-    html += `<span style="color:#ff8800;">● Orange = medium</span>`;
-    html += `<span style="color:#888;">● Gray = sunspot</span>`;
-    html += `<span style="color:#00c8c8;">○ Yellow = disk</span>`;
-    html += `</div>`;
-    html += `<div style="margin-top:6px;">`;
-    html += `<button class="btn-viewer" onclick="event.stopPropagation(); viewFile('${annotatedPath}', '${annotatedName}', {})" style="font-size:0.85em; padding:3px 10px;">▶ View annotated video</button>`;
+    const panel = document.createElement('div');
+    panel.id = 'analysisLegendPanel';
+    panel.onclick = e => e.stopPropagation();
+    panel.style.cssText = 'background:#1a1a1a; border-left:1px solid #333; padding:14px 16px; min-width:200px; max-width:240px; display:flex; flex-direction:column; gap:10px; font-size:0.85em; color:#ccc; overflow-y:auto; max-height:80vh;';
+
+    // Result section
+    const iconColor = events.length > 0 ? '#4dff88' : '#ffcc44';
+    const icon = events.length > 0 ? '🎯' : '🔍';
+    let html = `<div style="font-weight:bold; color:${iconColor}; font-size:1.05em;">${icon} ${summary}</div>`;
+
+    // Legend items - vertical list
+    html += `<div style="display:flex; flex-direction:column; gap:6px; padding:6px 0; border-top:1px solid #333;">`;
+    html += `<div style="font-weight:bold; color:#aaa; font-size:0.9em; margin-bottom:2px;">Legend</div>`;
+    html += `<div><span style="display:inline-block; width:12px; height:12px; border:3px solid #ff4444; border-radius:50%; margin-right:8px; vertical-align:middle;"></span>Transit detection</div>`;
+    html += `<div><span style="display:inline-block; width:12px; height:12px; border:1px solid #888; border-radius:50%; margin-right:8px; vertical-align:middle;"></span>Sunspot (filtered)</div>`;
+    html += `<div><span style="display:inline-block; width:12px; height:12px; border:2px solid #ffff00; border-radius:50%; margin-right:8px; vertical-align:middle;"></span>Disk boundary</div>`;
     html += `</div>`;
 
-    banner.innerHTML = html;
-    banner.className = events.length > 0 ? 'scan-found' : 'scan-none';
-    banner.style.display = 'block';
-    banner.onclick = null;  // prevent _setScanBanner onclick from wiping HTML
-    banner.style.cursor = 'default';
+    // Buttons
+    if (annotatedPath) {
+        html += `<button class="btn-viewer" id="legendViewBtn" style="font-size:0.85em; padding:4px 10px; width:100%;">▶ View annotated</button>`;
+    }
+
+    // Tuning sliders
+    html += `<div style="border-top:1px solid #333; padding-top:8px;">`;
+    html += `<div style="font-weight:bold; color:#aaa; font-size:0.9em; margin-bottom:6px;">Detection Tuning</div>`;
+
+    html += _sliderRow('sliderDiffThreshold', 'Sensitivity', 1, 30, 8,
+        'Lower = more sensitive (detects fainter objects, more noise)');
+    html += _sliderRow('sliderMinBlob', 'Min Blob Size', 1, 20, 3,
+        'Minimum pixel area to count as a detection');
+    html += _sliderRow('sliderDiskMargin', 'Edge Margin %', 0, 15, 5,
+        'Percentage of disk edge to ignore (trims atmospheric distortion)');
+
+    html += `<button class="btn-viewer" id="legendReanalyzeBtn" style="font-size:0.85em; padding:4px 10px; width:100%; margin-top:6px;">🔄 Re-analyze</button>`;
+    html += `</div>`;
+
+    panel.innerHTML = html;
+    body.appendChild(panel);
+
+    // Wire up button events (after innerHTML so elements exist)
+    const viewBtn = document.getElementById('legendViewBtn');
+    if (viewBtn) viewBtn.onclick = (e) => { e.stopPropagation(); viewFile(annotatedPath, annotatedName, {}); };
+    const reBtn = document.getElementById('legendReanalyzeBtn');
+    if (reBtn) reBtn.onclick = (e) => { e.stopPropagation(); scanTransit(); };
+
+    // Hide the top banner (legend panel replaces it)
+    _setScanBanner(null);
+}
+
+function _sliderRow(id, label, min, max, defaultVal, tooltip) {
+    return `<div style="margin-bottom:6px;" title="${tooltip}">` +
+        `<div style="display:flex; justify-content:space-between; font-size:0.85em;">` +
+        `<span>${label}</span><span id="${id}Val">${defaultVal}</span></div>` +
+        `<input type="range" id="${id}" min="${min}" max="${max}" value="${defaultVal}" ` +
+        `style="width:100%; accent-color:#4dff88;" ` +
+        `oninput="document.getElementById('${id}Val').textContent=this.value">` +
+        `</div>`;
 }
 
 function _formatTimestamp(secs) {

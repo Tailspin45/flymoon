@@ -26,17 +26,12 @@ import numpy as np
 
 from src import logger
 
-# ── Tunable parameters ────────────────────────────────────────────────────────
+# ── Default tunable parameters (can be overridden per-call) ───────────────────
 REFERENCE_WINDOW = 90       # frames in rolling reference (≈3 s at 30 fps)
 MIN_BLOB_PIXELS  = 3        # ignore single hot pixels / sub-pixel noise
 DIFF_THRESHOLD   = 8        # pixel intensity difference to flag as changed
-DISK_MARGIN_PCT  = 0.02     # fraction of radius to trim from limb (jitter margin)
-ANNOTATION_COLOR = (0, 0, 255)   # red (BGR)
-CONFIDENCE_COLORS = {           # BGR by confidence tier
-    "high":   (0,  0, 255),
-    "medium": (0, 128, 255),
-    "low":    (0, 200, 200),
-}
+DISK_MARGIN_PCT  = 0.05     # fraction of radius to trim from limb (atmosphere margin)
+TRANSIT_COLOR    = (0, 0, 255)   # red (BGR) for transit detections
 
 
 # ── Data classes ──────────────────────────────────────────────────────────────
@@ -150,6 +145,9 @@ def analyze_video(
     video_path: str,
     output_annotated: bool = True,
     progress_cb=None,
+    diff_threshold: int = None,
+    min_blob_pixels: int = None,
+    disk_margin_pct: float = None,
 ) -> AnalysisResult:
     """
     Analyze a saved MP4 for transiting objects.
@@ -163,6 +161,12 @@ def analyze_video(
         ``_analyzed.mp4``.
     progress_cb : callable(fraction: float) | None
         Optional progress callback, called with 0.0–1.0.
+    diff_threshold : int | None
+        Override DIFF_THRESHOLD (pixel intensity difference, default 8).
+    min_blob_pixels : int | None
+        Override MIN_BLOB_PIXELS (minimum blob area, default 3).
+    disk_margin_pct : float | None
+        Override DISK_MARGIN_PCT (fraction of radius to trim, default 0.05).
 
     Returns
     -------
@@ -170,6 +174,11 @@ def analyze_video(
         Detection metadata. Also written as ``<video>_analysis.json``.
     """
     from datetime import datetime, timezone
+
+    # Resolve per-call overrides
+    _diff_threshold = diff_threshold if diff_threshold is not None else DIFF_THRESHOLD
+    _min_blob_pixels = min_blob_pixels if min_blob_pixels is not None else MIN_BLOB_PIXELS
+    _disk_margin_pct = disk_margin_pct if disk_margin_pct is not None else DISK_MARGIN_PCT
 
     path = Path(video_path)
     if not path.exists():
@@ -195,6 +204,7 @@ def analyze_video(
     ref_window = min(REFERENCE_WINDOW, max(10, total_frames // 2))
 
     logger.info(f"[Analyzer] {path.name}: {total_frames} frames @ {fps:.1f} fps, {w}x{h}, ref_window={ref_window}")
+    logger.info(f"[Analyzer] Params: diff_threshold={_diff_threshold}, min_blob_pixels={_min_blob_pixels}, disk_margin={_disk_margin_pct:.0%}")
 
     # ── Probe for disk in first 30 frames ─────────────────────────────────────
     disk = None
@@ -227,7 +237,7 @@ def analyze_video(
     from collections import deque
     ref_buffer: deque = deque(maxlen=ref_window)
     reference = None          # frozen once buffer is full
-    mask = _disk_mask((h, w), disk_cx, disk_cy, disk_radius)
+    mask = _disk_mask((h, w), disk_cx, disk_cy, disk_radius, _disk_margin_pct)
 
     # ── Output writer — write to temp file, re-encode to H.264 via FFmpeg ────
     out = None
@@ -266,7 +276,7 @@ def analyze_video(
         diff_masked = cv2.bitwise_and(diff, diff, mask=mask)
 
         # Threshold
-        _, binary = cv2.threshold(diff_masked, DIFF_THRESHOLD, 255, cv2.THRESH_BINARY)
+        _, binary = cv2.threshold(diff_masked, _diff_threshold, 255, cv2.THRESH_BINARY)
 
         # Morphological cleanup — use small kernel to preserve tiny transit blobs
         kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (2, 2))
@@ -280,7 +290,7 @@ def analyze_video(
 
         for lbl in range(1, num_labels):  # skip background (0)
             area = int(stats[lbl, cv2.CC_STAT_AREA])
-            if area < MIN_BLOB_PIXELS:
+            if area < _min_blob_pixels:
                 continue
 
             bx = int(stats[lbl, cv2.CC_STAT_LEFT])
@@ -403,8 +413,8 @@ def _write_annotated_video(
                     label = f"S {d.area_px}px"  # S = sunspot/static
                     thickness = 1
                 else:
-                    color = CONFIDENCE_COLORS.get(d.confidence, ANNOTATION_COLOR)
-                    label = f"{d.confidence[0].upper()} {d.area_px}px"
+                    color = TRANSIT_COLOR
+                    label = f"T {d.area_px}px"  # T = transit
                     thickness = 3
                 half_w = max(d.width // 2 + 4, 8)
                 half_h = max(d.height // 2 + 4, 8)
@@ -415,7 +425,7 @@ def _write_annotated_video(
                             cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2, cv2.LINE_AA)
 
             # Disk outline
-            cv2.circle(annotated, (disk_cx, disk_cy), disk_radius, (0, 200, 200), 2)
+            cv2.circle(annotated, (disk_cx, disk_cy), disk_radius, (0, 255, 255), 2)
 
         # Timestamp
         ts = f"{frame_idx / fps:.2f}s"

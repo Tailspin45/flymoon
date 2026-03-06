@@ -914,9 +914,20 @@ def analyze_file():
 
         from src.transit_analyzer import analyze_video
 
+        # Optional tuning parameters from frontend sliders
+        req = request.json
+        diff_threshold = req.get("diff_threshold")
+        min_blob_pixels = req.get("min_blob_pixels")
+        disk_margin_pct = req.get("disk_margin_pct")
+
         def _run():
             try:
-                result = analyze_video(abs_path, output_annotated=True)
+                result = analyze_video(
+                    abs_path, output_annotated=True,
+                    diff_threshold=int(diff_threshold) if diff_threshold is not None else None,
+                    min_blob_pixels=int(min_blob_pixels) if min_blob_pixels is not None else None,
+                    disk_margin_pct=float(disk_margin_pct) if disk_margin_pct is not None else None,
+                )
                 return result
             except Exception as exc:
                 logger.error(f"[Analyzer] Error: {exc}")
