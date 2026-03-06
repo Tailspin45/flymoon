@@ -989,6 +989,22 @@ async function checkTransits() {
     }
 }
 
+function _transitStateFor(s) {
+    const PRE = 10;
+    if (s > PRE) {
+        const mins = Math.floor(s / 60);
+        const secs = s % 60;
+        const timeStr = mins > 0 ? `${mins}m ${secs}s` : `${secs}s`;
+        return { stateClass: 'state-waiting', stateLabel: `Transit in ${timeStr}`, countdownText: timeStr, countdownClass: 'tc-big' };
+    } else if (s > 0) {
+        return { stateClass: 'state-recording', stateLabel: `🔴 Recording — transit in ${s}s`, countdownText: `${s}s`, countdownClass: 'tc-big tc-red' };
+    } else if (s === 0) {
+        return { stateClass: 'state-transit', stateLabel: '🎯 TRANSIT NOW', countdownText: 'NOW', countdownClass: 'tc-big tc-red' };
+    } else {
+        return { stateClass: 'state-post', stateLabel: `🔴 Recording — transit passed ${Math.abs(s)}s ago`, countdownText: `+${Math.abs(s)}s`, countdownClass: 'tc-big tc-dim' };
+    }
+}
+
 function updateTransitList() {
     const list = document.getElementById('transitList');
     if (!list) return;
@@ -1002,50 +1018,56 @@ function updateTransitList() {
         return;
     }
 
-    list.innerHTML = upcomingTransits.map(transit => {
+    // Remove stale empty-state if present
+    const empty = list.querySelector('.empty-state');
+    if (empty) list.innerHTML = '';
+
+    const probClass = t => (t.probability || '').toLowerCase();
+
+    upcomingTransits.forEach(transit => {
         const s = transit.seconds_until;
-        const PRE = 10;
+        const { stateClass, stateLabel, countdownText, countdownClass } = _transitStateFor(s);
+        const cardId = `ta-${transit.flight.replace(/[^a-zA-Z0-9]/g, '_')}`;
+        let card = document.getElementById(cardId);
 
-        let stateClass, stateLabel, countdownHtml;
-
-        if (s > PRE) {
-            // Waiting — not yet recording
-            const mins = Math.floor(s / 60);
-            const secs = s % 60;
-            const timeStr = mins > 0 ? `${mins}m ${secs}s` : `${secs}s`;
-            stateClass = 'state-waiting';
-            stateLabel = `Transit in ${timeStr}`;
-            countdownHtml = `<div class="tc-big">${timeStr}</div>`;
-        } else if (s > 0) {
-            // Recording + imminent
-            stateClass = 'state-recording';
-            stateLabel = `🔴 Recording — transit in ${s}s`;
-            countdownHtml = `<div class="tc-big tc-red">${s}s</div>`;
-        } else if (s === 0) {
-            stateClass = 'state-transit';
-            stateLabel = '🎯 TRANSIT NOW';
-            countdownHtml = `<div class="tc-big tc-red">NOW</div>`;
-        } else {
-            // Post-transit, still recording
-            stateClass = 'state-post';
-            stateLabel = `🔴 Recording — transit passed ${Math.abs(s)}s ago`;
-            countdownHtml = `<div class="tc-big tc-dim">+${Math.abs(s)}s</div>`;
-        }
-
-        const probClass = (transit.probability || '').toLowerCase();
-
-        return `
-            <div class="transit-alert ${probClass} ${stateClass}">
+        if (!card) {
+            // First render — create the card
+            card = document.createElement('div');
+            card.id = cardId;
+            card.className = `transit-alert ${probClass(transit)} ${stateClass}`;
+            card.dataset.transitState = stateClass;
+            card.innerHTML = `
                 <div class="ta-header">
                     <span class="ta-flight">✈️ ${transit.flight}</span>
                     <span class="ta-prob">${transit.probability}</span>
                 </div>
                 <div class="ta-target">${transit.target || ''} &nbsp;·&nbsp; Alt ${transit.altitude}° Az ${transit.azimuth}°</div>
-                ${countdownHtml}
+                <div class="${countdownClass} ta-countdown">${countdownText}</div>
                 <div class="ta-state">${stateLabel}</div>
-            </div>
-        `;
-    }).join('');
+            `;
+            list.appendChild(card);
+        } else {
+            // Patch in-place — only update text nodes, never rebuild DOM
+            const countdown = card.querySelector('.ta-countdown');
+            const stateEl   = card.querySelector('.ta-state');
+            if (countdown) {
+                countdown.textContent = countdownText;
+                countdown.className = `${countdownClass} ta-countdown`;
+            }
+            if (stateEl) stateEl.textContent = stateLabel;
+            // Update state class on card only when it changes (avoids reflow)
+            if (card.dataset.transitState !== stateClass) {
+                card.dataset.transitState = stateClass;
+                card.className = `transit-alert ${probClass(transit)} ${stateClass}`;
+            }
+        }
+    });
+
+    // Remove cards for transits no longer in the list
+    const activeIds = new Set(upcomingTransits.map(t => `ta-${t.flight.replace(/[^a-zA-Z0-9]/g, '_')}`));
+    list.querySelectorAll('.transit-alert').forEach(card => {
+        if (!activeIds.has(card.id)) card.remove();
+    });
 }
 
 function formatCountdown(seconds) {
