@@ -2073,7 +2073,7 @@ async function scanTransit() {
     // Pulse the button text with frame count estimate
     let _analyzeTimer = setInterval(() => {
         if (btn && btn.disabled) {
-            const dots = '.'.repeat((Date.now() / 500 | 0) % 4);
+            const dots = '.'.repeat(Math.floor(Date.now() / 500) % 4);
             btn.textContent = `🔍 Analyzing${dots}`;
         }
     }, 500);
