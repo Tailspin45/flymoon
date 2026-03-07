@@ -16,6 +16,8 @@ Usage (API):
 
 import json
 import os
+import platform
+import subprocess
 import time
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
@@ -28,10 +30,9 @@ from src import logger
 
 # ── Default tunable parameters (can be overridden per-call) ───────────────────
 REFERENCE_WINDOW = 90       # frames in rolling reference (≈3 s at 30 fps)
-MIN_BLOB_PIXELS  = 3        # ignore single hot pixels / sub-pixel noise
-DIFF_THRESHOLD   = 8        # pixel intensity difference to flag as changed
+MIN_BLOB_PIXELS  = 20       # ignore tiny noise; a real transit blob is ≥20 px²
+DIFF_THRESHOLD   = 15       # pixel intensity difference — tuned for post-stabilization noise floor
 DISK_MARGIN_PCT  = 0.05     # fraction of radius to trim from limb (atmosphere margin)
-TRANSIT_COLOR    = (0, 0, 255)   # red (BGR) for transit detections
 
 
 # ── Data classes ──────────────────────────────────────────────────────────────
@@ -64,6 +65,7 @@ class AnalysisResult:
     disk_radius: Optional[int]
     detections: List[BlobDetection] = field(default_factory=list)
     transit_events: List[dict] = field(default_factory=list)  # grouped detections
+    composite_image: Optional[str] = None  # path to composite still image
     analyzed_at: str = ""
     error: Optional[str] = None
 
@@ -113,9 +115,23 @@ def _disk_mask(shape: Tuple[int, int], cx: int, cy: int, radius: int,
     return mask
 
 
+def _best_fourcc() -> tuple:
+    """Return (fourcc, ext) for the best available H.264-compatible codec."""
+    if platform.system() == "Darwin":
+        return cv2.VideoWriter_fourcc(*"avc1"), ".mp4"
+    # Linux/Windows: write raw mp4v then re-encode with ffmpeg
+    return cv2.VideoWriter_fourcc(*"mp4v"), ".mp4"
+
+
 def _reencode_h264(src: Path, dst: Path) -> None:
-    """Re-encode an OpenCV mp4v video to H.264 using FFmpeg so browsers can play it."""
-    import subprocess
+    """Re-encode temp video to H.264 via FFmpeg (non-macOS), or just rename on macOS."""
+    if not src.exists() or src.stat().st_size == 0:
+        logger.warning(f"[Analyzer] Temp file missing or empty: {src.name}, skipping")
+        return
+    if platform.system() == "Darwin":
+        # avc1 already produces H.264 — just rename
+        src.rename(dst)
+        return
     try:
         subprocess.run(
             ["ffmpeg", "-y", "-i", str(src),
@@ -125,11 +141,37 @@ def _reencode_h264(src: Path, dst: Path) -> None:
             check=True,
             capture_output=True,
         )
-        src.unlink(missing_ok=True)  # remove temp file
+        src.unlink(missing_ok=True)
     except Exception as exc:
-        logger.warning(f"[Analyzer] FFmpeg re-encode failed ({exc}), keeping mp4v file")
-        # Fall back: just rename temp to final
-        src.rename(dst)
+        logger.warning(f"[Analyzer] FFmpeg re-encode failed ({exc}), keeping as-is")
+        if src.exists():
+            src.rename(dst)
+
+
+def _stabilize_frame(
+    frame_gray: np.ndarray,
+    ref_gray_f32: np.ndarray,
+) -> Tuple[np.ndarray, Tuple[float, float]]:
+    """
+    Translate ``frame_gray`` to align with the reference via phase correlation
+    (FFT-based — fast, no feature matching needed).
+
+    Returns ``(stabilized_gray, (dx, dy))``.  If the detected shift is
+    unreasonably large (> 50 px) the original frame is returned unchanged so
+    a single bad frame cannot corrupt the whole sequence.
+    """
+    frame_f32 = frame_gray.astype(np.float32)
+    (dx, dy), _ = cv2.phaseCorrelate(ref_gray_f32, frame_f32)
+    if abs(dx) > 50 or abs(dy) > 50:
+        return frame_gray, (0.0, 0.0)
+    M = np.float32([[1, 0, dx], [0, 1, dy]])
+    h, w = frame_gray.shape
+    stabilized = cv2.warpAffine(
+        frame_gray, M, (w, h),
+        flags=cv2.INTER_LINEAR,
+        borderMode=cv2.BORDER_REFLECT,
+    )
+    return stabilized, (dx, dy)
 
 
 def _confidence(blob_area: int, disk_radius: int) -> str:
@@ -193,6 +235,19 @@ def analyze_video(
             analyzed_at=datetime.now(timezone.utc).isoformat(),
         )
 
+    # Refuse to re-analyze an already-analyzed file (jpg output, not a video)
+    if path.stem.startswith("analyzed_"):
+        return AnalysisResult(
+            source_file=str(path),
+            duration_seconds=0,
+            fps=0,
+            frame_count=0,
+            disk_detected=False,
+            disk_cx=None, disk_cy=None, disk_radius=None,
+            error=f"File appears already analyzed: {path.name}",
+            analyzed_at=datetime.now(timezone.utc).isoformat(),
+        )
+
     cap = cv2.VideoCapture(str(path))
     fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
     total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
@@ -236,7 +291,10 @@ def analyze_video(
     # baseline and become invisible.
     from collections import deque
     ref_buffer: deque = deque(maxlen=ref_window)
-    reference = None          # frozen once buffer is full
+    ref_buffer_bgr: deque = deque(maxlen=ref_window)  # BGR frames for composite bg
+    reference = None          # frozen once buffer is full (grayscale median)
+    ref_gray_f32 = None       # float32 version for phase-correlation stabilization
+    ref_bgr_frame = None      # color frame from reference window (composite background)
     mask = _disk_mask((h, w), disk_cx, disk_cy, disk_radius, _disk_margin_pct)
 
     # ── Output writer — write to temp file, re-encode to H.264 via FFmpeg ────
@@ -244,8 +302,10 @@ def analyze_video(
     base_stem = path.stem.replace("_analyzed", "")  # always derive from original name
     temp_path = path.with_name(base_stem + "_analyzed_tmp.mp4")
     out_path   = path.with_name(base_stem + "_analyzed.mp4")
+    temp_path.parent.mkdir(parents=True, exist_ok=True)
+    temp_path.unlink(missing_ok=True)  # remove any stale tmp from previous failed run
     if output_annotated:
-        fourcc = cv2.VideoWriter_fourcc(*"mp4v")
+        fourcc, _ = _best_fourcc()
         out = cv2.VideoWriter(str(temp_path), fourcc, fps, (w, h))
 
     # ── Main detection loop (no annotation yet) ─────────────────────────────
@@ -262,11 +322,18 @@ def analyze_video(
         # Build reference from early frames, then freeze it
         if reference is None:
             ref_buffer.append(gray)
+            ref_buffer_bgr.append(frame)
             if len(ref_buffer) >= ref_window:
                 reference = np.median(np.stack(ref_buffer), axis=0).astype(np.uint8)
+                ref_gray_f32 = reference.astype(np.float32)
+                # Use the middle frame of the reference window as the composite background
+                ref_bgr_frame = list(ref_buffer_bgr)[len(ref_buffer_bgr) // 2].copy()
                 logger.info(f"[Analyzer] Reference locked at frame {frame_idx}")
             frame_idx += 1
             continue
+
+        # Stabilize: translate frame to align with reference (corrects atmospheric drift)
+        gray, _ = _stabilize_frame(gray, ref_gray_f32)
 
         # Blur both to suppress sensor noise while preserving real transit blobs
         gray_blur = cv2.GaussianBlur(gray, (5, 5), 0)
@@ -331,28 +398,44 @@ def analyze_video(
     # Sunspots appear at the same position across many frames.  A real transit
     # moves across the disk.  Cluster detections by spatial proximity and mark
     # clusters present in >50% of detection frames as static.
-    detections = _filter_static_blobs(detections, proximity_px=8)
+    detections = _filter_static_blobs(detections, proximity_px=30)
     moving_detections = [d for d in detections if not d.is_static]
     n_static = sum(1 for d in detections if d.is_static)
-    if n_static:
-        logger.info(f"[Analyzer] Filtered {n_static} static-blob detections (sunspots)")
+
+    # ── Filter moving detections for transit coherence ──────────────────────
+    # A real transit traces a roughly linear path in under ~2 seconds.
+    # Anything that hangs around the same spot for many seconds is shimmer.
+    moving_detections = _filter_transit_coherence(moving_detections, fps)
+    if moving_detections:
+        logger.info(f"[Analyzer] After coherence filter: {len(moving_detections)} moving detections")
+    else:
+        logger.info("[Analyzer] No coherent transit paths found")
+
+    # Update the master detections list: mark non-coherent moving blobs as static
+    # so the composite only draws confirmed transit silhouettes.
+    coherent_ids = {id(d) for d in moving_detections}
+    for d in detections:
+        if not d.is_static and id(d) not in coherent_ids:
+            d.is_static = True
 
     # ── Group detections into transit events ───────────────────────────────────
     transit_events = _group_detections(moving_detections, fps)
 
-    # ── Annotation pass (second read of video) ────────────────────────────────
-    # Now that we know which blobs are static vs transit, re-read and annotate
-    # with correct colors: red/orange for transits, gray for filtered sunspots.
-    temp_path = path.with_name(base_stem + "_analyzed_tmp.mp4")
-    out_path   = path.with_name(base_stem + "_analyzed.mp4")
+    # ── Composite still image (replaces annotated video) ─────────────────────
+    # One background frame with transit positions overlaid.
+    composite_path = path.with_name("analyzed_" + base_stem + ".jpg")
+    composite_path.parent.mkdir(parents=True, exist_ok=True)
+    composite_image_str = None
     if output_annotated:
-        _write_annotated_video(
-            path, temp_path, fps, w, h, total_frames,
-            detections, disk_cx, disk_cy, disk_radius,
-            progress_cb, 0.7,  # start at 70% progress
+        composite_image_str = _write_composite_image(
+            path, composite_path, detections, disk_cx, disk_cy, disk_radius,
+            progress_cb, bg_frame=ref_bgr_frame,
+            reference_gray=reference, ref_gray_f32=ref_gray_f32,
         )
-        _reencode_h264(temp_path, out_path)
-        logger.info(f"[Analyzer] Annotated video → {out_path.name}")
+        if composite_image_str:
+            logger.info(f"[Analyzer] Composite image → {composite_path.name}")
+        else:
+            logger.warning("[Analyzer] Composite image write failed")
 
     result = AnalysisResult(
         source_file=str(path),
@@ -365,11 +448,12 @@ def analyze_video(
         disk_radius=disk_radius,
         detections=detections,
         transit_events=transit_events,
+        composite_image=composite_image_str,
         analyzed_at=datetime.now(timezone.utc).isoformat(),
     )
 
-    # Write JSON sidecar
-    sidecar = path.with_name(path.stem + "_analysis.json")
+    # Write JSON sidecar alongside the composite image
+    sidecar = path.with_name("analyzed_" + base_stem + "_analysis.json")
     _write_sidecar(result, sidecar)
     logger.info(
         f"[Analyzer] Done: {len(transit_events)} event(s), "
@@ -379,6 +463,156 @@ def analyze_video(
 
 
 STATIC_COLOR = (140, 140, 140)  # gray for sunspots/static features
+TRANSIT_TINT  = np.array([40, 40, 200], dtype=np.uint8)  # reddish tint for transit silhouettes
+
+
+def _write_composite_image(
+    src: Path,
+    dst: Path,
+    detections: List[BlobDetection],
+    disk_cx: Optional[int],
+    disk_cy: Optional[int],
+    disk_radius: Optional[int],
+    progress_cb=None,
+    bg_frame: Optional[np.ndarray] = None,
+    reference_gray: Optional[np.ndarray] = None,
+    ref_gray_f32: Optional[np.ndarray] = None,
+) -> Optional[str]:
+    """
+    Build a composite still image showing transit silhouettes and sunspots.
+
+    For each transit frame, the actual darkened pixels (object silhouette)
+    are extracted and alpha-blended onto the background.  Small fast movers
+    appear as a trail of dark dots; large targets produce dramatic time-lapse
+    overlays.  Sunspots get one grey circle per cluster.
+
+    Returns the output path string on success, None on failure.
+    """
+    if bg_frame is not None:
+        canvas = bg_frame.copy()
+    else:
+        cap = cv2.VideoCapture(str(src))
+        total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+        mid = max(0, total_frames // 2)
+        cap.set(cv2.CAP_PROP_POS_FRAMES, mid)
+        ok, canvas = cap.read()
+        cap.release()
+        if not ok or canvas is None:
+            logger.error("[Analyzer] Could not read background frame for composite image")
+            return None
+
+    h, w = canvas.shape[:2]
+    if progress_cb:
+        progress_cb(0.75)
+
+    # Separate static (sunspot) and transit detections
+    static_dets = [d for d in detections if d.is_static]
+    transit_dets = [d for d in detections if not d.is_static]
+
+    # ── Alpha-blend transit silhouettes from source frames ────────────────
+    if transit_dets and reference_gray is not None:
+        # Build a set of unique frame indices that contain transit detections
+        from collections import defaultdict
+        frames_needed: dict = defaultdict(list)
+        for d in transit_dets:
+            frames_needed[d.frame_index].append(d)
+
+        cap = cv2.VideoCapture(str(src))
+        frame_idx = 0
+        blended_count = 0
+
+        while True:
+            ok, frame = cap.read()
+            if not ok:
+                break
+
+            if frame_idx in frames_needed:
+                gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+                # Stabilize this frame same as during detection
+                if ref_gray_f32 is not None:
+                    gray, _ = _stabilize_frame(gray, ref_gray_f32)
+
+                for det in frames_needed[frame_idx]:
+                    # Extract bounding box around this detection (with padding)
+                    pad = max(det.width, det.height, 8)
+                    x1 = max(0, det.x - det.width // 2 - pad)
+                    y1 = max(0, det.y - det.height // 2 - pad)
+                    x2 = min(w, det.x + det.width // 2 + pad)
+                    y2 = min(h, det.y + det.height // 2 + pad)
+
+                    # Diff patch: where this frame is darker than the reference
+                    ref_patch = reference_gray[y1:y2, x1:x2].astype(np.int16)
+                    cur_patch = gray[y1:y2, x1:x2].astype(np.int16)
+                    darkening = np.clip(ref_patch - cur_patch, 0, 255).astype(np.uint8)
+
+                    # Threshold to get just the object silhouette
+                    _, sil_mask = cv2.threshold(darkening, 10, 255, cv2.THRESH_BINARY)
+
+                    if sil_mask.sum() == 0:
+                        # Fallback: draw a small red marker
+                        cv2.circle(canvas, (det.x, det.y), max(3, det.width // 3),
+                                   (0, 0, 220), -1)
+                        continue
+
+                    # Darken + tint the canvas where the silhouette is
+                    roi = canvas[y1:y2, x1:x2]
+                    alpha = (sil_mask.astype(np.float32) / 255.0)[:, :, np.newaxis]
+                    # Blend: make it darker and slightly red
+                    darkened = (roi.astype(np.float32) * 0.3).astype(np.uint8)
+                    tinted = cv2.addWeighted(darkened, 0.7, np.full_like(roi, TRANSIT_TINT), 0.3, 0)
+                    canvas[y1:y2, x1:x2] = (roi * (1 - alpha) + tinted * alpha).astype(np.uint8)
+                    blended_count += 1
+
+            frame_idx += 1
+            if progress_cb and frame_idx % 60 == 0:
+                progress_cb(0.75 + 0.15 * min(1.0, frame_idx / max(1, cap.get(cv2.CAP_PROP_FRAME_COUNT))))
+
+        cap.release()
+        if blended_count:
+            logger.info(f"[Analyzer] Composited {blended_count} transit silhouettes from {len(frames_needed)} frames")
+
+    elif transit_dets:
+        # No reference available — fall back to red dot markers
+        for d in transit_dets:
+            cv2.circle(canvas, (d.x, d.y), max(4, d.width // 3), (0, 0, 220), -1)
+
+    # ── Draw sunspot circles (grey, one per cluster) ─────────────────────
+    if static_dets:
+        PROX = 30
+        used: set = set()
+        for i, sd in enumerate(static_dets):
+            if i in used:
+                continue
+            cluster = [sd]
+            used.add(i)
+            for j in range(i + 1, len(static_dets)):
+                if j in used:
+                    continue
+                od = static_dets[j]
+                if abs(sd.x - od.x) <= PROX and abs(sd.y - od.y) <= PROX:
+                    cluster.append(od)
+                    used.add(j)
+            cx = int(sum(c.x for c in cluster) / len(cluster))
+            cy = int(sum(c.y for c in cluster) / len(cluster))
+            r = max(12, int(max(max(c.width, c.height) for c in cluster)) + 6)
+            cv2.circle(canvas, (cx, cy), r, STATIC_COLOR, 2)
+
+    # ── Draw disk boundary (yellow) LAST so it's on top ──────────────────
+    if disk_cx is not None and disk_cy is not None and disk_radius is not None:
+        cv2.circle(canvas, (disk_cx, disk_cy), disk_radius, (0, 255, 255), 2)
+
+    if progress_cb:
+        progress_cb(0.95)
+
+    ok = cv2.imwrite(str(dst), canvas, [cv2.IMWRITE_JPEG_QUALITY, 92])
+    if not ok:
+        logger.error(f"[Analyzer] imwrite failed: {dst}")
+        return None
+
+    if progress_cb:
+        progress_cb(1.0)
+
+    return str(dst)
 
 
 def _write_annotated_video(
@@ -395,8 +629,13 @@ def _write_annotated_video(
         by_frame[d.frame_index].append(d)
 
     cap = cv2.VideoCapture(str(src))
-    fourcc = cv2.VideoWriter_fourcc(*"mp4v")
+    fourcc, _ = _best_fourcc()
+    dst.parent.mkdir(parents=True, exist_ok=True)
     out = cv2.VideoWriter(str(dst), fourcc, fps, (w, h))
+    if not out.isOpened():
+        logger.error(f"[Analyzer] VideoWriter failed to open: {dst}")
+        cap.release()
+        return
     frame_idx = 0
 
     while True:
@@ -414,7 +653,7 @@ def _write_annotated_video(
                     label = f"S {d.area_px}px"  # S = sunspot/static
                     thickness = 1
                 else:
-                    color = TRANSIT_COLOR
+                    color = (0, 0, 255)  # red
                     label = f"T {d.area_px}px"  # T = transit
                     thickness = 3
                 half_w = max(d.width // 2 + 4, 8)
@@ -477,8 +716,9 @@ def _filter_static_blobs(detections: List[BlobDetection],
                 assigned.add(j)
         clusters.append(cluster)
 
-    # Mark clusters that appear in >50% of detection-containing frames as static
-    threshold = n_det_frames * 0.5
+    # Mark clusters that appear in >25% of detection-containing frames as static.
+    # (50% was too lenient — sunspots with intermittent detection escaped.)
+    threshold = n_det_frames * 0.25
     for cluster in clusters:
         unique_frames = set(detections[i].frame_index for i in cluster)
         if len(unique_frames) > threshold:
@@ -486,6 +726,115 @@ def _filter_static_blobs(detections: List[BlobDetection],
                 detections[i].is_static = True
 
     return detections
+
+
+def _filter_transit_coherence(
+    detections: List[BlobDetection],
+    fps: float,
+    max_duration_sec: float = 3.0,
+    min_travel_px: float = 40.0,
+    max_blobs_per_frame: int = 3,
+) -> List[BlobDetection]:
+    """Keep only detections that form coherent transit-like paths.
+
+    A real transit:
+      - Is ONE object (≤3 blobs/frame accounting for split silhouettes)
+      - Lasts 0.1–3 seconds
+      - Traces a roughly linear path ≥40 px long
+      - Appears in roughly consecutive frames
+
+    Algorithm:
+      1. Group moving detections into temporal runs (≤0.5 s gap).
+      2. Within each run, keep only the LARGEST blob per frame (the real object).
+      3. Check travel distance and per-frame scatter.
+      4. Discard runs that are scattered noise.
+    """
+    if not detections:
+        return []
+
+    import math
+    from collections import defaultdict
+
+    # Sort by time
+    dets = sorted(detections, key=lambda d: (d.time_seconds, d.x))
+
+    # Group into temporal runs
+    runs: List[List[BlobDetection]] = [[dets[0]]]
+    for d in dets[1:]:
+        if d.time_seconds - runs[-1][-1].time_seconds <= 0.5:
+            runs[-1].append(d)
+        else:
+            runs.append([d])
+
+    kept: List[BlobDetection] = []
+    for run in runs:
+        duration = run[-1].time_seconds - run[0].time_seconds
+
+        # Too long → not a transit
+        if duration > max_duration_sec:
+            continue
+
+        # Group by frame, keep only the largest blob per frame
+        by_frame: dict = defaultdict(list)
+        for d in run:
+            by_frame[d.frame_index].append(d)
+
+        # If too many frames have many blobs, it's scattered noise
+        multi_blob_frames = sum(1 for f in by_frame.values() if len(f) > max_blobs_per_frame)
+        if multi_blob_frames > len(by_frame) * 0.5:
+            continue  # >50% of frames have too many blobs → noise burst
+
+        # Pick the largest blob per frame to form the "track"
+        track = []
+        for fi in sorted(by_frame.keys()):
+            best = max(by_frame[fi], key=lambda d: d.area_px)
+            track.append(best)
+
+        if len(track) < 2:
+            # Single-frame detection — only keep if the blob is large enough
+            # to be a real object (not a 1-frame noise spike)
+            if run[0].area_px >= 200:
+                kept.extend(run)
+            continue
+
+        # Compute travel: smooth first→last using 3-frame averages
+        n = min(3, len(track))
+        first = track[:n]
+        last  = track[-n:]
+        cx0 = sum(d.x for d in first) / len(first)
+        cy0 = sum(d.y for d in first) / len(first)
+        cx1 = sum(d.x for d in last)  / len(last)
+        cy1 = sum(d.y for d in last)  / len(last)
+        travel = math.hypot(cx1 - cx0, cy1 - cy0)
+
+        # Must travel meaningfully (any multi-frame run)
+        if len(track) >= 2 and travel < min_travel_px:
+            continue
+
+        # Minimum speed check: a real transit crosses the disk fast.
+        # Aircraft transiting the solar disk travel 400-2700 px/s.
+        # Use 80 px/s as a conservative floor.
+        if duration > 0:
+            speed = travel / duration
+            if speed < 80:
+                continue
+
+        # Check spatial coherence: max deviation from the first→last line
+        # should be small relative to travel (a real transit is nearly linear)
+        if travel > 10 and len(track) > 3:
+            vx, vy = cx1 - cx0, cy1 - cy0
+            vlen = math.hypot(vx, vy)
+            nx, ny = -vy / vlen, vx / vlen  # normal to the line
+            max_dev = 0
+            for d in track:
+                dev = abs((d.x - cx0) * nx + (d.y - cy0) * ny)
+                max_dev = max(max_dev, dev)
+            if max_dev > travel * 0.4:
+                continue  # deviates >40% from straight line → not a transit
+
+        kept.extend(run)
+
+    return kept
 
 
 def _group_detections(detections: List[BlobDetection], fps: float,
@@ -546,6 +895,7 @@ def _write_sidecar(result: AnalysisResult, path: Path):
         "disk_radius":      result.disk_radius,
         "transit_events":   result.transit_events,
         "detection_count":  len(result.detections),
+        "composite_image":  result.composite_image,
         "error":            result.error,
     }
     with open(path, "w") as f:
