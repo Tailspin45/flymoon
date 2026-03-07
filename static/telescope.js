@@ -1918,7 +1918,7 @@ function viewFile(path, name, opts) {
         vid.addEventListener('seeked', updateTime);
         vid.addEventListener('loadedmetadata', updateTime);
     } else {
-        body.innerHTML = `<img src="${path}" alt="${name}" style="max-width:90vw; max-height:80vh; object-fit:contain;">`;
+        body.innerHTML = `<div style="overflow:auto; width:100%; height:100%; display:flex; align-items:center; justify-content:center;"><img src="${path}" alt="${name}" style="max-width:100%; max-height:100%; height:auto; display:block;"></div>`;
     }
 
     // Build action buttons (download, delete, prev/next, find transit)
@@ -1930,11 +1930,15 @@ function viewFile(path, name, opts) {
               `<button class="btn-viewer btn-viewer-scan" id="scanTransitBtn" onclick="scanTransit()" title="Analyze video for transits (OpenCV)">🎯 Find Transit</button>` +
               `<button class="btn-viewer" onmousedown="frameStepStart(1)" onmouseup="frameStepStop()" onmouseleave="frameStepStop()" title="Forward 1 frame (hold to repeat)">▷</button>`
             : '';
-        // Show Replay button if an _analyzed.mp4 already exists for this file
-        const hasAnalyzed = isVideo && !name.includes('_analyzed') && window.currentFiles &&
-            window.currentFiles.some(f => f.path === path.replace('.mp4', '_analyzed.mp4'));
+        // Show composite image button if an analyzed_xxx.jpg exists for this file
+        const stem = path.replace(/^.*\//, '').replace('.mp4', '');
+        const folder = path.substring(0, path.lastIndexOf('/'));
+        const analyzedJpg = folder + '/analyzed_' + stem + '.jpg';
+        const hasAnalyzed = isVideo && !name.startsWith('analyzed_') && window.currentFiles &&
+            window.currentFiles.some(f => f.path === analyzedJpg);
+        const viewerUrl = '/telescope/composite?path=' + encodeURIComponent(analyzedJpg.replace(/^\/static\//, ''));
         const replayBtn = hasAnalyzed
-            ? `<button class="btn-viewer" onclick="viewFile('${path.replace('.mp4', '_analyzed.mp4')}', '${name.replace('.mp4', '_analyzed.mp4')}', {})">🔄 Replay</button>`
+            ? `<button class="btn-viewer" onclick="openCompositeModal('${analyzedJpg}', null)">🖼 Composite</button>`
             : '';
         const isFav = getFavorites().has(path);
         const favBtn = `<button class="btn-viewer" id="viewerFavBtn" data-fav-path="${path}" onclick="toggleFavorite('${path}', event)" title="Favorite">${isFav ? '❤️' : '🤍'}</button>`;
@@ -2069,6 +2073,15 @@ async function scanTransit() {
     const playerVideo = document.querySelector('#fileViewerBody video');
     if (!playerVideo) return;
 
+    // Read tuning slider values BEFORE removing the old panel
+    const sliderBody = {};
+    const dtEl = document.getElementById('sliderDiffThreshold');
+    const mbEl = document.getElementById('sliderMinBlob');
+    const dmEl = document.getElementById('sliderDiskMargin');
+    if (dtEl) { sliderBody.diff_threshold = parseInt(dtEl.value); localStorage.setItem('transit_slider_sliderDiffThreshold', dtEl.value); }
+    if (mbEl) { sliderBody.min_blob_pixels = parseInt(mbEl.value); localStorage.setItem('transit_slider_sliderMinBlob', mbEl.value); }
+    if (dmEl) { sliderBody.disk_margin_pct = parseFloat(dmEl.value) / 100; localStorage.setItem('transit_slider_sliderDiskMargin', dmEl.value); }
+
     // Remove previous legend panel so user sees the UI change
     const oldPanel = document.getElementById('analysisLegendPanel');
     if (oldPanel) oldPanel.remove();
@@ -2089,15 +2102,6 @@ async function scanTransit() {
     const controller = new AbortController();
     _analyzeController = controller;
     const timeoutId = setTimeout(() => controller.abort(), 5 * 60 * 1000);
-
-    // Read tuning slider values (if panel exists)
-    const sliderBody = {};
-    const dtEl = document.getElementById('sliderDiffThreshold');
-    const mbEl = document.getElementById('sliderMinBlob');
-    const dmEl = document.getElementById('sliderDiskMargin');
-    if (dtEl) sliderBody.diff_threshold = parseInt(dtEl.value);
-    if (mbEl) sliderBody.min_blob_pixels = parseInt(mbEl.value);
-    if (dmEl) sliderBody.disk_margin_pct = parseFloat(dmEl.value) / 100;
 
     try {
         const resp = await fetch('/telescope/files/analyze', {
@@ -2178,9 +2182,8 @@ function _showAnalysisLegend(data, originalPath) {
 
     const events = data.transit_events || [];
     const staticCount = data.static_detections || 0;
-    const annotatedFile = data.annotated_file;
-    const annotatedPath = annotatedFile ? '/static/' + annotatedFile : null;
-    const annotatedName = annotatedFile ? annotatedFile.split('/').pop() : '';
+    const compositeFile = data.composite_image || data.annotated_file;
+    const compositePath = compositeFile ? '/static/' + compositeFile : null;
 
     // Summary
     let summary = '';
@@ -2198,35 +2201,58 @@ function _showAnalysisLegend(data, originalPath) {
     const panel = document.createElement('div');
     panel.id = 'analysisLegendPanel';
     panel.onclick = e => e.stopPropagation();
-    panel.style.cssText = 'background:#1a1a1a; border-left:1px solid #333; padding:14px 16px; min-width:200px; max-width:240px; display:flex; flex-direction:column; gap:10px; font-size:0.85em; color:#ccc; overflow-y:auto; max-height:80vh;';
+    panel.style.cssText = 'background:#1a1a1a; border-left:1px solid #333; padding:14px 16px; min-width:200px; max-width:240px; display:flex; flex-direction:column; gap:8px; font-size:0.85em; color:#ccc; height:100%; overflow:hidden;';
 
     // Result section
     const iconColor = events.length > 0 ? '#4dff88' : '#ffcc44';
     const icon = events.length > 0 ? '🎯' : '🔍';
     let html = `<div style="font-weight:bold; color:${iconColor}; font-size:1.05em;">${icon} ${summary}</div>`;
 
-    // Legend items - vertical list
-    html += `<div style="display:flex; flex-direction:column; gap:6px; padding:6px 0; border-top:1px solid #333;">`;
-    html += `<div style="font-weight:bold; color:#aaa; font-size:0.9em; margin-bottom:2px;">Legend</div>`;
-    html += `<div><span style="display:inline-block; width:12px; height:12px; border:3px solid #ff4444; border-radius:50%; margin-right:8px; vertical-align:middle;"></span>Transit detection</div>`;
-    html += `<div><span style="display:inline-block; width:12px; height:12px; border:1px solid #888; border-radius:50%; margin-right:8px; vertical-align:middle;"></span>Sunspot (filtered)</div>`;
-    html += `<div><span style="display:inline-block; width:12px; height:12px; border:2px solid #ffff00; border-radius:50%; margin-right:8px; vertical-align:middle;"></span>Disk boundary</div>`;
+    // Composite image preview — flex-grow fills available space
+    if (compositePath) {
+        const diskCx = data.disk_cx || 0;
+        const diskCy = data.disk_cy || 0;
+        const diskR  = data.disk_radius || 0;
+        html += `<div style="border-top:1px solid #333; padding-top:6px; flex:1; min-height:60px; overflow:hidden; display:flex; flex-direction:column;">`;
+        html += `<div style="font-weight:bold; color:#aaa; font-size:0.9em; margin-bottom:4px;">Transit Composite</div>`;
+        html += `<div style="position:relative; flex:1; min-height:0; overflow:hidden;">`;
+        html += `<img id="compositePreview" src="${compositePath}" ` +
+                `data-disk-cx="${diskCx}" data-disk-cy="${diskCy}" data-disk-r="${diskR}" ` +
+                `style="width:100%; height:100%; object-fit:contain; border-radius:4px; cursor:pointer; display:block;" title="Click to view full size" />`;
+        html += `<canvas id="compositeOverlay" style="position:absolute; top:0; left:0; width:100%; height:100%; pointer-events:none; border-radius:4px;"></canvas>`;
+        html += `</div>`;
+        html += `</div>`;
+    }
+
+    // Legend items - circles and text in aligned columns
+    html += `<div style="border-top:1px solid #333; padding-top:6px;">`;
+    html += `<div style="font-weight:bold; color:#aaa; font-size:0.9em; margin-bottom:4px;">Legend</div>`;
+    const legendRows = [
+        ['#ff4444', 'Transit detection'],
+        ['#888888', 'Sunspot (filtered)'],
+        ['#ffff00', 'Disk boundary'],
+    ];
+    legendRows.forEach(([color, label]) => {
+        html += `<div style="display:flex; align-items:center; gap:8px; margin-bottom:3px;">` +
+            `<span style="flex-shrink:0; width:12px; height:12px; border:2px solid ${color}; border-radius:50%; display:inline-block;"></span>` +
+            `<span>${label}</span></div>`;
+    });
     html += `</div>`;
 
     // Buttons
-    if (annotatedPath) {
-        html += `<button class="btn-viewer" id="legendViewBtn" style="font-size:0.85em; padding:4px 10px; width:100%;">▶ View annotated</button>`;
+    if (compositePath) {
+        html += `<button class="btn-viewer" id="legendViewBtn" style="font-size:0.85em; padding:4px 10px; width:100%;" data-img-src="${compositePath}">🖼 View full size</button>`;
     }
 
     // Tuning sliders
     html += `<div style="border-top:1px solid #333; padding-top:8px;">`;
     html += `<div style="font-weight:bold; color:#aaa; font-size:0.9em; margin-bottom:6px;">Detection Tuning</div>`;
 
-    html += _sliderRow('sliderDiffThreshold', 'Sensitivity', 1, 30, 8,
+    html += _sliderRow('sliderDiffThreshold', 'Sensitivity', 1, 30, 15,
         'Lower = more sensitive (detects fainter objects, more noise)');
-    html += _sliderRow('sliderMinBlob', 'Min Blob Size', 1, 20, 3,
+    html += _sliderRow('sliderMinBlob', 'Min Blob Size', 1, 50, 20,
         'Minimum pixel area to count as a detection');
-    html += _sliderRow('sliderDiskMargin', 'Edge Margin %', 0, 15, 5,
+    html += _sliderRow('sliderDiskMargin', 'Edge Margin %', 0, 20, 12,
         'Percentage of disk edge to ignore (trims atmospheric distortion)');
 
     html += `<div style="display:flex; gap:6px; margin-top:6px;">`;
@@ -2240,27 +2266,48 @@ function _showAnalysisLegend(data, originalPath) {
 
     // Wire up button events (after innerHTML so elements exist)
     const viewBtn = document.getElementById('legendViewBtn');
-    if (viewBtn) viewBtn.onclick = (e) => { e.stopPropagation(); viewFile(annotatedPath, annotatedName, {}); };
+    if (viewBtn) {
+        const imgSrc = viewBtn.dataset.imgSrc;
+        viewBtn.onclick = (e) => { e.stopPropagation(); openCompositeModal(imgSrc, data); };
+    }
+    const previewImg = document.getElementById('compositePreview');
+    if (previewImg && compositePath) {
+        previewImg.onclick = (e) => { e.stopPropagation(); openCompositeModal(compositePath, data); };
+        // Draw margin overlay when image has loaded dimensions
+        previewImg.addEventListener('load', _updateMarginOverlay);
+        if (previewImg.complete) _updateMarginOverlay();
+    }
     const reBtn = document.getElementById('legendReanalyzeBtn');
     if (reBtn) reBtn.onclick = (e) => { e.stopPropagation(); scanTransit(); };
     const resetBtn = document.getElementById('legendResetBtn');
     if (resetBtn) resetBtn.onclick = (e) => {
         e.stopPropagation();
         _resetSliders();
+        _updateMarginOverlay();
     };
+
+    // Hook disk margin slider to live-update the overlay
+    const dmSlider = document.getElementById('sliderDiskMargin');
+    if (dmSlider) {
+        const origInput = dmSlider.oninput;
+        dmSlider.addEventListener('input', _updateMarginOverlay);
+    }
 
     // Hide the top banner (legend panel replaces it)
     _setScanBanner(null);
 }
 
 function _sliderRow(id, label, min, max, defaultVal, tooltip) {
+    const saved = localStorage.getItem('transit_slider_' + id);
+    const val = saved !== null ? saved : defaultVal;
+    const extraCall = id === 'sliderDiskMargin' ? ' _updateMarginOverlay();' : '';
     return `<div style="margin-bottom:6px;" title="${tooltip}">` +
         `<div style="display:flex; justify-content:space-between; font-size:0.85em;">` +
-        `<span>${label}</span><span id="${id}Val">${defaultVal}</span></div>` +
-        `<input type="range" id="${id}" min="${min}" max="${max}" value="${defaultVal}" ` +
+        `<span>${label}</span><span id="${id}Val">${val}</span></div>` +
+        `<input type="range" id="${id}" min="${min}" max="${max}" value="${val}" ` +
         `data-default="${defaultVal}" ` +
         `style="width:100%; accent-color:#4dff88;" ` +
-        `oninput="document.getElementById('${id}Val').textContent=this.value">` +
+        `oninput="document.getElementById('${id}Val').textContent=this.value; localStorage.setItem('transit_slider_${id}', this.value);${extraCall}">` +
         `</div>`;
 }
 
@@ -2272,6 +2319,7 @@ function _resetSliders() {
             const valEl = document.getElementById(id + 'Val');
             if (valEl) valEl.textContent = el.dataset.default;
         }
+        localStorage.removeItem('transit_slider_' + id);
     });
 }
 
@@ -2279,6 +2327,137 @@ function _formatTimestamp(secs) {
     const m = Math.floor(secs / 60);
     const s = (secs % 60).toFixed(2);
     return m > 0 ? `${m}:${s.padStart(5, '0')}` : `${s}s`;
+}
+
+/**
+ * Draw a yellow ring on the compositeOverlay canvas to show the excluded edge margin.
+ * Called on page load (after img renders) and whenever sliderDiskMargin changes.
+ */
+function _updateMarginOverlay() {
+    const img    = document.getElementById('compositePreview');
+    const canvas = document.getElementById('compositeOverlay');
+    const slider = document.getElementById('sliderDiskMargin');
+    if (!img || !canvas || !slider) return;
+
+    const marginPct = parseFloat(slider.value) / 100;
+    const diskCx    = parseFloat(img.dataset.diskCx || 0);
+    const diskCy    = parseFloat(img.dataset.diskCy || 0);
+    const diskR     = parseFloat(img.dataset.diskR  || 0);
+    if (!diskR) return;
+
+    const dw = img.naturalWidth  || img.width;
+    const dh = img.naturalHeight || img.height;
+    const cw = img.clientWidth;
+    const ch = img.clientHeight;
+    if (!cw || !ch || !dw || !dh) return;
+
+    // object-fit:contain scale & letterbox offsets
+    const scale   = Math.min(cw / dw, ch / dh);
+    const offsetX = (cw - dw * scale) / 2;
+    const offsetY = (ch - dh * scale) / 2;
+
+    canvas.width  = cw;
+    canvas.height = ch;
+    const ctx = canvas.getContext('2d');
+    ctx.clearRect(0, 0, cw, ch);
+
+    if (marginPct <= 0) return;
+
+    const cx     = diskCx * scale + offsetX;
+    const cy     = diskCy * scale + offsetY;
+    const outerR = diskR  * scale;
+    const innerR = outerR * (1 - marginPct);
+    const band   = outerR - innerR;
+
+    // Draw excluded ring as semi-transparent yellow fill
+    ctx.beginPath();
+    ctx.arc(cx, cy, outerR, 0, Math.PI * 2, false);
+    ctx.arc(cx, cy, innerR, 0, Math.PI * 2, true);
+    ctx.fillStyle = 'rgba(255,255,0,0.25)';
+    ctx.fill();
+
+    // Bright yellow inner boundary line
+    ctx.beginPath();
+    ctx.arc(cx, cy, innerR, 0, Math.PI * 2);
+    ctx.strokeStyle = '#ffff00';
+    ctx.lineWidth = Math.max(1, band * 0.15);
+    ctx.stroke();
+}
+
+/**
+ * Open the composite image in a full-screen modal overlay (instead of a new tab).
+ * @param {string} imgSrc   - Full URL path e.g. "/static/captures/.../analyzed_xxx.jpg"
+ * @param {object|null} data - Analysis result JSON, or null to load from sidecar
+ */
+async function openCompositeModal(imgSrc, data) {
+    // Remove any existing modal
+    const existing = document.getElementById('compositeModal');
+    if (existing) existing.remove();
+
+    // Load sidecar if data not provided
+    if (!data) {
+        const sidecarUrl = imgSrc.replace('.jpg', '_analysis.json');
+        try {
+            const r = await fetch(sidecarUrl);
+            data = r.ok ? await r.json() : {};
+        } catch (e) { data = {}; }
+    }
+
+    const events = data.transit_events || [];
+    const staticCount = data.static_detections || (data.detection_count || 0) - events.length;
+    const source = (data.source_file || imgSrc).split('/').pop();
+    const diskDetected = data.disk_detected || false;
+    const duration = data.duration_seconds || 0;
+    const detectionCount = data.detection_count || 0;
+
+    // Build events HTML for right panel — keep it brief (sidebar has details)
+    let eventsHtml = '';
+    if (events.length > 0) {
+        events.forEach((evt, i) => {
+            const ms = evt.duration_ms || 0;
+            const conf = evt.confidence || '';
+            const confColor = conf === 'high' ? '#4dff88' : conf === 'medium' ? '#ffcc44' : '#aaa';
+            eventsHtml += `<div style="margin-bottom:4px;">Transit ${i + 1}: ~${ms}ms <span style="font-size:0.8em; color:${confColor};">${conf}</span></div>`;
+        });
+    } else {
+        eventsHtml = '<div style="color:#888;">No transits detected</div>';
+    }
+
+    const modal = document.createElement('div');
+    modal.id = 'compositeModal';
+    modal.style.cssText = 'position:fixed; inset:0; z-index:9999; display:flex; background:#111; overflow:hidden;';
+
+    modal.innerHTML = `
+      <div style="flex:1; overflow:auto; display:flex; align-items:flex-start; justify-content:center; background:#000; padding:8px;">
+        <img src="${imgSrc}" alt="Transit Composite" style="max-width:100%; width:auto; height:auto; display:block;" />
+      </div>
+      <div style="width:220px; min-width:220px; background:#1a1a1a; border-left:1px solid #333; padding:16px; display:flex; flex-direction:column; gap:12px; overflow-y:auto; font-size:0.85em; color:#ccc;">
+        <div style="display:flex; justify-content:space-between; align-items:center;">
+          <strong style="color:#eee; font-size:1em;">Transit Composite</strong>
+          <button onclick="document.getElementById('compositeModal').remove()"
+            style="background:none; border:1px solid #555; color:#ccc; border-radius:4px; padding:2px 8px; cursor:pointer; font-size:1.1em;" title="Close">✕</button>
+        </div>
+        <div style="color:#aaa; font-size:0.8em; word-break:break-all;">${source}</div>
+        <div style="border-top:1px solid #333; padding-top:10px;">
+          <div style="font-weight:bold; color:#aaa; margin-bottom:6px; font-size:0.9em;">Result</div>
+          ${eventsHtml}
+          <div style="margin-top:6px; color:#888; font-size:0.85em;">${detectionCount} detections · ${duration.toFixed ? duration.toFixed(1) : duration}s · disk ${diskDetected ? '✓' : '✗'}</div>
+        </div>
+        <div style="border-top:1px solid #333; padding-top:10px;">
+          <div style="font-weight:bold; color:#aaa; margin-bottom:6px; font-size:0.9em;">Legend</div>
+          <div style="display:flex; align-items:center; gap:8px; margin-bottom:5px;"><span style="flex-shrink:0; width:12px; height:12px; border:2px solid #ff4444; border-radius:50%; display:inline-block;"></span><span>Transit position</span></div>
+          <div style="display:flex; align-items:center; gap:8px; margin-bottom:5px;"><span style="flex-shrink:0; width:12px; height:12px; border:2px solid #888888; border-radius:50%; display:inline-block;"></span><span>Sunspot (filtered)</span></div>
+          <div style="display:flex; align-items:center; gap:8px; margin-bottom:5px;"><span style="flex-shrink:0; width:12px; height:12px; border:2px solid #ffff00; border-radius:50%; display:inline-block;"></span><span>Disk boundary</span></div>
+        </div>
+      </div>`;
+
+    // Close on backdrop click (left pane area)
+    modal.addEventListener('click', (e) => { if (e.target === modal) modal.remove(); });
+    // Close on Escape
+    const escHandler = (e) => { if (e.key === 'Escape') { modal.remove(); document.removeEventListener('keydown', escHandler); } };
+    document.addEventListener('keydown', escHandler);
+
+    document.body.appendChild(modal);
 }
 
 function _setScanBanner(type, text, onclick) {
@@ -3263,8 +3442,13 @@ async function startDetection() {
     if (btn) btn.disabled = true;
 
     try {
+        // Read sensitivity from the shared tuning sliders (if visible)
+        const dtEl = document.getElementById('sliderDiffThreshold');
+        const diffThreshold = dtEl ? parseInt(dtEl.value) : (parseInt(localStorage.getItem('transit_slider_sliderDiffThreshold')) || 5);
+
         const result = await apiCall('/telescope/detect/start', 'POST', {
-            record_on_detect: true
+            record_on_detect: true,
+            diff_threshold: diffThreshold,
         });
         if (result && !result.error) {
             isDetecting = true;

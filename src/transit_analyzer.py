@@ -573,7 +573,29 @@ def _write_composite_image(
         for d in transit_dets:
             cv2.circle(canvas, (d.x, d.y), max(4, d.width // 3), (0, 0, 220), -1)
 
-    # ── Draw sunspot circles (grey, one per cluster) ─────────────────────
+    # ── Draw one bounding circle per transit track ──────────────────────
+    if transit_dets:
+        import math
+        # Group transit detections into tracks (consecutive frames, near each other)
+        tdets = sorted(transit_dets, key=lambda d: d.frame_index)
+        tracks: list = [[tdets[0]]]
+        for d in tdets[1:]:
+            prev = tracks[-1][-1]
+            gap = d.frame_index - prev.frame_index
+            dist = math.hypot(d.x - prev.x, d.y - prev.y)
+            if gap <= 5 and dist < 200:
+                tracks[-1].append(d)
+            else:
+                tracks.append([d])
+
+        for track in tracks:
+            xs = [d.x for d in track]
+            ys = [d.y for d in track]
+            tcx = int(sum(xs) / len(xs))
+            tcy = int(sum(ys) / len(ys))
+            spread = max(max(xs) - min(xs), max(ys) - min(ys))
+            tr = max(20, spread // 2 + 15)
+            cv2.circle(canvas, (tcx, tcy), tr, (0, 0, 255), 2)
     if static_dets:
         PROX = 30
         used: set = set()
