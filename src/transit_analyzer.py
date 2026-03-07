@@ -575,21 +575,26 @@ def _write_composite_image(
             thickness = max(1, r // 12)
             cv2.circle(canvas, (d.x, d.y), r, (0, 0, 220), thickness)
 
-    # ── Sunspots: detect directly from reference image ───────────────────
+    # ── Sunspots: detect dark features from CLAHE-enhanced reference ─────
     if reference_gray is not None and disk_cx is not None and disk_radius is not None:
-        blur_ref = cv2.GaussianBlur(reference_gray, (5, 5), 0)
+        clahe = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(8, 8))
+        enhanced = clahe.apply(reference_gray)
+        blur_e = cv2.GaussianBlur(enhanced, (3, 3), 0)
         inner_r = int(disk_radius * (1 - DISK_MARGIN_PCT))
         spot_mask = np.zeros(reference_gray.shape[:2], dtype=np.uint8)
         cv2.circle(spot_mask, (disk_cx, disk_cy), inner_r, 255, -1)
-        mean_val = cv2.mean(blur_ref, mask=spot_mask)[0]
-        # Dark features significantly below mean brightness
-        dark_thresh = int(mean_val - 25)
-        _, dark = cv2.threshold(blur_ref, dark_thresh, 255, cv2.THRESH_BINARY_INV)
-        dark = cv2.bitwise_and(dark, spot_mask)
-        contours, _ = cv2.findContours(dark, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        adapt = cv2.adaptiveThreshold(
+            blur_e, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
+            cv2.THRESH_BINARY_INV, blockSize=51, C=8,
+        )
+        adapt = cv2.bitwise_and(adapt, spot_mask)
+        kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
+        adapt = cv2.morphologyEx(adapt, cv2.MORPH_CLOSE, kernel)
+        contours, _ = cv2.findContours(adapt, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        spot_count = 0
         for cnt in contours:
             area = cv2.contourArea(cnt)
-            if area < 20:
+            if area < 5:
                 continue
             M = cv2.moments(cnt)
             if M["m00"] == 0:
@@ -597,9 +602,11 @@ def _write_composite_image(
             sx = int(M["m10"] / M["m00"])
             sy = int(M["m01"] / M["m00"])
             _, _, sw, sh = cv2.boundingRect(cnt)
-            sr = max(12, max(sw, sh) // 2 + 8)
+            sr = max(10, max(sw, sh) // 2 + 6)
             cv2.circle(canvas, (sx, sy), sr, STATIC_COLOR, 2)
-            logger.debug(f"[Analyzer] Sunspot at ({sx},{sy}) size {sw}x{sh}")
+            spot_count += 1
+        if spot_count:
+            logger.info(f"[Analyzer] {spot_count} sunspot(s) detected")
 
     # ── Draw disk boundary (yellow) LAST so it's on top ──────────────────
     if disk_cx is not None and disk_cy is not None and disk_radius is not None:
