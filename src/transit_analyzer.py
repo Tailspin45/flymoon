@@ -545,9 +545,10 @@ def _write_composite_image(
                     # Threshold to get just the object silhouette
                     _, sil_mask = cv2.threshold(darkening, 10, 255, cv2.THRESH_BINARY)
 
-                    # Draw a small red outline circle around each detection
+                    # Draw a red outline circle sized to the detection
                     r = max(6, max(det.width, det.height) // 2 + 4)
-                    cv2.circle(canvas, (det.x, det.y), r, (0, 0, 220), 1)
+                    thickness = max(1, r // 12)
+                    cv2.circle(canvas, (det.x, det.y), r, (0, 0, 220), thickness)
 
                     if sil_mask.sum() == 0:
                         continue
@@ -571,7 +572,8 @@ def _write_composite_image(
         # No reference available — fall back to thin red outline markers
         for d in transit_dets:
             r = max(6, max(d.width, d.height) // 2 + 4)
-            cv2.circle(canvas, (d.x, d.y), r, (0, 0, 220), 1)
+            thickness = max(1, r // 12)
+            cv2.circle(canvas, (d.x, d.y), r, (0, 0, 220), thickness)
 
     # ── Static features (sunspots) ──────────────────────────────────────
         PROX = 30
