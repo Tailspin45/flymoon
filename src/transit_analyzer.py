@@ -545,19 +545,18 @@ def _write_composite_image(
                     # Threshold to get just the object silhouette
                     _, sil_mask = cv2.threshold(darkening, 10, 255, cv2.THRESH_BINARY)
 
+                    # Draw a small red outline circle around each detection
+                    r = max(6, max(det.width, det.height) // 2 + 4)
+                    cv2.circle(canvas, (det.x, det.y), r, (0, 0, 220), 1)
+
                     if sil_mask.sum() == 0:
-                        # Fallback: draw a small red marker
-                        cv2.circle(canvas, (det.x, det.y), max(3, det.width // 3),
-                                   (0, 0, 220), -1)
                         continue
 
-                    # Darken + tint the canvas where the silhouette is
+                    # Darken the object silhouette slightly so it stands out
                     roi = canvas[y1:y2, x1:x2]
                     alpha = (sil_mask.astype(np.float32) / 255.0)[:, :, np.newaxis]
-                    # Blend: make it darker and slightly red
-                    darkened = (roi.astype(np.float32) * 0.3).astype(np.uint8)
-                    tinted = cv2.addWeighted(darkened, 0.7, np.full_like(roi, TRANSIT_TINT), 0.3, 0)
-                    canvas[y1:y2, x1:x2] = (roi * (1 - alpha) + tinted * alpha).astype(np.uint8)
+                    darkened = (roi.astype(np.float32) * 0.5).astype(np.uint8)
+                    canvas[y1:y2, x1:x2] = (roi * (1 - alpha) + darkened * alpha).astype(np.uint8)
                     blended_count += 1
 
             frame_idx += 1
@@ -569,34 +568,12 @@ def _write_composite_image(
             logger.info(f"[Analyzer] Composited {blended_count} transit silhouettes from {len(frames_needed)} frames")
 
     elif transit_dets:
-        # No reference available — fall back to red dot markers
+        # No reference available — fall back to thin red outline markers
         for d in transit_dets:
-            cv2.circle(canvas, (d.x, d.y), max(4, d.width // 3), (0, 0, 220), -1)
+            r = max(6, max(d.width, d.height) // 2 + 4)
+            cv2.circle(canvas, (d.x, d.y), r, (0, 0, 220), 1)
 
-    # ── Draw one bounding circle per transit track ──────────────────────
-    if transit_dets:
-        import math
-        # Group transit detections into tracks (consecutive frames, near each other)
-        tdets = sorted(transit_dets, key=lambda d: d.frame_index)
-        tracks: list = [[tdets[0]]]
-        for d in tdets[1:]:
-            prev = tracks[-1][-1]
-            gap = d.frame_index - prev.frame_index
-            dist = math.hypot(d.x - prev.x, d.y - prev.y)
-            if gap <= 5 and dist < 200:
-                tracks[-1].append(d)
-            else:
-                tracks.append([d])
-
-        for track in tracks:
-            xs = [d.x for d in track]
-            ys = [d.y for d in track]
-            tcx = int(sum(xs) / len(xs))
-            tcy = int(sum(ys) / len(ys))
-            spread = max(max(xs) - min(xs), max(ys) - min(ys))
-            tr = max(20, spread // 2 + 15)
-            cv2.circle(canvas, (tcx, tcy), tr, (0, 0, 255), 2)
-    if static_dets:
+    # ── Static features (sunspots) ──────────────────────────────────────
         PROX = 30
         used: set = set()
         for i, sd in enumerate(static_dets):
