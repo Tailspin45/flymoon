@@ -575,25 +575,31 @@ def _write_composite_image(
             thickness = max(1, r // 12)
             cv2.circle(canvas, (d.x, d.y), r, (0, 0, 220), thickness)
 
-    # ── Static features (sunspots) ──────────────────────────────────────
-        PROX = 30
-        used: set = set()
-        for i, sd in enumerate(static_dets):
-            if i in used:
+    # ── Sunspots: detect directly from reference image ───────────────────
+    if reference_gray is not None and disk_cx is not None and disk_radius is not None:
+        blur_ref = cv2.GaussianBlur(reference_gray, (5, 5), 0)
+        inner_r = int(disk_radius * (1 - DISK_MARGIN_PCT))
+        spot_mask = np.zeros(reference_gray.shape[:2], dtype=np.uint8)
+        cv2.circle(spot_mask, (disk_cx, disk_cy), inner_r, 255, -1)
+        mean_val = cv2.mean(blur_ref, mask=spot_mask)[0]
+        # Dark features significantly below mean brightness
+        dark_thresh = int(mean_val - 25)
+        _, dark = cv2.threshold(blur_ref, dark_thresh, 255, cv2.THRESH_BINARY_INV)
+        dark = cv2.bitwise_and(dark, spot_mask)
+        contours, _ = cv2.findContours(dark, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        for cnt in contours:
+            area = cv2.contourArea(cnt)
+            if area < 20:
                 continue
-            cluster = [sd]
-            used.add(i)
-            for j in range(i + 1, len(static_dets)):
-                if j in used:
-                    continue
-                od = static_dets[j]
-                if abs(sd.x - od.x) <= PROX and abs(sd.y - od.y) <= PROX:
-                    cluster.append(od)
-                    used.add(j)
-            cx = int(sum(c.x for c in cluster) / len(cluster))
-            cy = int(sum(c.y for c in cluster) / len(cluster))
-            r = max(12, int(max(max(c.width, c.height) for c in cluster)) + 6)
-            cv2.circle(canvas, (cx, cy), r, STATIC_COLOR, 2)
+            M = cv2.moments(cnt)
+            if M["m00"] == 0:
+                continue
+            sx = int(M["m10"] / M["m00"])
+            sy = int(M["m01"] / M["m00"])
+            _, _, sw, sh = cv2.boundingRect(cnt)
+            sr = max(12, max(sw, sh) // 2 + 8)
+            cv2.circle(canvas, (sx, sy), sr, STATIC_COLOR, 2)
+            logger.debug(f"[Analyzer] Sunspot at ({sx},{sy}) size {sw}x{sh}")
 
     # ── Draw disk boundary (yellow) LAST so it's on top ──────────────────
     if disk_cx is not None and disk_cy is not None and disk_radius is not None:
