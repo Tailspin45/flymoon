@@ -32,7 +32,7 @@ from src import logger
 REFERENCE_WINDOW = 90       # frames in rolling reference (≈3 s at 30 fps)
 MIN_BLOB_PIXELS  = 20       # ignore tiny noise; a real transit blob is ≥20 px²
 DIFF_THRESHOLD   = 15       # pixel intensity difference — tuned for post-stabilization noise floor
-DISK_MARGIN_PCT  = 0.05     # fraction of radius to trim from limb (atmosphere margin)
+DISK_MARGIN_PCT  = 0.12     # fraction of radius to trim from limb (atmosphere margin)
 
 
 # ── Data classes ──────────────────────────────────────────────────────────────
@@ -308,7 +308,54 @@ def analyze_video(
         fourcc, _ = _best_fourcc()
         out = cv2.VideoWriter(str(temp_path), fourcc, fps, (w, h))
 
-    # ── Main detection loop (no annotation yet) ─────────────────────────────
+    # ── Detection helper (shared by reference-window scan & main scan) ───────
+    ref_blur_cached = [None]  # mutable container so inner fn can cache
+    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (2, 2))
+
+    def _detect_blobs_in_frame(gray: np.ndarray, fidx: int) -> List[BlobDetection]:
+        """Run blob detection on a single stabilized grayscale frame."""
+        gray_s, _ = _stabilize_frame(gray, ref_gray_f32)
+        gray_blur = cv2.GaussianBlur(gray_s, (5, 5), 0)
+        if ref_blur_cached[0] is None:
+            ref_blur_cached[0] = cv2.GaussianBlur(reference, (5, 5), 0)
+        diff = cv2.absdiff(gray_blur, ref_blur_cached[0])
+        diff_masked = cv2.bitwise_and(diff, diff, mask=mask)
+        _, binary = cv2.threshold(diff_masked, _diff_threshold, 255, cv2.THRESH_BINARY)
+        binary = cv2.morphologyEx(binary, cv2.MORPH_CLOSE, kernel)
+        binary = cv2.morphologyEx(binary, cv2.MORPH_OPEN, kernel)
+
+        num_labels, labels, stats, centroids = cv2.connectedComponentsWithStats(
+            binary, connectivity=8
+        )
+        blobs: List[BlobDetection] = []
+        for lbl in range(1, num_labels):
+            area = int(stats[lbl, cv2.CC_STAT_AREA])
+            if area < _min_blob_pixels:
+                continue
+            bx = int(stats[lbl, cv2.CC_STAT_LEFT])
+            by = int(stats[lbl, cv2.CC_STAT_TOP])
+            bw = int(stats[lbl, cv2.CC_STAT_WIDTH])
+            bh = int(stats[lbl, cv2.CC_STAT_HEIGHT])
+            bcx = bx + bw // 2
+            bcy = by + bh // 2
+            ar = bw / max(1, bh)
+            conf = _confidence(area, disk_radius)
+            dx_norm = (bcx - disk_cx) / max(1, disk_radius)
+            dy_norm = (bcy - disk_cy) / max(1, disk_radius)
+            blobs.append(BlobDetection(
+                frame_index=fidx,
+                time_seconds=round(fidx / fps, 3),
+                x=bcx, y=bcy,
+                width=bw, height=bh,
+                area_px=area,
+                aspect_ratio=round(ar, 2),
+                disk_x_norm=round(dx_norm, 3),
+                disk_y_norm=round(dy_norm, 3),
+                confidence=conf,
+            ))
+        return blobs
+
+    # ── Main detection loop ───────────────────────────────────────────────────
     detections: List[BlobDetection] = []
     frame_idx = 0
 
@@ -326,71 +373,21 @@ def analyze_video(
             if len(ref_buffer) >= ref_window:
                 reference = np.median(np.stack(ref_buffer), axis=0).astype(np.uint8)
                 ref_gray_f32 = reference.astype(np.float32)
-                # Use the middle frame of the reference window as the composite background
                 ref_bgr_frame = list(ref_buffer_bgr)[len(ref_buffer_bgr) // 2].copy()
                 logger.info(f"[Analyzer] Reference locked at frame {frame_idx}")
+                # Scan the reference-window frames we just collected
+                for ri, ref_gray_frame in enumerate(ref_buffer):
+                    detections.extend(_detect_blobs_in_frame(ref_gray_frame, ri))
             frame_idx += 1
             continue
 
-        # Stabilize: translate frame to align with reference (corrects atmospheric drift)
-        gray, _ = _stabilize_frame(gray, ref_gray_f32)
-
-        # Blur both to suppress sensor noise while preserving real transit blobs
-        gray_blur = cv2.GaussianBlur(gray, (5, 5), 0)
-        ref_blur = cv2.GaussianBlur(reference, (5, 5), 0)
-
-        # Difference inside disk only
-        diff = cv2.absdiff(gray_blur, ref_blur)
-        diff_masked = cv2.bitwise_and(diff, diff, mask=mask)
-
-        # Threshold
-        _, binary = cv2.threshold(diff_masked, _diff_threshold, 255, cv2.THRESH_BINARY)
-
-        # Morphological cleanup — use small kernel to preserve tiny transit blobs
-        kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (2, 2))
-        binary = cv2.morphologyEx(binary, cv2.MORPH_CLOSE, kernel)  # fill gaps first
-        binary = cv2.morphologyEx(binary, cv2.MORPH_OPEN, kernel)   # then remove noise
-
-        # Blob analysis
-        num_labels, labels, stats, centroids = cv2.connectedComponentsWithStats(
-            binary, connectivity=8
-        )
-
-        for lbl in range(1, num_labels):  # skip background (0)
-            area = int(stats[lbl, cv2.CC_STAT_AREA])
-            if area < _min_blob_pixels:
-                continue
-
-            bx = int(stats[lbl, cv2.CC_STAT_LEFT])
-            by = int(stats[lbl, cv2.CC_STAT_TOP])
-            bw = int(stats[lbl, cv2.CC_STAT_WIDTH])
-            bh = int(stats[lbl, cv2.CC_STAT_HEIGHT])
-            bcx = bx + bw // 2
-            bcy = by + bh // 2
-
-            ar = bw / max(1, bh)
-            conf = _confidence(area, disk_radius)
-
-            dx_norm = (bcx - disk_cx) / max(1, disk_radius)
-            dy_norm = (bcy - disk_cy) / max(1, disk_radius)
-
-            det = BlobDetection(
-                frame_index=frame_idx,
-                time_seconds=round(frame_idx / fps, 3),
-                x=bcx, y=bcy,
-                width=bw, height=bh,
-                area_px=area,
-                aspect_ratio=round(ar, 2),
-                disk_x_norm=round(dx_norm, 3),
-                disk_y_norm=round(dy_norm, 3),
-                confidence=conf,
-            )
-            detections.append(det)
+        gray_s, _ = _stabilize_frame(gray, ref_gray_f32)
+        detections.extend(_detect_blobs_in_frame(gray, frame_idx))
 
         frame_idx += 1
 
         if progress_cb and frame_idx % 30 == 0:
-            progress_cb(frame_idx / max(1, total_frames) * 0.7)  # 70% for detection
+            progress_cb(frame_idx / max(1, total_frames) * 0.7)
 
     cap.release()
 
@@ -733,21 +730,22 @@ def _filter_transit_coherence(
     fps: float,
     max_duration_sec: float = 3.0,
     min_travel_px: float = 40.0,
-    max_blobs_per_frame: int = 3,
+    min_speed_px_s: float = 80.0,
+    max_link_px: float = 150.0,
 ) -> List[BlobDetection]:
     """Keep only detections that form coherent transit-like paths.
 
-    A real transit:
-      - Is ONE object (≤3 blobs/frame accounting for split silhouettes)
-      - Lasts 0.1–3 seconds
-      - Traces a roughly linear path ≥40 px long
-      - Appears in roughly consecutive frames
+    A real transit is ONE object crossing the disk in 0.1–3 s at high speed.
+    This filter builds individual object tracks by linking the nearest blob
+    in consecutive frames, then evaluates each track for transit-like motion.
 
     Algorithm:
       1. Group moving detections into temporal runs (≤0.5 s gap).
-      2. Within each run, keep only the LARGEST blob per frame (the real object).
-      3. Check travel distance and per-frame scatter.
-      4. Discard runs that are scattered noise.
+      2. Within each run, build object tracks by greedy nearest-neighbor
+         linking across frames (max ``max_link_px`` per frame step).
+      3. Evaluate each track: must travel ≥40 px, speed ≥80 px/s,
+         and follow a roughly linear path.
+      4. Return only detections that belong to qualifying tracks.
     """
     if not detections:
         return []
@@ -755,10 +753,9 @@ def _filter_transit_coherence(
     import math
     from collections import defaultdict
 
-    # Sort by time
     dets = sorted(detections, key=lambda d: (d.time_seconds, d.x))
 
-    # Group into temporal runs
+    # ── 1. Temporal runs ────────────────────────────────────────────────
     runs: List[List[BlobDetection]] = [[dets[0]]]
     for d in dets[1:]:
         if d.time_seconds - runs[-1][-1].time_seconds <= 0.5:
@@ -767,72 +764,98 @@ def _filter_transit_coherence(
             runs.append([d])
 
     kept: List[BlobDetection] = []
+
     for run in runs:
         duration = run[-1].time_seconds - run[0].time_seconds
-
-        # Too long → not a transit
         if duration > max_duration_sec:
             continue
 
-        # Group by frame, keep only the largest blob per frame
+        # ── 2. Build per-frame blob lists ───────────────────────────────
         by_frame: dict = defaultdict(list)
         for d in run:
             by_frame[d.frame_index].append(d)
+        frame_ids = sorted(by_frame.keys())
 
-        # If too many frames have many blobs, it's scattered noise
-        multi_blob_frames = sum(1 for f in by_frame.values() if len(f) > max_blobs_per_frame)
-        if multi_blob_frames > len(by_frame) * 0.5:
-            continue  # >50% of frames have too many blobs → noise burst
-
-        # Pick the largest blob per frame to form the "track"
-        track = []
-        for fi in sorted(by_frame.keys()):
-            best = max(by_frame[fi], key=lambda d: d.area_px)
-            track.append(best)
-
-        if len(track) < 2:
-            # Single-frame detection — only keep if the blob is large enough
-            # to be a real object (not a 1-frame noise spike)
+        if len(frame_ids) < 2:
+            # Single-frame: keep only large blobs (likely real object)
             if run[0].area_px >= 200:
                 kept.extend(run)
             continue
 
-        # Compute travel: smooth first→last using 3-frame averages
-        n = min(3, len(track))
-        first = track[:n]
-        last  = track[-n:]
-        cx0 = sum(d.x for d in first) / len(first)
-        cy0 = sum(d.y for d in first) / len(first)
-        cx1 = sum(d.x for d in last)  / len(last)
-        cy1 = sum(d.y for d in last)  / len(last)
-        travel = math.hypot(cx1 - cx0, cy1 - cy0)
+        # ── 3. Greedy nearest-neighbor tracking ─────────────────────────
+        # Each "track" is a list of BlobDetections, one per frame.
+        # Start a track from every blob in the first frame, then extend
+        # greedily.  Blobs not linked to any track start new tracks.
+        tracks: List[List[BlobDetection]] = []
+        used_ids: set = set()  # id(det) of already-assigned detections
 
-        # Must travel meaningfully (any multi-frame run)
-        if len(track) >= 2 and travel < min_travel_px:
-            continue
+        # Seed tracks from the first frame
+        for d in by_frame[frame_ids[0]]:
+            tracks.append([d])
+            used_ids.add(id(d))
 
-        # Minimum speed check: a real transit crosses the disk fast.
-        # Aircraft transiting the solar disk travel 400-2700 px/s.
-        # Use 80 px/s as a conservative floor.
-        if duration > 0:
-            speed = travel / duration
-            if speed < 80:
+        for fi in frame_ids[1:]:
+            candidates = by_frame[fi]
+            # For each existing track, try to extend with nearest candidate
+            claimed: set = set()
+            for track in tracks:
+                tail = track[-1]
+                best_d = None
+                best_dist = max_link_px
+                for c in candidates:
+                    if id(c) in claimed:
+                        continue
+                    dist = math.hypot(c.x - tail.x, c.y - tail.y)
+                    if dist < best_dist:
+                        best_dist = dist
+                        best_d = c
+                if best_d is not None:
+                    track.append(best_d)
+                    claimed.add(id(best_d))
+                    used_ids.add(id(best_d))
+            # Start new tracks from unclaimed blobs
+            for c in candidates:
+                if id(c) not in claimed:
+                    tracks.append([c])
+                    used_ids.add(id(c))
+
+        # ── 4. Evaluate each track ──────────────────────────────────────
+        for track in tracks:
+            if len(track) < 3:
+                continue  # need ≥3 points to confirm a path
+
+            t_dur = track[-1].time_seconds - track[0].time_seconds
+            if t_dur > max_duration_sec or t_dur <= 0:
                 continue
 
-        # Check spatial coherence: max deviation from the first→last line
-        # should be small relative to travel (a real transit is nearly linear)
-        if travel > 10 and len(track) > 3:
-            vx, vy = cx1 - cx0, cy1 - cy0
-            vlen = math.hypot(vx, vy)
-            nx, ny = -vy / vlen, vx / vlen  # normal to the line
-            max_dev = 0
-            for d in track:
-                dev = abs((d.x - cx0) * nx + (d.y - cy0) * ny)
-                max_dev = max(max_dev, dev)
-            if max_dev > travel * 0.4:
-                continue  # deviates >40% from straight line → not a transit
+            # Travel (3-frame averaged endpoints)
+            n = min(3, len(track))
+            cx0 = sum(d.x for d in track[:n]) / n
+            cy0 = sum(d.y for d in track[:n]) / n
+            cx1 = sum(d.x for d in track[-n:]) / n
+            cy1 = sum(d.y for d in track[-n:]) / n
+            travel = math.hypot(cx1 - cx0, cy1 - cy0)
 
-        kept.extend(run)
+            if travel < min_travel_px:
+                continue
+
+            speed = travel / t_dur
+            if speed < min_speed_px_s:
+                continue
+
+            # Linearity: max deviation from straight line < 40% of travel
+            if travel > 10 and len(track) > 3:
+                vx, vy = cx1 - cx0, cy1 - cy0
+                vlen = math.hypot(vx, vy)
+                nx, ny = -vy / vlen, vx / vlen
+                max_dev = max(
+                    abs((d.x - cx0) * nx + (d.y - cy0) * ny) for d in track
+                )
+                if max_dev > travel * 0.4:
+                    continue
+
+            # This track is a real transit — keep all its detections
+            kept.extend(track)
 
     return kept
 
