@@ -802,6 +802,8 @@ def list_telescope_files():
                             (".jpg", ".jpeg", ".png", ".mp4", ".avi")
                         )
                         and "_thumb." not in filename.lower()
+                        and "_tmp."
+                        not in filename.lower()  # skip in-progress temp files
                     ):
                         full_path = os.path.join(root, filename)
                         rel_path = os.path.relpath(full_path, "static")
