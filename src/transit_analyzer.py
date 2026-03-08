@@ -650,6 +650,15 @@ def _write_composite_image(
         for d in transit_dets:
             frames_needed[d.frame_index].append(d)
 
+        # For moon: FTF produces many blobs per frame (leading/trailing edges).
+        # Keep only the largest detection per frame to avoid circle clutter.
+        if is_moon:
+            for fi in frames_needed:
+                dets = frames_needed[fi]
+                if len(dets) > 1:
+                    dets.sort(key=lambda d: d.width * d.height, reverse=True)
+                    frames_needed[fi] = [dets[0]]
+
         cap = cv2.VideoCapture(str(src))
         frame_idx = 0
         blended_count = 0
@@ -673,18 +682,34 @@ def _write_composite_image(
                     x2 = min(w, det.x + det.width // 2 + pad)
                     y2 = min(h, det.y + det.height // 2 + pad)
 
-                    # Diff patch: where this frame is darker than the reference
                     ref_patch = reference_gray[y1:y2, x1:x2].astype(np.int16)
                     cur_patch = gray[y1:y2, x1:x2].astype(np.int16)
-                    darkening = np.clip(ref_patch - cur_patch, 0, 255).astype(np.uint8)
 
-                    # Threshold to get just the object silhouette
-                    _, sil_mask = cv2.threshold(darkening, 10, 255, cv2.THRESH_BINARY)
+                    if is_moon:
+                        # Moon: aircraft can be lighter OR darker than
+                        # background, so use absolute difference.
+                        abs_diff = np.abs(ref_patch - cur_patch).astype(np.uint8)
+                        _, sil_mask = cv2.threshold(
+                            abs_diff, 12, 255, cv2.THRESH_BINARY
+                        )
+                    else:
+                        # Sun: aircraft is always darker (silhouette)
+                        darkening = np.clip(
+                            ref_patch - cur_patch, 0, 255
+                        ).astype(np.uint8)
+                        _, sil_mask = cv2.threshold(
+                            darkening, 10, 255, cv2.THRESH_BINARY
+                        )
 
-                    # Draw a red outline circle sized to the detection
+                    # Annotation circle — subtle for moon, bolder for sun
                     r = max(6, max(det.width, det.height) // 2 + 4)
-                    thickness = max(1, r // 12)
-                    cv2.circle(canvas, (det.x, det.y), r, (0, 0, 220), thickness)
+                    if is_moon:
+                        cv2.circle(canvas, (det.x, det.y), r, (0, 0, 220), 1)
+                    else:
+                        thickness = max(1, r // 12)
+                        cv2.circle(
+                            canvas, (det.x, det.y), r, (0, 0, 220), thickness
+                        )
 
                     if sil_mask.sum() == 0:
                         continue
@@ -787,8 +812,15 @@ def _write_composite_image(
         if spot_count:
             logger.info(f"[Analyzer] {spot_count} sunspot(s) detected")
 
-    # ── Mask outside disk to clean black ─────────────────────────────────
-    if disk_cx is not None and disk_cy is not None and disk_radius is not None:
+    # ── Mask outside disk to clean black (sun only) ─────────────────────
+    # For moon, the aircraft is visible against the dark sky near the limb,
+    # so we preserve the area around the disk.
+    if (
+        not is_moon
+        and disk_cx is not None
+        and disk_cy is not None
+        and disk_radius is not None
+    ):
         outside_mask = np.zeros(canvas.shape[:2], dtype=np.uint8)
         cv2.circle(outside_mask, (disk_cx, disk_cy), disk_radius + 2, 255, -1)
         canvas[outside_mask == 0] = 0
