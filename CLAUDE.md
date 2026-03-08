@@ -123,7 +123,14 @@ python3 src/config_wizard.py --setup
 - `/flights` - Query flights in bounding box with transit predictions
 - `/flights/<id>/route` - Forward flight route data
 - `/flights/<id>/track` - Historical track data
-- `/telescope/*` - Telescope control (see `src/telescope_routes.py`)
+- `/telescope/connect`, `/telescope/disconnect`, `/telescope/status` – Connection management
+- `/telescope/target/sun`, `/telescope/target/moon` – Switch viewing mode
+- `/telescope/recording/start`, `/telescope/recording/stop` – Video recording
+- `/telescope/preview/stream.mjpg` – Live MJPEG preview
+- `/telescope/files`, `/telescope/files/delete`, `/telescope/files/analyze` – Capture file management
+- `/telescope/composite` – Analyzed composite image viewer with sidecar legend
+- `/telescope/detect/start`, `/telescope/detect/stop`, `/telescope/detect/status`, `/telescope/detect/events` – Real-time detection (TransitDetector)
+- `/telescope/discover` – Auto-discover Seestar on local subnet
 - `/gallery` - Transit image gallery (write operations require auth token)
 
 **Telescope Integration** (`src/seestar_client.py`):
@@ -278,7 +285,9 @@ logger.error("message")
 ├── Makefile                  # Build commands
 ├── src/                      # Core modules
 │   ├── astro.py             # CelestialObject, Skyfield wrapper
-│   ├── transit.py           # Transit detection & classification
+│   ├── transit.py           # Transit prediction & classification
+│   ├── transit_detector.py  # Real-time detection from RTSP stream
+│   ├── transit_analyzer.py  # Post-capture video analysis
 │   ├── flight_data.py       # FlightAware API client
 │   ├── flight_cache.py      # In-memory flight data cache
 │   ├── position.py          # Coordinate transforms & prediction

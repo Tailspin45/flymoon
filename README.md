@@ -85,9 +85,9 @@ Access the web interface at `http://localhost:8000` or the displayed LAN address
 
 Transits are ranked by the angular separation between aircraft and celestial target:
 
-- **🟢 High** - ≤1° separation (direct transit very likely)
-- **🟠 Medium** - ≤2° separation (near miss, worth recording)
-- **⚪ Low** - ≤3° separation (possible distant transit)
+- **🟢 High** - ≤1.5° separation (direct transit very likely)
+- **🟠 Medium** - ≤2.5° separation (near miss, worth recording)
+- **⚪ Low** - ≤3.0° separation (possible distant transit)
 
 ## 🗺️ Map Features
 

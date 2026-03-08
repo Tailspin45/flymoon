@@ -935,21 +935,110 @@ def analyze_file():
 
         result = _run()
 
+        base = os.path.splitext(file_path)[0].replace("analyzed_", "")
+        folder = os.path.dirname(base)
+        stem = os.path.basename(base)
         return jsonify({
-            "success":        True,
-            "disk_detected":  result.disk_detected,
-            "duration":       result.duration_seconds,
-            "transit_events": result.transit_events,
+            "success":         True,
+            "disk_detected":   result.disk_detected,
+            "duration":        result.duration_seconds,
+            "transit_events":  result.transit_events,
             "detection_count": len(result.detections),
             "static_detections": sum(1 for d in result.detections if d.is_static),
-            "annotated_file": os.path.splitext(file_path)[0].replace("_analyzed", "") + "_analyzed.mp4",
-            "sidecar_file":   os.path.splitext(file_path)[0].replace("_analyzed", "") + "_analysis.json",
-            "error":          result.error,
+            "composite_image": folder + "/analyzed_" + stem + ".jpg",
+            "annotated_file":  folder + "/analyzed_" + stem + ".jpg",
+            "sidecar_file":    folder + "/analyzed_" + stem + "_analysis.json",
+            "error":           result.error,
         }), 200
 
     except Exception as e:
         logger.error(f"[Telescope] Analysis error: {e}")
         return handle_error(e)
+
+
+def composite_viewer():
+    """GET /telescope/composite?path=captures/2026/03/analyzed_vid_xxx.jpg"""
+    img_path = request.args.get("path", "")
+    if not img_path:
+        return "Missing path", 400
+
+    captures_abs = os.path.abspath("static/captures")
+    abs_path = os.path.abspath(os.path.join("static", img_path))
+    if not abs_path.startswith(captures_abs):
+        return "Forbidden", 403
+    if not os.path.exists(abs_path):
+        return "Image not found", 404
+
+    # Load sidecar JSON for legend data
+    sidecar_path = abs_path.replace(".jpg", "_analysis.json")
+    sidecar = {}
+    if os.path.exists(sidecar_path):
+        import json as _json
+        with open(sidecar_path) as f:
+            sidecar = _json.load(f)
+
+    events = sidecar.get("transit_events", [])
+    detection_count = sidecar.get("detection_count", 0)
+    static_count = sidecar.get("detection_count", 0) - len(
+        [e for e in events])  # rough
+    disk_detected = sidecar.get("disk_detected", False)
+    duration = sidecar.get("duration_seconds", 0)
+    source = os.path.basename(sidecar.get("source_file", img_path))
+
+    events_html = ""
+    for i, evt in enumerate(events, 1):
+        t = round((evt.get("start_seconds", 0) + evt.get("end_seconds", 0)) / 2, 2)
+        ms = evt.get("duration_ms", 0)
+        conf = evt.get("confidence", "")
+        events_html += f'<div class="evt-row">Transit {i}: {t}s (~{ms}ms) <span class="conf conf-{conf}">{conf}</span></div>'
+    if not events_html:
+        events_html = '<div style="color:#888;">No transits detected</div>'
+
+    img_url = "/static/" + img_path
+
+    html = f"""<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Transit Composite — {source}</title>
+<style>
+* {{ box-sizing: border-box; margin: 0; padding: 0; }}
+body {{ background: #111; color: #ccc; font-family: sans-serif; height: 100vh; display: flex; overflow: hidden; }}
+#imgPane {{ flex: 1; display: flex; align-items: center; justify-content: center; overflow: hidden; background: #000; }}
+#imgPane img {{ max-width: 100%; max-height: 100vh; object-fit: contain; }}
+#sidePanel {{ width: 220px; min-width: 220px; background: #1a1a1a; border-left: 1px solid #333; padding: 16px; display: flex; flex-direction: column; gap: 12px; overflow-y: auto; font-size: 0.85em; }}
+h2 {{ font-size: 1em; color: #eee; }}
+.section {{ border-top: 1px solid #333; padding-top: 10px; }}
+.section-title {{ font-weight: bold; color: #aaa; margin-bottom: 6px; font-size: 0.9em; }}
+.evt-row {{ margin-bottom: 4px; }}
+.conf {{ font-size: 0.8em; padding: 1px 5px; border-radius: 3px; }}
+.conf-high {{ background: #1a4a1a; color: #4dff88; }}
+.conf-medium {{ background: #4a3a00; color: #ffcc44; }}
+.conf-low {{ background: #333; color: #aaa; }}
+.leg-row {{ display: flex; align-items: center; gap: 8px; margin-bottom: 5px; }}
+.leg-dot {{ flex-shrink: 0; width: 12px; height: 12px; border-radius: 50%; border: 2px solid; }}
+</style>
+</head>
+<body>
+<div id="imgPane"><img src="{img_url}" /></div>
+<div id="sidePanel">
+  <h2>Transit Composite</h2>
+  <div style="color:#aaa; font-size:0.8em;">{source}</div>
+  <div class="section">
+    <div class="section-title">Result</div>
+    {events_html}
+    <div style="margin-top:6px; color:#888; font-size:0.85em;">{detection_count} detections · {round(duration,1)}s · disk {'✓' if disk_detected else '✗'}</div>
+  </div>
+  <div class="section">
+    <div class="section-title">Legend</div>
+    <div class="leg-row"><span class="leg-dot" style="border-color:#ff4444;"></span><span>Transit position</span></div>
+    <div class="leg-row"><span class="leg-dot" style="border-color:#888888;"></span><span>Sunspot (filtered)</span></div>
+    <div class="leg-row"><span class="leg-dot" style="border-color:#ffff00;"></span><span>Disk boundary</span></div>
+  </div>
+</div>
+</body>
+</html>"""
+    return html, 200, {"Content-Type": "text/html"}
 
 
 # Photo Capture Endpoint
@@ -1514,6 +1603,13 @@ def register_routes(app):
         methods=["POST"],
     )
 
+    app.add_url_rule(
+        "/telescope/composite",
+        "telescope_composite_viewer",
+        composite_viewer,
+        methods=["GET"],
+    )
+
     # Transit monitoring
     app.add_url_rule(
         "/telescope/transit/status",
@@ -1651,13 +1747,19 @@ def start_detection():
 
         # Optional params
         record = True
+        sensitivity_scale = 1.0
         try:
             if request.is_json and request.json:
                 record = request.json.get("record_on_detect", True)
+                diff_threshold = request.json.get("diff_threshold")
+                if diff_threshold is not None:
+                    # Map diff_threshold (1-30, default 5) → sensitivity_scale
+                    # Lower diff_threshold = more sensitive = lower scale
+                    sensitivity_scale = float(diff_threshold) / 5.0
         except Exception:
             pass
 
-        det = start_detector(rtsp_url, record_on_detect=record)
+        det = start_detector(rtsp_url, record_on_detect=record, sensitivity_scale=sensitivity_scale)
         return jsonify({"success": True, **det.get_status()}), 200
 
     except Exception as e:

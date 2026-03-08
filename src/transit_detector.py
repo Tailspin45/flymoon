@@ -119,12 +119,14 @@ class TransitDetector:
         on_detection: Optional[Callable[["DetectionEvent"], None]] = None,
         on_status: Optional[Callable[[Dict], None]] = None,
         record_on_detect: bool = True,
+        sensitivity_scale: float = 1.0,
     ):
         self.rtsp_url = rtsp_url
         self.capture_dir = capture_dir
         self.on_detection = on_detection
         self.on_status = on_status
         self.record_on_detect = record_on_detect
+        self.sensitivity_scale = max(0.1, float(sensitivity_scale))
 
         self._running = False
         self._process: Optional[subprocess.Popen] = None
@@ -360,8 +362,8 @@ class TransitDetector:
             return
 
         # --- Adaptive threshold ---
-        thresh_a = self._adaptive_threshold(self._scores_a)
-        thresh_b = self._adaptive_threshold(self._scores_b)
+        thresh_a = self._adaptive_threshold(self._scores_a) * self.sensitivity_scale
+        thresh_b = self._adaptive_threshold(self._scores_b) * self.sensitivity_scale
 
         # --- Detection check ---
         triggered = (score_a > thresh_a) or (score_b > thresh_b)
