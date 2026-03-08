@@ -677,16 +677,21 @@ def _write_composite_image(
                     dets.sort(key=lambda d: d.width * d.height, reverse=True)
                     frames_needed[fi] = [dets[0]]
 
-        # Subsample to max_positions evenly-spaced frames if requested
+        # Subsample to max_positions evenly-spaced frames if requested.
+        # Special case: max_positions=1 picks the middle frame.
         sorted_frame_keys = sorted(frames_needed.keys())
         if max_positions and 0 < max_positions < len(sorted_frame_keys):
-            step = (len(sorted_frame_keys) - 1) / max(1, max_positions - 1)
-            sampled = [
-                sorted_frame_keys[round(i * step)]
-                for i in range(max_positions)
-            ]
-            sampled_set = set(sampled)
-            frames_needed = {k: v for k, v in frames_needed.items() if k in sampled_set}
+            if max_positions == 1:
+                mid = sorted_frame_keys[len(sorted_frame_keys) // 2]
+                frames_needed = {mid: frames_needed[mid]}
+            else:
+                step = (len(sorted_frame_keys) - 1) / (max_positions - 1)
+                sampled = [
+                    sorted_frame_keys[round(i * step)]
+                    for i in range(max_positions)
+                ]
+                sampled_set = set(sampled)
+                frames_needed = {k: v for k, v in frames_needed.items() if k in sampled_set}
 
         cap = cv2.VideoCapture(str(src))
         frame_idx = 0
