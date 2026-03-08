@@ -677,21 +677,69 @@ def _write_composite_image(
                     dets.sort(key=lambda d: d.width * d.height, reverse=True)
                     frames_needed[fi] = [dets[0]]
 
-        # Subsample to max_positions evenly-spaced frames if requested.
-        # Special case: max_positions=1 picks the middle frame.
+        # ── Pre-qualify frames: trim edge positions and check silhouette ──
+        # Edge frames (first/last 15% of detection span) often show partial
+        # aircraft entering/leaving the field.  Additionally, some frames
+        # produce zero silhouette pixels — skip those entirely so the
+        # requested position count is always honoured by real objects.
         sorted_frame_keys = sorted(frames_needed.keys())
-        if max_positions and 0 < max_positions < len(sorted_frame_keys):
+        if len(sorted_frame_keys) > 4:
+            trim = max(1, len(sorted_frame_keys) // 7)  # ~15%
+            sorted_frame_keys = sorted_frame_keys[trim:-trim]
+
+        # Quick silhouette-quality scan: read video once to score each frame
+        good_frame_keys = []
+        if reference_gray is not None and sorted_frame_keys:
+            _cap_pre = cv2.VideoCapture(str(src))
+            _fi = 0
+            _key_set = set(sorted_frame_keys)
+            while True:
+                _ok, _frm = _cap_pre.read()
+                if not _ok:
+                    break
+                if _fi in _key_set:
+                    _gr = cv2.cvtColor(_frm, cv2.COLOR_BGR2GRAY)
+                    if ref_gray_f32 is not None:
+                        _gr, _ = _stabilize_frame(_gr, ref_gray_f32)
+                    det = frames_needed[_fi][0]
+                    pad = max(det.width, det.height, 8)
+                    _h, _w = _gr.shape
+                    x1 = max(0, det.x - det.width // 2 - pad)
+                    y1 = max(0, det.y - det.height // 2 - pad)
+                    x2 = min(_w, det.x + det.width // 2 + pad)
+                    y2 = min(_h, det.y + det.height // 2 + pad)
+                    ref_p = reference_gray[y1:y2, x1:x2].astype(np.int16)
+                    cur_p = _gr[y1:y2, x1:x2].astype(np.int16)
+                    if is_moon:
+                        diff_p = np.abs(ref_p - cur_p).astype(np.uint8)
+                    else:
+                        diff_p = np.clip(ref_p - cur_p, 0, 255).astype(np.uint8)
+                    _, _sil = cv2.threshold(diff_p, 12 if is_moon else 10, 255, cv2.THRESH_BINARY)
+                    if _sil.sum() > 0:
+                        good_frame_keys.append(_fi)
+                _fi += 1
+            _cap_pre.release()
+        else:
+            good_frame_keys = sorted_frame_keys
+
+        # Subsample from good frames to exactly max_positions if requested.
+        # Special case: max_positions=1 picks the middle frame.
+        if max_positions and 0 < max_positions < len(good_frame_keys):
             if max_positions == 1:
-                mid = sorted_frame_keys[len(sorted_frame_keys) // 2]
-                frames_needed = {mid: frames_needed[mid]}
+                mid = good_frame_keys[len(good_frame_keys) // 2]
+                good_frame_keys = [mid]
             else:
-                step = (len(sorted_frame_keys) - 1) / (max_positions - 1)
-                sampled = [
-                    sorted_frame_keys[round(i * step)]
+                step = (len(good_frame_keys) - 1) / (max_positions - 1)
+                good_frame_keys = list(dict.fromkeys(
+                    good_frame_keys[round(i * step)]
                     for i in range(max_positions)
-                ]
-                sampled_set = set(sampled)
-                frames_needed = {k: v for k, v in frames_needed.items() if k in sampled_set}
+                ))
+        frames_needed = {k: frames_needed[k] for k in good_frame_keys if k in frames_needed}
+        logger.info(
+            f"[Analyzer] Composite: {len(frames_needed)} frame(s) selected"
+            f" (max_positions={max_positions}, good={len(good_frame_keys)})"
+            f" keys={sorted(frames_needed.keys())}"
+        )
 
         cap = cv2.VideoCapture(str(src))
         frame_idx = 0
@@ -736,14 +784,11 @@ def _write_composite_image(
                         )
 
                     # Annotation circle — moon: only for tiny objects that
-                    # would be hard to spot; sun: always draw.
-                    # When max_positions is set, always draw so every
-                    # requested position is visible even if silhouette is empty.
+                    # would be hard to spot without a marker; sun: always draw.
                     r = max(6, max(det.width, det.height) // 2 + 4)
                     blob_size = max(det.width, det.height)
-                    _force_circle = max_positions is not None
                     if is_moon:
-                        if blob_size < 20 or _force_circle:
+                        if blob_size < 20:
                             cv2.circle(
                                 canvas, (det.x, det.y), r, (0, 0, 220), 1
                             )
