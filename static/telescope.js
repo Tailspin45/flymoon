@@ -2126,6 +2126,19 @@ function viewerDownload() {
     const files = window.currentFiles || [];
     if (_viewerIndex < 0 || _viewerIndex >= files.length) return;
     const f = files[_viewerIndex];
+
+    // If a composite JPG was produced, offer that for download instead
+    const panel = document.getElementById('analysisLegendPanel');
+    const preview = panel && document.getElementById('compositePreview');
+    if (preview && preview.src) {
+        // Strip query-string cache-buster and extract just the path
+        const srcUrl = new URL(preview.src);
+        const jpgPath = srcUrl.pathname; // e.g. /static/captures/.../analyzed_x.jpg
+        const jpgName = jpgPath.replace(/^.*\//, '');
+        downloadFile(jpgPath, jpgName);
+        return;
+    }
+
     downloadFile(f.path, f.name);
 }
 
