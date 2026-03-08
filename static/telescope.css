@@ -877,6 +877,32 @@ canvas.video-thumb-canvas {
 .btn-viewer-scan:hover:not(:disabled) {
     background: rgba(0, 180, 255, 0.3);
 }
+.btn-viewer-sun {
+    background: rgba(255, 200, 0, 0.18);
+    border-color: rgba(255, 200, 0, 0.5);
+    color: #ffe066;
+    font-weight: 600;
+}
+.btn-viewer-sun:hover:not(:disabled) {
+    background: rgba(255, 200, 0, 0.32);
+}
+.btn-viewer-sun:disabled {
+    opacity: 0.35;
+    cursor: default;
+}
+.btn-viewer-moon {
+    background: rgba(160, 190, 255, 0.15);
+    border-color: rgba(160, 190, 255, 0.45);
+    color: #b8ccff;
+    font-weight: 600;
+}
+.btn-viewer-moon:hover:not(:disabled) {
+    background: rgba(160, 190, 255, 0.28);
+}
+.btn-viewer-moon:disabled {
+    opacity: 0.35;
+    cursor: default;
+}
 
 /* Scan result banner shown below the viewer header */
 #scanResultBanner {

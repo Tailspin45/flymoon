@@ -2034,9 +2034,8 @@ function viewFile(path, name, opts) {
         const hasNext = _viewerIndex >= 0 && _viewerIndex < files.length - 1;
         const scanBtn = isVideo
             ? `<button class="btn-viewer" onmousedown="frameStepStart(-1)" onmouseup="frameStepStop()" onmouseleave="frameStepStop()" title="Back 1 frame (hold to repeat)">◁</button>` +
-              `<select id="scanTargetSelect" class="btn-viewer" title="Target body for analysis" style="font-size:0.8em; padding:3px 6px; cursor:pointer; background:#2a2a2a; color:#ccc; border:1px solid #555; border-radius:4px;">` +
-              `<option value="auto">🎯 Auto</option><option value="sun">☀️ Sun</option><option value="moon">🌙 Moon</option></select>` +
-              `<button class="btn-viewer btn-viewer-scan" id="scanTransitBtn" onclick="scanTransit()" title="Analyze video for transits">🔍 Find Transit</button>` +
+              `<button class="btn-viewer btn-viewer-sun" id="scanTransitBtn" onclick="scanTransit('sun')" title="Analyze for solar transit">☀️ Solar Transit</button>` +
+              `<button class="btn-viewer btn-viewer-moon" onclick="scanTransit('moon')" title="Analyze for lunar transit">🌙 Lunar Transit</button>` +
               `<button class="btn-viewer" onmousedown="frameStepStart(1)" onmouseup="frameStepStop()" onmouseleave="frameStepStop()" title="Forward 1 frame (hold to repeat)">▷</button>`
             : '';
         // Show composite image button if an analyzed_xxx.jpg exists for this file
@@ -2169,7 +2168,7 @@ async function viewerDelete(e) {
 
 var _analyzeController = null;  // AbortController for in-flight analysis
 
-async function scanTransit() {
+async function scanTransit(target) {
     const files = window.currentFiles || [];
     if (_viewerIndex < 0 || _viewerIndex >= files.length) return;
     const f = files[_viewerIndex];
@@ -2184,8 +2183,7 @@ async function scanTransit() {
 
     // Read tuning slider values BEFORE removing the old panel
     const sliderBody = {};
-    const targetEl = document.getElementById('scanTargetSelect');
-    if (targetEl) sliderBody.target = targetEl.value;
+    sliderBody.target = (target === 'moon') ? 'moon' : 'sun';
     const dtEl = document.getElementById('sliderDiffThreshold');
     const mbEl = document.getElementById('sliderMinBlob');
     const dmEl = document.getElementById('sliderDiskMargin');
@@ -2197,7 +2195,9 @@ async function scanTransit() {
     const oldPanel = document.getElementById('analysisLegendPanel');
     if (oldPanel) oldPanel.remove();
 
-    if (btn) { btn.disabled = true; btn.textContent = '🔍 Analyzing…'; }
+    const moonScanBtn = document.querySelector('.btn-viewer-moon');
+    if (btn) { btn.disabled = true; btn.textContent = (sliderBody.target === 'moon') ? '🌙 Analyzing…' : '☀️ Analyzing…'; }
+    if (moonScanBtn) moonScanBtn.disabled = true;
     // Show stop button
     _showStopAnalysisBtn(true);
     // Pulse the button text with frame count estimate
@@ -2259,7 +2259,9 @@ async function scanTransit() {
         clearInterval(_analyzeTimer);
         _analyzeController = null;
         _showStopAnalysisBtn(false);
-        if (btn) { btn.disabled = false; btn.textContent = '🎯 Find Transit'; }
+        if (btn) { btn.disabled = false; btn.textContent = '☀️ Solar Transit'; }
+        const _moonScanBtn = document.querySelector('.btn-viewer-moon');
+        if (_moonScanBtn) _moonScanBtn.disabled = false;
     }
 }
 
