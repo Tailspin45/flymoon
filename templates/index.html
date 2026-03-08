@@ -543,8 +543,10 @@
                         <button class="btn-icon" onclick="gridSelectAll()" title="Select all">☑️</button>
                         <button class="btn-icon" onclick="gridSelectNone()" title="Clear selection">✖️</button>
                         <button class="btn-icon" onclick="gridDownloadSelected()" title="Download selected">⬇️</button>
-                        <button class="btn-icon btn-danger" onclick="gridDeleteSelected()" title="Delete selected">🗑️</button>
+                        <button class="btn-icon btn-danger" onclick="gridDeleteSelected()" title="Delete selected (⌘⌫ to skip confirm)">🗑️</button>
                     </div>
+                    <button class="btn-icon" onclick="document.getElementById('importVideoInput').click()" title="Import video" style="margin-right:4px;">📥</button>
+                    <input type="file" id="importVideoInput" accept="video/mp4" style="display:none;" onchange="importVideoFile(this)">
                     <button class="modal-close" onclick="toggleFilesModal()">✕</button>
                 </div>
                 <div class="grid-sel-hint">Click to select · Ctrl+click to add · Shift+click for range · Drag to lasso</div>

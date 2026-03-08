@@ -366,7 +366,7 @@ class TransitDetector:
         thresh_b = self._adaptive_threshold(self._scores_b) * self.sensitivity_scale
 
         # --- Detection check ---
-        triggered = (score_a > thresh_a) or (score_b > thresh_b)
+        triggered = (score_a > thresh_a) and (score_b > thresh_b)
 
         if triggered:
             now = time.time()
@@ -586,8 +586,10 @@ class TransitDetector:
                 from src.constants import ASTRO_EPHEMERIS
 
                 my_pos = get_my_pos(
-                    lat, lon, float(os.getenv("OBSERVER_ELEVATION", "0")),
-                    base_ref=ASTRO_EPHEMERIS["earth"]
+                    lat,
+                    lon,
+                    float(os.getenv("OBSERVER_ELEVATION", "0")),
+                    base_ref=ASTRO_EPHEMERIS["earth"],
                 )
                 ref_dt = event.timestamp
 

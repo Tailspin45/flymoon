@@ -105,11 +105,6 @@ body {
 .guide-btn-group {
     display: inline-flex;
     gap: 4px;
-    background: rgba(78, 96, 96, 0.35);
-    border: 1px solid rgba(255, 255, 255, 0.1);
-    border-radius: 16px;
-    padding: 3px 10px;
-    backdrop-filter: blur(4px);
 }
 .guide-btn-group .btn-help {
     opacity: 0.8;

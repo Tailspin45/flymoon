@@ -248,10 +248,13 @@ def get_telescope_client() -> Optional[SeestarClient]:
             # Gate reconnect attempts on Sun/Moon visibility
             try:
                 from src.astro import targets_above_horizon
+
                 lat = float(os.getenv("OBSERVER_LATITUDE", "0"))
                 lon = float(os.getenv("OBSERVER_LONGITUDE", "0"))
                 elev = float(os.getenv("OBSERVER_ELEVATION", "0"))
-                _telescope_client._above_horizon_check = lambda: targets_above_horizon(lat, lon, elev)
+                _telescope_client._above_horizon_check = lambda: targets_above_horizon(
+                    lat, lon, elev
+                )
             except Exception as _e:
                 logger.warning(f"[Telescope] Could not set horizon check: {_e}")
         except Exception as e:
@@ -871,6 +874,16 @@ def delete_telescope_file():
         if os.path.exists(thumb_path):
             os.remove(thumb_path)
 
+        # Delete analyzed composite and sidecar if they exist (e.g. analyzed_vid_xxx.jpg)
+        stem = os.path.splitext(abs_path)[0]
+        base_dir = os.path.dirname(stem)
+        base_name = os.path.basename(stem)
+        for ext in (".jpg", "_analysis.json"):
+            analyzed = os.path.join(base_dir, "analyzed_" + base_name + ext)
+            if os.path.exists(analyzed):
+                os.remove(analyzed)
+                logger.info(f"[Telescope] Deleted analyzed artifact: {analyzed}")
+
         return (
             jsonify(
                 {"success": True, "message": f"Deleted {os.path.basename(file_path)}"}
@@ -923,10 +936,17 @@ def analyze_file():
         def _run():
             try:
                 result = analyze_video(
-                    abs_path, output_annotated=True,
-                    diff_threshold=int(diff_threshold) if diff_threshold is not None else None,
-                    min_blob_pixels=int(min_blob_pixels) if min_blob_pixels is not None else None,
-                    disk_margin_pct=float(disk_margin_pct) if disk_margin_pct is not None else None,
+                    abs_path,
+                    output_annotated=True,
+                    diff_threshold=(
+                        int(diff_threshold) if diff_threshold is not None else None
+                    ),
+                    min_blob_pixels=(
+                        int(min_blob_pixels) if min_blob_pixels is not None else None
+                    ),
+                    disk_margin_pct=(
+                        float(disk_margin_pct) if disk_margin_pct is not None else None
+                    ),
                 )
                 return result
             except Exception as exc:
@@ -938,18 +958,25 @@ def analyze_file():
         base = os.path.splitext(file_path)[0].replace("analyzed_", "")
         folder = os.path.dirname(base)
         stem = os.path.basename(base)
-        return jsonify({
-            "success":         True,
-            "disk_detected":   result.disk_detected,
-            "duration":        result.duration_seconds,
-            "transit_events":  result.transit_events,
-            "detection_count": len(result.detections),
-            "static_detections": sum(1 for d in result.detections if d.is_static),
-            "composite_image": folder + "/analyzed_" + stem + ".jpg",
-            "annotated_file":  folder + "/analyzed_" + stem + ".jpg",
-            "sidecar_file":    folder + "/analyzed_" + stem + "_analysis.json",
-            "error":           result.error,
-        }), 200
+        return (
+            jsonify(
+                {
+                    "success": True,
+                    "disk_detected": result.disk_detected,
+                    "duration": result.duration_seconds,
+                    "transit_events": result.transit_events,
+                    "detection_count": len(result.detections),
+                    "static_detections": sum(
+                        1 for d in result.detections if d.is_static
+                    ),
+                    "composite_image": folder + "/analyzed_" + stem + ".jpg",
+                    "annotated_file": folder + "/analyzed_" + stem + ".jpg",
+                    "sidecar_file": folder + "/analyzed_" + stem + "_analysis.json",
+                    "error": result.error,
+                }
+            ),
+            200,
+        )
 
     except Exception as e:
         logger.error(f"[Telescope] Analysis error: {e}")
@@ -974,13 +1001,13 @@ def composite_viewer():
     sidecar = {}
     if os.path.exists(sidecar_path):
         import json as _json
+
         with open(sidecar_path) as f:
             sidecar = _json.load(f)
 
     events = sidecar.get("transit_events", [])
     detection_count = sidecar.get("detection_count", 0)
-    static_count = sidecar.get("detection_count", 0) - len(
-        [e for e in events])  # rough
+    static_count = sidecar.get("detection_count", 0) - len([e for e in events])  # rough
     disk_detected = sidecar.get("disk_detected", False)
     duration = sidecar.get("duration_seconds", 0)
     source = os.path.basename(sidecar.get("source_file", img_path))
@@ -1039,6 +1066,83 @@ h2 {{ font-size: 1em; color: #eee; }}
 </body>
 </html>"""
     return html, 200, {"Content-Type": "text/html"}
+
+
+def upload_telescope_file():
+    """POST /telescope/files/upload - Upload an external MP4 to the captures directory."""
+    logger.info("[Telescope] POST /telescope/files/upload")
+
+    try:
+        if "file" not in request.files:
+            return jsonify({"error": "No file provided"}), 400
+
+        f = request.files["file"]
+        if not f or not f.filename:
+            return jsonify({"error": "Empty file"}), 400
+
+        # Only accept MP4
+        orig_name = f.filename
+        if not orig_name.lower().endswith(".mp4"):
+            return jsonify({"error": "Only .mp4 files are accepted"}), 400
+
+        # Check magic bytes (ftyp box: 00 00 00 xx 66 74 79 70)
+        header = f.read(12)
+        f.seek(0)
+        if len(header) < 8 or header[4:8] not in (
+            b"ftyp",
+            b"moov",
+            b"mdat",
+            b"free",
+            b"wide",
+        ):
+            return jsonify({"error": "File does not appear to be a valid MP4"}), 400
+
+        # Enforce 500 MB size limit
+        import io
+
+        f.seek(0, io.SEEK_END)
+        size = f.tell()
+        f.seek(0)
+        if size > 500 * 1024 * 1024:
+            return jsonify({"error": "File exceeds 500 MB limit"}), 400
+
+        # Save to static/captures/YYYY/MM/
+        from datetime import datetime as _dt
+
+        now = _dt.now()
+        dest_dir = os.path.join(
+            "static", "captures", now.strftime("%Y"), now.strftime("%m")
+        )
+        os.makedirs(dest_dir, exist_ok=True)
+
+        # Use a safe filename — prefix with timestamp to avoid collisions
+        safe_name = orig_name.replace(" ", "_")
+        dest_path = os.path.join(dest_dir, safe_name)
+        # If a file with the same name already exists, add a counter
+        base, ext = os.path.splitext(dest_path)
+        counter = 1
+        while os.path.exists(dest_path):
+            dest_path = f"{base}_{counter}{ext}"
+            counter += 1
+
+        f.save(dest_path)
+        rel_path = os.path.relpath(dest_path, "static").replace(os.sep, "/")
+        logger.info(f"[Telescope] Uploaded file: {dest_path}")
+
+        return (
+            jsonify(
+                {
+                    "success": True,
+                    "url": f"/static/{rel_path}",
+                    "name": os.path.basename(dest_path),
+                }
+            ),
+            200,
+        )
+
+    except Exception as e:
+        logger.error(f"[Telescope] Upload error: {e}", exc_info=True)
+        return handle_error(e)
 
 
 # Photo Capture Endpoint
@@ -1610,6 +1714,13 @@ def register_routes(app):
         methods=["GET"],
     )
 
+    app.add_url_rule(
+        "/telescope/files/upload",
+        "telescope_files_upload",
+        upload_telescope_file,
+        methods=["POST"],
+    )
+
     # Transit monitoring
     app.add_url_rule(
         "/telescope/transit/status",
@@ -1759,7 +1870,9 @@ def start_detection():
         except Exception:
             pass
 
-        det = start_detector(rtsp_url, record_on_detect=record, sensitivity_scale=sensitivity_scale)
+        det = start_detector(
+            rtsp_url, record_on_detect=record, sensitivity_scale=sensitivity_scale
+        )
         return jsonify({"success": True, **det.get_status()}), 200
 
     except Exception as e:
