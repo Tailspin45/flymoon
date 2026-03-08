@@ -1949,18 +1949,12 @@ function generateVideoThumbnail(canvas) {
     video.muted = true;
     video.playsInline = true;
     video.preload = 'metadata';
-    video.src = src;
-    video.addEventListener('loadeddata', () => {
-        video.currentTime = 0.5; // seek to 0.5s to avoid blank first frame
-    });
-    video.addEventListener('seeked', () => {
-        canvas.width = video.videoWidth || 192;
-        canvas.height = video.videoHeight || 108;
-        canvas.getContext('2d').drawImage(video, 0, 0, canvas.width, canvas.height);
-        video.src = ''; // free memory
-    }, { once: true });
-    video.addEventListener('error', () => {
-        // Fallback: draw 🎬 emoji on canvas
+    let done = false;
+
+    function _fallback() {
+        if (done) return;
+        done = true;
+        video.src = '';
         canvas.width = 192; canvas.height = 108;
         const ctx = canvas.getContext('2d');
         ctx.fillStyle = '#1a1a2e';
@@ -1968,7 +1962,26 @@ function generateVideoThumbnail(canvas) {
         ctx.font = '36px serif';
         ctx.textAlign = 'center';
         ctx.fillText('🎬', 96, 66);
+    }
+
+    // Safety timeout — if seeked never fires (e.g. 416 range error), fall back
+    const _timeout = setTimeout(_fallback, 5000);
+
+    video.addEventListener('loadeddata', () => {
+        video.currentTime = 0.5; // seek to 0.5s to avoid blank first frame
     });
+    video.addEventListener('seeked', () => {
+        if (done) return;
+        done = true;
+        clearTimeout(_timeout);
+        canvas.width = video.videoWidth || 192;
+        canvas.height = video.videoHeight || 108;
+        canvas.getContext('2d').drawImage(video, 0, 0, canvas.width, canvas.height);
+        video.src = ''; // free memory
+    }, { once: true });
+    video.addEventListener('error', _fallback);
+
+    video.src = src;
 }
 
 // Track viewer state for navigation
