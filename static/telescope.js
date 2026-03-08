@@ -1938,7 +1938,7 @@ function viewFile(path, name, opts) {
             window.currentFiles.some(f => f.path === analyzedJpg);
         const viewerUrl = '/telescope/composite?path=' + encodeURIComponent(analyzedJpg.replace(/^\/static\//, ''));
         const replayBtn = hasAnalyzed
-            ? `<button class="btn-viewer" onclick="openCompositeModal('${analyzedJpg}', null)">🖼 Composite</button>`
+            ? `<button class="btn-viewer" onclick="openCompositeModal('${analyzedJpg}?t=${Date.now()}', null)">🖼 Composite</button>`
             : '';
         const isFav = getFavorites().has(path);
         const favBtn = `<button class="btn-viewer" id="viewerFavBtn" data-fav-path="${path}" onclick="toggleFavorite('${path}', event)" title="Favorite">${isFav ? '❤️' : '🤍'}</button>`;
@@ -2183,7 +2183,7 @@ function _showAnalysisLegend(data, originalPath) {
     const events = data.transit_events || [];
     const staticCount = data.static_detections || 0;
     const compositeFile = data.composite_image || data.annotated_file;
-    const compositePath = compositeFile ? '/static/' + compositeFile : null;
+    const compositePath = compositeFile ? '/static/' + compositeFile + '?t=' + Date.now() : null;
 
     // Summary
     let summary = '';
@@ -2252,7 +2252,7 @@ function _showAnalysisLegend(data, originalPath) {
         'Lower = more sensitive (detects fainter objects, more noise)');
     html += _sliderRow('sliderMinBlob', 'Min Blob Size', 1, 50, 20,
         'Minimum pixel area to count as a detection');
-    html += _sliderRow('sliderDiskMargin', 'Edge Margin %', 0, 20, 12,
+    html += _sliderRow('sliderDiskMargin', 'Edge Margin %', 5, 20, 12,
         'Percentage of disk edge to ignore (trims atmospheric distortion)');
 
     html += `<div style="display:flex; gap:6px; margin-top:6px;">`;
@@ -2299,7 +2299,12 @@ function _showAnalysisLegend(data, originalPath) {
 
 function _sliderRow(id, label, min, max, defaultVal, tooltip) {
     const saved = localStorage.getItem('transit_slider_' + id);
-    const val = saved !== null ? saved : defaultVal;
+    // Migrate: if stored edge margin was from old default (< 10), reset it
+    if (id === 'sliderDiskMargin' && saved !== null && parseFloat(saved) < 10) {
+        localStorage.removeItem('transit_slider_' + id);
+    }
+    const current = localStorage.getItem('transit_slider_' + id);
+    const val = current !== null ? current : defaultVal;
     const extraCall = id === 'sliderDiskMargin' ? ' _updateMarginOverlay();' : '';
     return `<div style="margin-bottom:6px;" title="${tooltip}">` +
         `<div style="display:flex; justify-content:space-between; font-size:0.85em;">` +
