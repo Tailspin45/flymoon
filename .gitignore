@@ -188,3 +188,8 @@ electron/assets/icon.png
 # Transit recording captures
 static/captures/
 DS_Store
+
+# Analysis output files
+analyzed_*
+*_analyzed_tmp.*
+*_analysis.json

@@ -701,10 +701,15 @@ def _write_composite_image(
                             darkening, 10, 255, cv2.THRESH_BINARY
                         )
 
-                    # Annotation circle — subtle for moon, bolder for sun
+                    # Annotation circle — moon: only for tiny objects that
+                    # would be hard to spot; sun: always draw
                     r = max(6, max(det.width, det.height) // 2 + 4)
+                    blob_size = max(det.width, det.height)
                     if is_moon:
-                        cv2.circle(canvas, (det.x, det.y), r, (0, 0, 220), 1)
+                        if blob_size < 20:
+                            cv2.circle(
+                                canvas, (det.x, det.y), r, (0, 0, 220), 1
+                            )
                     else:
                         thickness = max(1, r // 12)
                         cv2.circle(
@@ -825,8 +830,15 @@ def _write_composite_image(
         cv2.circle(outside_mask, (disk_cx, disk_cy), disk_radius + 2, 255, -1)
         canvas[outside_mask == 0] = 0
 
-    # ── Draw disk boundary (yellow) LAST so it's on top ──────────────────
-    if disk_cx is not None and disk_cy is not None and disk_radius is not None:
+    # ── Draw disk boundary (yellow) LAST so it's on top (sun only) ──────
+    # For moon, the aircraft silhouette is the star; omitting the limb circle
+    # keeps the composite cleaner.
+    if (
+        not is_moon
+        and disk_cx is not None
+        and disk_cy is not None
+        and disk_radius is not None
+    ):
         cv2.circle(canvas, (disk_cx, disk_cy), disk_radius, (0, 255, 255), 2)
 
     if progress_cb:
