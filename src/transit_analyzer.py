@@ -744,6 +744,9 @@ def _write_composite_image(
         cap = cv2.VideoCapture(str(src))
         frame_idx = 0
         blended_count = 0
+        # Solar: collect annotation circles separately so they are drawn
+        # AFTER disk masking and the limb ring (never overwritten).
+        solar_circles: list = []  # list of (cx, cy, r)
 
         while True:
             ok, frame = cap.read()
@@ -757,9 +760,15 @@ def _write_composite_image(
                     gray, _ = _stabilize_frame(gray, ref_gray_f32)
 
                 for det in frames_needed[frame_idx]:
-                    # Tight bounding box — small pad prevents stabilisation
-                    # jitter from bleeding into the silhouette.
-                    pad = min(max(det.width, det.height) // 4 + 4, 20)
+                    # Moon: tight pad prevents stabilisation jitter bleeding
+                    # across the crater-textured surface.
+                    # Sun: use the full blob half-size as padding so the entire
+                    # aircraft silhouette is always captured (aircraft may be
+                    # large and detection centre slightly off-centre).
+                    if is_moon:
+                        pad = min(max(det.width, det.height) // 4 + 4, 20)
+                    else:
+                        pad = max(det.width, det.height, 8)
                     x1 = max(0, det.x - det.width // 2 - pad)
                     y1 = max(0, det.y - det.height // 2 - pad)
                     x2 = min(w, det.x + det.width // 2 + pad)
@@ -777,6 +786,12 @@ def _write_composite_image(
                         )
                         # Erode to remove single-pixel jitter / fringe
                         sil_mask = cv2.erode(sil_mask, np.ones((2, 2), np.uint8))
+                        # Moon: small blobs only get a circle; large aircraft
+                        # silhouettes are self-evident.
+                        blob_size = max(det.width, det.height)
+                        if blob_size < 20:
+                            r = max(6, blob_size // 2 + 4)
+                            cv2.circle(canvas, (det.x, det.y), r, (0, 0, 220), 1)
                     else:
                         # Sun: aircraft is always darker (silhouette)
                         darkening = np.clip(
@@ -784,21 +799,6 @@ def _write_composite_image(
                         ).astype(np.uint8)
                         _, sil_mask = cv2.threshold(
                             darkening, 10, 255, cv2.THRESH_BINARY
-                        )
-
-                    # Annotation circle — moon: only for tiny objects that
-                    # would be hard to spot without a marker; sun: always draw.
-                    r = max(6, max(det.width, det.height) // 2 + 4)
-                    blob_size = max(det.width, det.height)
-                    if is_moon:
-                        if blob_size < 20:
-                            cv2.circle(
-                                canvas, (det.x, det.y), r, (0, 0, 220), 1
-                            )
-                    else:
-                        thickness = max(1, r // 12)
-                        cv2.circle(
-                            canvas, (det.x, det.y), r, (0, 0, 220), thickness
                         )
 
                     if sil_mask.sum() == 0:
@@ -814,6 +814,11 @@ def _write_composite_image(
                         dst_roi * (1 - alpha) + src_roi * alpha
                     ).astype(np.uint8)
                     blended_count += 1
+                    # Solar: queue circle for later so disk masking can't
+                    # remove it and the yellow limb ring can't cover it.
+                    if not is_moon:
+                        r = max(6, max(det.width, det.height) // 2 + 4)
+                        solar_circles.append((det.x, det.y, r))
 
             frame_idx += 1
             if progress_cb and frame_idx % 60 == 0:
@@ -830,10 +835,10 @@ def _write_composite_image(
             )
 
     elif transit_dets:
-        # No reference available — fall back to thin red outline markers
+        # No reference available — fall back to red outline markers
         for d in transit_dets:
             r = max(6, max(d.width, d.height) // 2 + 4)
-            thickness = max(1, r // 12)
+            thickness = max(2, r // 6)
             cv2.circle(canvas, (d.x, d.y), r, (0, 0, 220), thickness)
 
     # ── Sunspots (sun only): detect dark features from CLAHE-enhanced reference ─
@@ -925,6 +930,12 @@ def _write_composite_image(
         and disk_radius is not None
     ):
         cv2.circle(canvas, (disk_cx, disk_cy), disk_radius, (0, 255, 255), 2)
+
+    # ── Solar transit annotation circles (drawn last, on top of everything) ─
+    # Drawn after disk masking and the limb ring so they are never occluded.
+    for (cx, cy, r) in solar_circles:
+        thickness = max(2, r // 6)
+        cv2.circle(canvas, (cx, cy), r, (0, 0, 220), thickness)
 
     if progress_cb:
         progress_cb(0.95)
