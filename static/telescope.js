@@ -1998,6 +1998,14 @@ function viewFile(path, name, opts) {
     const viewer = document.getElementById('fileViewer');
     const body = document.getElementById('fileViewerBody');
     const nameEl = document.getElementById('fileViewerName');
+
+    // Hide the files grid modal while the viewer is open to prevent
+    // z-index overlap issues where clicks fall through to the grid.
+    const filesModal = document.getElementById('filesModal');
+    if (filesModal && filesModal.style.display !== 'none') {
+        viewer._filesModalWasOpen = true;
+        filesModal.style.display = 'none';
+    }
     const actionsEl = document.getElementById('fileViewerActions');
 
     nameEl.textContent = name;
@@ -2025,7 +2033,7 @@ function viewFile(path, name, opts) {
         vid.addEventListener('seeked', updateTime);
         vid.addEventListener('loadedmetadata', updateTime);
     } else {
-        body.innerHTML = `<div style="overflow:auto; width:100%; height:100%; display:flex; align-items:center; justify-content:center;"><img src="${path}" alt="${name}" style="max-width:100%; max-height:100%; height:auto; display:block;"></div>`;
+        body.innerHTML = `<img src="${path}" alt="${name}" style="max-width:100%; max-height:100%; height:auto; display:block; margin:auto;">`;
     }
 
     // Build action buttons (download, delete, prev/next, find transit)
@@ -2072,6 +2080,13 @@ function closeFileViewer() {
     _setScanBanner(null);
     _viewerIndex = -1;
     _loopSegment = null;
+
+    // Restore the files grid modal if it was open before the viewer
+    if (viewer._filesModalWasOpen) {
+        const filesModal = document.getElementById('filesModal');
+        if (filesModal) filesModal.style.display = 'flex';
+        viewer._filesModalWasOpen = false;
+    }
 }
 
 var _frameStepTimer = null;
@@ -2553,14 +2568,14 @@ async function openCompositeModal(imgSrc, data) {
     modal.style.cssText = 'position:fixed; inset:0; z-index:9999; display:flex; background:#111; overflow:hidden;';
 
     modal.innerHTML = `
-      <div id="compositeImagePane" style="flex:1; overflow:auto; display:flex; align-items:flex-start; justify-content:center; background:#000; padding:8px;">
-        <img id="compositeFullImg" src="${imgSrc}" alt="Transit Composite" loading="lazy" style="max-width:100%; max-height:calc(100vh - 40px); width:auto; height:auto; display:block;" />
+      <div id="compositeImagePane" style="flex:1; overflow:auto; text-align:center; background:#000; padding:8px;">
+        <img id="compositeFullImg" src="${imgSrc}" alt="Transit Composite" style="max-width:100%; max-height:calc(100vh - 40px); width:auto; height:auto; display:inline-block;" />
       </div>
-      <div style="width:220px; min-width:220px; background:#1a1a1a; border-left:1px solid #333; padding:16px; display:flex; flex-direction:column; gap:12px; overflow-y:auto; font-size:0.85em; color:#ccc;">
+      <div style="width:220px; min-width:220px; background:#1a1a1a; border-left:1px solid #333; padding:16px; display:flex; flex-direction:column; gap:12px; font-size:0.85em; color:#ccc;">
         <div style="display:flex; justify-content:space-between; align-items:center;">
           <strong style="color:#eee; font-size:1em;">Transit Composite</strong>
           <button onclick="document.getElementById('compositeModal').remove()"
-            style="background:none; border:1px solid #555; color:#ccc; border-radius:4px; padding:2px 8px; cursor:pointer; font-size:1.1em;" title="Close">✕</button>
+            style="background:none; border:1px solid #555; color:#ccc; border-radius:4px; padding:2px 8px; cursor:pointer; font-size:1.1em;" title="Close (Esc)">✕</button>
         </div>
         <div style="color:#aaa; font-size:0.8em; word-break:break-all;">${source}</div>
         <div style="border-top:1px solid #333; padding-top:10px;">
@@ -2576,8 +2591,9 @@ async function openCompositeModal(imgSrc, data) {
         </div>
       </div>`;
 
-    // Close on backdrop click (left pane area)
-    modal.addEventListener('click', (e) => { if (e.target === modal) modal.remove(); });
+    // Close on clicking the image pane background (not the image itself)
+    const paneEl = modal.querySelector('#compositeImagePane');
+    paneEl.addEventListener('click', (e) => { if (e.target === paneEl) modal.remove(); });
     // Close on Escape
     const escHandler = (e) => { if (e.key === 'Escape') { modal.remove(); document.removeEventListener('keydown', escHandler); } };
     document.addEventListener('keydown', escHandler);
