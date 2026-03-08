@@ -658,6 +658,9 @@ def _write_composite_image(
     # Separate static (sunspot) and transit detections
     static_dets = [d for d in detections if d.is_static]
     transit_dets = [d for d in detections if not d.is_static]
+    # Solar annotation circles are collected during the render loop and drawn
+    # last (after disk masking) so they are never occluded.
+    solar_circles: list = []  # list of (cx, cy, r)
 
     # ── Alpha-blend transit silhouettes from source frames ────────────────
     if transit_dets and reference_gray is not None:
@@ -744,9 +747,6 @@ def _write_composite_image(
         cap = cv2.VideoCapture(str(src))
         frame_idx = 0
         blended_count = 0
-        # Solar: collect annotation circles separately so they are drawn
-        # AFTER disk masking and the limb ring (never overwritten).
-        solar_circles: list = []  # list of (cx, cy, r)
 
         while True:
             ok, frame = cap.read()
