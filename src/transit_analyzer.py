@@ -1316,13 +1316,15 @@ def _filter_transit_coherence(
                 if max_dev > travel * 0.15:
                     continue
 
-            # Aspect-ratio guard: reject horizontally elongated arcs (scope slews)
-            # A real transit object is roughly round (width:height ≤ 3:1)
-            xs = [d.x for d in track]
-            ys = [d.y for d in track]
-            bbox_w = max(xs) - min(xs) + 1
-            bbox_h = max(ys) - min(ys) + 1
-            if bbox_h > 0 and (bbox_w / bbox_h) > 4:
+            # Aspect-ratio guard: reject tracks where the blob itself is
+            # highly elongated (scope-slew smear) — but do NOT reject a
+            # track just because the *path* is wide, since a real transit
+            # can cross mostly horizontally.  Only apply when avg blob
+            # aspect ratio is extreme (> 5:1).
+            avg_blob_aspect = (
+                sum(d.width / max(d.height, 1) for d in track) / len(track)
+            )
+            if avg_blob_aspect > 5:
                 continue
 
             # This track is a real transit — keep all its detections
