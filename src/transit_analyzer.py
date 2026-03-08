@@ -550,6 +550,29 @@ def analyze_video(
     composite_path = path.with_name("analyzed_" + base_stem + ".jpg")
     composite_path.parent.mkdir(parents=True, exist_ok=True)
     composite_image_str = None
+
+    # Choose a clean background frame that doesn't contain the transit.
+    # The ref_bgr_frame (middle of reference buffer) can contain the aircraft
+    # if the transit occurs early.  Pick a frame far from any detection.
+    bg_for_composite = ref_bgr_frame
+    if moving_detections and ref_bgr_frame is not None:
+        transit_frames = {d.frame_index for d in moving_detections}
+        min_tf = min(transit_frames)
+        max_tf = max(transit_frames)
+        margin = max(10, (max_tf - min_tf))  # stay this far from transit
+        # Prefer a frame well after the transit; fall back to well before
+        safe_idx = max_tf + margin
+        if safe_idx >= frame_idx:
+            safe_idx = max(0, min_tf - margin)
+        if safe_idx < 0:
+            safe_idx = frame_idx // 2
+        _cap_bg = cv2.VideoCapture(str(path))
+        _cap_bg.set(cv2.CAP_PROP_POS_FRAMES, safe_idx)
+        _ok_bg, _bg_frame = _cap_bg.read()
+        _cap_bg.release()
+        if _ok_bg and _bg_frame is not None:
+            bg_for_composite = _bg_frame
+
     if output_annotated:
         composite_image_str = _write_composite_image(
             path,
@@ -559,7 +582,7 @@ def analyze_video(
             disk_cy,
             disk_radius,
             progress_cb,
-            bg_frame=ref_bgr_frame,
+            bg_frame=bg_for_composite,
             reference_gray=reference,
             ref_gray_f32=ref_gray_f32,
             is_moon=is_moon,
