@@ -553,25 +553,25 @@ def analyze_video(
 
     # Choose a clean background frame that doesn't contain the transit.
     # The ref_bgr_frame (middle of reference buffer) can contain the aircraft
-    # if the transit occurs early.  Pick a frame far from any detection.
+    # if the transit occurs early.  Pick a frame from the existing reference
+    # buffer that is furthest from any transit detection — no extra video
+    # reads needed, and drift is zero since it's from the same time window.
     bg_for_composite = ref_bgr_frame
     if moving_detections and ref_bgr_frame is not None:
-        transit_frames = {d.frame_index for d in moving_detections}
-        min_tf = min(transit_frames)
-        max_tf = max(transit_frames)
-        margin = max(10, (max_tf - min_tf))  # stay this far from transit
-        # Prefer a frame well after the transit; fall back to well before
-        safe_idx = max_tf + margin
-        if safe_idx >= frame_idx:
-            safe_idx = max(0, min_tf - margin)
-        if safe_idx < 0:
-            safe_idx = frame_idx // 2
-        _cap_bg = cv2.VideoCapture(str(path))
-        _cap_bg.set(cv2.CAP_PROP_POS_FRAMES, safe_idx)
-        _ok_bg, _bg_frame = _cap_bg.read()
-        _cap_bg.release()
-        if _ok_bg and _bg_frame is not None:
-            bg_for_composite = _bg_frame
+        transit_frame_set = {d.frame_index for d in moving_detections}
+        buf_len = len(ref_buffer_bgr)
+        if buf_len > 0:
+            # Score each buffer frame by minimum distance to any transit frame
+            best_idx = 0
+            best_dist = -1
+            buf_list = list(ref_buffer_bgr)
+            for bi in range(buf_len):
+                min_d = min(abs(bi - tf) for tf in transit_frame_set)
+                if min_d > best_dist:
+                    best_dist = min_d
+                    best_idx = bi
+            if best_dist > 0:
+                bg_for_composite = buf_list[best_idx].copy()
 
     if output_annotated:
         composite_image_str = _write_composite_image(
