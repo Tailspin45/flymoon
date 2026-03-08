@@ -66,6 +66,7 @@ class SeestarClient:
         self._heartbeat_thread: Optional[threading.Thread] = None
         self._heartbeat_running = False
         self._socket_lock = threading.Lock()  # Prevent concurrent socket access
+        self._above_horizon_check = None  # Optional[Callable[[], bool]] — set by app startup
 
         logger.info(f"Initialized Seestar client for {host}:{port}")
 
@@ -252,6 +253,15 @@ class SeestarClient:
         while self._heartbeat_running:
             # Auto-reconnect when connection has dropped
             if not self._connected:
+                # Don't attempt reconnect when Sun and Moon are both below the horizon —
+                # the scope won't be in use and the warnings would be noise.
+                if self._above_horizon_check is not None:
+                    try:
+                        if not self._above_horizon_check():
+                            time.sleep(60)  # check again in a minute
+                            continue
+                    except Exception:
+                        pass  # fail open
                 reconnect_wait += 1
                 if reconnect_wait >= RECONNECT_INTERVAL:
                     reconnect_wait = 0
@@ -387,10 +397,6 @@ class SeestarClient:
             self._connected = True
             logger.info("Connected to Seestar")
 
-            # NOTE: Initialization may be needed depending on use case
-            # For solar/lunar video: send iscope_start_view after connect
-            # Example: self.start_solar_mode() or self.start_lunar_mode()
-
             # Start heartbeat thread
             self._heartbeat_running = True
             self._heartbeat_thread = threading.Thread(
@@ -405,7 +411,59 @@ class SeestarClient:
             if self.socket:
                 self.socket.close()
                 self.socket = None
+
+            # On host-down / unreachable errors, try auto-discovering the
+            # Seestar on the local subnet before giving up.
+            import errno as _errno
+            host_down = hasattr(e, "errno") and e.errno in (_errno.EHOSTDOWN, _errno.EHOSTUNREACH, 64)
+            timed_out  = isinstance(e, socket.timeout) or (hasattr(e, "errno") and e.errno == _errno.ETIMEDOUT)
+
+            if host_down or timed_out:
+                discovered = self._auto_discover()
+                if discovered and discovered != self.host:
+                    logger.warning(
+                        f"[Seestar] Auto-discovered at {discovered} "
+                        f"(was {self.host}). Update SEESTAR_HOST in .env to make permanent."
+                    )
+                    self.host = discovered
+                    return self.connect()  # retry with new IP
+
             raise RuntimeError(f"Connection failed: {e}")
+
+    def _auto_discover(self) -> str:
+        """
+        Scan the local /24 subnet for a host accepting connections on self.port.
+        Returns the first found IP, or None.
+        """
+        import concurrent.futures
+
+        # Determine local subnet
+        try:
+            probe = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            probe.connect(("8.8.8.8", 80))
+            local_ip = probe.getsockname()[0]
+            probe.close()
+        except Exception:
+            return None
+
+        base = local_ip.rsplit(".", 1)[0]
+        logger.info(f"[Seestar] Scanning {base}.0/24 for port {self.port}…")
+
+        def _probe(ip):
+            try:
+                with socket.create_connection((ip, self.port), timeout=0.4):
+                    return ip
+            except Exception:
+                return None
+
+        hosts = [f"{base}.{i}" for i in range(1, 255)]
+        with concurrent.futures.ThreadPoolExecutor(max_workers=64) as pool:
+            for ip in pool.map(_probe, hosts):
+                if ip:
+                    logger.info(f"[Seestar] Found at {ip}")
+                    return ip
+        logger.warning("[Seestar] Auto-discover: no host found on subnet")
+        return None
 
     def disconnect(self) -> bool:
         """

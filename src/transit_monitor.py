@@ -4,6 +4,7 @@ Polls FlightAware API every 10 minutes and uses cached flight data with
 position prediction for transit calculations in between.
 """
 
+import asyncio
 import os
 import threading
 import time
@@ -12,7 +13,8 @@ from typing import Dict, List, Optional
 from zoneinfo import ZoneInfo
 
 from src import logger
-from src.constants import PossibilityLevel
+from src.constants import POSSIBLE_TRANSITS_LOGFILENAME, PossibilityLevel
+from src.flight_data import save_possible_transits
 from src.transit import get_transits
 
 
@@ -169,6 +171,66 @@ class TransitMonitor:
 
         # Sort by time (nearest first)
         all_transits.sort(key=lambda t: t["seconds_until"])
+
+        # Log any newly-seen transits (near-misses) to the CSV so they persist
+        # even when the web map isn't open.
+        new_flights = {t["flight"] for t in all_transits}
+        known_flights = {t["flight"] for t in self.cached_transits}
+        newly_detected = new_flights - known_flights
+        if newly_detected:
+            from datetime import date as _date
+            date_ = _date.today().strftime("%Y%m%d")
+            log_rows = []
+            for transit in all_transits:
+                if transit["flight"] not in newly_detected:
+                    continue
+                # Build a minimal row compatible with save_possible_transits schema
+                log_rows.append({
+                    "id": transit["flight"],
+                    "is_possible_transit": 1,
+                    "possibility_level": PossibilityLevel[transit["probability"]].value,
+                    "target_alt": transit["altitude"],
+                    "target_az": transit["azimuth"],
+                    "time": round(transit["seconds_until"] / 60, 3),
+                    "fa_flight_id": "",
+                    "origin": "",
+                    "destination": "",
+                    "aircraft_type": "",
+                    "aircraft_elevation": 0,
+                    "speed": 0,
+                    "latitude": 0,
+                    "longitude": 0,
+                    "alt_diff": 0,
+                    "az_diff": 0,
+                    "plane_alt": 0,
+                    "plane_az": 0,
+                    "direction": 0,
+                    "elevation_change": "",
+                    "vertical_rate": None,
+                    "category": None,
+                    "squawk": None,
+                    "on_ground": False,
+                    "icao24": "",
+                    "origin_country": None,
+                    "position_source": "detection",
+                    "position_age_s": None,
+                    "scope_connected": False,
+                    "scope_mode": "",
+                })
+            if log_rows:
+                try:
+                    asyncio.run(
+                        save_possible_transits(
+                            log_rows,
+                            POSSIBLE_TRANSITS_LOGFILENAME.format(date_=date_),
+                        )
+                    )
+                    logger.info(
+                        f"[TransitMonitor] Logged {len(log_rows)} near-miss transit(s): "
+                        f"{', '.join(newly_detected)}"
+                    )
+                except Exception as e:
+                    logger.warning(f"[TransitMonitor] Near-miss log write failed: {e}")
 
         # Update cache
         self.cached_transits = all_transits

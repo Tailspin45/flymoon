@@ -35,6 +35,8 @@ a = Analysis(
         'dotenv',
         'requests',
         'telegram',
+        'aiofiles',
+        'cv2',
     ],
     hookspath=[],
     hooksconfig={},

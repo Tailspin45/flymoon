@@ -159,7 +159,7 @@ async function connect() {
     const result = await apiCall('/telescope/connect', 'POST');
     if (result && result.success) {
         isConnected = true;
-        showStatus('Connected successfully!', 'success');
+        showStatus('Connected successfully!', 'success', 5000);
         
         // Start status polling
         if (statusPollInterval) clearInterval(statusPollInterval);
@@ -168,6 +168,31 @@ async function connect() {
         updateConnectionUI();
         updateStatus();
         startPreview();
+    }
+}
+
+async function findSeestar() {
+    const btn = document.getElementById('findSeestarBtn');
+    if (btn) { btn.disabled = true; btn.textContent = '⏳ Scanning…'; }
+    showStatus('Scanning network for Seestar…', 'info', 0);
+    try {
+        const resp = await fetch('/telescope/discover');
+        const data = await resp.json();
+        if (btn) { btn.disabled = false; btn.textContent = '🔍 Find'; }
+        if (!data.found || data.found.length === 0) {
+            showStatus('No Seestar found on ' + data.subnet + ' — is it powered on?', 'warning', 8000);
+            return;
+        }
+        const ip = data.found[0];
+        const others = data.found.slice(1);
+        let msg = `Found Seestar at ${ip}`;
+        if (others.length) msg += ` (also: ${others.join(', ')})`;
+        msg += ` — update SEESTAR_HOST in .env and restart`;
+        showStatus(msg, 'success', 12000);
+        console.log('[Discover]', msg, '— found:', data.found);
+    } catch (err) {
+        if (btn) { btn.disabled = false; btn.textContent = '🔍 Find'; }
+        showStatus('Scan error: ' + err.message, 'error', 6000);
     }
 }
 
@@ -281,6 +306,9 @@ async function updateStatus() {
         if (justDisconnected) {
             console.warn('[Scope] Disconnected — prior connected state:', JSON.stringify(_lastConnectedStatus || {}));
             if (result.error) console.warn('[Scope] Server error:', result.error);
+            // Immediately clear transit cards — nothing to capture with
+            upcomingTransits = [];
+            updateTransitList();
         }
         // Cache last connected response for diagnostics
         if (isConnected) {
@@ -524,6 +552,12 @@ async function startRecording() {
 
 async function stopRecording() {
     console.log('[Telescope] Stopping recording');
+    // Immediately mark as not recording so concurrent calls (e.g. timer + recordTransit)
+    // don't both try to stop an already-stopped recording.
+    if (!isRecording && !isSimulating) return;
+    isRecording = false;
+    stopRecordingTimer();
+    updateRecordingUI();
     showStatus('Stopping recording...', 'info');
     
     // Handle simulation mode
@@ -534,15 +568,12 @@ async function stopRecording() {
     
     const result = await apiCall('/telescope/recording/stop', 'POST');
     if (result && result.success) {
-        isRecording = false;
-        stopRecordingTimer();
-        updateRecordingUI();
         showStatus('Recording stopped', 'success', 5000);
-        
         // Refresh file list after a short delay
         setTimeout(refreshFiles, 2000);
     } else {
-        showStatus('⚠️ Could not stop recording — telescope may be disconnected', 'warning', 6000);
+        // Backend already stopped (400) — state already reset above, just warn quietly
+        showStatus('⚠️ Recording already stopped', 'warning', 3000);
     }
 }
 
@@ -969,6 +1000,9 @@ async function apiCall(endpoint, method = 'GET', body = null) {
 // ============================================================================
 
 async function checkTransits() {
+    // Don't poll or populate transit list when scope is disconnected
+    if (!isConnected) return;
+
     try {
         const response = await fetch('/telescope/transit/status');
         if (!response.ok) return;
@@ -989,9 +1023,33 @@ async function checkTransits() {
     }
 }
 
+function _transitStateFor(s) {
+    const PRE = 10;
+    if (s > PRE) {
+        const mins = Math.floor(s / 60);
+        const secs = s % 60;
+        const timeStr = mins > 0 ? `${mins}m ${secs}s` : `${secs}s`;
+        return { stateClass: 'state-waiting', stateLabel: `Transit in ${timeStr}`, countdownText: timeStr, countdownClass: 'tc-big' };
+    } else if (s > 0) {
+        return { stateClass: 'state-recording', stateLabel: `🔴 Recording — transit in ${s}s`, countdownText: `${s}s`, countdownClass: 'tc-big tc-red' };
+    } else if (s === 0) {
+        return { stateClass: 'state-transit', stateLabel: '🎯 TRANSIT NOW', countdownText: 'NOW', countdownClass: 'tc-big tc-red' };
+    } else {
+        return { stateClass: 'state-post', stateLabel: `🔴 Recording — transit passed ${Math.abs(s)}s ago`, countdownText: `+${Math.abs(s)}s`, countdownClass: 'tc-big tc-dim' };
+    }
+}
+
 function updateTransitList() {
     const list = document.getElementById('transitList');
     if (!list) return;
+
+    // Never show predicted transits when the scope isn't connected —
+    // there's nothing to capture with, so the alert is misleading.
+    if (!isConnected) {
+        upcomingTransits = [];
+        list.innerHTML = '<p class="empty-state">Connect telescope to monitor transits</p>';
+        return;
+    }
 
     // Auto-remove transits that are more than POST seconds past (recording done)
     const POST = 10;
@@ -1002,50 +1060,56 @@ function updateTransitList() {
         return;
     }
 
-    list.innerHTML = upcomingTransits.map(transit => {
+    // Remove stale empty-state if present
+    const empty = list.querySelector('.empty-state');
+    if (empty) list.innerHTML = '';
+
+    const probClass = t => (t.probability || '').toLowerCase();
+
+    upcomingTransits.forEach(transit => {
         const s = transit.seconds_until;
-        const PRE = 10;
+        const { stateClass, stateLabel, countdownText, countdownClass } = _transitStateFor(s);
+        const cardId = `ta-${transit.flight.replace(/[^a-zA-Z0-9]/g, '_')}`;
+        let card = document.getElementById(cardId);
 
-        let stateClass, stateLabel, countdownHtml;
-
-        if (s > PRE) {
-            // Waiting — not yet recording
-            const mins = Math.floor(s / 60);
-            const secs = s % 60;
-            const timeStr = mins > 0 ? `${mins}m ${secs}s` : `${secs}s`;
-            stateClass = 'state-waiting';
-            stateLabel = `Transit in ${timeStr}`;
-            countdownHtml = `<div class="tc-big">${timeStr}</div>`;
-        } else if (s > 0) {
-            // Recording + imminent
-            stateClass = 'state-recording';
-            stateLabel = `🔴 Recording — transit in ${s}s`;
-            countdownHtml = `<div class="tc-big tc-red">${s}s</div>`;
-        } else if (s === 0) {
-            stateClass = 'state-transit';
-            stateLabel = '🎯 TRANSIT NOW';
-            countdownHtml = `<div class="tc-big tc-red">NOW</div>`;
-        } else {
-            // Post-transit, still recording
-            stateClass = 'state-post';
-            stateLabel = `🔴 Recording — transit passed ${Math.abs(s)}s ago`;
-            countdownHtml = `<div class="tc-big tc-dim">+${Math.abs(s)}s</div>`;
-        }
-
-        const probClass = (transit.probability || '').toLowerCase();
-
-        return `
-            <div class="transit-alert ${probClass} ${stateClass}">
+        if (!card) {
+            // First render — create the card
+            card = document.createElement('div');
+            card.id = cardId;
+            card.className = `transit-alert ${probClass(transit)} ${stateClass}`;
+            card.dataset.transitState = stateClass;
+            card.innerHTML = `
                 <div class="ta-header">
                     <span class="ta-flight">✈️ ${transit.flight}</span>
                     <span class="ta-prob">${transit.probability}</span>
                 </div>
                 <div class="ta-target">${transit.target || ''} &nbsp;·&nbsp; Alt ${transit.altitude}° Az ${transit.azimuth}°</div>
-                ${countdownHtml}
+                <div class="${countdownClass} ta-countdown">${countdownText}</div>
                 <div class="ta-state">${stateLabel}</div>
-            </div>
-        `;
-    }).join('');
+            `;
+            list.appendChild(card);
+        } else {
+            // Patch in-place — only update text nodes, never rebuild DOM
+            const countdown = card.querySelector('.ta-countdown');
+            const stateEl   = card.querySelector('.ta-state');
+            if (countdown) {
+                countdown.textContent = countdownText;
+                countdown.className = `${countdownClass} ta-countdown`;
+            }
+            if (stateEl) stateEl.textContent = stateLabel;
+            // Update state class on card only when it changes (avoids reflow)
+            if (card.dataset.transitState !== stateClass) {
+                card.dataset.transitState = stateClass;
+                card.className = `transit-alert ${probClass(transit)} ${stateClass}`;
+            }
+        }
+    });
+
+    // Remove cards for transits no longer in the list
+    const activeIds = new Set(upcomingTransits.map(t => `ta-${t.flight.replace(/[^a-zA-Z0-9]/g, '_')}`));
+    list.querySelectorAll('.transit-alert').forEach(card => {
+        if (!activeIds.has(card.id)) card.remove();
+    });
 }
 
 function formatCountdown(seconds) {
@@ -1055,7 +1119,7 @@ function formatCountdown(seconds) {
     return `${mins}:${secs.toString().padStart(2, '0')}`;
 }
 
-function checkAutoCapture() {
+async function checkAutoCapture() {
     const autoCapture = document.getElementById('autoCaptureToggle').checked;
     if (!autoCapture || !isConnected) return;
 
@@ -1069,6 +1133,11 @@ function checkAutoCapture() {
 
     imminent.handled = true;           // prevent re-triggering on per-second tick
     capturedTransits.add(imminent.flight); // persist across array replacements from server poll
+
+    // Force-sync recording state before deciding — guards against the backend
+    // TransitRecorder having already started Seestar's internal recording, which
+    // would otherwise be invisible to the 2 s background poll.
+    await updateStatus();
 
     const isSimFlight = imminent.flight === SIM_TRANSIT.flight ||
                         imminent.flight === SIM_ECLIPSE_TRANSIT.flight;
@@ -1849,7 +1918,7 @@ function viewFile(path, name, opts) {
         vid.addEventListener('seeked', updateTime);
         vid.addEventListener('loadedmetadata', updateTime);
     } else {
-        body.innerHTML = `<img src="${path}" alt="${name}" style="max-width:90vw; max-height:80vh; object-fit:contain;">`;
+        body.innerHTML = `<div style="overflow:auto; width:100%; height:100%; display:flex; align-items:center; justify-content:center;"><img src="${path}" alt="${name}" style="max-width:100%; max-height:100%; height:auto; display:block;"></div>`;
     }
 
     // Build action buttons (download, delete, prev/next, find transit)
@@ -1858,15 +1927,26 @@ function viewFile(path, name, opts) {
         const hasNext = _viewerIndex >= 0 && _viewerIndex < files.length - 1;
         const scanBtn = isVideo
             ? `<button class="btn-viewer" onmousedown="frameStepStart(-1)" onmouseup="frameStepStop()" onmouseleave="frameStepStop()" title="Back 1 frame (hold to repeat)">◁</button>` +
-              `<button class="btn-viewer btn-viewer-scan" id="scanTransitBtn" onclick="scanTransit()" title="Scan for transit frame">🎯 Find Transit</button>` +
+              `<button class="btn-viewer btn-viewer-scan" id="scanTransitBtn" onclick="scanTransit()" title="Analyze video for transits (OpenCV)">🎯 Find Transit</button>` +
               `<button class="btn-viewer" onmousedown="frameStepStart(1)" onmouseup="frameStepStop()" onmouseleave="frameStepStop()" title="Forward 1 frame (hold to repeat)">▷</button>`
             : '';
+        // Show composite image button if an analyzed_xxx.jpg exists for this file
+        const stem = path.replace(/^.*\//, '').replace('.mp4', '');
+        const folder = path.substring(0, path.lastIndexOf('/'));
+        const analyzedJpg = folder + '/analyzed_' + stem + '.jpg';
+        const hasAnalyzed = isVideo && !name.startsWith('analyzed_') && window.currentFiles &&
+            window.currentFiles.some(f => f.path === analyzedJpg);
+        const viewerUrl = '/telescope/composite?path=' + encodeURIComponent(analyzedJpg.replace(/^\/static\//, ''));
+        const replayBtn = hasAnalyzed
+            ? `<button class="btn-viewer" onclick="openCompositeModal('${analyzedJpg}?t=${Date.now()}', null)">🖼 Composite</button>`
+            : '';
         const isFav = getFavorites().has(path);
-        const favBtn = `<button class="btn-viewer" id="viewerFavBtn" onclick="toggleFavorite('${path}', event); _updateViewerFavState('${path}')" title="Favorite">${isFav ? '❤️' : '🤍'}</button>`;
+        const favBtn = `<button class="btn-viewer" id="viewerFavBtn" data-fav-path="${path}" onclick="toggleFavorite('${path}', event)" title="Favorite">${isFav ? '❤️' : '🤍'}</button>`;
         const delDisabled = isFav ? 'disabled title="Remove favorite first"' : 'title="Delete (⌘/Ctrl+click to skip confirm)"';
         actionsEl.innerHTML =
             `<button class="btn-viewer" onclick="viewerNav(-1)" title="Previous" ${hasPrev ? '' : 'disabled'}>◀</button>` +
             scanBtn +
+            replayBtn +
             favBtn +
             `<button class="btn-viewer" onclick="viewerDownload()" title="Download">⬇️ Download</button>` +
             `<button class="btn-viewer btn-viewer-danger" id="viewerDeleteBtn" onclick="viewerDelete(event)" ${delDisabled}>🗑️ Delete</button>` +
@@ -1978,52 +2058,411 @@ async function viewerDelete(e) {
 // then seeks the player to the centre of the transit.
 // ============================================================================
 
+var _analyzeController = null;  // AbortController for in-flight analysis
+
 async function scanTransit() {
     const files = window.currentFiles || [];
     if (_viewerIndex < 0 || _viewerIndex >= files.length) return;
     const f = files[_viewerIndex];
-    const videoPath = f.path;
+    // If viewing an analyzed file, re-analyze the original
+    let videoPath = f.path;
+    videoPath = videoPath.replace(/_analyzed/g, '');
     if (!/\.(mp4|avi|mov|mkv|webm)$/i.test(f.name)) return;
 
     const btn = document.getElementById('scanTransitBtn');
     const playerVideo = document.querySelector('#fileViewerBody video');
     if (!playerVideo) return;
 
-    if (btn) { btn.disabled = true; btn.textContent = '🔍 0%'; }
-    _setScanBanner(null); // clear previous result
+    // Read tuning slider values BEFORE removing the old panel
+    const sliderBody = {};
+    const dtEl = document.getElementById('sliderDiffThreshold');
+    const mbEl = document.getElementById('sliderMinBlob');
+    const dmEl = document.getElementById('sliderDiskMargin');
+    if (dtEl) { sliderBody.diff_threshold = parseInt(dtEl.value); localStorage.setItem('transit_slider_sliderDiffThreshold', dtEl.value); }
+    if (mbEl) { sliderBody.min_blob_pixels = parseInt(mbEl.value); localStorage.setItem('transit_slider_sliderMinBlob', mbEl.value); }
+    if (dmEl) { sliderBody.disk_margin_pct = parseFloat(dmEl.value) / 100; localStorage.setItem('transit_slider_sliderDiskMargin', dmEl.value); }
+
+    // Remove previous legend panel so user sees the UI change
+    const oldPanel = document.getElementById('analysisLegendPanel');
+    if (oldPanel) oldPanel.remove();
+
+    if (btn) { btn.disabled = true; btn.textContent = '🔍 Analyzing…'; }
+    // Show stop button
+    _showStopAnalysisBtn(true);
+    // Pulse the button text with frame count estimate
+    let _analyzeTimer = setInterval(() => {
+        if (btn && btn.disabled) {
+            const dots = '.'.repeat(Math.floor(Date.now() / 500) % 4);
+            btn.textContent = `🔍 Analyzing${dots}`;
+        }
+    }, 500);
+    _setScanBanner(null);
+
+    const apiPath = videoPath.replace(/^\/static\//, '');
+    const controller = new AbortController();
+    _analyzeController = controller;
+    const timeoutId = setTimeout(() => controller.abort(), 5 * 60 * 1000);
 
     try {
-        const result = await _scanVideoForTransit(videoPath, pct => {
-            if (btn) btn.textContent = `🔍 ${pct}%`;
+        const resp = await fetch('/telescope/files/analyze', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ path: apiPath, ...sliderBody }),
+            signal: controller.signal,
         });
+        const data = await resp.json();
+        if (!resp.ok || data.error) {
+            _setScanBanner('error', `Analysis failed: ${data.error || resp.statusText}`);
+            return;
+        }
 
-        if (result) {
-            const loopStart = Math.max(0, result.start - 0.5);
-            const loopEnd = result.end + 0.5;
+        const events = data.transit_events || [];
+        const staticCount = data.static_detections || 0;
+
+        if (events.length > 0) {
+            // Seek to first transit event and set up loop
+            const evt = events[0];
+            const loopStart = Math.max(0, evt.start_seconds - 0.5);
+            const loopEnd = evt.end_seconds + 0.5;
             _loopSegment = { start: loopStart, end: loopEnd };
             playerVideo.currentTime = loopStart;
             playerVideo.play();
-            const durMs = Math.round(result.duration * 1000);
-            const ts = _formatTimestamp(result.center);
-            _setScanBanner('found',
-                `🎯 Transit detected at ${ts} (~${durMs}ms)` +
-                `  —  looping segment · click to stop loop`,
-                () => { _loopSegment = null; _setScanBanner('found', `🎯 Transit at ${ts} (~${durMs}ms) — loop stopped`); }
-            );
-        } else {
-            _setScanBanner('none', 'No transit detected in this video');
         }
-    } catch (e) {
-        _setScanBanner('error', `Scan failed: ${e.message}`);
+
+        // Refresh files and show legend (handles both found/not-found)
+        await refreshFiles();
+        updateFilesGrid();
+        _showAnalysisLegend(data, videoPath);
+    } catch (err) {
+        if (controller.signal.aborted) {
+            _setScanBanner('error', 'Analysis stopped');
+        } else {
+            _setScanBanner('error', `Analysis error: ${err.message}`);
+        }
+    } finally {
+        clearTimeout(timeoutId);
+        clearInterval(_analyzeTimer);
+        _analyzeController = null;
+        _showStopAnalysisBtn(false);
+        if (btn) { btn.disabled = false; btn.textContent = '🎯 Find Transit'; }
+    }
+}
+
+function stopAnalysis() {
+    if (_analyzeController) { _analyzeController.abort(); _analyzeController = null; }
+}
+
+function _showStopAnalysisBtn(show) {
+    let stopBtn = document.getElementById('stopAnalysisBtn');
+    if (show) {
+        if (!stopBtn) {
+            const scanBtn = document.getElementById('scanTransitBtn');
+            if (!scanBtn) return;
+            stopBtn = document.createElement('button');
+            stopBtn.id = 'stopAnalysisBtn';
+            stopBtn.className = 'btn-viewer btn-viewer-danger';
+            stopBtn.style.cssText = 'font-size:0.8em; padding:2px 8px;';
+            stopBtn.textContent = '⏹ Stop';
+            stopBtn.onclick = (e) => { e.stopPropagation(); stopAnalysis(); };
+            scanBtn.parentNode.insertBefore(stopBtn, scanBtn.nextSibling);
+        }
+        stopBtn.style.display = '';
+    } else if (stopBtn) {
+        stopBtn.remove();
+    }
+}
+
+function _showAnalysisLegend(data, originalPath) {
+    // Remove any previous legend panel
+    const old = document.getElementById('analysisLegendPanel');
+    if (old) old.remove();
+
+    const body = document.getElementById('fileViewerBody');
+    if (!body) return;
+
+    const events = data.transit_events || [];
+    const staticCount = data.static_detections || 0;
+    const compositeFile = data.composite_image || data.annotated_file;
+    const compositePath = compositeFile ? '/static/' + compositeFile + '?t=' + Date.now() : null;
+
+    // Summary
+    let summary = '';
+    if (events.length > 0) {
+        const evt = events[0];
+        const ts = _formatTimestamp((evt.start_seconds + evt.end_seconds) / 2);
+        summary = events.length > 1
+            ? `${events.length} transits — first at ${ts} (~${evt.duration_ms}ms)`
+            : `Transit at ${ts} (~${evt.duration_ms}ms)`;
+    } else {
+        summary = 'No transit detected';
+    }
+    if (staticCount > 0) summary += `<br>${staticCount} sunspot(s) filtered`;
+
+    const panel = document.createElement('div');
+    panel.id = 'analysisLegendPanel';
+    panel.onclick = e => e.stopPropagation();
+    panel.style.cssText = 'background:#1a1a1a; border-left:1px solid #333; padding:14px 16px; min-width:200px; max-width:240px; display:flex; flex-direction:column; gap:8px; font-size:0.85em; color:#ccc; height:100%; overflow:hidden;';
+
+    // Result section
+    const iconColor = events.length > 0 ? '#4dff88' : '#ffcc44';
+    const icon = events.length > 0 ? '🎯' : '🔍';
+    let html = `<div style="font-weight:bold; color:${iconColor}; font-size:1.05em;">${icon} ${summary}</div>`;
+
+    // Composite image preview — flex-grow fills available space
+    if (compositePath) {
+        const diskCx = data.disk_cx || 0;
+        const diskCy = data.disk_cy || 0;
+        const diskR  = data.disk_radius || 0;
+        html += `<div style="border-top:1px solid #333; padding-top:6px; flex:1; min-height:60px; overflow:hidden; display:flex; flex-direction:column;">`;
+        html += `<div style="font-weight:bold; color:#aaa; font-size:0.9em; margin-bottom:4px;">Transit Composite</div>`;
+        html += `<div style="position:relative; flex:1; min-height:0; overflow:hidden;">`;
+        html += `<img id="compositePreview" src="${compositePath}" ` +
+                `data-disk-cx="${diskCx}" data-disk-cy="${diskCy}" data-disk-r="${diskR}" ` +
+                `style="width:100%; height:100%; object-fit:contain; border-radius:4px; cursor:pointer; display:block;" title="Click to view full size" />`;
+        html += `<canvas id="compositeOverlay" style="position:absolute; top:0; left:0; width:100%; height:100%; pointer-events:none; border-radius:4px;"></canvas>`;
+        html += `</div>`;
+        html += `</div>`;
     }
 
-    if (btn) { btn.disabled = false; btn.textContent = '🎯 Find Transit'; }
+    // Legend items - circles and text in aligned columns
+    html += `<div style="border-top:1px solid #333; padding-top:6px;">`;
+    html += `<div style="font-weight:bold; color:#aaa; font-size:0.9em; margin-bottom:4px;">Legend</div>`;
+    const legendRows = [
+        ['#ff4444', 'Transit detection'],
+        ['#888888', 'Sunspot (filtered)'],
+        ['#ffff00', 'Disk boundary'],
+    ];
+    legendRows.forEach(([color, label]) => {
+        html += `<div style="display:flex; align-items:center; gap:8px; margin-bottom:3px;">` +
+            `<span style="flex-shrink:0; width:12px; height:12px; border:2px solid ${color}; border-radius:50%; display:inline-block;"></span>` +
+            `<span>${label}</span></div>`;
+    });
+    html += `</div>`;
+
+    // Buttons
+    if (compositePath) {
+        html += `<button class="btn-viewer" id="legendViewBtn" style="font-size:0.85em; padding:4px 10px; width:100%;" data-img-src="${compositePath}">🖼 View full size</button>`;
+    }
+
+    // Tuning sliders
+    html += `<div style="border-top:1px solid #333; padding-top:8px;">`;
+    html += `<div style="font-weight:bold; color:#aaa; font-size:0.9em; margin-bottom:6px;">Detection Tuning</div>`;
+
+    html += _sliderRow('sliderDiffThreshold', 'Sensitivity', 1, 30, 15,
+        'Lower = more sensitive (detects fainter objects, more noise)');
+    html += _sliderRow('sliderMinBlob', 'Min Blob Size', 1, 50, 20,
+        'Minimum pixel area to count as a detection');
+    html += _sliderRow('sliderDiskMargin', 'Edge Margin %', 5, 20, 12,
+        'Percentage of disk edge to ignore (trims atmospheric distortion)');
+
+    html += `<div style="display:flex; gap:6px; margin-top:6px;">`;
+    html += `<button class="btn-viewer" id="legendReanalyzeBtn" style="font-size:0.85em; padding:4px 10px; flex:1;">🔄 Re-analyze</button>`;
+    html += `<button class="btn-viewer" id="legendResetBtn" style="font-size:0.85em; padding:4px 10px;" title="Reset sliders to defaults">↩ Reset</button>`;
+    html += `</div>`;
+    html += `</div>`;
+
+    panel.innerHTML = html;
+    body.appendChild(panel);
+
+    // Wire up button events (after innerHTML so elements exist)
+    const viewBtn = document.getElementById('legendViewBtn');
+    if (viewBtn) {
+        const imgSrc = viewBtn.dataset.imgSrc;
+        viewBtn.onclick = (e) => { e.stopPropagation(); openCompositeModal(imgSrc, data); };
+    }
+    const previewImg = document.getElementById('compositePreview');
+    if (previewImg && compositePath) {
+        previewImg.onclick = (e) => { e.stopPropagation(); openCompositeModal(compositePath, data); };
+        // Draw margin overlay when image has loaded dimensions
+        previewImg.addEventListener('load', _updateMarginOverlay);
+        if (previewImg.complete) _updateMarginOverlay();
+    }
+    const reBtn = document.getElementById('legendReanalyzeBtn');
+    if (reBtn) reBtn.onclick = (e) => { e.stopPropagation(); scanTransit(); };
+    const resetBtn = document.getElementById('legendResetBtn');
+    if (resetBtn) resetBtn.onclick = (e) => {
+        e.stopPropagation();
+        _resetSliders();
+        _updateMarginOverlay();
+    };
+
+    // Hook disk margin slider to live-update the overlay
+    const dmSlider = document.getElementById('sliderDiskMargin');
+    if (dmSlider) {
+        const origInput = dmSlider.oninput;
+        dmSlider.addEventListener('input', _updateMarginOverlay);
+    }
+
+    // Hide the top banner (legend panel replaces it)
+    _setScanBanner(null);
+}
+
+function _sliderRow(id, label, min, max, defaultVal, tooltip) {
+    const saved = localStorage.getItem('transit_slider_' + id);
+    // Migrate: if stored edge margin was from old default (< 10), reset it
+    if (id === 'sliderDiskMargin' && saved !== null && parseFloat(saved) < 10) {
+        localStorage.removeItem('transit_slider_' + id);
+    }
+    const current = localStorage.getItem('transit_slider_' + id);
+    const val = current !== null ? current : defaultVal;
+    const extraCall = id === 'sliderDiskMargin' ? ' _updateMarginOverlay();' : '';
+    return `<div style="margin-bottom:6px;" title="${tooltip}">` +
+        `<div style="display:flex; justify-content:space-between; font-size:0.85em;">` +
+        `<span>${label}</span><span id="${id}Val">${val}</span></div>` +
+        `<input type="range" id="${id}" min="${min}" max="${max}" value="${val}" ` +
+        `data-default="${defaultVal}" ` +
+        `style="width:100%; accent-color:#4dff88;" ` +
+        `oninput="document.getElementById('${id}Val').textContent=this.value; localStorage.setItem('transit_slider_${id}', this.value);${extraCall}">` +
+        `</div>`;
+}
+
+function _resetSliders() {
+    ['sliderDiffThreshold', 'sliderMinBlob', 'sliderDiskMargin'].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) {
+            el.value = el.dataset.default;
+            const valEl = document.getElementById(id + 'Val');
+            if (valEl) valEl.textContent = el.dataset.default;
+        }
+        localStorage.removeItem('transit_slider_' + id);
+    });
 }
 
 function _formatTimestamp(secs) {
     const m = Math.floor(secs / 60);
     const s = (secs % 60).toFixed(2);
     return m > 0 ? `${m}:${s.padStart(5, '0')}` : `${s}s`;
+}
+
+/**
+ * Draw a yellow ring on the compositeOverlay canvas to show the excluded edge margin.
+ * Called on page load (after img renders) and whenever sliderDiskMargin changes.
+ */
+function _updateMarginOverlay() {
+    const img    = document.getElementById('compositePreview');
+    const canvas = document.getElementById('compositeOverlay');
+    const slider = document.getElementById('sliderDiskMargin');
+    if (!img || !canvas || !slider) return;
+
+    const marginPct = parseFloat(slider.value) / 100;
+    const diskCx    = parseFloat(img.dataset.diskCx || 0);
+    const diskCy    = parseFloat(img.dataset.diskCy || 0);
+    const diskR     = parseFloat(img.dataset.diskR  || 0);
+    if (!diskR) return;
+
+    const dw = img.naturalWidth  || img.width;
+    const dh = img.naturalHeight || img.height;
+    const cw = img.clientWidth;
+    const ch = img.clientHeight;
+    if (!cw || !ch || !dw || !dh) return;
+
+    // object-fit:contain scale & letterbox offsets
+    const scale   = Math.min(cw / dw, ch / dh);
+    const offsetX = (cw - dw * scale) / 2;
+    const offsetY = (ch - dh * scale) / 2;
+
+    canvas.width  = cw;
+    canvas.height = ch;
+    const ctx = canvas.getContext('2d');
+    ctx.clearRect(0, 0, cw, ch);
+
+    if (marginPct <= 0) return;
+
+    const cx     = diskCx * scale + offsetX;
+    const cy     = diskCy * scale + offsetY;
+    const outerR = diskR  * scale;
+    const innerR = outerR * (1 - marginPct);
+    const band   = outerR - innerR;
+
+    // Draw excluded ring as semi-transparent yellow fill
+    ctx.beginPath();
+    ctx.arc(cx, cy, outerR, 0, Math.PI * 2, false);
+    ctx.arc(cx, cy, innerR, 0, Math.PI * 2, true);
+    ctx.fillStyle = 'rgba(255,255,0,0.25)';
+    ctx.fill();
+
+    // Bright yellow inner boundary line
+    ctx.beginPath();
+    ctx.arc(cx, cy, innerR, 0, Math.PI * 2);
+    ctx.strokeStyle = '#ffff00';
+    ctx.lineWidth = Math.max(1, band * 0.15);
+    ctx.stroke();
+}
+
+/**
+ * Open the composite image in a full-screen modal overlay (instead of a new tab).
+ * @param {string} imgSrc   - Full URL path e.g. "/static/captures/.../analyzed_xxx.jpg"
+ * @param {object|null} data - Analysis result JSON, or null to load from sidecar
+ */
+async function openCompositeModal(imgSrc, data) {
+    // Remove any existing modal
+    const existing = document.getElementById('compositeModal');
+    if (existing) existing.remove();
+
+    // Load sidecar if data not provided
+    if (!data) {
+        const sidecarUrl = imgSrc.replace('.jpg', '_analysis.json');
+        try {
+            const r = await fetch(sidecarUrl);
+            data = r.ok ? await r.json() : {};
+        } catch (e) { data = {}; }
+    }
+
+    const events = data.transit_events || [];
+    const staticCount = data.static_detections || (data.detection_count || 0) - events.length;
+    const source = (data.source_file || imgSrc).split('/').pop();
+    const diskDetected = data.disk_detected || false;
+    const duration = data.duration_seconds || 0;
+    const detectionCount = data.detection_count || 0;
+
+    // Build events HTML for right panel — keep it brief (sidebar has details)
+    let eventsHtml = '';
+    if (events.length > 0) {
+        events.forEach((evt, i) => {
+            const ms = evt.duration_ms || 0;
+            const conf = evt.confidence || '';
+            const confColor = conf === 'high' ? '#4dff88' : conf === 'medium' ? '#ffcc44' : '#aaa';
+            eventsHtml += `<div style="margin-bottom:4px;">Transit ${i + 1}: ~${ms}ms <span style="font-size:0.8em; color:${confColor};">${conf}</span></div>`;
+        });
+    } else {
+        eventsHtml = '<div style="color:#888;">No transits detected</div>';
+    }
+
+    const modal = document.createElement('div');
+    modal.id = 'compositeModal';
+    modal.style.cssText = 'position:fixed; inset:0; z-index:9999; display:flex; background:#111; overflow:hidden;';
+
+    modal.innerHTML = `
+      <div style="flex:1; overflow:auto; display:flex; align-items:flex-start; justify-content:center; background:#000; padding:8px;">
+        <img src="${imgSrc}" alt="Transit Composite" style="max-width:100%; width:auto; height:auto; display:block;" />
+      </div>
+      <div style="width:220px; min-width:220px; background:#1a1a1a; border-left:1px solid #333; padding:16px; display:flex; flex-direction:column; gap:12px; overflow-y:auto; font-size:0.85em; color:#ccc;">
+        <div style="display:flex; justify-content:space-between; align-items:center;">
+          <strong style="color:#eee; font-size:1em;">Transit Composite</strong>
+          <button onclick="document.getElementById('compositeModal').remove()"
+            style="background:none; border:1px solid #555; color:#ccc; border-radius:4px; padding:2px 8px; cursor:pointer; font-size:1.1em;" title="Close">✕</button>
+        </div>
+        <div style="color:#aaa; font-size:0.8em; word-break:break-all;">${source}</div>
+        <div style="border-top:1px solid #333; padding-top:10px;">
+          <div style="font-weight:bold; color:#aaa; margin-bottom:6px; font-size:0.9em;">Result</div>
+          ${eventsHtml}
+          <div style="margin-top:6px; color:#888; font-size:0.85em;">${detectionCount} detections · ${duration.toFixed ? duration.toFixed(1) : duration}s · disk ${diskDetected ? '✓' : '✗'}</div>
+        </div>
+        <div style="border-top:1px solid #333; padding-top:10px;">
+          <div style="font-weight:bold; color:#aaa; margin-bottom:6px; font-size:0.9em;">Legend</div>
+          <div style="display:flex; align-items:center; gap:8px; margin-bottom:5px;"><span style="flex-shrink:0; width:12px; height:12px; border:2px solid #ff4444; border-radius:50%; display:inline-block;"></span><span>Transit position</span></div>
+          <div style="display:flex; align-items:center; gap:8px; margin-bottom:5px;"><span style="flex-shrink:0; width:12px; height:12px; border:2px solid #888888; border-radius:50%; display:inline-block;"></span><span>Sunspot (filtered)</span></div>
+          <div style="display:flex; align-items:center; gap:8px; margin-bottom:5px;"><span style="flex-shrink:0; width:12px; height:12px; border:2px solid #ffff00; border-radius:50%; display:inline-block;"></span><span>Disk boundary</span></div>
+        </div>
+      </div>`;
+
+    // Close on backdrop click (left pane area)
+    modal.addEventListener('click', (e) => { if (e.target === modal) modal.remove(); });
+    // Close on Escape
+    const escHandler = (e) => { if (e.key === 'Escape') { modal.remove(); document.removeEventListener('keydown', escHandler); } };
+    document.addEventListener('keydown', escHandler);
+
+    document.body.appendChild(modal);
 }
 
 function _setScanBanner(type, text, onclick) {
@@ -2145,12 +2584,13 @@ async function _scanVideoForTransit(src, onProgress) {
         return sum;
     };
 
-    // Helper: adaptive threshold = median + max(3×MAD, 0.5×median)
+    // Helper: adaptive threshold = median + max(2×MAD, 0.3×median)
+    // Less conservative than 3×MAD so subtle transits aren't missed.
     const adaptiveThreshold = (values) => {
         const s = [...values].sort((a, b) => a - b);
         const med = s[Math.floor(s.length / 2)];
         const mad = [...values].map(d => Math.abs(d - med)).sort((a, b) => a - b)[Math.floor(values.length / 2)];
-        return med + Math.max(mad * 3, med * 0.5);
+        return med + Math.max(mad * 2, med * 0.3);
     };
 
     // --- Coarse pass (0.1s steps, dual signals) ---
@@ -2187,20 +2627,32 @@ async function _scanVideoForTransit(src, onProgress) {
             spikeIndices.push(i);
         }
     }
-    if (spikeIndices.length === 0) { video.src = ''; return null; }
+
+    // If nothing exceeds threshold, fall back to the single highest-scoring frame
+    // (a real transit might score highest even if it doesn't cross the threshold)
+    let effectiveSpikes = spikeIndices;
+    if (spikeIndices.length === 0) {
+        const best = coarseSamples.reduce((a, b, i) =>
+            (b.consecDiff / threshA + b.refDiff / threshB) > (a.val) 
+                ? { idx: i, val: b.consecDiff / threshA + b.refDiff / threshB }
+                : a,
+            { idx: 0, val: 0 }
+        );
+        effectiveSpikes = [best.idx];
+    }
 
     // Merge spikes into clusters (gap ≤ 5 coarse steps = 0.5s)
     const clusters = [];
-    let cStart = spikeIndices[0], cEnd = spikeIndices[0];
+    let cStart = effectiveSpikes[0], cEnd = effectiveSpikes[0];
     let cPeak = Math.max(coarseSamples[cStart].consecDiff, coarseSamples[cStart].refDiff);
-    for (let k = 1; k < spikeIndices.length; k++) {
-        if (spikeIndices[k] - spikeIndices[k-1] <= 5) {
-            cEnd = spikeIndices[k];
+    for (let k = 1; k < effectiveSpikes.length; k++) {
+        if (effectiveSpikes[k] - effectiveSpikes[k-1] <= 5) {
+            cEnd = effectiveSpikes[k];
             const s = coarseSamples[cEnd];
             cPeak = Math.max(cPeak, s.consecDiff, s.refDiff);
         } else {
             clusters.push({ start: coarseSamples[cStart].time, end: coarseSamples[cEnd].time, peak: cPeak });
-            cStart = cEnd = spikeIndices[k];
+            cStart = cEnd = effectiveSpikes[k];
             cPeak = Math.max(coarseSamples[cStart].consecDiff, coarseSamples[cStart].refDiff);
         }
     }
@@ -2218,9 +2670,9 @@ async function _scanVideoForTransit(src, onProgress) {
     const fineStep = 0.033;
     const numFine = Math.ceil((fineEnd - fineStart) / fineStep);
 
-    // Reference = first frame of the fine window (should be clean background)
-    await seekTo(fineStart);
-    const fineRef = grabFrame();
+    // Reference = frame 0 (cleanest background — avoids using a frame that
+    // might already contain the transit object as the reference)
+    const fineRef = refFrame;
     const fineSamples = [];
 
     for (let i = 0; i < numFine; i++) {
@@ -2995,8 +3447,13 @@ async function startDetection() {
     if (btn) btn.disabled = true;
 
     try {
+        // Read sensitivity from the shared tuning sliders (if visible)
+        const dtEl = document.getElementById('sliderDiffThreshold');
+        const diffThreshold = dtEl ? parseInt(dtEl.value) : (parseInt(localStorage.getItem('transit_slider_sliderDiffThreshold')) || 5);
+
         const result = await apiCall('/telescope/detect/start', 'POST', {
-            record_on_detect: true
+            record_on_detect: true,
+            diff_threshold: diffThreshold,
         });
         if (result && !result.error) {
             isDetecting = true;

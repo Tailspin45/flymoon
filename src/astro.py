@@ -89,3 +89,29 @@ def get_rise_set_times(lat: float, lon: float, elevation: float) -> dict:
     except Exception:
         pass
     return result
+
+
+def targets_above_horizon(lat: float, lon: float, elevation: float = 0) -> bool:
+    """Return True if the Sun or Moon is currently above the horizon.
+
+    Used to gate Seestar reconnect attempts — no point trying to connect
+    when there is no observable target.
+    """
+    import os
+    from datetime import timezone
+
+    try:
+        from skyfield.api import wgs84
+
+        observer = wgs84.latlon(lat, lon, elevation_m=elevation)
+        now = EARTH_TIMESCALE.from_datetime(datetime.now(tz=timezone.utc))
+        for body_name in ("sun", "moon"):
+            body = ASTRO_EPHEMERIS[body_name]
+            alt, _, _ = (
+                observer.at(now).observe(body).apparent().altaz()
+            )
+            if alt.degrees > 0:
+                return True
+        return False
+    except Exception:
+        return True  # fail open — don't suppress reconnects on error

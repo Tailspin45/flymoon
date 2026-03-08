@@ -448,6 +448,7 @@ def get_transits(
     az_threshold: float = 10.0,
     custom_bbox: dict = None,
     data_source: str = "hybrid",
+    enrich: bool = True,
 ) -> Dict[str, Any]:
     API_KEY = get_aeroapi_key()
 
@@ -691,7 +692,8 @@ def get_transits(
                 target_positions=target_positions,
             )
             if (
-                data_source not in ("fa-only",)
+                enrich
+                and data_source not in ("fa-only",)
                 and not test_mode
                 and result.get("possibility_level") == PossibilityLevel.HIGH.value
                 and API_KEY
