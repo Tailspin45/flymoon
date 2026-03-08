@@ -457,6 +457,12 @@ def analyze_video(
             d.is_static = True
 
     # ── Group detections into transit events ───────────────────────────────────
+    # Use actual frames read rather than metadata-reported total to avoid
+    # timestamps exceeding the real video duration (OpenCV can over-report frames).
+    actual_duration = frame_idx / fps if fps > 0 else duration
+    for d in detections:
+        if d.time_seconds > actual_duration:
+            d.time_seconds = actual_duration
     transit_events = _group_detections(moving_detections, fps)
 
     # ── Composite still image (replaces annotated video) ─────────────────────
@@ -484,9 +490,9 @@ def analyze_video(
 
     result = AnalysisResult(
         source_file=str(path),
-        duration_seconds=round(duration, 2),
+        duration_seconds=round(actual_duration, 2),
         fps=round(fps, 2),
-        frame_count=total_frames,
+        frame_count=frame_idx,
         disk_detected=disk_detected,
         disk_cx=disk_cx,
         disk_cy=disk_cy,
