@@ -2302,6 +2302,7 @@ function _showAnalysisLegend(data, originalPath) {
     html += `<div style="font-weight:bold; color:#aaa; font-size:0.9em; margin-bottom:4px;">Legend</div>`;
     const legendRows = [
         ['#ff4444', 'Transit detection'],
+        ['#888888', 'Sunspot (filtered)'],
         ['#ffff00', 'Disk boundary'],
     ];
     legendRows.forEach(([color, label]) => {
@@ -2523,6 +2524,7 @@ async function openCompositeModal(imgSrc, data) {
         <div style="border-top:1px solid #333; padding-top:10px;">
           <div style="font-weight:bold; color:#aaa; margin-bottom:6px; font-size:0.9em;">Legend</div>
           <div style="display:flex; align-items:center; gap:8px; margin-bottom:5px;"><span style="flex-shrink:0; width:12px; height:12px; border:2px solid #ff4444; border-radius:50%; display:inline-block;"></span><span>Transit position</span></div>
+          <div style="display:flex; align-items:center; gap:8px; margin-bottom:5px;"><span style="flex-shrink:0; width:12px; height:12px; border:2px solid #888888; border-radius:50%; display:inline-block;"></span><span>Sunspot (filtered)</span></div>
           <div style="display:flex; align-items:center; gap:8px; margin-bottom:5px;"><span style="flex-shrink:0; width:12px; height:12px; border:2px solid #ffff00; border-radius:50%; display:inline-block;"></span><span>Disk boundary</span></div>
         </div>
       </div>`;
