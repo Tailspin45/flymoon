@@ -553,11 +553,13 @@ def _write_composite_image(
                     if sil_mask.sum() == 0:
                         continue
 
-                    # Darken the object silhouette slightly so it stands out
-                    roi = canvas[y1:y2, x1:x2]
+                    # Copy actual source frame pixels where the object is,
+                    # so the transit appears as its real silhouette (not
+                    # artificially darkened)
+                    src_roi = frame[y1:y2, x1:x2]
+                    dst_roi = canvas[y1:y2, x1:x2]
                     alpha = (sil_mask.astype(np.float32) / 255.0)[:, :, np.newaxis]
-                    darkened = (roi.astype(np.float32) * 0.5).astype(np.uint8)
-                    canvas[y1:y2, x1:x2] = (roi * (1 - alpha) + darkened * alpha).astype(np.uint8)
+                    canvas[y1:y2, x1:x2] = (dst_roi * (1 - alpha) + src_roi * alpha).astype(np.uint8)
                     blended_count += 1
 
             frame_idx += 1
@@ -580,17 +582,25 @@ def _write_composite_image(
         clahe = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(8, 8))
         enhanced = clahe.apply(reference_gray)
         blur_e = cv2.GaussianBlur(enhanced, (3, 3), 0)
-        inner_r = int(disk_radius * (1 - DISK_MARGIN_PCT))
+        # Use generous margin for sunspot detection (only exclude outermost 2%)
+        spot_inner_r = int(disk_radius * 0.98)
         spot_mask = np.zeros(reference_gray.shape[:2], dtype=np.uint8)
-        cv2.circle(spot_mask, (disk_cx, disk_cy), inner_r, 255, -1)
+        cv2.circle(spot_mask, (disk_cx, disk_cy), spot_inner_r, 255, -1)
         adapt = cv2.adaptiveThreshold(
             blur_e, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
-            cv2.THRESH_BINARY_INV, blockSize=51, C=8,
+            cv2.THRESH_BINARY_INV, blockSize=51, C=6,
         )
         adapt = cv2.bitwise_and(adapt, spot_mask)
         kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
         adapt = cv2.morphologyEx(adapt, cv2.MORPH_CLOSE, kernel)
         contours, _ = cv2.findContours(adapt, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        # Also confirm each candidate against the raw reference: must be
+        # darker than local mean (avoids CLAHE artifacts near limb)
+        blur_ref = cv2.GaussianBlur(reference_gray, (5, 5), 0)
+        # Build on-disk mask for verification (avoid off-disk dark pixels
+        # dragging the local mean down for limb spots)
+        verify_mask = np.zeros(reference_gray.shape[:2], dtype=np.uint8)
+        cv2.circle(verify_mask, (disk_cx, disk_cy), disk_radius, 255, -1)
         spot_count = 0
         for cnt in contours:
             area = cv2.contourArea(cnt)
@@ -601,12 +611,31 @@ def _write_composite_image(
                 continue
             sx = int(M["m10"] / M["m00"])
             sy = int(M["m01"] / M["m00"])
+            # Verify: spot must be darker than on-disk neighbors
+            local_val = int(blur_ref[sy, sx])
+            patch_r = 25
+            py1, py2 = max(0, sy - patch_r), min(h, sy + patch_r)
+            px1, px2 = max(0, sx - patch_r), min(w, sx + patch_r)
+            patch = blur_ref[py1:py2, px1:px2]
+            mask_patch = verify_mask[py1:py2, px1:px2]
+            on_disk = patch[mask_patch > 0]
+            if len(on_disk) == 0:
+                continue
+            local_mean = float(on_disk.mean())
+            if local_val >= local_mean - 3:
+                continue  # not actually darker than surroundings
             _, _, sw, sh = cv2.boundingRect(cnt)
             sr = max(10, max(sw, sh) // 2 + 6)
             cv2.circle(canvas, (sx, sy), sr, STATIC_COLOR, 2)
             spot_count += 1
         if spot_count:
             logger.info(f"[Analyzer] {spot_count} sunspot(s) detected")
+
+    # ── Mask outside disk to clean black ─────────────────────────────────
+    if disk_cx is not None and disk_cy is not None and disk_radius is not None:
+        outside_mask = np.zeros(canvas.shape[:2], dtype=np.uint8)
+        cv2.circle(outside_mask, (disk_cx, disk_cy), disk_radius + 2, 255, -1)
+        canvas[outside_mask == 0] = 0
 
     # ── Draw disk boundary (yellow) LAST so it's on top ──────────────────
     if disk_cx is not None and disk_cy is not None and disk_radius is not None:
