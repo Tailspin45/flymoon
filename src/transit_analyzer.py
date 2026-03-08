@@ -736,11 +736,14 @@ def _write_composite_image(
                         )
 
                     # Annotation circle — moon: only for tiny objects that
-                    # would be hard to spot; sun: always draw
+                    # would be hard to spot; sun: always draw.
+                    # When max_positions is set, always draw so every
+                    # requested position is visible even if silhouette is empty.
                     r = max(6, max(det.width, det.height) // 2 + 4)
                     blob_size = max(det.width, det.height)
+                    _force_circle = max_positions is not None
                     if is_moon:
-                        if blob_size < 20:
+                        if blob_size < 20 or _force_circle:
                             cv2.circle(
                                 canvas, (det.x, det.y), r, (0, 0, 220), 1
                             )

@@ -2198,7 +2198,13 @@ async function scanTransit(target) {
 
     // Read tuning slider values BEFORE removing the old panel
     const sliderBody = {};
-    sliderBody.target = (target === 'moon') ? 'moon' : 'sun';
+    // Persist target so re-analyze keeps the same mode
+    if (target === 'moon' || target === 'sun') {
+        localStorage.setItem('transit_last_target', target);
+    } else {
+        target = localStorage.getItem('transit_last_target') || 'sun';
+    }
+    sliderBody.target = target;
     const dtEl = document.getElementById('sliderDiffThreshold');
     const mbEl = document.getElementById('sliderMinBlob');
     const dmEl = document.getElementById('sliderDiskMargin');
