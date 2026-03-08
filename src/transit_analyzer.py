@@ -1229,9 +1229,9 @@ def _filter_transit_coherence(
     kept: List[BlobDetection] = []
 
     for run in runs:
-        duration = run[-1].time_seconds - run[0].time_seconds
-        if duration > max_duration_sec:
-            continue
+        # NOTE: do NOT check run duration here — a long shimmer stream can
+        # contain a short real transit buried inside it.  The per-track
+        # duration check (below) enforces max_duration_sec correctly.
 
         # ── 2. Build per-frame blob lists ───────────────────────────────
         by_frame: dict = defaultdict(list)
