@@ -932,6 +932,7 @@ def analyze_file():
         diff_threshold = req.get("diff_threshold")
         min_blob_pixels = req.get("min_blob_pixels")
         disk_margin_pct = req.get("disk_margin_pct")
+        target = req.get("target", "auto")
 
         def _run():
             try:
@@ -947,6 +948,7 @@ def analyze_file():
                     disk_margin_pct=(
                         float(disk_margin_pct) if disk_margin_pct is not None else None
                     ),
+                    target=target,
                 )
                 return result
             except Exception as exc:
@@ -1129,12 +1131,41 @@ def upload_telescope_file():
         rel_path = os.path.relpath(dest_path, "static").replace(os.sep, "/")
         logger.info(f"[Telescope] Uploaded file: {dest_path}")
 
+        # Generate thumbnail from first frame
+        thumb_url = None
+        thumb_path = os.path.splitext(dest_path)[0] + "_thumb.jpg"
+        try:
+            result = subprocess.run(
+                [
+                    "ffmpeg",
+                    "-i",
+                    dest_path,
+                    "-frames:v",
+                    "1",
+                    "-update",
+                    "1",
+                    "-q:v",
+                    "5",
+                    "-y",
+                    thumb_path,
+                ],
+                capture_output=True,
+                timeout=15,
+            )
+            if os.path.exists(thumb_path) and os.path.getsize(thumb_path) > 0:
+                rel_thumb = os.path.relpath(thumb_path, "static").replace(os.sep, "/")
+                thumb_url = f"/static/{rel_thumb}"
+                logger.info(f"[Telescope] Thumbnail generated: {thumb_path}")
+        except Exception as te:
+            logger.warning(f"[Telescope] Thumbnail generation skipped: {te}")
+
         return (
             jsonify(
                 {
                     "success": True,
                     "url": f"/static/{rel_path}",
                     "name": os.path.basename(dest_path),
+                    "thumbnail": thumb_url,
                 }
             ),
             200,

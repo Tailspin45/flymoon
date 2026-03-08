@@ -369,6 +369,11 @@
 .transit-alert.state-transit {
     animation: transit-pulse 1s infinite;
 }
+.transit-alert.state-expired {
+    opacity: 0.5;
+    border-left-color: #555;
+    transition: opacity 5s ease-out;
+}
 
 @keyframes transit-pulse {
     0%, 100% { opacity: 1; }
