@@ -757,8 +757,9 @@ def _write_composite_image(
                     gray, _ = _stabilize_frame(gray, ref_gray_f32)
 
                 for det in frames_needed[frame_idx]:
-                    # Extract bounding box around this detection (with padding)
-                    pad = max(det.width, det.height, 8)
+                    # Tight bounding box — small pad prevents stabilisation
+                    # jitter from bleeding into the silhouette.
+                    pad = min(max(det.width, det.height) // 4 + 4, 20)
                     x1 = max(0, det.x - det.width // 2 - pad)
                     y1 = max(0, det.y - det.height // 2 - pad)
                     x2 = min(w, det.x + det.width // 2 + pad)
@@ -772,8 +773,10 @@ def _write_composite_image(
                         # background, so use absolute difference.
                         abs_diff = np.abs(ref_patch - cur_patch).astype(np.uint8)
                         _, sil_mask = cv2.threshold(
-                            abs_diff, 12, 255, cv2.THRESH_BINARY
+                            abs_diff, 18, 255, cv2.THRESH_BINARY
                         )
+                        # Erode to remove single-pixel jitter / fringe
+                        sil_mask = cv2.erode(sil_mask, np.ones((2, 2), np.uint8))
                     else:
                         # Sun: aircraft is always darker (silhouette)
                         darkening = np.clip(

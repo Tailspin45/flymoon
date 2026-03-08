@@ -2282,6 +2282,10 @@ async function scanTransit(target) {
 
         // Refresh files and show legend (handles both found/not-found)
         await refreshFiles();
+        // Re-sync _viewerIndex to the file we analyzed — refreshFiles may
+        // have changed the list (new composite JPG added), shifting indices.
+        const syncedIdx = (window.currentFiles || []).findIndex(f => f.path === videoPath);
+        if (syncedIdx >= 0) _viewerIndex = syncedIdx;
         updateFilesGrid();
         _showAnalysisLegend(data, videoPath);
     } catch (err) {
