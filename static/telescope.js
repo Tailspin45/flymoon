@@ -1029,7 +1029,7 @@ function _transitStateFor(s) {
         const mins = Math.floor(s / 60);
         const secs = s % 60;
         const timeStr = mins > 0 ? `${mins}m ${secs}s` : `${secs}s`;
-        return { stateClass: 'state-waiting', stateLabel: `Transit in ${timeStr}`, countdownText: timeStr, countdownClass: 'tc-big' };
+        return { stateClass: 'state-waiting', stateLabel: '', countdownText: timeStr, countdownClass: 'tc-big' };
     } else if (s > 0) {
         return { stateClass: 'state-recording', stateLabel: `🔴 Recording — transit in ${s}s`, countdownText: `${s}s`, countdownClass: 'tc-big tc-red' };
     } else if (s === 0) {
@@ -1085,7 +1085,7 @@ function updateTransitList() {
                 </div>
                 <div class="ta-target">${transit.target || ''} &nbsp;·&nbsp; Alt ${transit.altitude}° Az ${transit.azimuth}°</div>
                 <div class="${countdownClass} ta-countdown">${countdownText}</div>
-                <div class="ta-state">${stateLabel}</div>
+                ${stateLabel ? `<div class="ta-state">${stateLabel}</div>` : ""}
             `;
             list.appendChild(card);
         } else {
@@ -1096,7 +1096,10 @@ function updateTransitList() {
                 countdown.textContent = countdownText;
                 countdown.className = `${countdownClass} ta-countdown`;
             }
-            if (stateEl) stateEl.textContent = stateLabel;
+            if (stateEl) {
+                stateEl.textContent = stateLabel;
+                stateEl.style.display = stateLabel ? '' : 'none';
+            }
             // Update state class on card only when it changes (avoids reflow)
             if (card.dataset.transitState !== stateClass) {
                 card.dataset.transitState = stateClass;
@@ -1105,10 +1108,24 @@ function updateTransitList() {
         }
     });
 
-    // Remove cards for transits no longer in the list
+    // Remove cards for transits no longer in the list; show expiry msg for unconfirmed ones
     const activeIds = new Set(upcomingTransits.map(t => `ta-${t.flight.replace(/[^a-zA-Z0-9]/g, '_')}`));
     list.querySelectorAll('.transit-alert').forEach(card => {
-        if (!activeIds.has(card.id)) card.remove();
+        if (!activeIds.has(card.id) && !card.dataset.expiring) {
+            const wasRecorded = card.dataset.transitState === 'state-transit' || card.dataset.transitState === 'state-recording' || card.dataset.transitState === 'state-post';
+            if (!wasRecorded) {
+                // Prediction expired before the transit could be confirmed
+                card.dataset.expiring = '1';
+                card.className = 'transit-alert low state-expired';
+                const countdown = card.querySelector('.ta-countdown');
+                const stateEl = card.querySelector('.ta-state');
+                if (countdown) { countdown.textContent = '—'; countdown.className = 'tc-big tc-dim'; }
+                if (stateEl) { stateEl.textContent = 'Prediction expired — transit no longer anticipated'; stateEl.style.display = ''; }
+                setTimeout(() => card.remove(), 5000);
+            } else {
+                card.remove();
+            }
+        }
     });
 }
 
@@ -1761,34 +1778,42 @@ async function gridDeleteSelectedSkipConfirm() {
 }
 
 async function importVideoFile(input) {
-    const file = input.files[0];
-    if (!input || !file) return;
-    input.value = '';  // reset so same file can be re-selected
+    if (!input || !input.files.length) return;
+    const files = Array.from(input.files);
+    input.value = '';  // reset so same files can be re-selected
 
-    if (!file.name.toLowerCase().endsWith('.mp4')) {
-        showStatus('Only .mp4 files are supported', 'error', 4000);
-        return;
+    const invalid = files.filter(f => !f.name.toLowerCase().endsWith('.mp4'));
+    if (invalid.length) {
+        showStatus(`Only .mp4 files are accepted (skipping: ${invalid.map(f=>f.name).join(', ')})`, 'error', 5000);
     }
-    if (file.size > 500 * 1024 * 1024) {
-        showStatus('File exceeds 500 MB limit', 'error', 4000);
-        return;
-    }
+    const toUpload = files.filter(f => f.name.toLowerCase().endsWith('.mp4') && f.size <= 500 * 1024 * 1024);
+    const tooLarge = files.filter(f => f.name.toLowerCase().endsWith('.mp4') && f.size > 500 * 1024 * 1024);
+    if (tooLarge.length) showStatus(`Skipping ${tooLarge.length} file(s) over 500 MB limit`, 'warning', 4000);
+    if (!toUpload.length) return;
 
-    showStatus(`Uploading ${file.name}…`, 'info', 0);
-    try {
-        const formData = new FormData();
-        formData.append('file', file);
-        const resp = await fetch('/telescope/files/upload', { method: 'POST', body: formData });
-        const data = await resp.json();
-        if (resp.ok && data.success) {
-            showStatus(`Imported ${data.name}`, 'success', 4000);
-            await refreshFiles();
-            updateFilesGrid();
-        } else {
-            showStatus(`Import failed: ${data.error || resp.statusText}`, 'error', 6000);
+    let uploaded = 0;
+    for (let i = 0; i < toUpload.length; i++) {
+        const file = toUpload[i];
+        showStatus(`Uploading ${file.name} (${i + 1} of ${toUpload.length})…`, 'info', 0);
+        try {
+            const formData = new FormData();
+            formData.append('file', file);
+            const resp = await fetch('/telescope/files/upload', { method: 'POST', body: formData });
+            const data = await resp.json();
+            if (resp.ok && data.success) {
+                uploaded++;
+            } else {
+                showStatus(`Import failed for ${file.name}: ${data.error || resp.statusText}`, 'error', 5000);
+            }
+        } catch (err) {
+            showStatus(`Import error for ${file.name}: ${err.message}`, 'error', 5000);
         }
-    } catch (err) {
-        showStatus(`Import error: ${err.message}`, 'error', 6000);
+    }
+
+    if (uploaded > 0) {
+        showStatus(`Imported ${uploaded} of ${toUpload.length} file${toUpload.length > 1 ? 's' : ''}`, 'success', 4000);
+        await refreshFiles();
+        updateFilesGrid();
     }
 }
 
@@ -1996,7 +2021,9 @@ function viewFile(path, name, opts) {
         const hasNext = _viewerIndex >= 0 && _viewerIndex < files.length - 1;
         const scanBtn = isVideo
             ? `<button class="btn-viewer" onmousedown="frameStepStart(-1)" onmouseup="frameStepStop()" onmouseleave="frameStepStop()" title="Back 1 frame (hold to repeat)">◁</button>` +
-              `<button class="btn-viewer btn-viewer-scan" id="scanTransitBtn" onclick="scanTransit()" title="Analyze video for transits (OpenCV)">🎯 Find Transit</button>` +
+              `<select id="scanTargetSelect" class="btn-viewer" title="Target body for analysis" style="font-size:0.8em; padding:3px 6px; cursor:pointer; background:#2a2a2a; color:#ccc; border:1px solid #555; border-radius:4px;">` +
+              `<option value="auto">🎯 Auto</option><option value="sun">☀️ Sun</option><option value="moon">🌙 Moon</option></select>` +
+              `<button class="btn-viewer btn-viewer-scan" id="scanTransitBtn" onclick="scanTransit()" title="Analyze video for transits">🔍 Find Transit</button>` +
               `<button class="btn-viewer" onmousedown="frameStepStart(1)" onmouseup="frameStepStop()" onmouseleave="frameStepStop()" title="Forward 1 frame (hold to repeat)">▷</button>`
             : '';
         // Show composite image button if an analyzed_xxx.jpg exists for this file
@@ -2144,6 +2171,8 @@ async function scanTransit() {
 
     // Read tuning slider values BEFORE removing the old panel
     const sliderBody = {};
+    const targetEl = document.getElementById('scanTargetSelect');
+    if (targetEl) sliderBody.target = targetEl.value;
     const dtEl = document.getElementById('sliderDiffThreshold');
     const mbEl = document.getElementById('sliderMinBlob');
     const dmEl = document.getElementById('sliderDiskMargin');
@@ -2474,9 +2503,12 @@ async function openCompositeModal(imgSrc, data) {
 
     // Load sidecar if data not provided
     if (!data) {
-        const sidecarUrl = imgSrc.replace('.jpg', '_analysis.json');
+        const sidecarUrl = imgSrc.replace(/\.jpg(\?.*)?$/, '_analysis.json');
         try {
-            const r = await fetch(sidecarUrl);
+            const ctrl = new AbortController();
+            const tid = setTimeout(() => ctrl.abort(), 5000);
+            const r = await fetch(sidecarUrl, { signal: ctrl.signal });
+            clearTimeout(tid);
             data = r.ok ? await r.json() : {};
         } catch (e) { data = {}; }
     }
@@ -2507,7 +2539,7 @@ async function openCompositeModal(imgSrc, data) {
 
     modal.innerHTML = `
       <div id="compositeImagePane" style="flex:1; overflow:auto; display:flex; align-items:flex-start; justify-content:center; background:#000; padding:8px;">
-        <img id="compositeFullImg" src="${imgSrc}" alt="Transit Composite" style="max-width:100%; max-height:calc(100vh - 40px); width:auto; height:auto; display:block;" />
+        <img id="compositeFullImg" src="${imgSrc}" alt="Transit Composite" loading="lazy" style="max-width:100%; max-height:calc(100vh - 40px); width:auto; height:auto; display:block;" />
       </div>
       <div style="width:220px; min-width:220px; background:#1a1a1a; border-left:1px solid #333; padding:16px; display:flex; flex-direction:column; gap:12px; overflow-y:auto; font-size:0.85em; color:#ccc;">
         <div style="display:flex; justify-content:space-between; align-items:center;">
@@ -2542,13 +2574,14 @@ async function openCompositeModal(imgSrc, data) {
     const pane = modal.querySelector('#compositeImagePane');
     if (fullImg && pane) {
         const doCenter = () => {
-            const imgH = fullImg.naturalHeight;
+            // Use rendered offsetHeight (respects max-height CSS), not naturalHeight
+            const imgH = fullImg.offsetHeight;
             const paneH = pane.clientHeight;
             if (imgH > paneH) {
                 pane.scrollTop = (imgH / 2) - (paneH / 2);
             }
         };
-        if (fullImg.complete) doCenter();
+        if (fullImg.complete && fullImg.offsetHeight > 0) doCenter();
         else fullImg.addEventListener('load', doCenter, { once: true });
     }
 }

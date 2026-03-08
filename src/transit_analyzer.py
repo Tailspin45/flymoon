@@ -212,6 +212,7 @@ def analyze_video(
     diff_threshold: int = None,
     min_blob_pixels: int = None,
     disk_margin_pct: float = None,
+    target: str = "auto",
 ) -> AnalysisResult:
     """
     Analyze a saved MP4 for transiting objects.
@@ -247,6 +248,15 @@ def analyze_video(
     _disk_margin_pct = (
         disk_margin_pct if disk_margin_pct is not None else DISK_MARGIN_PCT
     )
+
+    # Moon-specific overrides
+    is_moon = str(target).lower() == "moon"
+    if is_moon:
+        if diff_threshold is None:
+            _diff_threshold = max(8, int(_diff_threshold * 0.75))
+    _min_travel_px = 20.0 if is_moon else 40.0
+    _min_speed_px_s = 40.0 if is_moon else 80.0
+    _static_threshold_pct = 0.80 if is_moon else 0.25
 
     path = Path(video_path)
     if not path.exists():
@@ -434,14 +444,21 @@ def analyze_video(
     # Sunspots appear at the same position across many frames.  A real transit
     # moves across the disk.  Cluster detections by spatial proximity and mark
     # clusters present in >50% of detection frames as static.
-    detections = _filter_static_blobs(detections, proximity_px=30)
+    detections = _filter_static_blobs(
+        detections, proximity_px=30, static_threshold_pct=_static_threshold_pct
+    )
     moving_detections = [d for d in detections if not d.is_static]
     n_static = sum(1 for d in detections if d.is_static)
 
     # ── Filter moving detections for transit coherence ──────────────────────
     # A real transit traces a roughly linear path in under ~2 seconds.
     # Anything that hangs around the same spot for many seconds is shimmer.
-    moving_detections = _filter_transit_coherence(moving_detections, fps)
+    moving_detections = _filter_transit_coherence(
+        moving_detections,
+        fps,
+        min_travel_px=_min_travel_px,
+        min_speed_px_s=_min_speed_px_s,
+    )
     if moving_detections:
         logger.info(
             f"[Analyzer] After coherence filter: {len(moving_detections)} moving detections"
@@ -482,6 +499,7 @@ def analyze_video(
             bg_frame=ref_bgr_frame,
             reference_gray=reference,
             ref_gray_f32=ref_gray_f32,
+            is_moon=is_moon,
         )
         if composite_image_str:
             logger.info(f"[Analyzer] Composite image → {composite_path.name}")
@@ -530,14 +548,15 @@ def _write_composite_image(
     bg_frame: Optional[np.ndarray] = None,
     reference_gray: Optional[np.ndarray] = None,
     ref_gray_f32: Optional[np.ndarray] = None,
+    is_moon: bool = False,
 ) -> Optional[str]:
     """
-    Build a composite still image showing transit silhouettes and sunspots.
+    Build a composite still image showing transit silhouettes and sunspots/craters.
 
     For each transit frame, the actual darkened pixels (object silhouette)
-    are extracted and alpha-blended onto the background.  Small fast movers
-    appear as a trail of dark dots; large targets produce dramatic time-lapse
-    overlays.  Sunspots get one grey circle per cluster.
+    are extracted and alpha-blended onto the background.  Sunspots (sun) or
+    craters (moon) are detected from the reference frame; when is_moon=True
+    those static features are NOT drawn on the composite.
 
     Returns the output path string on success, None on failure.
     """
@@ -644,8 +663,14 @@ def _write_composite_image(
             thickness = max(1, r // 12)
             cv2.circle(canvas, (d.x, d.y), r, (0, 0, 220), thickness)
 
-    # ── Sunspots: detect dark features from CLAHE-enhanced reference ─────
-    if reference_gray is not None and disk_cx is not None and disk_radius is not None:
+    # ── Sunspots (sun only): detect dark features from CLAHE-enhanced reference ─
+    # For moon targets, craters are pervasive and we deliberately skip this step.
+    if (
+        not is_moon
+        and reference_gray is not None
+        and disk_cx is not None
+        and disk_radius is not None
+    ):
         clahe = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(8, 8))
         enhanced = clahe.apply(reference_gray)
         blur_e = cv2.GaussianBlur(enhanced, (3, 3), 0)
@@ -824,13 +849,17 @@ def _write_annotated_video(
 
 
 def _filter_static_blobs(
-    detections: List[BlobDetection], proximity_px: int = 8
+    detections: List[BlobDetection],
+    proximity_px: int = 8,
+    static_threshold_pct: float = 0.25,
 ) -> List[BlobDetection]:
-    """Mark blobs that stay at the same position across many frames as static (sunspots).
+    """Mark blobs that stay at the same position across many frames as static.
 
     Algorithm: group all detections by spatial proximity.  If a spatial cluster
-    spans more than 50% of the frames that contain *any* detection, it's a
-    static feature — sunspot, crater, sensor hot-spot — not a transit.
+    spans more than `static_threshold_pct` of the frames that contain *any*
+    detection, it's a static feature (sunspot, crater, hot-pixel), not a transit.
+    Use a higher threshold (e.g. 0.80) for Moon targets where craters are stable
+    features that must not bleed into the moving-blob set.
     """
     if not detections:
         return detections
@@ -860,9 +889,7 @@ def _filter_static_blobs(
                 assigned.add(j)
         clusters.append(cluster)
 
-    # Mark clusters that appear in >25% of detection-containing frames as static.
-    # (50% was too lenient — sunspots with intermittent detection escaped.)
-    threshold = n_det_frames * 0.25
+    threshold = n_det_frames * static_threshold_pct
     for cluster in clusters:
         unique_frames = set(detections[i].frame_index for i in cluster)
         if len(unique_frames) > threshold:
