@@ -29,28 +29,31 @@ import numpy as np
 from src import logger
 
 # ── Default tunable parameters (can be overridden per-call) ───────────────────
-REFERENCE_WINDOW = 90       # frames in rolling reference (≈3 s at 30 fps)
-MIN_BLOB_PIXELS  = 20       # ignore tiny noise; a real transit blob is ≥20 px²
-DIFF_THRESHOLD   = 15       # pixel intensity difference — tuned for post-stabilization noise floor
-DISK_MARGIN_PCT  = 0.12     # fraction of radius to trim from limb (atmosphere margin)
+REFERENCE_WINDOW = 90  # frames in rolling reference (≈3 s at 30 fps)
+MIN_BLOB_PIXELS = 20  # ignore tiny noise; a real transit blob is ≥20 px²
+DIFF_THRESHOLD = (
+    15  # pixel intensity difference — tuned for post-stabilization noise floor
+)
+DISK_MARGIN_PCT = 0.12  # fraction of radius to trim from limb (atmosphere margin)
 
 
 # ── Data classes ──────────────────────────────────────────────────────────────
+
 
 @dataclass
 class BlobDetection:
     frame_index: int
     time_seconds: float
-    x: int          # bounding-box centre x
-    y: int          # bounding-box centre y
+    x: int  # bounding-box centre x
+    y: int  # bounding-box centre y
     width: int
     height: int
     area_px: int
-    aspect_ratio: float   # width/height — >2 suggests elongated (aircraft)
-    disk_x_norm: float    # x relative to disk centre, normalised by radius (-1..1)
+    aspect_ratio: float  # width/height — >2 suggests elongated (aircraft)
+    disk_x_norm: float  # x relative to disk centre, normalised by radius (-1..1)
     disk_y_norm: float
-    confidence: str       # "high" | "medium" | "low"
-    is_static: bool = False   # True = likely sunspot/static feature (filtered out)
+    confidence: str  # "high" | "medium" | "low"
+    is_static: bool = False  # True = likely sunspot/static feature (filtered out)
 
 
 @dataclass
@@ -71,6 +74,7 @@ class AnalysisResult:
 
 
 # ── Core analysis ──────────────────────────────────────────────────────────────
+
 
 def _detect_disk(frame: np.ndarray) -> Optional[Tuple[int, int, int]]:
     """Return (cx, cy, radius) of the solar/lunar disk, or None."""
@@ -100,14 +104,19 @@ def _detect_disk(frame: np.ndarray) -> Optional[Tuple[int, int, int]]:
     contours, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     if contours:
         largest = max(contours, key=cv2.contourArea)
-        if cv2.contourArea(largest) > (min_r ** 2 * np.pi):
+        if cv2.contourArea(largest) > (min_r**2 * np.pi):
             (cx, cy), radius = cv2.minEnclosingCircle(largest)
             return int(cx), int(cy), int(radius)
     return None
 
 
-def _disk_mask(shape: Tuple[int, int], cx: int, cy: int, radius: int,
-               margin_pct: float = DISK_MARGIN_PCT) -> np.ndarray:
+def _disk_mask(
+    shape: Tuple[int, int],
+    cx: int,
+    cy: int,
+    radius: int,
+    margin_pct: float = DISK_MARGIN_PCT,
+) -> np.ndarray:
     """Binary mask: 255 inside disk (minus limb margin), 0 outside."""
     mask = np.zeros(shape[:2], dtype=np.uint8)
     inner_r = max(1, int(radius * (1.0 - margin_pct)))
@@ -134,10 +143,21 @@ def _reencode_h264(src: Path, dst: Path) -> None:
         return
     try:
         subprocess.run(
-            ["ffmpeg", "-y", "-i", str(src),
-             "-c:v", "libx264", "-preset", "fast", "-crf", "23",
-             "-movflags", "+faststart",
-             str(dst)],
+            [
+                "ffmpeg",
+                "-y",
+                "-i",
+                str(src),
+                "-c:v",
+                "libx264",
+                "-preset",
+                "fast",
+                "-crf",
+                "23",
+                "-movflags",
+                "+faststart",
+                str(dst),
+            ],
             check=True,
             capture_output=True,
         )
@@ -167,7 +187,9 @@ def _stabilize_frame(
     M = np.float32([[1, 0, dx], [0, 1, dy]])
     h, w = frame_gray.shape
     stabilized = cv2.warpAffine(
-        frame_gray, M, (w, h),
+        frame_gray,
+        M,
+        (w, h),
         flags=cv2.INTER_LINEAR,
         borderMode=cv2.BORDER_REFLECT,
     )
@@ -175,7 +197,7 @@ def _stabilize_frame(
 
 
 def _confidence(blob_area: int, disk_radius: int) -> str:
-    frac = blob_area / max(1, np.pi * disk_radius ** 2)
+    frac = blob_area / max(1, np.pi * disk_radius**2)
     if frac > 0.002:
         return "high"
     if frac > 0.0003:
@@ -219,8 +241,12 @@ def analyze_video(
 
     # Resolve per-call overrides
     _diff_threshold = diff_threshold if diff_threshold is not None else DIFF_THRESHOLD
-    _min_blob_pixels = min_blob_pixels if min_blob_pixels is not None else MIN_BLOB_PIXELS
-    _disk_margin_pct = disk_margin_pct if disk_margin_pct is not None else DISK_MARGIN_PCT
+    _min_blob_pixels = (
+        min_blob_pixels if min_blob_pixels is not None else MIN_BLOB_PIXELS
+    )
+    _disk_margin_pct = (
+        disk_margin_pct if disk_margin_pct is not None else DISK_MARGIN_PCT
+    )
 
     path = Path(video_path)
     if not path.exists():
@@ -230,7 +256,9 @@ def analyze_video(
             fps=0,
             frame_count=0,
             disk_detected=False,
-            disk_cx=None, disk_cy=None, disk_radius=None,
+            disk_cx=None,
+            disk_cy=None,
+            disk_radius=None,
             error=f"File not found: {path}",
             analyzed_at=datetime.now(timezone.utc).isoformat(),
         )
@@ -243,7 +271,9 @@ def analyze_video(
             fps=0,
             frame_count=0,
             disk_detected=False,
-            disk_cx=None, disk_cy=None, disk_radius=None,
+            disk_cx=None,
+            disk_cy=None,
+            disk_radius=None,
             error=f"File appears already analyzed: {path.name}",
             analyzed_at=datetime.now(timezone.utc).isoformat(),
         )
@@ -258,8 +288,12 @@ def analyze_video(
     # For short clips, use fewer reference frames (min 10, or half the clip)
     ref_window = min(REFERENCE_WINDOW, max(10, total_frames // 2))
 
-    logger.info(f"[Analyzer] {path.name}: {total_frames} frames @ {fps:.1f} fps, {w}x{h}, ref_window={ref_window}")
-    logger.info(f"[Analyzer] Params: diff_threshold={_diff_threshold}, min_blob_pixels={_min_blob_pixels}, disk_margin={_disk_margin_pct:.0%}")
+    logger.info(
+        f"[Analyzer] {path.name}: {total_frames} frames @ {fps:.1f} fps, {w}x{h}, ref_window={ref_window}"
+    )
+    logger.info(
+        f"[Analyzer] Params: diff_threshold={_diff_threshold}, min_blob_pixels={_min_blob_pixels}, disk_margin={_disk_margin_pct:.0%}"
+    )
 
     # ── Probe for disk in first 30 frames ─────────────────────────────────────
     disk = None
@@ -290,18 +324,19 @@ def analyze_video(
     # so that a transit happening early in the clip doesn't contaminate the
     # baseline and become invisible.
     from collections import deque
+
     ref_buffer: deque = deque(maxlen=ref_window)
     ref_buffer_bgr: deque = deque(maxlen=ref_window)  # BGR frames for composite bg
-    reference = None          # frozen once buffer is full (grayscale median)
-    ref_gray_f32 = None       # float32 version for phase-correlation stabilization
-    ref_bgr_frame = None      # color frame from reference window (composite background)
+    reference = None  # frozen once buffer is full (grayscale median)
+    ref_gray_f32 = None  # float32 version for phase-correlation stabilization
+    ref_bgr_frame = None  # color frame from reference window (composite background)
     mask = _disk_mask((h, w), disk_cx, disk_cy, disk_radius, _disk_margin_pct)
 
     # ── Output writer — write to temp file, re-encode to H.264 via FFmpeg ────
     out = None
     base_stem = path.stem.replace("_analyzed", "")  # always derive from original name
     temp_path = path.with_name(base_stem + "_analyzed_tmp.mp4")
-    out_path   = path.with_name(base_stem + "_analyzed.mp4")
+    out_path = path.with_name(base_stem + "_analyzed.mp4")
     temp_path.parent.mkdir(parents=True, exist_ok=True)
     temp_path.unlink(missing_ok=True)  # remove any stale tmp from previous failed run
     if output_annotated:
@@ -342,17 +377,21 @@ def analyze_video(
             conf = _confidence(area, disk_radius)
             dx_norm = (bcx - disk_cx) / max(1, disk_radius)
             dy_norm = (bcy - disk_cy) / max(1, disk_radius)
-            blobs.append(BlobDetection(
-                frame_index=fidx,
-                time_seconds=round(fidx / fps, 3),
-                x=bcx, y=bcy,
-                width=bw, height=bh,
-                area_px=area,
-                aspect_ratio=round(ar, 2),
-                disk_x_norm=round(dx_norm, 3),
-                disk_y_norm=round(dy_norm, 3),
-                confidence=conf,
-            ))
+            blobs.append(
+                BlobDetection(
+                    frame_index=fidx,
+                    time_seconds=round(fidx / fps, 3),
+                    x=bcx,
+                    y=bcy,
+                    width=bw,
+                    height=bh,
+                    area_px=area,
+                    aspect_ratio=round(ar, 2),
+                    disk_x_norm=round(dx_norm, 3),
+                    disk_y_norm=round(dy_norm, 3),
+                    confidence=conf,
+                )
+            )
         return blobs
 
     # ── Main detection loop ───────────────────────────────────────────────────
@@ -404,7 +443,9 @@ def analyze_video(
     # Anything that hangs around the same spot for many seconds is shimmer.
     moving_detections = _filter_transit_coherence(moving_detections, fps)
     if moving_detections:
-        logger.info(f"[Analyzer] After coherence filter: {len(moving_detections)} moving detections")
+        logger.info(
+            f"[Analyzer] After coherence filter: {len(moving_detections)} moving detections"
+        )
     else:
         logger.info("[Analyzer] No coherent transit paths found")
 
@@ -425,9 +466,16 @@ def analyze_video(
     composite_image_str = None
     if output_annotated:
         composite_image_str = _write_composite_image(
-            path, composite_path, detections, disk_cx, disk_cy, disk_radius,
-            progress_cb, bg_frame=ref_bgr_frame,
-            reference_gray=reference, ref_gray_f32=ref_gray_f32,
+            path,
+            composite_path,
+            detections,
+            disk_cx,
+            disk_cy,
+            disk_radius,
+            progress_cb,
+            bg_frame=ref_bgr_frame,
+            reference_gray=reference,
+            ref_gray_f32=ref_gray_f32,
         )
         if composite_image_str:
             logger.info(f"[Analyzer] Composite image → {composite_path.name}")
@@ -460,7 +508,9 @@ def analyze_video(
 
 
 STATIC_COLOR = (140, 140, 140)  # gray for sunspots/static features
-TRANSIT_TINT  = np.array([40, 40, 200], dtype=np.uint8)  # reddish tint for transit silhouettes
+TRANSIT_TINT = np.array(
+    [40, 40, 200], dtype=np.uint8
+)  # reddish tint for transit silhouettes
 
 
 def _write_composite_image(
@@ -495,7 +545,9 @@ def _write_composite_image(
         ok, canvas = cap.read()
         cap.release()
         if not ok or canvas is None:
-            logger.error("[Analyzer] Could not read background frame for composite image")
+            logger.error(
+                "[Analyzer] Could not read background frame for composite image"
+            )
             return None
 
     h, w = canvas.shape[:2]
@@ -510,6 +562,7 @@ def _write_composite_image(
     if transit_dets and reference_gray is not None:
         # Build a set of unique frame indices that contain transit detections
         from collections import defaultdict
+
         frames_needed: dict = defaultdict(list)
         for d in transit_dets:
             frames_needed[d.frame_index].append(d)
@@ -559,16 +612,24 @@ def _write_composite_image(
                     src_roi = frame[y1:y2, x1:x2]
                     dst_roi = canvas[y1:y2, x1:x2]
                     alpha = (sil_mask.astype(np.float32) / 255.0)[:, :, np.newaxis]
-                    canvas[y1:y2, x1:x2] = (dst_roi * (1 - alpha) + src_roi * alpha).astype(np.uint8)
+                    canvas[y1:y2, x1:x2] = (
+                        dst_roi * (1 - alpha) + src_roi * alpha
+                    ).astype(np.uint8)
                     blended_count += 1
 
             frame_idx += 1
             if progress_cb and frame_idx % 60 == 0:
-                progress_cb(0.75 + 0.15 * min(1.0, frame_idx / max(1, cap.get(cv2.CAP_PROP_FRAME_COUNT))))
+                progress_cb(
+                    0.75
+                    + 0.15
+                    * min(1.0, frame_idx / max(1, cap.get(cv2.CAP_PROP_FRAME_COUNT)))
+                )
 
         cap.release()
         if blended_count:
-            logger.info(f"[Analyzer] Composited {blended_count} transit silhouettes from {len(frames_needed)} frames")
+            logger.info(
+                f"[Analyzer] Composited {blended_count} transit silhouettes from {len(frames_needed)} frames"
+            )
 
     elif transit_dets:
         # No reference available — fall back to thin red outline markers
@@ -587,13 +648,19 @@ def _write_composite_image(
         spot_mask = np.zeros(reference_gray.shape[:2], dtype=np.uint8)
         cv2.circle(spot_mask, (disk_cx, disk_cy), spot_inner_r, 255, -1)
         adapt = cv2.adaptiveThreshold(
-            blur_e, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
-            cv2.THRESH_BINARY_INV, blockSize=51, C=6,
+            blur_e,
+            255,
+            cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
+            cv2.THRESH_BINARY_INV,
+            blockSize=51,
+            C=6,
         )
         adapt = cv2.bitwise_and(adapt, spot_mask)
         kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
         adapt = cv2.morphologyEx(adapt, cv2.MORPH_CLOSE, kernel)
-        contours, _ = cv2.findContours(adapt, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        contours, _ = cv2.findContours(
+            adapt, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
+        )
         # Also confirm each candidate against the raw reference: must be
         # darker than local mean (avoids CLAHE artifacts near limb)
         blur_ref = cv2.GaussianBlur(reference_gray, (5, 5), 0)
@@ -656,14 +723,23 @@ def _write_composite_image(
 
 
 def _write_annotated_video(
-    src: Path, dst: Path, fps: float, w: int, h: int, total_frames: int,
+    src: Path,
+    dst: Path,
+    fps: float,
+    w: int,
+    h: int,
+    total_frames: int,
     detections: List[BlobDetection],
-    disk_cx: int, disk_cy: int, disk_radius: int,
-    progress_cb=None, progress_offset: float = 0.0,
+    disk_cx: int,
+    disk_cy: int,
+    disk_radius: int,
+    progress_cb=None,
+    progress_offset: float = 0.0,
 ):
     """Second pass: re-read source video and overlay annotations."""
     # Index detections by frame for fast lookup
     from collections import defaultdict
+
     by_frame: dict = defaultdict(list)
     for d in detections:
         by_frame[d.frame_index].append(d)
@@ -698,33 +774,52 @@ def _write_annotated_video(
                     thickness = 3
                 half_w = max(d.width // 2 + 4, 8)
                 half_h = max(d.height // 2 + 4, 8)
-                cv2.ellipse(annotated, (d.x, d.y), (half_w, half_h),
-                            0, 0, 360, color, thickness)
-                cv2.putText(annotated, label,
-                            (d.x - d.width // 2, max(12, d.y - d.height // 2 - 6)),
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2, cv2.LINE_AA)
+                cv2.ellipse(
+                    annotated, (d.x, d.y), (half_w, half_h), 0, 0, 360, color, thickness
+                )
+                cv2.putText(
+                    annotated,
+                    label,
+                    (d.x - d.width // 2, max(12, d.y - d.height // 2 - 6)),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    0.6,
+                    color,
+                    2,
+                    cv2.LINE_AA,
+                )
 
             # Disk outline
             cv2.circle(annotated, (disk_cx, disk_cy), disk_radius, (0, 255, 255), 2)
 
         # Timestamp
         ts = f"{frame_idx / fps:.2f}s"
-        cv2.putText(annotated, ts, (8, h - 8),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, (180, 180, 180), 1, cv2.LINE_AA)
+        cv2.putText(
+            annotated,
+            ts,
+            (8, h - 8),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.5,
+            (180, 180, 180),
+            1,
+            cv2.LINE_AA,
+        )
 
         out.write(annotated)
         frame_idx += 1
 
         if progress_cb and frame_idx % 30 == 0:
-            frac = progress_offset + (1.0 - progress_offset) * (frame_idx / max(1, total_frames))
+            frac = progress_offset + (1.0 - progress_offset) * (
+                frame_idx / max(1, total_frames)
+            )
             progress_cb(frac)
 
     cap.release()
     out.release()
 
 
-def _filter_static_blobs(detections: List[BlobDetection],
-                        proximity_px: int = 8) -> List[BlobDetection]:
+def _filter_static_blobs(
+    detections: List[BlobDetection], proximity_px: int = 8
+) -> List[BlobDetection]:
     """Mark blobs that stay at the same position across many frames as static (sunspots).
 
     Algorithm: group all detections by spatial proximity.  If a spatial cluster
@@ -751,7 +846,10 @@ def _filter_static_blobs(detections: List[BlobDetection],
         for j in range(i + 1, len(detections)):
             if j in assigned:
                 continue
-            if abs(detections[j].x - d.x) <= proximity_px and abs(detections[j].y - d.y) <= proximity_px:
+            if (
+                abs(detections[j].x - d.x) <= proximity_px
+                and abs(detections[j].y - d.y) <= proximity_px
+            ):
                 cluster.append(j)
                 assigned.add(j)
         clusters.append(cluster)
@@ -886,16 +984,24 @@ def _filter_transit_coherence(
             if speed < min_speed_px_s:
                 continue
 
-            # Linearity: max deviation from straight line < 40% of travel
+            # Linearity: max deviation from straight line < 15% of travel
+            # (Reduced from 40% to reject curved telescope-slew artifacts)
             if travel > 10 and len(track) > 3:
                 vx, vy = cx1 - cx0, cy1 - cy0
                 vlen = math.hypot(vx, vy)
                 nx, ny = -vy / vlen, vx / vlen
-                max_dev = max(
-                    abs((d.x - cx0) * nx + (d.y - cy0) * ny) for d in track
-                )
-                if max_dev > travel * 0.4:
+                max_dev = max(abs((d.x - cx0) * nx + (d.y - cy0) * ny) for d in track)
+                if max_dev > travel * 0.15:
                     continue
+
+            # Aspect-ratio guard: reject horizontally elongated arcs (scope slews)
+            # A real transit object is roughly round (width:height ≤ 3:1)
+            xs = [d.x for d in track]
+            ys = [d.y for d in track]
+            bbox_w = max(xs) - min(xs) + 1
+            bbox_h = max(ys) - min(ys) + 1
+            if bbox_h > 0 and (bbox_w / bbox_h) > 4:
+                continue
 
             # This track is a real transit — keep all its detections
             kept.extend(track)
@@ -903,8 +1009,9 @@ def _filter_transit_coherence(
     return kept
 
 
-def _group_detections(detections: List[BlobDetection], fps: float,
-                      gap_seconds: float = 0.5) -> List[dict]:
+def _group_detections(
+    detections: List[BlobDetection], fps: float, gap_seconds: float = 0.5
+) -> List[dict]:
     """Merge per-frame detections into discrete transit events."""
     if not detections:
         return []
@@ -925,44 +1032,49 @@ def _group_detections(detections: List[BlobDetection], fps: float,
 
 def _summarize_event(blobs: List[BlobDetection]) -> dict:
     t_start = blobs[0].time_seconds
-    t_end   = blobs[-1].time_seconds
-    best    = max(blobs, key=lambda b: b.area_px)
-    confs   = [b.confidence for b in blobs]
+    t_end = blobs[-1].time_seconds
+    best = max(blobs, key=lambda b: b.area_px)
+    confs = [b.confidence for b in blobs]
     overall = "high" if "high" in confs else ("medium" if "medium" in confs else "low")
     # Estimate direction from first→last blob centroid
     dx = blobs[-1].disk_x_norm - blobs[0].disk_x_norm
     dy = blobs[-1].disk_y_norm - blobs[0].disk_y_norm
     import math
+
     heading_deg = round(math.degrees(math.atan2(dy, dx)), 1) if len(blobs) > 1 else None
-    speed_norm = round(math.hypot(dx, dy) / max(0.001, t_end - t_start), 3) if t_end > t_start else None
+    speed_norm = (
+        round(math.hypot(dx, dy) / max(0.001, t_end - t_start), 3)
+        if t_end > t_start
+        else None
+    )
     return {
-        "start_seconds":  t_start,
-        "end_seconds":    t_end,
-        "duration_ms":    round((t_end - t_start) * 1000),
-        "peak_area_px":   best.area_px,
+        "start_seconds": t_start,
+        "end_seconds": t_end,
+        "duration_ms": round((t_end - t_start) * 1000),
+        "peak_area_px": best.area_px,
         "peak_aspect_ratio": best.aspect_ratio,
-        "confidence":     overall,
-        "heading_deg":    heading_deg,
+        "confidence": overall,
+        "heading_deg": heading_deg,
         "speed_norm_per_s": speed_norm,
-        "frame_count":    len(blobs),
+        "frame_count": len(blobs),
     }
 
 
 def _write_sidecar(result: AnalysisResult, path: Path):
     data = {
-        "source_file":      result.source_file,
-        "analyzed_at":      result.analyzed_at,
+        "source_file": result.source_file,
+        "analyzed_at": result.analyzed_at,
         "duration_seconds": result.duration_seconds,
-        "fps":              result.fps,
-        "frame_count":      result.frame_count,
-        "disk_detected":    result.disk_detected,
-        "disk_cx":          result.disk_cx,
-        "disk_cy":          result.disk_cy,
-        "disk_radius":      result.disk_radius,
-        "transit_events":   result.transit_events,
-        "detection_count":  len(result.detections),
-        "composite_image":  result.composite_image,
-        "error":            result.error,
+        "fps": result.fps,
+        "frame_count": result.frame_count,
+        "disk_detected": result.disk_detected,
+        "disk_cx": result.disk_cx,
+        "disk_cy": result.disk_cy,
+        "disk_radius": result.disk_radius,
+        "transit_events": result.transit_events,
+        "detection_count": len(result.detections),
+        "composite_image": result.composite_image,
+        "error": result.error,
     }
     with open(path, "w") as f:
         json.dump(data, f, indent=2)
@@ -972,12 +1084,18 @@ def _write_sidecar(result: AnalysisResult, path: Path):
 
 if __name__ == "__main__":
     import sys
+
     if len(sys.argv) < 2:
         print("Usage: python -m src.transit_analyzer <video.mp4>")
         sys.exit(1)
     r = analyze_video(sys.argv[1])
-    print(json.dumps({
-        "events": r.transit_events,
-        "detections": len(r.detections),
-        "disk": {"cx": r.disk_cx, "cy": r.disk_cy, "r": r.disk_radius},
-    }, indent=2))
+    print(
+        json.dumps(
+            {
+                "events": r.transit_events,
+                "detections": len(r.detections),
+                "disk": {"cx": r.disk_cx, "cy": r.disk_cy, "r": r.disk_radius},
+            },
+            indent=2,
+        )
+    )

@@ -1566,6 +1566,14 @@ function dismissTransit(flight) {
     }
     document.addEventListener('keydown', (e) => {
         if (e.key === 'Escape') closeFileViewer();
+        // CMD/Ctrl + Delete in files grid
+        if ((e.key === 'Delete' || e.key === 'Backspace') && (e.metaKey || e.ctrlKey)) {
+            const modal = document.getElementById('filesModal');
+            if (modal && modal.style.display !== 'none' && gridSelection.selected.size > 0) {
+                e.preventDefault();
+                gridDeleteSelectedSkipConfirm();
+            }
+        }
     });
 })();
 
@@ -1721,6 +1729,67 @@ async function gridDeleteSelected() {
     showStatus(`Deleted ${deleted} of ${n} file${n > 1 ? 's' : ''}`, deleted > 0 ? 'success' : 'error', 3000);
     await refreshFiles();
     updateFilesGrid();
+}
+
+async function gridDeleteSelectedSkipConfirm() {
+    const paths = [...gridSelection.selected];
+    const n = paths.length;
+    if (n === 0) return;
+    const favs = getFavorites();
+    const deletable = paths.filter(p => !favs.has(p));
+    if (deletable.length === 0) return;
+    let deleted = 0;
+    for (const filePath of deletable) {
+        try {
+            const p = filePath.replace('/static/', '');
+            const response = await fetch('/telescope/files/delete', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ path: p })
+            });
+            const data = await response.json();
+            if (response.ok && data.success) deleted++;
+        } catch (err) {
+            console.error('[Grid] Delete error for', filePath, err);
+        }
+    }
+    gridSelection.selected.clear();
+    gridSelection.lastClicked = null;
+    showStatus(`Deleted ${deleted} of ${n} file${n > 1 ? 's' : ''}`, deleted > 0 ? 'success' : 'error', 3000);
+    await refreshFiles();
+    updateFilesGrid();
+}
+
+async function importVideoFile(input) {
+    const file = input.files[0];
+    if (!input || !file) return;
+    input.value = '';  // reset so same file can be re-selected
+
+    if (!file.name.toLowerCase().endsWith('.mp4')) {
+        showStatus('Only .mp4 files are supported', 'error', 4000);
+        return;
+    }
+    if (file.size > 500 * 1024 * 1024) {
+        showStatus('File exceeds 500 MB limit', 'error', 4000);
+        return;
+    }
+
+    showStatus(`Uploading ${file.name}…`, 'info', 0);
+    try {
+        const formData = new FormData();
+        formData.append('file', file);
+        const resp = await fetch('/telescope/files/upload', { method: 'POST', body: formData });
+        const data = await resp.json();
+        if (resp.ok && data.success) {
+            showStatus(`Imported ${data.name}`, 'success', 4000);
+            await refreshFiles();
+            updateFilesGrid();
+        } else {
+            showStatus(`Import failed: ${data.error || resp.statusText}`, 'error', 6000);
+        }
+    } catch (err) {
+        showStatus(`Import error: ${err.message}`, 'error', 6000);
+    }
 }
 
 function gridDownloadSelected() {
@@ -2090,11 +2159,15 @@ async function scanTransit() {
     // Show stop button
     _showStopAnalysisBtn(true);
     // Pulse the button text with frame count estimate
+    const _analyzeStart = Date.now();
+    _setScanBanner('info', '🔍 Analyzing… 0s');
     let _analyzeTimer = setInterval(() => {
         if (btn && btn.disabled) {
             const dots = '.'.repeat(Math.floor(Date.now() / 500) % 4);
             btn.textContent = `🔍 Analyzing${dots}`;
         }
+        const elapsed = Math.floor((Date.now() - _analyzeStart) / 1000);
+        _setScanBanner('info', `🔍 Analyzing… ${elapsed}s`);
     }, 500);
     _setScanBanner(null);
 
@@ -2196,7 +2269,7 @@ function _showAnalysisLegend(data, originalPath) {
     } else {
         summary = 'No transit detected';
     }
-    if (staticCount > 0) summary += `<br>${staticCount} sunspot(s) filtered`;
+
 
     const panel = document.createElement('div');
     panel.id = 'analysisLegendPanel';
@@ -2229,7 +2302,6 @@ function _showAnalysisLegend(data, originalPath) {
     html += `<div style="font-weight:bold; color:#aaa; font-size:0.9em; margin-bottom:4px;">Legend</div>`;
     const legendRows = [
         ['#ff4444', 'Transit detection'],
-        ['#888888', 'Sunspot (filtered)'],
         ['#ffff00', 'Disk boundary'],
     ];
     legendRows.forEach(([color, label]) => {
@@ -2433,8 +2505,8 @@ async function openCompositeModal(imgSrc, data) {
     modal.style.cssText = 'position:fixed; inset:0; z-index:9999; display:flex; background:#111; overflow:hidden;';
 
     modal.innerHTML = `
-      <div style="flex:1; overflow:auto; display:flex; align-items:flex-start; justify-content:center; background:#000; padding:8px;">
-        <img src="${imgSrc}" alt="Transit Composite" style="max-width:100%; width:auto; height:auto; display:block;" />
+      <div id="compositeImagePane" style="flex:1; overflow:auto; display:flex; align-items:flex-start; justify-content:center; background:#000; padding:8px;">
+        <img id="compositeFullImg" src="${imgSrc}" alt="Transit Composite" style="max-width:100%; max-height:calc(100vh - 40px); width:auto; height:auto; display:block;" />
       </div>
       <div style="width:220px; min-width:220px; background:#1a1a1a; border-left:1px solid #333; padding:16px; display:flex; flex-direction:column; gap:12px; overflow-y:auto; font-size:0.85em; color:#ccc;">
         <div style="display:flex; justify-content:space-between; align-items:center;">
@@ -2451,7 +2523,6 @@ async function openCompositeModal(imgSrc, data) {
         <div style="border-top:1px solid #333; padding-top:10px;">
           <div style="font-weight:bold; color:#aaa; margin-bottom:6px; font-size:0.9em;">Legend</div>
           <div style="display:flex; align-items:center; gap:8px; margin-bottom:5px;"><span style="flex-shrink:0; width:12px; height:12px; border:2px solid #ff4444; border-radius:50%; display:inline-block;"></span><span>Transit position</span></div>
-          <div style="display:flex; align-items:center; gap:8px; margin-bottom:5px;"><span style="flex-shrink:0; width:12px; height:12px; border:2px solid #888888; border-radius:50%; display:inline-block;"></span><span>Sunspot (filtered)</span></div>
           <div style="display:flex; align-items:center; gap:8px; margin-bottom:5px;"><span style="flex-shrink:0; width:12px; height:12px; border:2px solid #ffff00; border-radius:50%; display:inline-block;"></span><span>Disk boundary</span></div>
         </div>
       </div>`;
@@ -2463,13 +2534,28 @@ async function openCompositeModal(imgSrc, data) {
     document.addEventListener('keydown', escHandler);
 
     document.body.appendChild(modal);
+
+    // Scroll the image pane so the vertical midpoint of the image is centered
+    const fullImg = modal.querySelector('#compositeFullImg');
+    const pane = modal.querySelector('#compositeImagePane');
+    if (fullImg && pane) {
+        const doCenter = () => {
+            const imgH = fullImg.naturalHeight;
+            const paneH = pane.clientHeight;
+            if (imgH > paneH) {
+                pane.scrollTop = (imgH / 2) - (paneH / 2);
+            }
+        };
+        if (fullImg.complete) doCenter();
+        else fullImg.addEventListener('load', doCenter, { once: true });
+    }
 }
 
 function _setScanBanner(type, text, onclick) {
     const el = document.getElementById('scanResultBanner');
     if (!el) return;
     if (!type) { el.style.display = 'none'; el.className = ''; el.onclick = null; return; }
-    el.className = type === 'found' ? 'scan-found' : type === 'none' ? 'scan-none' : 'scan-error';
+    el.className = type === 'found' ? 'scan-found' : type === 'none' ? 'scan-none' : type === 'info' ? 'scan-info' : 'scan-error';
     el.textContent = text;
     el.style.display = 'block';
     el.onclick = onclick || null;

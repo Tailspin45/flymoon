@@ -895,6 +895,11 @@ canvas.video-thumb-canvas {
     color: #ff6666;
     border-bottom: 1px solid rgba(255, 60, 60, 0.2);
 }
+#scanResultBanner.scan-info {
+    background: rgba(80, 140, 255, 0.12);
+    color: #88aaff;
+    border-bottom: 1px solid rgba(80, 140, 255, 0.2);
+}
 
 /* Precise video time overlay */
 .video-precise-time {

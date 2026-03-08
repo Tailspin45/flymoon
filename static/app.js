@@ -2011,9 +2011,14 @@ function fetchFlights() {
         // Schedule arrow removal when each target sets (fixes stale arrow after moon/sun sets)
         if (data.riseSetTimes) scheduleAzimuthArrowCleanup(data.riseSetTimes);
 
-        // Check if any targets are trackable
+        // Check if any targets are trackable; clear flight table when nothing is up
         if(data.trackingTargets && data.trackingTargets.length === 0) {
-            alertNoResults.innerHTML = "Sun or moon is below the min angle you selected or weather is bad";
+            alertNoResults.innerHTML = "Sun and Moon are below the horizon — no transits possible";
+            // Clear stale flight data so we don't show predictions that can't happen
+            window.lastFlightData = [];
+            window.lastSoftFlightData = [];
+            updateTable([]);
+            if (typeof window.clearAllFlightMarkers === 'function') window.clearAllFlightMarkers();
         }
 
         // Use server bbox only if user hasn't set a custom one via savePosition()
