@@ -704,12 +704,11 @@ def _write_composite_image(
                     frames_needed[fi] = [dets[0]]
 
         # ── Pre-qualify frames: trim edge positions and check silhouette ──
-        # Edge frames (first/last 15% of detection span) often show partial
-        # aircraft entering/leaving the field.  Additionally, some frames
-        # produce zero silhouette pixels — skip those entirely so the
-        # requested position count is always honoured by real objects.
+        # Moon: edge frames often show partial aircraft entering/leaving the
+        # field — trim ~15% from each end.  Sun: the aircraft can touch the
+        # limb, so keep ALL detection frames (no edge trimming).
         sorted_frame_keys = sorted(frames_needed.keys())
-        if len(sorted_frame_keys) > 4:
+        if is_moon and len(sorted_frame_keys) > 4:
             trim = max(1, len(sorted_frame_keys) // 7)  # ~15%
             sorted_frame_keys = sorted_frame_keys[trim:-trim]
 
