@@ -295,8 +295,13 @@ def analyze_video(
     h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
     duration = total_frames / fps
 
-    # For short clips, use fewer reference frames (min 10, or half the clip)
-    ref_window = min(REFERENCE_WINDOW, max(10, total_frames // 2))
+    # For short clips, use fewer reference frames (min 10, or half the clip).
+    # Moon FTF mode only needs a small reference for stabilisation — keep it
+    # short so the transit isn't consumed by the reference window.
+    if is_moon:
+        ref_window = min(20, max(10, total_frames // 4))
+    else:
+        ref_window = min(REFERENCE_WINDOW, max(10, total_frames // 2))
 
     logger.info(
         f"[Analyzer] {path.name}: {total_frames} frames @ {fps:.1f} fps, {w}x{h}, ref_window={ref_window}"
@@ -353,29 +358,25 @@ def analyze_video(
         fourcc, _ = _best_fourcc()
         out = cv2.VideoWriter(str(temp_path), fourcc, fps, (w, h))
 
-    # ── Detection helper (shared by reference-window scan & main scan) ───────
+    # ── Detection helpers ───────────────────────────────────────────────────
     ref_blur_cached = [None]  # mutable container so inner fn can cache
     kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (2, 2))
+    # For moon FTF mode, raise min blob size to ignore texture jitter
+    _ftf_min_blob = max(_min_blob_pixels, 30) if is_moon else _min_blob_pixels
+    # FTF uses a gentler threshold since frame-to-frame changes are smaller
+    _ftf_threshold = 15
 
-    def _detect_blobs_in_frame(gray: np.ndarray, fidx: int) -> List[BlobDetection]:
-        """Run blob detection on a single stabilized grayscale frame."""
-        gray_s, _ = _stabilize_frame(gray, ref_gray_f32)
-        gray_blur = cv2.GaussianBlur(gray_s, (5, 5), 0)
-        if ref_blur_cached[0] is None:
-            ref_blur_cached[0] = cv2.GaussianBlur(reference, (5, 5), 0)
-        diff = cv2.absdiff(gray_blur, ref_blur_cached[0])
-        diff_masked = cv2.bitwise_and(diff, diff, mask=mask)
-        _, binary = cv2.threshold(diff_masked, _diff_threshold, 255, cv2.THRESH_BINARY)
-        binary = cv2.morphologyEx(binary, cv2.MORPH_CLOSE, kernel)
-        binary = cv2.morphologyEx(binary, cv2.MORPH_OPEN, kernel)
-
+    def _extract_blobs(
+        binary: np.ndarray, fidx: int, min_px: int
+    ) -> List[BlobDetection]:
+        """Extract BlobDetections from a thresholded binary image."""
         num_labels, labels, stats, centroids = cv2.connectedComponentsWithStats(
             binary, connectivity=8
         )
         blobs: List[BlobDetection] = []
         for lbl in range(1, num_labels):
             area = int(stats[lbl, cv2.CC_STAT_AREA])
-            if area < _min_blob_pixels:
+            if area < min_px:
                 continue
             bx = int(stats[lbl, cv2.CC_STAT_LEFT])
             by = int(stats[lbl, cv2.CC_STAT_TOP])
@@ -404,9 +405,39 @@ def analyze_video(
             )
         return blobs
 
+    def _detect_blobs_in_frame(gray: np.ndarray, fidx: int) -> List[BlobDetection]:
+        """Detect blobs via reference-frame diff (solar mode)."""
+        gray_s, _ = _stabilize_frame(gray, ref_gray_f32)
+        gray_blur = cv2.GaussianBlur(gray_s, (5, 5), 0)
+        if ref_blur_cached[0] is None:
+            ref_blur_cached[0] = cv2.GaussianBlur(reference, (5, 5), 0)
+        diff = cv2.absdiff(gray_blur, ref_blur_cached[0])
+        diff_masked = cv2.bitwise_and(diff, diff, mask=mask)
+        _, binary = cv2.threshold(diff_masked, _diff_threshold, 255, cv2.THRESH_BINARY)
+        binary = cv2.morphologyEx(binary, cv2.MORPH_CLOSE, kernel)
+        binary = cv2.morphologyEx(binary, cv2.MORPH_OPEN, kernel)
+        return _extract_blobs(binary, fidx, _min_blob_pixels)
+
+    def _detect_blobs_ftf(
+        cur_blur: np.ndarray, prev_blur: np.ndarray, fidx: int
+    ) -> List[BlobDetection]:
+        """Detect blobs via frame-to-frame diff (lunar mode).
+
+        Compares consecutive frames instead of a reference frame, which
+        eliminates static lunar features (craters, maria) and isolates
+        objects that actually moved between frames.
+        """
+        diff = cv2.absdiff(cur_blur, prev_blur)
+        diff_masked = cv2.bitwise_and(diff, diff, mask=mask)
+        _, binary = cv2.threshold(diff_masked, _ftf_threshold, 255, cv2.THRESH_BINARY)
+        binary = cv2.morphologyEx(binary, cv2.MORPH_CLOSE, kernel)
+        binary = cv2.morphologyEx(binary, cv2.MORPH_OPEN, kernel)
+        return _extract_blobs(binary, fidx, _ftf_min_blob)
+
     # ── Main detection loop ───────────────────────────────────────────────────
     detections: List[BlobDetection] = []
     frame_idx = 0
+    prev_blur_ftf = None  # previous stabilized+blurred frame for FTF mode
 
     while True:
         ok, frame = cap.read()
@@ -424,14 +455,28 @@ def analyze_video(
                 ref_gray_f32 = reference.astype(np.float32)
                 ref_bgr_frame = list(ref_buffer_bgr)[len(ref_buffer_bgr) // 2].copy()
                 logger.info(f"[Analyzer] Reference locked at frame {frame_idx}")
-                # Scan the reference-window frames we just collected
-                for ri, ref_gray_frame in enumerate(ref_buffer):
-                    detections.extend(_detect_blobs_in_frame(ref_gray_frame, ri))
+                if not is_moon:
+                    # Scan reference-window frames (solar only — moon uses FTF)
+                    for ri, ref_gray_frame in enumerate(ref_buffer):
+                        detections.extend(_detect_blobs_in_frame(ref_gray_frame, ri))
+                else:
+                    # Prime the FTF previous-frame buffer
+                    last_ref = ref_buffer[-1]
+                    last_s, _ = _stabilize_frame(last_ref, ref_gray_f32)
+                    prev_blur_ftf = cv2.GaussianBlur(last_s, (5, 5), 0)
             frame_idx += 1
             continue
 
         gray_s, _ = _stabilize_frame(gray, ref_gray_f32)
-        detections.extend(_detect_blobs_in_frame(gray, frame_idx))
+
+        if is_moon:
+            # Frame-to-frame diff: eliminates static craters, isolates moving objects
+            cur_blur = cv2.GaussianBlur(gray_s, (5, 5), 0)
+            if prev_blur_ftf is not None:
+                detections.extend(_detect_blobs_ftf(cur_blur, prev_blur_ftf, frame_idx))
+            prev_blur_ftf = cur_blur
+        else:
+            detections.extend(_detect_blobs_in_frame(gray, frame_idx))
 
         frame_idx += 1
 
@@ -440,25 +485,38 @@ def analyze_video(
 
     cap.release()
 
-    # ── Filter out static blobs (sunspots) ───────────────────────────────────
-    # Sunspots appear at the same position across many frames.  A real transit
-    # moves across the disk.  Cluster detections by spatial proximity and mark
-    # clusters present in >50% of detection frames as static.
-    detections = _filter_static_blobs(
-        detections, proximity_px=30, static_threshold_pct=_static_threshold_pct
-    )
+    # ── Filter out static blobs (sunspots / craters) ───────────────────────
+    # In reference-diff mode (solar), sunspots appear at the same position
+    # across many frames.  In FTF mode (lunar), static features are already
+    # eliminated by the frame-to-frame approach, so skip the static filter.
+    if not is_moon:
+        detections = _filter_static_blobs(
+            detections, proximity_px=30, static_threshold_pct=_static_threshold_pct
+        )
     moving_detections = [d for d in detections if not d.is_static]
     n_static = sum(1 for d in detections if d.is_static)
 
     # ── Filter moving detections for transit coherence ──────────────────────
     # A real transit traces a roughly linear path in under ~2 seconds.
     # Anything that hangs around the same spot for many seconds is shimmer.
-    moving_detections = _filter_transit_coherence(
-        moving_detections,
-        fps,
-        min_travel_px=_min_travel_px,
-        min_speed_px_s=_min_speed_px_s,
-    )
+    if is_moon:
+        # FTF blobs represent change-points, not the object centroid, so the
+        # standard nearest-neighbour tracker produces noisy tracks.  Use a
+        # simpler dominant-blob strategy that is robust to the dual-signal
+        # nature of frame-to-frame differencing.
+        moving_detections = _filter_transit_coherence_ftf(
+            moving_detections,
+            fps,
+            min_travel_px=_min_travel_px,
+            min_speed_px_s=_min_speed_px_s,
+        )
+    else:
+        moving_detections = _filter_transit_coherence(
+            moving_detections,
+            fps,
+            min_travel_px=_min_travel_px,
+            min_speed_px_s=_min_speed_px_s,
+        )
     if moving_detections:
         logger.info(
             f"[Analyzer] After coherence filter: {len(moving_detections)} moving detections"
@@ -897,6 +955,97 @@ def _filter_static_blobs(
                 detections[i].is_static = True
 
     return detections
+
+
+def _filter_transit_coherence_ftf(
+    detections: List[BlobDetection],
+    fps: float,
+    max_duration_sec: float = 4.0,
+    min_travel_px: float = 20.0,
+    min_speed_px_s: float = 40.0,
+) -> List[BlobDetection]:
+    """Coherence filter tuned for frame-to-frame (lunar) blob detection.
+
+    FTF blobs represent *change-points* between consecutive frames — they
+    appear at both the leading and trailing edges of a moving object.  This
+    means a single aircraft produces two blobs per frame, and positions
+    jitter between the old and new locations.
+
+    Strategy: take the largest blob per frame as the dominant signal (the
+    combined leading+trailing edge blob is always the biggest), then check
+    whether these dominant positions trace a coherent path across the disk.
+    If they do, keep ALL detections in those frames so the composite can
+    render them.
+    """
+    if not detections:
+        return []
+
+    import math
+    from collections import defaultdict
+
+    by_frame: dict = defaultdict(list)
+    for d in detections:
+        by_frame[d.frame_index].append(d)
+
+    if len(by_frame) < 3:
+        return []
+
+    # Build dominant-blob track (largest blob per frame)
+    frame_ids = sorted(by_frame.keys())
+    dominant = []
+    for fi in frame_ids:
+        best = max(by_frame[fi], key=lambda d: d.area_px)
+        dominant.append(best)
+
+    # Split into temporal runs (gap ≤ 2 frames to bridge occasional dropouts)
+    runs: list = [[dominant[0]]]
+    for d in dominant[1:]:
+        prev = runs[-1][-1]
+        gap_frames = d.frame_index - prev.frame_index
+        if gap_frames <= 3:  # allow up to 2 dropped frames
+            runs[-1].append(d)
+        else:
+            runs.append([d])
+
+    kept_frames: set = set()
+
+    for run in runs:
+        if len(run) < 3:
+            continue
+        t_dur = run[-1].time_seconds - run[0].time_seconds
+        if t_dur <= 0 or t_dur > max_duration_sec:
+            continue
+
+        # Travel (3-frame averaged endpoints)
+        n = min(3, len(run))
+        cx0 = sum(d.x for d in run[:n]) / n
+        cy0 = sum(d.y for d in run[:n]) / n
+        cx1 = sum(d.x for d in run[-n:]) / n
+        cy1 = sum(d.y for d in run[-n:]) / n
+        travel = math.hypot(cx1 - cx0, cy1 - cy0)
+
+        if travel < min_travel_px:
+            continue
+        speed = travel / t_dur
+        if speed < min_speed_px_s:
+            continue
+
+        # Linearity: relaxed to 35% for FTF (dual-edge jitter)
+        if travel > 10 and len(run) > 3:
+            vx, vy = cx1 - cx0, cy1 - cy0
+            vlen = math.hypot(vx, vy)
+            if vlen > 0:
+                nx, ny = -vy / vlen, vx / vlen
+                max_dev = max(abs((d.x - cx0) * nx + (d.y - cy0) * ny) for d in run)
+                if max_dev > travel * 0.35:
+                    continue
+
+        # This run is a transit — mark all its frames
+        for d in run:
+            kept_frames.add(d.frame_index)
+
+    # Return ALL detections from qualifying frames
+    return [d for d in detections if d.frame_index in kept_frames]
 
 
 def _filter_transit_coherence(
