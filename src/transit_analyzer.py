@@ -68,6 +68,7 @@ class AnalysisResult:
     disk_radius: Optional[int]
     detections: List[BlobDetection] = field(default_factory=list)
     transit_events: List[dict] = field(default_factory=list)  # grouped detections
+    transit_positions: int = 0  # unique frames with transit detections (for UI slider)
     composite_image: Optional[str] = None  # path to composite still image
     analyzed_at: str = ""
     error: Optional[str] = None
@@ -213,6 +214,7 @@ def analyze_video(
     min_blob_pixels: int = None,
     disk_margin_pct: float = None,
     target: str = "auto",
+    max_positions: int = None,
 ) -> AnalysisResult:
     """
     Analyze a saved MP4 for transiting objects.
@@ -232,6 +234,9 @@ def analyze_video(
         Override MIN_BLOB_PIXELS (minimum blob area, default 3).
     disk_margin_pct : float | None
         Override DISK_MARGIN_PCT (fraction of radius to trim, default 0.05).
+    max_positions : int | None
+        Maximum number of silhouette overlay positions in the composite.
+        None = show all detected positions.
 
     Returns
     -------
@@ -558,11 +563,16 @@ def analyze_video(
             reference_gray=reference,
             ref_gray_f32=ref_gray_f32,
             is_moon=is_moon,
+            max_positions=max_positions,
         )
         if composite_image_str:
             logger.info(f"[Analyzer] Composite image → {composite_path.name}")
         else:
             logger.warning("[Analyzer] Composite image write failed")
+
+    # Count unique frames with transit detections (for UI slider range)
+    _transit_frame_set = set(d.frame_index for d in moving_detections)
+    _transit_positions = len(_transit_frame_set)
 
     result = AnalysisResult(
         source_file=str(path),
@@ -575,6 +585,7 @@ def analyze_video(
         disk_radius=disk_radius,
         detections=detections,
         transit_events=transit_events,
+        transit_positions=_transit_positions,
         composite_image=composite_image_str,
         analyzed_at=datetime.now(timezone.utc).isoformat(),
     )
@@ -607,6 +618,7 @@ def _write_composite_image(
     reference_gray: Optional[np.ndarray] = None,
     ref_gray_f32: Optional[np.ndarray] = None,
     is_moon: bool = False,
+    max_positions: Optional[int] = None,
 ) -> Optional[str]:
     """
     Build a composite still image showing transit silhouettes and sunspots/craters.
@@ -615,6 +627,12 @@ def _write_composite_image(
     are extracted and alpha-blended onto the background.  Sunspots (sun) or
     craters (moon) are detected from the reference frame; when is_moon=True
     those static features are NOT drawn on the composite.
+
+    Parameters
+    ----------
+    max_positions : int | None
+        Maximum number of silhouette positions to overlay.  When set,
+        frames are evenly sampled across the detection span.  None = all.
 
     Returns the output path string on success, None on failure.
     """
@@ -658,6 +676,17 @@ def _write_composite_image(
                 if len(dets) > 1:
                     dets.sort(key=lambda d: d.width * d.height, reverse=True)
                     frames_needed[fi] = [dets[0]]
+
+        # Subsample to max_positions evenly-spaced frames if requested
+        sorted_frame_keys = sorted(frames_needed.keys())
+        if max_positions and 0 < max_positions < len(sorted_frame_keys):
+            step = (len(sorted_frame_keys) - 1) / max(1, max_positions - 1)
+            sampled = [
+                sorted_frame_keys[round(i * step)]
+                for i in range(max_positions)
+            ]
+            sampled_set = set(sampled)
+            frames_needed = {k: v for k, v in frames_needed.items() if k in sampled_set}
 
         cap = cv2.VideoCapture(str(src))
         frame_idx = 0
@@ -1298,6 +1327,7 @@ def _write_sidecar(result: AnalysisResult, path: Path):
         "disk_cy": result.disk_cy,
         "disk_radius": result.disk_radius,
         "transit_events": result.transit_events,
+        "transit_positions": result.transit_positions,
         "detection_count": len(result.detections),
         "composite_image": result.composite_image,
         "error": result.error,

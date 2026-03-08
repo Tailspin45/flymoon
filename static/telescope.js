@@ -2205,6 +2205,8 @@ async function scanTransit(target) {
     if (dtEl) { sliderBody.diff_threshold = parseInt(dtEl.value); localStorage.setItem('transit_slider_sliderDiffThreshold', dtEl.value); }
     if (mbEl) { sliderBody.min_blob_pixels = parseInt(mbEl.value); localStorage.setItem('transit_slider_sliderMinBlob', mbEl.value); }
     if (dmEl) { sliderBody.disk_margin_pct = parseFloat(dmEl.value) / 100; localStorage.setItem('transit_slider_sliderDiskMargin', dmEl.value); }
+    const mpEl = document.getElementById('sliderMaxPositions');
+    if (mpEl) { sliderBody.max_positions = parseInt(mpEl.value); localStorage.setItem('transit_slider_sliderMaxPositions', mpEl.value); }
 
     // Remove previous legend panel so user sees the UI change
     const oldPanel = document.getElementById('analysisLegendPanel');
@@ -2387,6 +2389,13 @@ function _showAnalysisLegend(data, originalPath) {
     html += _sliderRow('sliderDiskMargin', 'Edge Margin %', 5, 20, 12,
         'Percentage of disk edge to ignore (trims atmospheric distortion)');
 
+    // Overlay positions slider — max is driven by detection count from analysis
+    const totalPositions = data.transit_positions || 0;
+    if (totalPositions > 1) {
+        html += _sliderRow('sliderMaxPositions', 'Overlay Positions', 1, totalPositions, totalPositions,
+            'How many silhouette positions to show in the composite (1 = single, max = all)');
+    }
+
     html += `<div style="display:flex; gap:6px; margin-top:6px;">`;
     html += `<button class="btn-viewer" id="legendReanalyzeBtn" style="font-size:0.85em; padding:4px 10px; flex:1;">🔄 Re-analyze</button>`;
     html += `<button class="btn-viewer" id="legendResetBtn" style="font-size:0.85em; padding:4px 10px;" title="Reset sliders to defaults">↩ Reset</button>`;
@@ -2449,7 +2458,7 @@ function _sliderRow(id, label, min, max, defaultVal, tooltip) {
 }
 
 function _resetSliders() {
-    ['sliderDiffThreshold', 'sliderMinBlob', 'sliderDiskMargin'].forEach(id => {
+    ['sliderDiffThreshold', 'sliderMinBlob', 'sliderDiskMargin', 'sliderMaxPositions'].forEach(id => {
         const el = document.getElementById(id);
         if (el) {
             el.value = el.dataset.default;

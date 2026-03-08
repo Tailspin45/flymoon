@@ -935,6 +935,7 @@ def analyze_file():
         min_blob_pixels = req.get("min_blob_pixels")
         disk_margin_pct = req.get("disk_margin_pct")
         target = req.get("target", "auto")
+        max_positions = req.get("max_positions")
 
         def _run():
             try:
@@ -951,6 +952,9 @@ def analyze_file():
                         float(disk_margin_pct) if disk_margin_pct is not None else None
                     ),
                     target=target,
+                    max_positions=(
+                        int(max_positions) if max_positions is not None else None
+                    ),
                 )
                 return result
             except Exception as exc:
@@ -969,6 +973,7 @@ def analyze_file():
                     "disk_detected": result.disk_detected,
                     "duration": result.duration_seconds,
                     "transit_events": result.transit_events,
+                    "transit_positions": result.transit_positions,
                     "detection_count": len(result.detections),
                     "static_detections": sum(
                         1 for d in result.detections if d.is_static
