@@ -4,10 +4,9 @@
 
 ### Step 1 — Install Docker Desktop
 
-Go to **[docker.com/get-started](https://www.docker.com/get-started/)**, click the big green download button, and install it. Works on Mac, Windows, and Linux.
+Go to **[docker.com/get-started](https://www.docker.com/get-started/)**, click the "Download Docker Desktop" button, and install it  for your system (Mac, Windows, and Linux).
 
 ### Step 2 — Download Flymoon
-
 
 Windows: “Press the Windows key, type cmd, then press Enter.”
 
@@ -17,7 +16,7 @@ If that doesn’t work on Linux: “Open the apps menu, search for Terminal, and
 
 Mac / Apple: “Press Command + Space, type Terminal, then press Return.”
 
-Copy/paste the following
+## Then copy/paste the following
 
 git clone https://github.com/Tailspin45/flymoon.git
 cd flymoon
