@@ -470,16 +470,6 @@ function renderRichFlightRow(item, bodyTable) {
     acCell.innerHTML = `<strong style="color:#e0e0e0">${item.id}</strong>${acSub ? `<br>${acSub}` : ''}`;
     row.appendChild(acCell);
 
-    // Col 5 — Category (text only, no emoji; blank for 0/1/13 = no useful info)
-    const catCell = document.createElement('td');
-    catCell.style.whiteSpace = 'nowrap';
-    const cat = AIRCRAFT_CATEGORY[item.category] || AIRCRAFT_CATEGORY[0];
-    const catBlank = item.category == null || item.category <= 1 || item.category === 13;
-    catCell.innerHTML = !catBlank
-        ? `<span title="${cat.desc}" style="font-size:0.85em;color:#ccc">${cat.label}</span>`
-        : '<span style="color:#444">—</span>';
-    row.appendChild(catCell);
-
     // Col 6 — Altitude
     const altCell = document.createElement('td');
     altCell.style.whiteSpace = 'nowrap';
@@ -544,22 +534,6 @@ function renderRichFlightRow(item, bodyTable) {
         spdCell.innerHTML = '<span style="color:#444">—</span>';
     }
     row.appendChild(spdCell);
-
-    // Col 11 — Route
-    const routeCell = document.createElement('td');
-    routeCell.style.whiteSpace = 'nowrap';
-    const _clean = v => (v && v !== 'N/A' && v !== 'N/D') ? v : '';
-    const orig = _clean(item.origin), dest = _clean(item.destination);
-    if (orig && dest) {
-        routeCell.innerHTML = `<span title="${orig} → ${dest}" style="font-family:monospace;font-size:0.88em">${orig} → ${dest}</span>`;
-    } else if (sq === '1200') {
-        routeCell.innerHTML = '<span style="color:#4caf50;font-size:0.85em">VFR local</span>';
-    } else if (orig) {
-        routeCell.innerHTML = `<span style="font-family:monospace;font-size:0.88em">${orig} →?</span>`;
-    } else {
-        routeCell.innerHTML = '<span style="color:#444">—</span>';
-    }
-    row.appendChild(routeCell);
 
     // Col 12 — Src / Age
     const srcCell = document.createElement('td');
@@ -1600,11 +1574,9 @@ const HELP_CONTENT = {
 <tr><td style="padding:4px 8px;color:#7eb8f7;white-space:nowrap"><strong>transit</strong></td><td style="padding:4px 8px">🟢 HIGH / 🟠 MEDIUM / ⚪ LOW probability, with countdown to closest approach (T-mm:ss).</td></tr>
 <tr><td style="padding:4px 8px;color:#7eb8f7;white-space:nowrap"><strong>☀️🌙</strong></td><td style="padding:4px 8px">Which celestial body this aircraft may transit.</td></tr>
 <tr><td style="padding:4px 8px;color:#7eb8f7;white-space:nowrap"><strong>aircraft</strong></td><td style="padding:4px 8px">Callsign and ICAO type code (e.g. B738 = Boeing 737-800). Click to flash on map and show route.</td></tr>
-<tr><td style="padding:4px 8px;color:#7eb8f7;white-space:nowrap"><strong>category</strong></td><td style="padding:4px 8px">ADS-B emitter category from transponder: 🛩️ Light, ✈️ Small / Large / Hi-Vortex / Heavy, ⚡ Hi-Perf, 🚁 Rotorcraft, ⛵ Glider/sailplane, 🎈 Lighter-than-air, 🪂 Parachutist/skydiver, 🛩️ Ultralight/hang-glider, 🛸 UAV, 🚀 Space, 🚨 Emergency veh, 🚐 Service veh, 🎯 Obstacle. Hover cell for full description. Row tinted for unusual categories. Requires OpenSky with <code>extended=1</code>.</td></tr>
 <tr><td style="padding:4px 8px;color:#7eb8f7;white-space:nowrap"><strong>alt / v/s</strong></td><td style="padding:4px 8px">Altitude (FL350 above 18,000ft, otherwise feet). Vertical speed: ▲ climbing (green), ▼ descending (red), ▶ level (grey). V/S in ft/min from ADS-B vertical rate; ▲/▼ only from FlightAware elevation_change flag.</td></tr>
 <tr><td style="padding:4px 8px;color:#7eb8f7;white-space:nowrap"><strong>sky Δ</strong></td><td style="padding:4px 8px">Angular separation at closest approach: ↕ altitude diff, ↔ azimuth diff. Green ≤1°, orange ≤2°, grey ≥3°.</td></tr>
 <tr><td style="padding:4px 8px;color:#7eb8f7;white-space:nowrap"><strong>track</strong></td><td style="padding:4px 8px">Compass direction (NNW etc.), true heading in degrees, and ground speed in knots.</td></tr>
-<tr><td style="padding:4px 8px;color:#7eb8f7;white-space:nowrap"><strong>route</strong></td><td style="padding:4px 8px">Origin → Destination as city names (FlightAware) or ICAO codes (OpenSky FlightData). VFR label shown for squawk 1200.</td></tr>
 <tr><td style="padding:4px 8px;color:#7eb8f7;white-space:nowrap"><strong>src / age</strong></td><td style="padding:4px 8px">Position source badge (ADS-B / MLAT / FLARM / OS / FA) and data age in seconds. Age colour: green ≤5s, yellow ≤30s, orange ≤60s, red >60s.</td></tr>
 </table>
 <p style="margin-top:10px;font-size:0.82em;color:#aaa">Category, vertical rate, squawk, SPI, and on-ground fields require OpenSky Network or ADS-B Receiver mode. In FlightAware-only mode these columns show — gracefully.</p>
