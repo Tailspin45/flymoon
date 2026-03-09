@@ -6,9 +6,6 @@
   <img src="static/images/flymoon-hero.jpg" alt="Flymoon — Aircraft Transit Tracker" width="100%">
 </p>
 
-<p align="center">
-  <img src="docs/flymoon-sim.png" alt="Flymoon simulation — aircraft path versus Sun disc" width="100%">
-</p>
 
 ---
 
@@ -22,6 +19,10 @@ Flymoon combines real-time flight data, high-precision celestial mechanics, and 
 - Analyses recorded video to produce **annotated composite images** showing the aircraft's path across the disc
 - Sends **Telegram alerts** when a high-probability transit is detected
 - Runs **headlessly overnight** on a Mac, Linux box, or Windows PC
+
+<p align="center">
+  <img src="docs/flymoon-sim.png" alt="Flymoon simulation — aircraft path versus Sun disc" width="100%">
+</p>
 
 ---
 
