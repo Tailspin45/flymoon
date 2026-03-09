@@ -1782,13 +1782,18 @@ async function importVideoFile(input) {
     const files = Array.from(input.files);
     input.value = '';  // reset so same files can be re-selected
 
-    const invalid = files.filter(f => !f.name.toLowerCase().endsWith('.mp4'));
+    const isAllowed = f => /\.(mp4|jpg|jpeg|png)$/i.test(f.name);
+    const isImage   = f => /\.(jpg|jpeg|png)$/i.test(f.name);
+    const sizeLimit = f => isImage(f) ? 50 * 1024 * 1024 : 500 * 1024 * 1024;
+    const sizeLabel = f => isImage(f) ? '50 MB' : '500 MB';
+
+    const invalid  = files.filter(f => !isAllowed(f));
     if (invalid.length) {
-        showStatus(`Only .mp4 files are accepted (skipping: ${invalid.map(f=>f.name).join(', ')})`, 'error', 5000);
+        showStatus(`Only .mp4, .jpg, .jpeg, .png files are accepted (skipping: ${invalid.map(f=>f.name).join(', ')})`, 'error', 5000);
     }
-    const toUpload = files.filter(f => f.name.toLowerCase().endsWith('.mp4') && f.size <= 500 * 1024 * 1024);
-    const tooLarge = files.filter(f => f.name.toLowerCase().endsWith('.mp4') && f.size > 500 * 1024 * 1024);
-    if (tooLarge.length) showStatus(`Skipping ${tooLarge.length} file(s) over 500 MB limit`, 'warning', 4000);
+    const toUpload = files.filter(f => isAllowed(f) && f.size <= sizeLimit(f));
+    const tooLarge = files.filter(f => isAllowed(f) && f.size > sizeLimit(f));
+    if (tooLarge.length) showStatus(`Skipping ${tooLarge.length} file(s) over size limit (${tooLarge.map(f => `${f.name} — max ${sizeLabel(f)}`).join(', ')})`, 'warning', 5000);
     if (!toUpload.length) return;
 
     let uploaded = 0;

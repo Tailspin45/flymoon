@@ -1097,8 +1097,12 @@ h2 {{ font-size: 1em; color: #eee; }}
 
 
 def upload_telescope_file():
-    """POST /telescope/files/upload - Upload an external MP4 to the captures directory."""
+    """POST /telescope/files/upload - Upload an external MP4, JPG, or PNG to the captures directory."""
     logger.info("[Telescope] POST /telescope/files/upload")
+
+    _VIDEO_EXTS = (".mp4",)
+    _IMAGE_EXTS = (".jpg", ".jpeg", ".png")
+    _ALLOWED_EXTS = _VIDEO_EXTS + _IMAGE_EXTS
 
     try:
         if "file" not in request.files:
@@ -1108,31 +1112,43 @@ def upload_telescope_file():
         if not f or not f.filename:
             return jsonify({"error": "Empty file"}), 400
 
-        # Only accept MP4
         orig_name = f.filename
-        if not orig_name.lower().endswith(".mp4"):
-            return jsonify({"error": "Only .mp4 files are accepted"}), 400
+        ext = os.path.splitext(orig_name)[1].lower()
+        if ext not in _ALLOWED_EXTS:
+            return jsonify({"error": "Only .mp4, .jpg, .jpeg, and .png files are accepted"}), 400
 
-        # Check magic bytes (ftyp box: 00 00 00 xx 66 74 79 70)
+        is_video = ext in _VIDEO_EXTS
+        is_image = ext in _IMAGE_EXTS
+
+        # Validate magic bytes
         header = f.read(12)
         f.seek(0)
-        if len(header) < 8 or header[4:8] not in (
-            b"ftyp",
-            b"moov",
-            b"mdat",
-            b"free",
-            b"wide",
-        ):
-            return jsonify({"error": "File does not appear to be a valid MP4"}), 400
+        if is_video:
+            if len(header) < 8 or header[4:8] not in (
+                b"ftyp",
+                b"moov",
+                b"mdat",
+                b"free",
+                b"wide",
+            ):
+                return jsonify({"error": "File does not appear to be a valid MP4"}), 400
+        elif ext in (".jpg", ".jpeg"):
+            if len(header) < 3 or header[:3] != b"\xff\xd8\xff":
+                return jsonify({"error": "File does not appear to be a valid JPEG"}), 400
+        elif ext == ".png":
+            if len(header) < 8 or header[:8] != b"\x89PNG\r\n\x1a\n":
+                return jsonify({"error": "File does not appear to be a valid PNG"}), 400
 
-        # Enforce 500 MB size limit
+        # Enforce size limits: 500 MB for video, 50 MB for images
         import io
 
         f.seek(0, io.SEEK_END)
         size = f.tell()
         f.seek(0)
-        if size > 500 * 1024 * 1024:
-            return jsonify({"error": "File exceeds 500 MB limit"}), 400
+        max_size = 500 * 1024 * 1024 if is_video else 50 * 1024 * 1024
+        max_label = "500 MB" if is_video else "50 MB"
+        if size > max_size:
+            return jsonify({"error": f"File exceeds {max_label} limit"}), 400
 
         # Save to static/captures/YYYY/MM/
         from datetime import datetime as _dt
@@ -1157,33 +1173,39 @@ def upload_telescope_file():
         rel_path = os.path.relpath(dest_path, "static").replace(os.sep, "/")
         logger.info(f"[Telescope] Uploaded file: {dest_path}")
 
-        # Generate thumbnail from first frame
+        # Generate thumbnail
+        # For videos: extract first frame with ffmpeg.
+        # For images: the file itself is the thumbnail.
         thumb_url = None
         thumb_path = os.path.splitext(dest_path)[0] + "_thumb.jpg"
-        try:
-            result = subprocess.run(
-                [
-                    "ffmpeg",
-                    "-i",
-                    dest_path,
-                    "-frames:v",
-                    "1",
-                    "-update",
-                    "1",
-                    "-q:v",
-                    "5",
-                    "-y",
-                    thumb_path,
-                ],
-                capture_output=True,
-                timeout=15,
-            )
-            if os.path.exists(thumb_path) and os.path.getsize(thumb_path) > 0:
-                rel_thumb = os.path.relpath(thumb_path, "static").replace(os.sep, "/")
-                thumb_url = f"/static/{rel_thumb}"
-                logger.info(f"[Telescope] Thumbnail generated: {thumb_path}")
-        except Exception as te:
-            logger.warning(f"[Telescope] Thumbnail generation skipped: {te}")
+        if is_image:
+            # Use the uploaded image directly as its own thumbnail
+            thumb_url = f"/static/{rel_path}"
+        else:
+            try:
+                result = subprocess.run(
+                    [
+                        "ffmpeg",
+                        "-i",
+                        dest_path,
+                        "-frames:v",
+                        "1",
+                        "-update",
+                        "1",
+                        "-q:v",
+                        "5",
+                        "-y",
+                        thumb_path,
+                    ],
+                    capture_output=True,
+                    timeout=15,
+                )
+                if os.path.exists(thumb_path) and os.path.getsize(thumb_path) > 0:
+                    rel_thumb = os.path.relpath(thumb_path, "static").replace(os.sep, "/")
+                    thumb_url = f"/static/{rel_thumb}"
+                    logger.info(f"[Telescope] Thumbnail generated: {thumb_path}")
+            except Exception as te:
+                logger.warning(f"[Telescope] Thumbnail generation skipped: {te}")
 
         return (
             jsonify(
