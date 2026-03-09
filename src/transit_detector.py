@@ -487,6 +487,53 @@ class TransitDetector:
             logger.error(f"[Detector] Failed to start recording: {e}")
             return None
 
+    def _peak_scene_time(self, filepath: str, search_secs: float = 3.0) -> Optional[float]:
+        """Return the timestamp (seconds) of the frame with the highest scene-change
+        score in the first *search_secs* of *filepath*.
+
+        Uses ffmpeg's ``scdet`` filter together with ``showinfo``.  The frame with the
+        maximum score is where the aircraft silhouette produces the biggest pixel
+        difference against the disc — i.e. the centre of the transit.
+
+        Returns ``None`` on any failure so the caller can fall back to the first frame.
+        """
+        import re
+
+        try:
+            r = subprocess.run(
+                [
+                    "ffmpeg",
+                    "-i", filepath,
+                    "-t", str(search_secs),
+                    "-vf", "scdet=threshold=2,showinfo",
+                    "-f", "null", "-",
+                ],
+                capture_output=True,
+                text=True,
+                timeout=20,
+            )
+            # ffmpeg writes filter output to stderr
+            output = r.stderr
+
+            best_time: Optional[float] = None
+            best_score = 0.0
+            current_time = 0.0
+
+            for line in output.splitlines():
+                m_t = re.search(r"pts_time:([\d.]+)", line)
+                if m_t:
+                    current_time = float(m_t.group(1))
+                m_s = re.search(r"lavfi\.scd\.score:\s*([\d.]+)", line)
+                if m_s:
+                    score = float(m_s.group(1))
+                    if score > best_score:
+                        best_score = score
+                        best_time = current_time
+
+            return best_time
+        except Exception:
+            return None
+
     def _finalize_recording(self, filepath: str, ts: datetime, duration: int) -> None:
         """Wait for recording to finish, then generate thumbnail + metadata."""
         if self._rec_process:
@@ -500,12 +547,19 @@ class TransitDetector:
             logger.warning(f"[Detector] Recording file missing: {filepath}")
             return
 
-        # Generate thumbnail
+        # Generate thumbnail at the frame where the aircraft is most visible
+        # (peak scene-change score = maximum pixel difference = aircraft at disc centre).
+        # Falls back to first frame if the scene-change scan fails.
         thumb_path = filepath.rsplit(".", 1)[0] + "_thumb.jpg"
         try:
+            seek_time = self._peak_scene_time(filepath)
+            seek_args = ["-ss", str(seek_time)] if seek_time is not None else []
+            if seek_time is not None:
+                logger.info(f"[Detector] Thumbnail seek to peak-scene frame at {seek_time:.2f}s")
             subprocess.run(
                 [
                     "ffmpeg",
+                    *seek_args,
                     "-i",
                     filepath,
                     "-frames:v",
