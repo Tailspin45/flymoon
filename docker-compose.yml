@@ -1,0 +1,11 @@
+services:
+  flymoon:
+    build: .
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./data:/app/data        # persist captures and logs across restarts
+    env_file:
+      - path: ./.env
+        required: false         # app will print a helpful message if .env is missing
+    restart: unless-stopped

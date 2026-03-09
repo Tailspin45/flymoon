@@ -1,54 +1,73 @@
 # Flymoon — Quick Start
 
-## 1. Install
+## The Easy Way: Docker
+
+### Step 1 — Install Docker Desktop
+
+Go to **[docker.com/get-started](https://www.docker.com/get-started/)**, click the big green download button, and install it. Works on Mac, Windows, and Linux.
+
+### Step 2 — Download Flymoon
+
+```bash
+git clone https://github.com/Tailspin45/flymoon.git
+cd flymoon
+```
+
+No git? [Download the zip](https://github.com/Tailspin45/flymoon/archive/refs/heads/main.zip) and unzip it instead.
+
+### Step 3 — Run the setup wizard
+
+```bash
+docker compose run --rm flymoon python3 src/config_wizard.py --setup
+```
+
+This walks you through everything interactively:
+- Your location (lat / lon / elevation)
+- Your FlightAware API key — the wizard opens the signup page for you if you need one ([free personal tier](https://www.flightaware.com/aeroapi/signup/personal))
+- Optional: Telegram notifications
+- Optional: Seestar telescope
+
+### Step 4 — Start Flymoon
+
+```bash
+docker compose up -d
+```
+
+Open **[http://localhost:8000](http://localhost:8000)** in your browser. That's it.
+
+To stop it: `docker compose down`  
+To see logs: `docker compose logs -f`
+
+---
+
+## First Use
+
+1. **Draw your bounding box** — drag the corners of the search rectangle to cover the patch of sky you can see
+2. **Pick a target** — Sun or Moon
+3. **Set minimum altitudes** — use the N / E / S / W quadrant inputs to mask out directions blocked by trees or buildings
+4. **Hit Search** — flights appear colour-coded by transit probability
+5. **Enable auto-refresh** — set a check interval so Flymoon monitors continuously
+
+---
+
+## Keeping Flymoon Updated
+
+```bash
+git pull
+docker compose build
+docker compose up -d
+```
+
+---
+
+## Without Docker (Mac / Linux)
 
 ```bash
 make setup
 source .venv/bin/activate
-```
-
-## 2. Configure
-
-```bash
-cp .env.mock .env
-```
-
-Open `.env` and set the three required values:
-
-```
-AEROAPI_API_KEY=your_flightaware_key
-OBSERVER_LATITUDE=your_lat
-OBSERVER_LONGITUDE=your_lon
-OBSERVER_ELEVATION=your_elevation_metres
-```
-
-Everything else is optional. Run the config wizard for a guided check of all settings:
-
-```bash
 python3 src/config_wizard.py --setup
-```
-
-## 3. Run
-
-```bash
 python app.py
 ```
-
-Open the URL printed at startup (e.g. `http://192.168.1.x:8000`). The same address works from any device on your local network.
-
----
-
-## Using the Map
-
-**Set your bounding box** — drag the corners of the search rectangle to cover the sky area you can observe.
-
-**Pick a target** — select Sun or Moon from the target toggle. Flymoon will only show flights that could transit the chosen body.
-
-**Set minimum altitudes** — the four quadrant inputs (N / E / S / W) let you set independent minimum angles for each compass direction. Raise the value for any direction blocked by trees or buildings so those low transits are filtered out.
-
-**Hit Search** — flights appear colour-coded by transit probability. Click any flight to see its planned route and historical track.
-
-**Auto-refresh** — enable the timer to re-check every few minutes automatically. Sound alerts fire when a new high-probability transit appears.
 
 ---
 
@@ -58,52 +77,23 @@ Add to `.env`:
 
 ```
 ENABLE_SEESTAR=true
-SEESTAR_HOST=192.168.x.x   # or leave blank to auto-discover
+SEESTAR_HOST=192.168.x.x   # leave blank to auto-discover on your LAN
 ```
 
-Connect from the telescope panel on the right side of the map page. Flymoon will:
-
-- Switch the scope to Solar or Lunar mode to match the selected target
-- Start recording automatically before each predicted transit (default: 10 s early)
-- Stop recording after the transit passes (default: 10 s buffer)
-- Reconnect automatically if the scope drops off the network — but only once the target is back above the minimum altitude you set in the quadrant controls, so there are no pointless reconnect attempts overnight
-
-Analysed composite images appear in the **Gallery** after each session.
-
----
-
-## Headless / Overnight Mode
-
-No browser needed. Both scripts run continuously in the background:
-
-```bash
-# Telegram notifications + Seestar control
-python3 transit_capture.py --latitude LAT --longitude LON --target moon
-
-# Pushbullet notifications only
-python3 monitor_transits.py --latitude LAT --longitude LON --target moon
-```
-
-### macOS App
-
-```bash
-./build_mac_app.sh        # one-time build
-```
-
-Double-click **Transit Monitor.app**, choose your target, and leave it running. Logs: `/tmp/transit_monitor.log`.
+Flymoon will start recording automatically before each predicted transit and stop after. If the scope disconnects overnight it waits until the target is back above your minimum altitude before reconnecting.
 
 ---
 
 ## Notifications
 
-Add to `.env` to receive Telegram alerts for medium and high probability transits:
+Add to `.env`:
 
 ```
 TELEGRAM_BOT_TOKEN=your_token
 TELEGRAM_CHAT_ID=your_chat_id
 ```
 
-See **[SETUP.md](SETUP.md)** for how to create the bot and find your chat ID.
+See **[SETUP.md](SETUP.md)** for how to create the Telegram bot.
 
 ---
 
@@ -111,9 +101,10 @@ See **[SETUP.md](SETUP.md)** for how to create the bot and find your chat ID.
 
 | Symptom | Fix |
 |---------|-----|
-| No flights shown | Check `AEROAPI_API_KEY` and bounding box covers your sky |
-| Sun/Moon not visible | Target may be below your minimum altitude — check the quadrant inputs |
-| Telescope not found | Try `SEESTAR_HOST=` blank to enable auto-discovery, or check the scope is on the same subnet |
-| Config errors on startup | Run `python3 src/config_wizard.py --setup` |
+| Page won't load | Make sure Docker Desktop is running; check `docker compose logs` |
+| No flights shown | Check `AEROAPI_API_KEY` in `.env` and ensure the bounding box covers your sky |
+| Sun/Moon not appearing | Target may be below your minimum altitude — lower the quadrant inputs |
+| Telescope not found | Set `SEESTAR_HOST=` blank to enable auto-discovery |
+| Need to re-run setup | `docker compose run --rm flymoon python3 src/config_wizard.py --setup` |
 
 Full documentation → **[SETUP.md](SETUP.md)**
