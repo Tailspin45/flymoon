@@ -38,7 +38,7 @@ This guide will help you set up both features.
 
 ### Optional (for telescope integration)
 - Seestar telescope (S50 or S30 Pro)
-- Seestar connected to WiFi network
+- Seestar connected to WiFi network with Station mode
 - Computer and telescope on the same network
 
 ---
