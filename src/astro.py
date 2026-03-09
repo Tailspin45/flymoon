@@ -97,7 +97,6 @@ def targets_above_horizon(lat: float, lon: float, elevation: float = 0) -> bool:
     Used to gate Seestar reconnect attempts — no point trying to connect
     when there is no observable target.
     """
-    import os
     from datetime import timezone
 
     try:
@@ -113,5 +112,40 @@ def targets_above_horizon(lat: float, lon: float, elevation: float = 0) -> bool:
             if alt.degrees > 0:
                 return True
         return False
+    except Exception:
+        return True  # fail open — don't suppress reconnects on error
+
+
+def target_above_min_altitude(
+    target: str, lat: float, lon: float, elevation: float = 0, min_altitude: float = 10.0
+) -> bool:
+    """Return True if *target* is currently at or above *min_altitude* degrees.
+
+    Used to gate Seestar reconnect attempts so the scope only reconnects when
+    the selected viewing target is actually at a useful elevation.
+    Falls back to ``targets_above_horizon`` when target is unknown/None.
+
+    Parameters
+    ----------
+    target:
+        Celestial body name — ``"sun"`` or ``"moon"``.
+    lat, lon, elevation:
+        Observer coordinates (degrees / metres).
+    min_altitude:
+        Minimum altitude in degrees above the horizon.
+    """
+    from datetime import timezone
+
+    if target not in ("sun", "moon"):
+        return targets_above_horizon(lat, lon, elevation)
+
+    try:
+        from skyfield.api import wgs84
+
+        observer = wgs84.latlon(lat, lon, elevation_m=elevation)
+        now = EARTH_TIMESCALE.from_datetime(datetime.now(tz=timezone.utc))
+        body = ASTRO_EPHEMERIS[target]
+        alt, _, _ = observer.at(now).observe(body).apparent().altaz()
+        return alt.degrees >= min_altitude
     except Exception:
         return True  # fail open — don't suppress reconnects on error

@@ -23,6 +23,13 @@ from src.seestar_client import SeestarClient
 # Get EARTH reference for position calculations
 EARTH = ASTRO_EPHEMERIS["earth"]
 
+# User-adjustable settings pushed from the browser (see /api/settings).
+# Stored here so the heartbeat reconnect logic can read them without a
+# circular import back to app.py.
+_user_settings: dict = {
+    "min_reconnect_altitude": None,  # degrees; None → fall back to env var
+}
+
 
 # Mock Telescope Client for Testing
 
@@ -245,15 +252,27 @@ def get_telescope_client() -> Optional[SeestarClient]:
             _telescope_client = SeestarClient(
                 host=host, port=port, timeout=timeout, heartbeat_interval=heartbeat
             )
-            # Gate reconnect attempts on Sun/Moon visibility
+            # Gate reconnect attempts: only reconnect when the selected target
+            # is at or above the minimum altitude the user set in the UI quadrant.
             try:
-                from src.astro import targets_above_horizon
+                from src.astro import target_above_min_altitude, targets_above_horizon
 
                 lat = float(os.getenv("OBSERVER_LATITUDE", "0"))
                 lon = float(os.getenv("OBSERVER_LONGITUDE", "0"))
                 elev = float(os.getenv("OBSERVER_ELEVATION", "0"))
-                _telescope_client._above_horizon_check = lambda: targets_above_horizon(
-                    lat, lon, elev
+                _env_min_alt = float(os.getenv("MIN_TARGET_ALTITUDE", "10"))
+
+                def _make_horizon_check(client, lat, lon, elev, env_min_alt):
+                    def _check():
+                        # Prefer the value pushed from the browser; fall back to .env
+                        min_alt = _user_settings.get("min_reconnect_altitude") or env_min_alt
+                        return target_above_min_altitude(
+                            client._viewing_mode, lat, lon, elev, min_alt
+                        )
+                    return _check
+
+                _telescope_client._above_horizon_check = _make_horizon_check(
+                    _telescope_client, lat, lon, elev, _env_min_alt
                 )
             except Exception as _e:
                 logger.warning(f"[Telescope] Could not set horizon check: {_e}")
@@ -1648,6 +1667,26 @@ def get_notifications_status():
 # Route Registration Helper
 
 
+def update_user_settings():
+    """POST /api/settings — receive browser-side UI settings for server use."""
+    data = request.get_json(silent=True) or {}
+    if "min_reconnect_altitude" in data:
+        try:
+            _user_settings["min_reconnect_altitude"] = float(data["min_reconnect_altitude"])
+            logger.info(
+                f"[Settings] min_reconnect_altitude updated to "
+                f"{_user_settings['min_reconnect_altitude']}°"
+            )
+        except (TypeError, ValueError):
+            return jsonify({"error": "min_reconnect_altitude must be a number"}), 400
+    return jsonify({"ok": True, "settings": _user_settings})
+
+
+def get_user_settings():
+    """GET /api/settings — return current server-side UI settings."""
+    return jsonify(_user_settings)
+
+
 def register_routes(app):
     """
     Register all telescope routes with the Flask app.
@@ -1655,6 +1694,10 @@ def register_routes(app):
     Args:
         app: Flask application instance
     """
+    # User settings sync (browser → server)
+    app.add_url_rule("/api/settings", "api_settings_post", update_user_settings, methods=["POST"])
+    app.add_url_rule("/api/settings", "api_settings_get", get_user_settings, methods=["GET"])
+
     # Connection management
     app.add_url_rule(
         "/telescope/discover", "telescope_discover", discover_seestar, methods=["GET"]

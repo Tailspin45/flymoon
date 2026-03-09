@@ -883,6 +883,7 @@ function setupStickyQuadrantInputs() {
                     localStorage.setItem(id, value);
                     lastSavedValue = value;
                     console.log(`Saved ${id}: ${value}`);
+                    syncMinAltitudeToServer();
 
                     // Auto-refresh if results are visible (debounced to avoid duplicate calls)
                     if (resultsVisible) {
@@ -903,10 +904,24 @@ function setupStickyQuadrantInputs() {
     });
 }
 
+/**
+ * Push the lowest quadrant min-altitude to the server so the telescope
+ * reconnect logic uses the same threshold the user set in the UI.
+ */
+function syncMinAltitudeToServer() {
+    const minAlt = getMinAltitudeAllQuadrants();
+    fetch('/api/settings', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ min_reconnect_altitude: minAlt }),
+    }).catch(() => {/* non-critical — server will fall back to .env default */});
+}
+
 // Initialize sticky inputs and toggle buttons when DOM is ready
 function initUIControls() {
     setupStickyQuadrantInputs();
     updateToggleButtons();
+    syncMinAltitudeToServer();  // tell server the current UI threshold on every page load
 }
 if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', initUIControls);

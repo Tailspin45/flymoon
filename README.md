@@ -1,295 +1,221 @@
-# 🌙 Flymoon - Aircraft Transit Tracker
+# 🌙 Flymoon — Aircraft Transit Tracker
 
-Track aircraft transiting the Sun and Moon in real-time with automatic telescope photography.
+**Predict, detect, and photograph aircraft crossing the Sun or Moon in real time.**
 
-![Flymoon — Aircraft Transit Prediction](static/images/flymoon-hero.jpg)
+<p align="center">
+  <img src="docs/flymoon-map.png" alt="Flymoon interactive map — live transit predictions" width="100%">
+</p>
 
-## ✨ Features
+<p align="center">
+  <img src="docs/flymoon-sim.png" alt="Flymoon simulation — aircraft path versus Sun disc" width="100%">
+</p>
 
-- **Real-Time Transit Detection** - Monitor flights up to 15 minutes ahead for potential transits
-- **Interactive Map** - Leaflet-based visualization with flight routes, altitude indicators, and azimuth arrows
-- **Traffic Density Heatmap** - Accumulates aircraft positions across refreshes to reveal flight corridors
-- **Smart Probability Analysis** - Color-coded transit likelihood (🟢 High, 🟠 Medium, 🟡 Low)
-- **Automatic Telescope Control** - Integrated Seestar S50 support with automatic recording
-- **Telegram Notifications** - Get alerts when possible transits are detected
-- **Flight Tracking** - Real-time data from FlightAware AeroAPI
+---
+
+## ✨ What Flymoon Does
+
+Flymoon combines real-time flight data, high-precision celestial mechanics, and optional telescope automation to give you everything you need to capture an aircraft transiting the Sun or Moon:
+
+- Predicts which flights will pass close to the Sun or Moon up to **15 minutes ahead**
+- Shows flight paths, altitudes, and transit probability on an **interactive map**
+- Optionally controls a **Seestar S50 telescope** to start recording automatically before the transit and stop after
+- Analyses recorded video to produce **annotated composite images** showing the aircraft's path across the disc
+- Sends **Telegram alerts** when a high-probability transit is detected
+- Runs **headlessly overnight** on a Mac, Linux box, or Windows PC
+
+---
 
 ## 🚀 Quick Start
 
 ### Prerequisites
 - Python 3.9+
-- FlightAware AeroAPI account ([Free Personal Tier](https://www.flightaware.com/aeroapi/signup/personal))
+- FlightAware AeroAPI key ([free personal tier](https://www.flightaware.com/aeroapi/signup/personal))
 
-### Installation
+### Install
 
-**macOS/Linux:**
 ```bash
 make setup
 source .venv/bin/activate
-```
-
-**Windows:**
-```cmd
-python -m venv .venv
-.venv\Scripts\activate
-pip install -r requirements.txt
-```
-
-### Configuration
-
-1. **Create `.env` file:**
-   ```bash
-   cp .env.mock .env
-   ```
-
-2. **Add your FlightAware API key:**
-   ```
-   AEROAPI_API_KEY=your_api_key_here
-   ```
-
-3. **Set your observer location:**
-   ```
-   OBSERVER_LATITUDE=your_latitude_here
-   OBSERVER_LONGITUDE=your_longitude_here
-   OBSERVER_ELEVATION=your elevation_above_sealevel_here
-   ```
-
-4. **Optional: Set up Telegram or Telescope** - See [SETUP.md](SETUP.md) for detailed instructions
-
-### Run
-
-```bash
+cp .env.mock .env   # then edit .env with your API key and location
 python app.py
 ```
 
-Access the web interface at `http://localhost:8000` or the displayed LAN address (e.g., `http://192.168.1.100:8000`)
+Open `http://localhost:8000` — or the LAN address printed at startup.
 
-**Note:** The application runs with minimal console output by default. To enable detailed debug logging, see [SETUP.md](SETUP.md#troubleshooting).
-
-## 📖 Documentation
-
-- **[QUICKSTART.md](QUICKSTART.md)** - Fast-track setup guide
-- **[SETUP.md](SETUP.md)** - Complete setup instructions (Telegram, Telescope)
-- **[SECURITY.md](SECURITY.md)** - Security guidelines and best practices
-- **[LICENSE](LICENSE)** - MIT License
-
-## 🎯 How It Works
-
-1. **Set Your Location** - Enter your coordinates (lat/lon/elevation)
-2. **Define Search Area** - Draw or adjust bounding box on map
-3. **Select Target** - Choose Sun, Moon, or Auto mode
-4. **Monitor Transits** - View real-time flight data with transit predictions
-5. **Automatic Recording** - Connected telescope automatically captures transits
-
-### Transit Probability
-
-Transits are ranked by the angular separation between aircraft and celestial target:
-
-- **🟢 High** - ≤1.5° separation (direct transit very likely)
-- **🟠 Medium** - ≤2.5° separation (near miss, worth recording)
-- **⚪ Low** - ≤3.0° separation (possible distant transit)
-
-## 🗺️ Map Features
-
-- **Altitude Overlay** - Thin horizontal bars show aircraft altitude (clickable)
-- **Route Display** - Click any indicator to show planned route and historical track
-- **Azimuth Arrows** - Visual direction indicators to Sun/Moon
-- **Traffic Density Heatmap** - Toggle 🔥 to reveal accumulated flight corridors; data persists in browser storage across sessions (capped at 2,000 points)
-- **Bounding Box** - Adjustable search area (drag corners to resize)
-
-## ⚙️ Advanced Features
-
-### Auto-Refresh Mode
-Set automatic checks every N minutes with sound alerts for detected transits
-
-### Telescope Integration
-Automatic video recording when transits are detected (Seestar S50 supported)
-
-### Telegram Notifications
-Receive instant alerts on your phone for medium/high probability transits
-
-## 🤖 Headless/Background Mode
-
-For automated monitoring without the web interface, use the standalone scripts:
-
-### `monitor_transits.py` - Pushbullet Notifications
-Monitors for high-probability transits and sends Pushbullet push notifications:
-
-```bash
-python3 monitor_transits.py \
-  --latitude YOUR_LATITUDE \
-  --longitude YOUR_LONGITUDE \
-  --elevation YOUR_ELEVATION \
-  --target sun \
-  --interval 15 \
-  --warning 5
-```
-
-**Requirements:**
-- `PUSH_BULLET_API_KEY` in `.env` ([Get free API key](https://www.pushbullet.com/#settings/account))
-- `AEROAPI_API_KEY` in `.env`
-
-**Options:**
-- `--target`: `sun`, `moon`, or `auto` (default: `sun`)
-- `--interval`: Check interval in minutes (default: 15 or from `.env` `MONITOR_INTERVAL`)
-- `--warning`: Minutes before transit to send urgent notification (default: 5)
-
-### `transit_capture.py` - Automated Telescope Recording
-Automatically controls Seestar telescope or sends Telegram notifications:
-
-```bash
-# Automatic mode (tries Seestar control first, falls back to Telegram)
-python3 transit_capture.py \
-  --latitude YOUR_LATITUDE \
-  --longitude YOUR_LONGITUDE \
-  --target sun
-
-# Force manual mode (Telegram notifications only)
-python3 transit_capture.py \
-  --latitude YOUR_LATITUDE \
-  --longitude YOUR_LONGITUDE \
-  --target sun \
-  --manual
-
-# Test Seestar connection
-python3 transit_capture.py --test-seestar
-```
-
-**Requirements:**
-- **Automatic mode**: `ENABLE_SEESTAR=true`, `SEESTAR_HOST` in `.env`
-- **Manual mode**: `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID` in `.env` (see [SETUP.md](SETUP.md))
-
-Both scripts can run in the background (append `&` on Unix/Mac or use Task Scheduler on Windows) and will continuously monitor for transits.
-
-### Windows System Tray Monitor
-
-For Windows users, a system tray application is available:
-
-1. **Install Windows dependencies:**
-   ```cmd
-   pip install -r requirements-windows.txt
-   ```
-
-2. **Configure** `.env` with your observer location and optionally Telegram credentials
-
-3. **Run the monitor:**
-   ```cmd
-   python windows_monitor.py
-   ```
-
-The app runs in your system tray with a color-coded icon:
-- **Gray** - Idle (not monitoring)
-- **Green** - Monitoring active
-- **Orange** - Transit detected!
-- **Red** - Error
-
-Right-click the tray icon to change targets, start/stop monitoring, or quit.
-
-### macOS Application Bundle
-
-For macOS users, a double-clickable `.app` is available:
-
-1. **Build the app** (first time only):
-   ```bash
-   ./build_mac_app.sh
-   ```
-
-2. **Configure** `.env` with `TELEGRAM_BOT_TOKEN` and observer location
-
-3. **Double-click** `Transit Monitor.app` and select your target
-
-The app provides a GUI for configuration and runs `transit_capture.py` in the background. Logs are written to `/tmp/transit_monitor.log`.
-
-## 🔧 Technical Details
-
-### Transit Detection Algorithm
-
-Flymoon predicts aircraft transits using a multi-step process:
-
-1. **Flight Data Acquisition** - Queries FlightAware AeroAPI for all aircraft within the configured bounding box
-2. **Position Prediction** - Projects each aircraft's position up to 15 minutes ahead assuming constant velocity and heading
-3. **Celestial Tracking** - Calculates Sun/Moon altitude and azimuth using Skyfield and JPL ephemeris data (de421.bsp)
-4. **Angular Separation** - Uses numerical optimization to find the minimum angular distance between aircraft path and celestial target
-5. **Probability Classification** - Ranks transits using true on-sky angular separation:
-   - **🟢 High**: ≤1.5° separation (direct transit very likely)
-   - **🟠 Medium**: ≤2.5° separation (near miss, worth recording)
-   - **⚪ Low**: ≤3.0° separation (possible distant transit)
-
-The algorithm uses great-circle angular separation in alt-az space (azimuth differences are cosine-weighted by target altitude to correct for geometric compression near the zenith).
-
-**Key Assumptions:**
-- Aircraft maintain constant velocity and heading over the prediction window
-- Prediction accuracy decreases beyond 5-10 minutes due to flight path changes
-- Actual transit duration is typically 0.5-2 seconds
-
-### Data Sources
-- **Flight Data**: FlightAware AeroAPI (primary), OpenSky Network (last-mile refinement)
-- **Celestial Calculations**: Skyfield with JPL ephemeris (de421.bsp)
-- **Map Tiles**: OpenStreetMap
-- **Map Library**: Leaflet 1.9.4 (self-hosted for security)
-
-### V3 Architecture Highlights
-- **Single-fetch-per-cycle**: Sun and Moon evaluations share the same cached flight data, reducing API calls by 50%
-- **OpenSky last-mile**: When a transit candidate is <60s from predicted transit, OpenSky provides fresh position data without consuming FlightAware credits
-- **Duplicate-schedule guards**: Prevents timer accumulation when the same flight is detected across multiple polling cycles
-- **Unified timestamp handling**: Consistent `time` format (minutes) across backend, monitor, and frontend
-
-## 📊 Requirements
-
-- **API Rate Limits**: FlightAware Personal tier allows 10 queries/minute
-- **Network**: LAN access for telescope control (if using)
-- **Storage**: ~50MB per transit video (if recording enabled)
-
-## 🔒 Security
-
-Flymoon binds to `0.0.0.0:8000` by default (accessible on your local network). Gallery write operations require authentication:
-
-```bash
-# Generate secure token
-python3 -c "import secrets; print(secrets.token_urlsafe(32))"
-
-# Add to .env
-GALLERY_AUTH_TOKEN=your_token_here
-```
-
-**Important**: Do not expose Flymoon to the internet without additional security measures. See [SECURITY.md](SECURITY.md) for details.
-
-## 🤝 Contributing
-
-Contributions welcome! Please open an issue or pull request for:
-- Bug fixes
-- Feature enhancements
-- Documentation improvements
-
-**Share Your Transits!** Post your transit photos in [this issue](https://github.com/dbetm/flymoon/issues/21)
-
-## 📝 Credits & Attribution
-
-Created with contributions from the Flymoon community. Special thanks to all contributors and transit photographers!
-
-### Open-Source Libraries & Services
-
-| Component | Project | License |
-|-----------|---------|---------|
-| Interactive map | [Leaflet 1.9.4](https://leafletjs.com) © 2010–2023 Vladimir Agafonkin | BSD 2-Clause |
-| Bounding-box drawing | [Leaflet.Editable](https://github.com/Leaflet/Leaflet.editable) © Yoann Aubineau | MIT |
-| Traffic heatmap | [Leaflet.heat](https://github.com/Leaflet/Leaflet.heat) © 2014 Vladimir Agafonkin | MIT |
-| Celestial calculations | [Skyfield 1.49](https://rhodesmill.org/skyfield/) © Brandon Rhodes | MIT |
-| Web framework | [Flask 3.0.3](https://flask.palletsprojects.com) © Pallets | BSD 3-Clause |
-| HTTP client | [Requests 2.32](https://requests.readthedocs.io) © Kenneth Reitz | Apache 2.0 |
-| Telegram alerts | [python-telegram-bot 21.0](https://python-telegram-bot.org) © Leandro Toledo | LGPLv3 |
-| Environment config | [python-dotenv 1.0](https://github.com/theskumar/python-dotenv) © Saurabh Kumar | BSD 3-Clause |
-| Timezone detection | [tzlocal 5.2](https://github.com/regebro/tzlocal) © Lennart Regebro | MIT |
-| JPL Ephemeris | [DE421](https://naif.jpl.nasa.gov/pub/naif/generic_kernels/spk/planets/) — NASA/JPL | Public Domain |
-| Aviation charts overlay | [OpenAIP](https://www.openaip.net) | CC BY-NC-SA 4.0 |
-| Free flight positions | [OpenSky Network](https://opensky-network.org) (planned hybrid mode) | [Terms of Use](https://opensky-network.org/about/terms-of-use) |
-
-See [ATTRIBUTION.md](ATTRIBUTION.md) for full license texts and acknowledgements.
-
-## 📄 License
-
-MIT License - See [LICENSE](LICENSE) for details
+Full setup instructions (Telegram, Telescope, Windows) → **[SETUP.md](SETUP.md)**
 
 ---
 
-**Pro Tip**: Use Flightradar24 alongside Flymoon for additional flight tracking context.
+## 🎯 Transit Detection
+
+### Prediction Algorithm
+
+1. **Flight acquisition** — queries FlightAware AeroAPI for all aircraft within the configured bounding box
+2. **Position projection** — extrapolates each aircraft's position up to 15 minutes ahead using constant velocity and heading
+3. **Celestial tracking** — computes Sun/Moon altitude and azimuth with Skyfield + the JPL DE421 ephemeris, accounting for atmospheric refraction
+4. **Angular separation** — numerical optimisation finds the moment of closest approach between the aircraft path and the celestial disc
+5. **Probability classification** — ranks each candidate by true on-sky angular separation (azimuth differences cosine-weighted by target altitude to correct for geometric compression near the zenith):
+
+| Indicator | Separation | Meaning |
+|-----------|-----------|---------|
+| 🟢 High | ≤ 1.5° | Direct transit very likely |
+| 🟠 Medium | ≤ 2.5° | Near miss — worth recording |
+| ⚪ Low | ≤ 3.0° | Possible transit |
+
+### Real-Time Video Detection
+
+When the telescope is connected and running, **TransitDetector** monitors the live RTSP stream frame-by-frame, detecting aircraft silhouettes crossing the disc in real time using computer-vision coherence tracking. Detections trigger an immediate recording bookmark and are logged to the gallery.
+
+### Post-Capture Analysis
+
+**TransitAnalyzer** processes recorded video after each session to produce:
+- A **composite image** showing every frame where the aircraft was on the disc, blended over a clean reference background
+- A **sidecar legend** annotating the track with frame times, angular velocity, and disc entry/exit positions
+
+---
+
+## 🗺️ Map Interface
+
+<p align="center">
+  <img src="docs/flymoon-connected.png" alt="Flymoon with telescope connected" width="100%">
+</p>
+
+- **Per-quadrant minimum altitude** — set independent minimum angles for North, East, South, and West to mask out trees, rooftops, or other obstructions; only flights near the Sun/Moon when it is above your local horizon count
+- **Altitude bars** — thin horizontal bars on each flight indicator show cruising altitude at a glance
+- **Route & track overlay** — click any indicator to show the planned route ahead and historical track behind
+- **Azimuth arrows** — on-map arrows point toward the Sun and Moon from your observer position
+- **Traffic density heatmap** — toggle 🔥 to reveal accumulated flight corridors built up across polling cycles (persists across sessions in browser storage, capped at 2,000 points)
+- **Adjustable bounding box** — drag the corners to resize the search area
+
+---
+
+## 🔭 Telescope Integration
+
+Flymoon connects directly to the Seestar S50 over TCP — no bridge app required.
+
+- **Auto-discovery** — scans the local subnet to find the scope's IP automatically
+- **Solar & lunar modes** — switches the scope to the correct imaging mode for the selected target
+- **Automatic recording** — starts video a configurable number of seconds before the predicted transit and stops after (defaults: 10 s pre/post buffer)
+- **Live preview** — MJPEG stream from the scope shown directly in the browser panel
+- **Smart reconnection** — if the scope drops off the network overnight, Flymoon waits to reconnect until the selected target is back above the minimum altitude you set in the UI quadrant controls, avoiding noisy reconnect attempts in the middle of the night
+- **Capture gallery** — browsable gallery of all recorded clips and analysed composites
+
+<p align="center">
+  <img src="docs/flymoon-eclipse.png" alt="Flymoon eclipse monitoring mode" width="80%">
+</p>
+
+---
+
+## 📱 Notifications
+
+**Telegram** — instant phone alerts for medium and high probability transits, including predicted transit time, flight details, and angular separation.
+
+---
+
+## 🤖 Headless / Background Mode
+
+### `monitor_transits.py` — Pushbullet notifications
+```bash
+python3 monitor_transits.py \
+  --latitude 51.5 --longitude -0.12 --elevation 10 \
+  --target sun --interval 15
+```
+
+### `transit_capture.py` — Telescope control or Telegram fallback
+```bash
+# Fully automated (Seestar + Telegram)
+python3 transit_capture.py --latitude 51.5 --longitude -0.12 --target sun
+
+# Notifications only
+python3 transit_capture.py --latitude 51.5 --longitude -0.12 --target sun --manual
+```
+
+Both scripts run continuously in the background and handle their own scheduling.
+
+### macOS App Bundle
+
+```bash
+./build_mac_app.sh        # builds Transit Monitor.app
+```
+
+Double-click `Transit Monitor.app`, select your target, and leave it running. Logs go to `/tmp/transit_monitor.log`.
+
+### Windows System Tray
+
+```cmd
+pip install -r requirements-windows.txt
+python windows_monitor.py
+```
+
+Tray icon colours: **gray** = idle · **green** = monitoring · **orange** = transit detected · **red** = error.
+
+---
+
+## ⚙️ Configuration
+
+Copy `.env.mock` to `.env` and fill in:
+
+| Variable | Purpose |
+|----------|---------|
+| `AEROAPI_API_KEY` | FlightAware API key (required) |
+| `OBSERVER_LATITUDE / LONGITUDE / ELEVATION` | Your location |
+| `LAT/LONG_LOWER_LEFT / UPPER_RIGHT` | Flight search bounding box |
+| `TELEGRAM_BOT_TOKEN / CHAT_ID` | Telegram alerts (optional) |
+| `ENABLE_SEESTAR / SEESTAR_HOST` | Telescope control (optional) |
+| `SEESTAR_PRE_BUFFER / POST_BUFFER` | Recording window in seconds (default: 10) |
+| `MIN_TARGET_ALTITUDE` | Fallback minimum altitude for reconnect logic when the browser hasn't connected yet (default: 10°) |
+
+Run `python3 src/config_wizard.py --setup` for interactive validation of all settings.
+
+---
+
+## 📖 Documentation
+
+| File | Contents |
+|------|---------|
+| [QUICKSTART.md](QUICKSTART.md) | Fastest path to first detection |
+| [SETUP.md](SETUP.md) | Full setup — Telegram, Telescope, Windows |
+| [SECURITY.md](SECURITY.md) | Securing the server on a LAN |
+| [ATTRIBUTION.md](ATTRIBUTION.md) | Open-source library credits |
+
+---
+
+## 🔒 Security
+
+Flymoon binds to `0.0.0.0:8000` by default (LAN-accessible). Gallery write operations require a `GALLERY_AUTH_TOKEN` in `.env`. See [SECURITY.md](SECURITY.md) before exposing the server beyond your local network.
+
+---
+
+## 🤝 Contributing
+
+Issues and pull requests welcome — especially transit photographs!
+
+**Share your captures** → [GitHub Discussions / Issue #21](https://github.com/dbetm/flymoon/issues/21)
+
+---
+
+## 📝 Credits
+
+| Component | Project | Licence |
+|-----------|---------|---------|
+| Interactive map | [Leaflet 1.9.4](https://leafletjs.com) © Vladimir Agafonkin | BSD 2-Clause |
+| Bounding-box drawing | [Leaflet.Editable](https://github.com/Leaflet/Leaflet.editable) © Yoann Aubineau | MIT |
+| Traffic heatmap | [Leaflet.heat](https://github.com/Leaflet/Leaflet.heat) © Vladimir Agafonkin | MIT |
+| Celestial calculations | [Skyfield 1.49](https://rhodesmill.org/skyfield/) © Brandon Rhodes | MIT |
+| Web framework | [Flask 3.0.3](https://flask.palletsprojects.com) © Pallets | BSD 3-Clause |
+| Telegram alerts | [python-telegram-bot 21.0](https://python-telegram-bot.org) | LGPLv3 |
+| JPL Ephemeris | [DE421](https://naif.jpl.nasa.gov/pub/naif/generic_kernels/spk/planets/) — NASA/JPL | Public Domain |
+| Free flight positions | [OpenSky Network](https://opensky-network.org) | [Terms](https://opensky-network.org/about/terms-of-use) |
+| Aviation chart overlay | [OpenAIP](https://www.openaip.net) | CC BY-NC-SA 4.0 |
+
+See [ATTRIBUTION.md](ATTRIBUTION.md) for full licence texts.
+
+---
+
+## 📄 Licence
+
+MIT — see [LICENSE](LICENSE)
+
+---
+
+*Pro tip: open Flightradar24 alongside Flymoon for extra situational awareness when a high-probability transit is approaching.*
