@@ -176,8 +176,8 @@ Then edit `.env` with your favorite text editor.
 AEROAPI_API_KEY=your_api_key_here
 
 # Your observer location (required)
-OBSERVER_LATITUDE=33.111369
-OBSERVER_LONGITUDE=-117.310169
+OBSERVER_LATITUDE=34.111369
+OBSERVER_LONGITUDE=-118.310169
 OBSERVER_ELEVATION=0
 ```
 
@@ -245,8 +245,8 @@ This enables the **Aviation (OpenAIP)** toggle in the map's Layers control, whic
 AEROAPI_API_KEY=your_api_key_here
 
 # Observer Location
-OBSERVER_LATITUDE=33.111369
-OBSERVER_LONGITUDE=-117.310169
+OBSERVER_LATITUDE=34.111369
+OBSERVER_LONGITUDE=-118.310169
 OBSERVER_ELEVATION=0
 
 # Telegram Notifications
@@ -275,8 +275,8 @@ Run the transit capture script to test notifications:
 
 ```bash
 python3 transit_capture.py \
-  --latitude 33.111369 \
-  --longitude -117.310169 \
+  --latitude 34.111369 \
+  --longitude -118.310169 \
   --target moon
 ```
 
@@ -321,8 +321,8 @@ Run the automated monitoring with both Telegram and telescope enabled:
 
 ```bash
 python3 transit_capture.py \
-  --latitude 33.111369 \
-  --longitude -117.310169 \
+  --latitude 34.111369 \
+  --longitude -118.310169 \
   --target moon \
   --interval 60
 ```
@@ -341,8 +341,8 @@ This will:
 
 ```bash
 python3 transit_capture.py \
-  --latitude 33.111369 \
-  --longitude -117.310169 \
+  --latitude 34.111369 \
+  --longitude -118.310169 \
   --target sun \
   --interval 30
 ```
@@ -351,8 +351,8 @@ python3 transit_capture.py \
 
 ```bash
 python3 transit_capture.py \
-  --latitude 33.111369 \
-  --longitude -117.310169 \
+  --latitude 34.111369 \
+  --longitude -118.310169 \
   --target moon \
   --interval 60
 ```
@@ -552,6 +552,6 @@ Happy transit hunting!
 
 ---
 
-**Last Updated**: 2026-02-04
+**Last Updated**: 2026-03-09
 **Project**: Flymoon
 **Documentation**: See project README for more details
