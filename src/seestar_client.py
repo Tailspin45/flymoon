@@ -564,8 +564,8 @@ class SeestarClient:
                 "(must be 'sun' or 'moon'). Point the scope at the target first."
             )
         if self._viewing_mode is None:
-            logger.warning(
-                "Recording with unknown viewing mode — scope may not be pointed at target"
+            logger.info(
+                "Recording in unknown viewing mode (scope connected externally or reconnected) — proceeding"
             )
 
         try:
