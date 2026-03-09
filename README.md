@@ -14,7 +14,7 @@
 
 ## ✨ What Flymoon Does
 
-Flymoon combines real-time flight data, high-precision celestial mechanics, and optional telescope automation to give you everything you need to capture an aircraft transiting the Sun or Moon:
+Flymoon combines real-time flight data, high-precision celestial mechanics, and telescope automation to give you everything you need to capture an aircraft transiting the Sun or Moon--even an eclipse timelapse:
 
 - Predicts which flights will pass close to the Sun or Moon up to **15 minutes ahead**
 - Shows flight paths, altitudes, and transit probability on an **interactive map**
