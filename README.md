@@ -34,16 +34,7 @@ Flymoon combines real-time flight data, high-precision celestial mechanics, and 
 
 ### Install
 
-```bash
-make setup
-source .venv/bin/activate
-cp .env.mock .env   # then edit .env with your API key and location
-python app.py
-```
-
-Open `http://localhost:8000` — or the LAN address printed at startup.
-
-Full setup instructions (Telegram, Telescope, Windows) → **[SETUP.md](SETUP.md)**
+Full setup instructions (Mac, Windows, Linux) → **[SETUP.md](SETUP.md)**
 
 ---
 
