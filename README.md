@@ -77,7 +77,7 @@ When the telescope is connected and running, **TransitDetector** monitors the li
 ## 🗺️ Map Interface
 
 <p align="center">
-  <img src="docs/flymoon-connected.png" alt="Flymoon with telescope connected" width="100%">
+  <img src="docs/flymoon-map.png" alt="Flymoon map interface" width="100%">
 </p>
 
 - **Per-quadrant minimum altitude** — set independent minimum angles for North, East, South, and West to mask out trees, rooftops, or other obstructions; only flights near the Sun/Moon when it is above your local horizon count
