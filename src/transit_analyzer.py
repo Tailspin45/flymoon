@@ -1217,6 +1217,7 @@ def _filter_transit_coherence(
     min_travel_px: float = 40.0,
     min_speed_px_s: float = 80.0,
     max_link_px: float = 150.0,
+    max_frame_gap: int = 3,
 ) -> List[BlobDetection]:
     """Keep only detections that form coherent transit-like paths.
 
@@ -1227,7 +1228,10 @@ def _filter_transit_coherence(
     Algorithm:
       1. Group moving detections into temporal runs (≤0.5 s gap).
       2. Within each run, build object tracks by greedy nearest-neighbor
-         linking across frames (max ``max_link_px`` per frame step).
+         linking across frames (max ``max_link_px`` per frame step,
+         scaled by frame gap).  Tracks are closed when no blob appears
+         within ``max_frame_gap`` frames — this prevents a finished
+         transit from absorbing unrelated blobs later.
       3. Evaluate each track: must travel ≥40 px, speed ≥80 px/s,
          and follow a roughly linear path.
       4. Return only detections that belong to qualifying tracks.
@@ -1281,12 +1285,19 @@ def _filter_transit_coherence(
 
         for fi in frame_ids[1:]:
             candidates = by_frame[fi]
-            # For each existing track, try to extend with nearest candidate
+            # For each existing track, try to extend with nearest candidate.
+            # Skip tracks whose last detection is too far back — the object
+            # has left and extending would merge unrelated objects.
             claimed: set = set()
             for track in tracks:
                 tail = track[-1]
+                frame_gap = fi - tail.frame_index
+                if frame_gap > max_frame_gap:
+                    continue  # track is stale, don't extend
+                # Allow larger link distance when frames are skipped
+                link_limit = max_link_px * frame_gap
                 best_d = None
-                best_dist = max_link_px
+                best_dist = link_limit
                 for c in candidates:
                     if id(c) in claimed:
                         continue
