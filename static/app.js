@@ -1854,10 +1854,11 @@ function fetchFlights() {
     alertTargetUnderHorizon = '';
 
     const minAltitude = getMinAltitudeAllQuadrants();
-    // Thresholds now configured via server .env (ALT_THRESHOLD, AZ_THRESHOLD)
-    // Default values used here are overridden by server config
-    const altThreshold = 1.0;
-    const azThreshold = 1.0;
+    // Use wide outer-search thresholds so all classifiable transits are returned.
+    // HIGH=≤1.5°, MEDIUM=≤2.5°, LOW=≤3.0° — combined_threshold must be ≥3.0°
+    // or flights between 1.0° and 1.5° separation (which are HIGH) get dropped.
+    const altThreshold = 5.0;
+    const azThreshold = 5.0;
     
     let endpoint_url = (
         `/flights?target=${encodeURIComponent(target)}`
