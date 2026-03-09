@@ -169,11 +169,9 @@ class SeestarClient:
                             try:
                                 result = json.loads(line)
 
-                                # Skip Event messages
+                                # Parse and handle Event messages (state updates)
                                 if "Event" in result:
-                                    logger.debug(
-                                        f"Skipping event: {result.get('Event')}"
-                                    )
+                                    self._handle_event(result)
                                     continue
 
                                 # Check if this is our response
@@ -214,6 +212,48 @@ class SeestarClient:
                 # Always restore the default socket timeout after command
                 if self.socket:
                     self.socket.settimeout(self.timeout)
+
+    # ── Known event names from the Seestar firmware ──────────────────────────
+    # Discovered via live traffic capture. New events are logged at DEBUG level
+    # so they appear in logs when --debug is active, making future discovery easy.
+    _VIEW_START_EVENTS = {"ImagingViewStart", "SolarViewStart", "LunarViewStart"}
+    _VIEW_STOP_EVENTS  = {"ImagingViewStop",  "SolarViewStop",  "LunarViewStop"}
+
+    def _handle_event(self, event: dict) -> None:
+        """Parse unsolicited Event messages from the Seestar firmware.
+
+        Updates internal state (e.g. _viewing_mode) so the app stays in sync
+        with whatever mode the scope is actually in — even when it was set via
+        the Seestar app before Flymoon connected.
+        """
+        name = event.get("Event", "")
+
+        # Viewing-mode state changes
+        if name in ("SolarViewStart",):
+            if self._viewing_mode != "sun":
+                self._viewing_mode = "sun"
+                logger.info("Seestar event: solar viewing mode active")
+        elif name in ("LunarViewStart",):
+            if self._viewing_mode != "moon":
+                self._viewing_mode = "moon"
+                logger.info("Seestar event: lunar viewing mode active")
+        elif name in self._VIEW_STOP_EVENTS:
+            if self._viewing_mode is not None:
+                logger.info(f"Seestar event: viewing mode stopped (was {self._viewing_mode})")
+                self._viewing_mode = None
+        # Recording state changes
+        elif name == "RecordingStart":
+            if not self._recording:
+                self._recording = True
+                logger.info("Seestar event: recording started")
+        elif name == "RecordingStop":
+            if self._recording:
+                self._recording = False
+                self._recording_start_time = None
+                logger.info("Seestar event: recording stopped")
+        else:
+            # Log unknown events at DEBUG so they're visible during testing
+            logger.debug(f"Seestar event: {name} {event}")
 
     def _reconnect(self) -> bool:
         """Attempt to re-establish the TCP connection without starting a new heartbeat thread.
