@@ -1,296 +1,119 @@
-# Transit Capture - Quick Start Guide
+# Flymoon — Quick Start
 
-## The System
-
-This is your production transit capture system. It's designed to **automatically record** aircraft transits with your Seestar telescope, with a **manual fallback** if automatic control isn't working.
-
-## Current Status (Firmware 6.70)
-
-- **Automatic Mode**: Not available (JSON-RPC timeout issue)
-- **Manual Mode**: ✓ Working (push notifications)
-- **When Fixed**: System will automatically switch to automatic mode
-
-## Quick Start
-
-### 1. Test Your Seestar
+## 1. Install
 
 ```bash
-python3 transit_capture.py --test-seestar
+make setup
+source .venv/bin/activate
 ```
 
-This tells you which mode will be used:
-- **Automatic available** → Seestar will record automatically
-- **Manual required** → You'll get notifications to record manually
-
-### 2. Start Monitoring
+## 2. Configure
 
 ```bash
-python3 transit_capture.py \
-  --latitude 33.111369 \
-  --longitude -117.310169 \
-  --target sun
+cp .env.mock .env
 ```
 
-The system will:
-1. Try automatic mode first
-2. Fall back to manual notifications if needed
-3. Monitor for HIGH probability transits
-4. Capture transits (automatically or notify you)
-
-## How It Works
-
-### Automatic Mode (Future - When Firmware Fixed)
+Open `.env` and set the three required values:
 
 ```
-[Detection] → [Scheduling] → [AUTO RECORD] → [STOP] → [Done]
+AEROAPI_API_KEY=your_flightaware_key
+OBSERVER_LATITUDE=your_lat
+OBSERVER_LONGITUDE=your_lon
+OBSERVER_ELEVATION=your_elevation_metres
 ```
 
-- No user action needed
-- Recordings happen automatically
-- You can review captured videos later
-
-### Manual Mode (Current - Firmware 6.70)
-
-```
-[Detection] → [Notification] → [User Opens App] → [User Records] → [Done]
-```
-
-**You receive two notifications:**
-
-1. **Detection** (when transit first appears):
-   ```
-   🟢 HIGH Probability Transit Detected!
-   Flight: UAL1234 in 23 minutes
-   You will receive a warning 5 min before transit.
-   ```
-
-2. **Imminent** (5 minutes before):
-   ```
-   🚨 TRANSIT IMMINENT - 4 minutes
-
-   ⏰ TIMING:
-   Start recording: 14:23:35
-   Stop recording: 14:23:55
-
-   📱 ACTION:
-   1. Open Seestar app NOW
-   2. Confirm sun is centered
-   3. Press RECORD at 14:23:35
-   4. Press STOP at 14:23:55
-   ```
-
-## Commands
-
-### Standard Usage
+Everything else is optional. Run the config wizard for a guided check of all settings:
 
 ```bash
-# Basic (tries automatic, falls back to manual)
-python3 transit_capture.py \
-  --latitude 33.111369 \
-  --longitude -117.310169 \
-  --target sun
-
-# More responsive
-python3 transit_capture.py \
-  --latitude 33.111369 \
-  --longitude -117.310169 \
-  --target sun \
-  --interval 5 \
-  --warning 3
-
-# Force manual mode (skip automatic test)
-python3 transit_capture.py \
-  --latitude 33.111369 \
-  --longitude -117.310169 \
-  --target sun \
-  --manual
+python3 src/config_wizard.py --setup
 ```
 
-### Options
-
-| Flag | Default | Description |
-|------|---------|-------------|
-| `--latitude` | Required | Your latitude |
-| `--longitude` | Required | Your longitude |
-| `--target` | sun | Target: sun, moon, or auto |
-| `--interval` | 15 | Check every N minutes |
-| `--warning` | 5 | Manual mode: warn N min before |
-| `--manual` | - | Force manual mode |
-| `--test-seestar` | - | Test Seestar and exit |
-
-## What You See
-
-### Startup (Manual Fallback)
-
-```
-============================================================
-TRANSIT CAPTURE SYSTEM - STARTUP
-============================================================
-Target: sun
-Location: 33.111369, -117.310169
-Check interval: 15 min
-============================================================
-
-Attempting automatic mode (preferred)...
-Testing Seestar connection...
-  Seestar not responding to commands
-
-Automatic mode unavailable (Seestar not responding)
-Falling back to manual notification mode...
-  PushBullet connected
-  You will receive notifications to manually record
-
-⚠️  MANUAL MODE ACTIVE (FALLBACK)
-    Reason: Seestar firmware 6.70 JSON-RPC timeout issue
-    You will receive notifications to manually record
-
-============================================================
-MODE: MANUAL
-============================================================
-⚠️  You will receive notifications for manual recording
-⚠️  Keep Seestar app accessible
-============================================================
-MONITORING STARTED
-```
-
-### Startup (Automatic - Future)
-
-```
-Attempting automatic mode (preferred)...
-Testing Seestar connection...
-  Seestar responding to commands!
-  Connected to Seestar at 192.168.7.221
-  Setting sun viewing mode...
-  Automatic mode ready
-  Seestar will record transits automatically
-
-✓✓✓ AUTOMATIC MODE ACTIVE ✓✓✓
-
-============================================================
-MODE: AUTOMATIC
-============================================================
-✓ Transits will be recorded automatically
-✓ No user action required
-============================================================
-```
-
-### During Operation
-
-```
-[14:00:00] Checking for transits...
-Found 2 HIGH probability transits (out of 47 total)
-
-[Manual Mode]
-📱 Sent detection notification for UAL1234
-Next check in 15 minutes at 14:15:00
-
-[14:15:00] Checking for transits...
-Found 2 HIGH probability transits (out of 51 total)
-🚨 Sent IMMINENT notification for UAL1234
-Next check in 15 minutes at 14:30:00
-
-[Automatic Mode - Future]
-⏰ Scheduling automatic recording for UAL1234
-   Start: 14:23:35
-   Duration: 20s
-Waiting 480s until recording starts...
-🎥 STARTING AUTOMATIC RECORDING
-⏹️  STOPPING AUTOMATIC RECORDING
-✓ Automatic capture complete
-```
-
-## Workflow
-
-### Manual Mode (Current)
-
-**Before Observing:**
-1. Start the monitor: `python3 transit_capture.py --latitude ... --longitude ... --target sun`
-2. Keep your phone nearby
-3. Have Seestar app ready to open
-
-**When Transit Detected:**
-- You get first notification: "Transit in 23 minutes"
-- Keep monitoring
-
-**When Transit Imminent:**
-- You get urgent notification with exact times
-- Open Seestar app
-- Verify sun/moon centered
-- Press RECORD at start time
-- Press STOP at stop time
-
-### Automatic Mode (Future)
-
-**Before Observing:**
-1. Start the monitor
-2. Walk away
-
-**When Transit Detected:**
-- System schedules recording
-- Recording happens automatically
-- No action needed
-
-**After Session:**
-- Review captured videos
-- Download from Seestar if desired
-
-## Troubleshooting
-
-### No Notifications (Manual Mode)
-
-Check PushBullet:
-```bash
-python3 -c "
-from dotenv import load_dotenv
-import os
-load_dotenv()
-from pushbullet import Pushbullet
-pb = Pushbullet(os.getenv('PUSH_BULLET_API_KEY'))
-pb.push_note('Test', 'PushBullet works!')
-"
-```
-
-### Automatic Mode Not Working
-
-The system will automatically detect this and fall back to manual mode. You'll see:
-```
-⚠️  MANUAL MODE ACTIVE (FALLBACK)
-    Reason: Seestar firmware 6.70 JSON-RPC timeout issue
-```
-
-This is expected with current firmware. Continue with manual mode.
-
-### Monitor Stops
+## 3. Run
 
 ```bash
-# Run with logging
-python3 transit_capture.py \
-  --latitude 33.111369 \
-  --longitude -117.310169 \
-  --target sun 2>&1 | tee capture.log
+python app.py
 ```
 
-## When Automatic Mode Works
-
-Once the Seestar firmware issue is resolved:
-
-1. Run the same command
-2. System will detect Seestar is responding
-3. Automatically switch to automatic mode
-4. No code changes needed!
-
-The system is designed to work **exactly the same way** whether automatic or manual. You just won't need to press buttons anymore.
-
-## Files
-
-- **`transit_capture.py`** - Main production system (this guide)
-- **`monitor_transits.py`** - Manual-only version (if you want to force manual)
-
-## Support
-
-- Setup guide: `SETUP.md`
-- Telescope guide: `docs/TELESCOPE_GUIDE.md`
+Open the URL printed at startup (e.g. `http://192.168.1.x:8000`). The same address works from any device on your local network.
 
 ---
 
-**Bottom Line**: Run `transit_capture.py` with your coordinates. It will use the best available mode automatically.
+## Using the Map
+
+**Set your bounding box** — drag the corners of the search rectangle to cover the sky area you can observe.
+
+**Pick a target** — select Sun or Moon from the target toggle. Flymoon will only show flights that could transit the chosen body.
+
+**Set minimum altitudes** — the four quadrant inputs (N / E / S / W) let you set independent minimum angles for each compass direction. Raise the value for any direction blocked by trees or buildings so those low transits are filtered out.
+
+**Hit Search** — flights appear colour-coded by transit probability. Click any flight to see its planned route and historical track.
+
+**Auto-refresh** — enable the timer to re-check every few minutes automatically. Sound alerts fire when a new high-probability transit appears.
+
+---
+
+## Telescope (Seestar S50)
+
+Add to `.env`:
+
+```
+ENABLE_SEESTAR=true
+SEESTAR_HOST=192.168.x.x   # or leave blank to auto-discover
+```
+
+Connect from the telescope panel on the right side of the map page. Flymoon will:
+
+- Switch the scope to Solar or Lunar mode to match the selected target
+- Start recording automatically before each predicted transit (default: 10 s early)
+- Stop recording after the transit passes (default: 10 s buffer)
+- Reconnect automatically if the scope drops off the network — but only once the target is back above the minimum altitude you set in the quadrant controls, so there are no pointless reconnect attempts overnight
+
+Analysed composite images appear in the **Gallery** after each session.
+
+---
+
+## Headless / Overnight Mode
+
+No browser needed. Both scripts run continuously in the background:
+
+```bash
+# Telegram notifications + Seestar control
+python3 transit_capture.py --latitude LAT --longitude LON --target moon
+
+# Pushbullet notifications only
+python3 monitor_transits.py --latitude LAT --longitude LON --target moon
+```
+
+### macOS App
+
+```bash
+./build_mac_app.sh        # one-time build
+```
+
+Double-click **Transit Monitor.app**, choose your target, and leave it running. Logs: `/tmp/transit_monitor.log`.
+
+---
+
+## Notifications
+
+Add to `.env` to receive Telegram alerts for medium and high probability transits:
+
+```
+TELEGRAM_BOT_TOKEN=your_token
+TELEGRAM_CHAT_ID=your_chat_id
+```
+
+See **[SETUP.md](SETUP.md)** for how to create the bot and find your chat ID.
+
+---
+
+## Troubleshooting
+
+| Symptom | Fix |
+|---------|-----|
+| No flights shown | Check `AEROAPI_API_KEY` and bounding box covers your sky |
+| Sun/Moon not visible | Target may be below your minimum altitude — check the quadrant inputs |
+| Telescope not found | Try `SEESTAR_HOST=` blank to enable auto-discovery, or check the scope is on the same subnet |
+| Config errors on startup | Run `python3 src/config_wizard.py --setup` |
+
+Full documentation → **[SETUP.md](SETUP.md)**
