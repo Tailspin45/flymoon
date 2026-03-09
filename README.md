@@ -3,7 +3,7 @@
 **Predict, detect, and photograph aircraft crossing the Sun or Moon in real time.**
 
 <p align="center">
-  <img src="docs/flymoon-map.png" alt="Flymoon interactive map — live transit predictions" width="100%">
+  <img src="static/images/flymoon-hero.jpg" alt="Flymoon — Aircraft Transit Tracker" width="100%">
 </p>
 
 <p align="center">
