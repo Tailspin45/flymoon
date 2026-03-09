@@ -852,22 +852,18 @@ body {
     overflow: hidden;
     text-overflow: ellipsis;
 }
-/* Right-align numeric columns: Alt(6), v/s(7), sky Δ(8), track(9), src/age(12) */
-#resultsTableRich th:nth-child(n+6):nth-child(-n+9),
-#resultsTableRich td:nth-child(n+6):nth-child(-n+9),
-#resultsTableRich th:nth-child(12),
-#resultsTableRich td:nth-child(12) {
+/* Right-align numeric columns: Alt(5), v/s(6), sky Δ(7), track(8), src/age(10) */
+#resultsTableRich th:nth-child(n+5):nth-child(-n+8),
+#resultsTableRich td:nth-child(n+5):nth-child(-n+8),
+#resultsTableRich th:nth-child(10),
+#resultsTableRich td:nth-child(10) {
     text-align: right;
 }
-/* Center-align aircraft(4), category(5), spd(10), and route(11) columns */
+/* Center-align aircraft(4) and spd(9) columns */
 #resultsTableRich th:nth-child(4),
 #resultsTableRich td:nth-child(4),
-#resultsTableRich th:nth-child(5),
-#resultsTableRich td:nth-child(5),
-#resultsTableRich th:nth-child(10),
-#resultsTableRich td:nth-child(10),
-#resultsTableRich th:nth-child(11),
-#resultsTableRich td:nth-child(11) {
+#resultsTableRich th:nth-child(9),
+#resultsTableRich td:nth-child(9) {
     text-align: center;
 }
 
