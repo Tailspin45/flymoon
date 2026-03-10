@@ -3893,6 +3893,18 @@ function ensureHarnessUI() {
         panel.className = 'harness-card';
         panel.innerHTML = `
             <div class="harness-card-title">🧪 Detection Tester</div>
+            <div class="harness-mode-row">
+                <label for="harnessMode"
+                       class="harness-mode-label"
+                       title="Choose how strict the analyzer should be for tester runs">Mode</label>
+                <select id="harnessMode"
+                        class="harness-mode-select"
+                        title="Default = production-like thresholds. Sensitive = lower speed/travel gates and no static filtering, better for slow birds/balloons."
+                        aria-label="Detection tester mode: default or sensitive">
+                    <option value="default" selected>Default</option>
+                    <option value="sensitive">Sensitive</option>
+                </select>
+            </div>
             <div class="harness-buttons">
                 <button class="btn btn-secondary btn-compact"
                         title="Inject a synthetic dark blob across a generated solar/lunar disc and check if the analyzer detects it"
@@ -3936,14 +3948,22 @@ function _harnessStatus(html) {
 
 function _harnessDisableButtons(disabled) {
     document.querySelectorAll('#harnessPanel .btn').forEach(b => b.disabled = disabled);
+    const modeSelect = document.getElementById('harnessMode');
+    if (modeSelect) modeSelect.disabled = disabled;
+}
+
+function _harnessPreset() {
+    const modeSelect = document.getElementById('harnessMode');
+    return (modeSelect && modeSelect.value === 'sensitive') ? 'sensitive' : 'default';
 }
 
 async function runHarnessInject() {
     _harnessDisableButtons(true);
     _harnessStatus('<span class="harness-info">💉 Injecting synthetic transit…</span>');
     try {
+        const preset = _harnessPreset();
         const data = await apiCall('/telescope/harness/inject', 'POST', {
-            size: 14, speed: 300, target: 'sun'
+            size: 14, speed: 300, target: 'sun', preset
         });
         if (!data) { _harnessStatus('<span class="harness-miss">Request failed</span>'); return; }
         const icon = data.detected ? '✅' : '❌';
@@ -3951,7 +3971,7 @@ async function runHarnessInject() {
         const badge = data.detected
             ? '<span class="harness-badge harness-badge-hit">PASS</span>'
             : '<span class="harness-badge harness-badge-miss">MISS</span>';
-        let html = `<div class="harness-title">Inject Result</div>`;
+        let html = `<div class="harness-title">Inject Result (${data.preset || preset})</div>`;
         html += `<div class="harness-row"><span>${data.params.size}px @ ${data.params.speed}px/s</span>`;
         html += `<span class="${cls}">${icon} ${data.detected ? 'Detected' : 'Missed'} ${badge}</span></div>`;
         if (data.matched_event) {
@@ -3959,11 +3979,14 @@ async function runHarnessInject() {
             html += `<div class="harness-row harness-info"><span>${ev.start_seconds?.toFixed(2)}s–${ev.end_seconds?.toFixed(2)}s (${ev.duration_ms}ms, ${ev.confidence})</span></div>`;
         }
         html += `<div class="harness-row harness-info"><span>GT: ${data.gt_start}s–${data.gt_end}s · ${data.num_events} event(s)</span></div>`;
+        if (data.preset_description) {
+            html += `<div class="harness-note">${data.preset_description}</div>`;
+        }
         _harnessStatus(html);
         showStatus(
             data.detected
-                ? `Inject test passed (${data.num_events} event${data.num_events === 1 ? '' : 's'})`
-                : 'Inject test missed synthetic transit',
+                ? `Inject (${data.preset || preset}) passed (${data.num_events} event${data.num_events === 1 ? '' : 's'})`
+                : `Inject (${data.preset || preset}) missed synthetic transit`,
             data.detected ? 'success' : 'warning',
             5000
         );
@@ -3978,10 +4001,12 @@ async function runHarnessSweep() {
     _harnessDisableButtons(true);
     _harnessStatus('<span class="harness-info">📊 Sweeping size × speed… (this takes a couple of minutes)</span>');
     try {
+        const preset = _harnessPreset();
         const data = await apiCall('/telescope/harness/sweep', 'POST', {
             target: 'sun',
             sizes: [6, 10, 14, 20],
             speeds: [60, 100, 200, 300],
+            preset,
         });
         if (!data) { _harnessStatus('<span class="harness-miss">Request failed</span>'); return; }
         const sizes = data.sizes;
@@ -4019,11 +4044,21 @@ async function runHarnessSweep() {
         const badge = data.detected > 0
             ? '<span class="harness-badge harness-badge-hit">HAS HITS</span>'
             : '<span class="harness-badge harness-badge-miss">ALL MISSED</span>';
-        let html = `<div class="harness-title">Sweep: ${data.detected}/${data.total} detected (${(data.detection_rate*100).toFixed(0)}%) ${badge}</div>`;
+        let html = `<div class="harness-title">Sweep (${data.preset || preset}): ${data.detected}/${data.total} detected (${(data.detection_rate*100).toFixed(0)}%) ${badge}</div>`;
         html += `<div class="harness-grid">${rows}</div>`;
+        if ((data.preset || preset) === 'default' && data.detection_rate < 0.6) {
+            html += `<div class="harness-note">Next step: switch Mode to <b>Sensitive</b> and rerun Sweep to see slow-object coverage.</div>`;
+        } else if ((data.preset || preset) === 'sensitive' && data.detection_rate < 0.6) {
+            html += `<div class="harness-note">Still low in Sensitive mode: run Validate on known clips, then we should lower speed/travel gates further.</div>`;
+        } else if ((data.preset || preset) === 'sensitive') {
+            html += `<div class="harness-note">Sensitive mode improved coverage. Use Default for normal operation; use Sensitive when checking for slower objects.</div>`;
+        }
+        if (data.preset_description) {
+            html += `<div class="harness-note">${data.preset_description}</div>`;
+        }
         _harnessStatus(html);
         showStatus(
-            `Sweep complete: ${data.detected}/${data.total} detected (${(data.detection_rate * 100).toFixed(0)}%)`,
+            `Sweep (${data.preset || preset}) complete: ${data.detected}/${data.total} detected (${(data.detection_rate * 100).toFixed(0)}%)`,
             data.detected > 0 ? 'success' : 'warning',
             6000
         );
@@ -4038,13 +4073,14 @@ async function runHarnessValidate() {
     _harnessDisableButtons(true);
     _harnessStatus('<span class="harness-info">✅ Validating captured videos…</span>');
     try {
-        const data = await apiCall('/telescope/harness/validate', 'POST', {target: 'auto'});
+        const preset = _harnessPreset();
+        const data = await apiCall('/telescope/harness/validate', 'POST', {target: 'auto', preset});
         if (!data) { _harnessStatus('<span class="harness-miss">Request failed</span>'); return; }
         if (data.results.length === 0) {
             _harnessStatus('<span class="harness-info">No MP4 captures found</span>');
             return;
         }
-        let html = `<div class="harness-title">Validated: ${data.with_events}/${data.total} files with events</div>`;
+        let html = `<div class="harness-title">Validate (${data.preset || preset}): ${data.with_events}/${data.total} files with events</div>`;
         data.results.forEach(r => {
             if (r.error) return;
             const name = r.name.length > 28 ? r.name.slice(0, 25) + '…' : r.name;
@@ -4052,6 +4088,9 @@ async function runHarnessValidate() {
             const cls = r.num_events > 0 ? 'harness-hit' : 'harness-info';
             html += `<div class="harness-row"><span>${icon} ${name}</span><span class="${cls}">${r.num_events} event(s)</span></div>`;
         });
+        if (data.preset_description) {
+            html += `<div class="harness-note">${data.preset_description}</div>`;
+        }
         _harnessStatus(html);
     } catch (e) {
         _harnessStatus(`<span class="harness-miss">Error: ${e.message}</span>`);

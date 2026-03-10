@@ -215,6 +215,10 @@ def analyze_video(
     disk_margin_pct: float = None,
     target: str = "auto",
     max_positions: int = None,
+    min_travel_px: float = None,
+    min_speed_px_s: float = None,
+    static_threshold_pct: float = None,
+    apply_static_filter: bool = None,
 ) -> AnalysisResult:
     """
     Analyze a saved MP4 for transiting objects.
@@ -229,14 +233,22 @@ def analyze_video(
     progress_cb : callable(fraction: float) | None
         Optional progress callback, called with 0.0–1.0.
     diff_threshold : int | None
-        Override DIFF_THRESHOLD (pixel intensity difference, default 8).
+        Override DIFF_THRESHOLD (pixel intensity difference, default 15).
     min_blob_pixels : int | None
-        Override MIN_BLOB_PIXELS (minimum blob area, default 3).
+        Override MIN_BLOB_PIXELS (minimum blob area, default 20).
     disk_margin_pct : float | None
-        Override DISK_MARGIN_PCT (fraction of radius to trim, default 0.05).
+        Override DISK_MARGIN_PCT (fraction of radius to trim, default 0.12).
     max_positions : int | None
         Maximum number of silhouette overlay positions in the composite.
         None = show all detected positions.
+    min_travel_px : float | None
+        Override minimum coherent track travel distance in pixels.
+    min_speed_px_s : float | None
+        Override minimum coherent track speed in pixels/second.
+    static_threshold_pct : float | None
+        Override static-feature threshold used by static blob filter.
+    apply_static_filter : bool | None
+        Force-enable/disable static blob filtering regardless of target mode.
 
     Returns
     -------
@@ -259,9 +271,24 @@ def analyze_video(
     if is_moon:
         if diff_threshold is None:
             _diff_threshold = max(8, int(_diff_threshold * 0.75))
-    _min_travel_px = 20.0 if is_moon else 40.0
-    _min_speed_px_s = 40.0 if is_moon else 80.0
-    _static_threshold_pct = 0.80 if is_moon else 0.25
+    _min_travel_px = (
+        float(min_travel_px)
+        if min_travel_px is not None
+        else (20.0 if is_moon else 40.0)
+    )
+    _min_speed_px_s = (
+        float(min_speed_px_s)
+        if min_speed_px_s is not None
+        else (40.0 if is_moon else 80.0)
+    )
+    _static_threshold_pct = (
+        float(static_threshold_pct)
+        if static_threshold_pct is not None
+        else (0.80 if is_moon else 0.25)
+    )
+    _apply_static_filter = (
+        bool(apply_static_filter) if apply_static_filter is not None else (not is_moon)
+    )
 
     path = Path(video_path)
     if not path.exists():
@@ -494,7 +521,7 @@ def analyze_video(
     # In reference-diff mode (solar), sunspots appear at the same position
     # across many frames.  In FTF mode (lunar), static features are already
     # eliminated by the frame-to-frame approach, so skip the static filter.
-    if not is_moon:
+    if _apply_static_filter:
         detections = _filter_static_blobs(
             detections, proximity_px=30, static_threshold_pct=_static_threshold_pct
         )
@@ -739,7 +766,9 @@ def _write_composite_image(
                         diff_p = np.abs(ref_p - cur_p).astype(np.uint8)
                     else:
                         diff_p = np.clip(ref_p - cur_p, 0, 255).astype(np.uint8)
-                    _, _sil = cv2.threshold(diff_p, 12 if is_moon else 10, 255, cv2.THRESH_BINARY)
+                    _, _sil = cv2.threshold(
+                        diff_p, 12 if is_moon else 10, 255, cv2.THRESH_BINARY
+                    )
                     if _sil.sum() > 0:
                         good_frame_keys.append(_fi)
                 _fi += 1
@@ -755,11 +784,14 @@ def _write_composite_image(
                 good_frame_keys = [mid]
             else:
                 step = (len(good_frame_keys) - 1) / (max_positions - 1)
-                good_frame_keys = list(dict.fromkeys(
-                    good_frame_keys[round(i * step)]
-                    for i in range(max_positions)
-                ))
-        frames_needed = {k: frames_needed[k] for k in good_frame_keys if k in frames_needed}
+                good_frame_keys = list(
+                    dict.fromkeys(
+                        good_frame_keys[round(i * step)] for i in range(max_positions)
+                    )
+                )
+        frames_needed = {
+            k: frames_needed[k] for k in good_frame_keys if k in frames_needed
+        }
         logger.info(
             f"[Analyzer] Composite: {len(frames_needed)} frame(s) selected"
             f" (max_positions={max_positions}, good={len(good_frame_keys)})"
@@ -816,9 +848,9 @@ def _write_composite_image(
                             cv2.circle(canvas, (det.x, det.y), r, (0, 0, 220), 1)
                     else:
                         # Sun: aircraft is always darker (silhouette)
-                        darkening = np.clip(
-                            ref_patch - cur_patch, 0, 255
-                        ).astype(np.uint8)
+                        darkening = np.clip(ref_patch - cur_patch, 0, 255).astype(
+                            np.uint8
+                        )
                         _, sil_mask = cv2.threshold(
                             darkening, 10, 255, cv2.THRESH_BINARY
                         )
@@ -955,7 +987,7 @@ def _write_composite_image(
 
     # ── Solar transit annotation circles (drawn last, on top of everything) ─
     # Drawn after disk masking and the limb ring so they are never occluded.
-    for (cx, cy, r) in solar_circles:
+    for cx, cy, r in solar_circles:
         thickness = max(2, r // 6)
         cv2.circle(canvas, (cx, cy), r, (0, 0, 220), thickness)
 
@@ -1354,8 +1386,8 @@ def _filter_transit_coherence(
             # track just because the *path* is wide, since a real transit
             # can cross mostly horizontally.  Only apply when avg blob
             # aspect ratio is extreme (> 5:1).
-            avg_blob_aspect = (
-                sum(d.width / max(d.height, 1) for d in track) / len(track)
+            avg_blob_aspect = sum(d.width / max(d.height, 1) for d in track) / len(
+                track
             )
             if avg_blob_aspect > 5:
                 continue

@@ -64,6 +64,32 @@ When the telescope is connected and running, **TransitDetector** monitors the li
 - A **composite image** showing every frame where the aircraft was on the disc, blended over a clean reference background
 - A **sidecar legend** annotating the track with frame times, angular velocity, and disc entry/exit positions
 
+### Detection Tester (Inject / Sweep / Validate)
+
+In the telescope sidebar (under **Live Detection**), the **Detection Tester** card gives quick feedback on missed-vs-detected transits:
+
+- **Inject** — inserts a synthetic transit and checks whether the analyzer catches it (quick pipeline sanity check)
+- **Sweep** — runs a size × speed matrix and reports how many combinations are detected
+- **Validate** — runs the analyzer over your captured MP4 files and reports events found per file
+
+Mode selector:
+
+- **Default** — production-like thresholds (stricter; fewer false positives)
+- **Sensitive** — lower speed/travel gates and static-filter disabled (better at slower birds/balloons, more false positives)
+
+How to use the sweep output:
+
+- If only fast columns (e.g. 200/300 px/s) are green, your setup is tuned for fast transits only
+- If Default misses many cells, switch to **Sensitive** and rerun
+- If Sensitive is still low, run **Validate** on known-transit clips and tune thresholds further
+
+Recommended sequence:
+
+1. Run **Inject** (Default) to verify the pipeline works
+2. Run **Sweep** (Default), then **Sweep** (Sensitive)
+3. Run **Validate** on known real-transit clips
+4. Keep **Default** for daily use; use **Sensitive** when checking for slow/ambiguous objects
+
 ---
 
 ## 🗺️ Map Interface

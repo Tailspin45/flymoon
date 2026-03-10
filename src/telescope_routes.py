@@ -2084,6 +2084,33 @@ def get_detection_events():
 # ── Detection Test Harness Endpoints ──────────────────────────────────────────
 
 
+def _harness_profile(preset: str, target: str):
+    """Return (preset_name, analyzer_kwargs, description) for harness runs."""
+    mode = str(preset or "default").strip().lower()
+    tgt = str(target or "auto").strip().lower()
+    if mode == "sensitive":
+        # Sensitive profile aims to reduce false negatives for slow/small objects.
+        # It relaxes coherence gates and disables static filtering.
+        analyzer_kwargs = {
+            "diff_threshold": 10,
+            "min_blob_pixels": 8,
+            "min_travel_px": 14.0 if tgt == "moon" else 16.0,
+            "min_speed_px_s": 25.0 if tgt == "moon" else 30.0,
+            "apply_static_filter": False,
+            "static_threshold_pct": 0.95,
+        }
+        return (
+            "sensitive",
+            analyzer_kwargs,
+            "Lower speed/travel thresholds and disabled static filtering to catch slower transits.",
+        )
+    return (
+        "default",
+        None,
+        "Baseline thresholds aligned with production analyzer behavior.",
+    )
+
+
 def harness_inject():
     """POST /telescope/harness/inject — inject a synthetic blob and test detection."""
     try:
@@ -2098,12 +2125,21 @@ def harness_inject():
             angle_deg=float(req.get("angle", 30)),
         )
         target = req.get("target", "sun")
+        preset, analyzer_kwargs, preset_description = _harness_profile(
+            req.get("preset", "default"), target
+        )
 
-        r = run_injection_test(params, target=target)
+        r = run_injection_test(
+            params,
+            target=target,
+            analyzer_kwargs=analyzer_kwargs,
+        )
 
         return jsonify(
             {
                 "success": True,
+                "preset": preset,
+                "preset_description": preset_description,
                 "detected": r.detected,
                 "num_events": r.num_events,
                 "gt_start": round(r.ground_truth_start_sec, 2),
@@ -2131,11 +2167,15 @@ def harness_sweep():
         target = req.get("target", "sun")
         sizes = req.get("sizes", [6, 10, 14, 20])
         speeds = req.get("speeds", [60, 100, 150, 200, 300])
+        preset, analyzer_kwargs, preset_description = _harness_profile(
+            req.get("preset", "default"), target
+        )
 
         sweep = run_sweep(
             sizes=[float(s) for s in sizes],
             speeds=[float(s) for s in speeds],
             target=target,
+            analyzer_kwargs=analyzer_kwargs,
         )
 
         def _fmt_num(v):
@@ -2160,6 +2200,8 @@ def harness_sweep():
             {
                 "success": True,
                 "target": target,
+                "preset": preset,
+                "preset_description": preset_description,
                 "sizes": sizes,
                 "speeds": speeds,
                 "grid": grid,
@@ -2182,6 +2224,9 @@ def harness_validate():
 
         req = request.json or {}
         target = req.get("target", "auto")
+        preset, analyzer_kwargs, preset_description = _harness_profile(
+            req.get("preset", "default"), target
+        )
 
         captures_dir = os.path.join("static", "captures")
         video_paths = []
@@ -2191,6 +2236,7 @@ def harness_validate():
                     f.lower().endswith(".mp4")
                     and not f.startswith("analyzed_")
                     and not f.endswith("_analyzed.mp4")
+                    and not f.endswith("_analyzed_tmp.mp4")
                 ):
                     video_paths.append(os.path.join(root, f))
 
@@ -2199,11 +2245,15 @@ def harness_validate():
                 {"success": True, "results": [], "message": "No MP4s found in captures"}
             )
 
-        results = validate_real_videos(video_paths, target=target)
+        results = validate_real_videos(
+            video_paths, target=target, analyzer_kwargs=analyzer_kwargs
+        )
 
         return jsonify(
             {
                 "success": True,
+                "preset": preset,
+                "preset_description": preset_description,
                 "total": len(results),
                 "with_events": sum(1 for r in results if r["num_events"] > 0),
                 "results": results,

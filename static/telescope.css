@@ -1396,6 +1396,27 @@ canvas.video-thumb-canvas {
     font-weight: 600;
     letter-spacing: 0.4px;
 }
+.harness-mode-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-bottom: 6px;
+}
+.harness-mode-label {
+    color: #b0b0b0;
+    font-size: 0.74em;
+    white-space: nowrap;
+}
+.harness-mode-select {
+    flex: 1;
+    min-width: 0;
+    background: #141414;
+    color: #ddd;
+    border: 1px solid #333;
+    border-radius: 4px;
+    padding: 3px 5px;
+    font-size: 0.74em;
+}
 .harness-buttons {
     display: flex;
     gap: 4px;
@@ -1422,6 +1443,12 @@ canvas.video-thumb-canvas {
 .harness-status .harness-miss { color: #f44336; }
 .harness-status .harness-info { color: #aaa; }
 .harness-status .harness-title { color: #039c9c; font-weight: 600; margin-bottom: 3px; }
+.harness-note {
+    margin-top: 4px;
+    color: #9aa0a6;
+    font-size: 0.9em;
+    line-height: 1.35;
+}
 .harness-badge {
     display: inline-block;
     margin-left: 6px;

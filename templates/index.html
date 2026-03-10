@@ -371,6 +371,20 @@
                     <!-- Detection Test Harness -->
                     <div id="harnessPanel" class="harness-card">
                         <div class="harness-card-title">🧪 Detection Tester</div>
+                        <div class="harness-mode-row">
+                            <label for="harnessMode"
+                                   class="harness-mode-label"
+                                   title="Choose how strict the analyzer should be for tester runs">
+                                Mode
+                            </label>
+                            <select id="harnessMode"
+                                    class="harness-mode-select"
+                                    title="Default = production-like thresholds. Sensitive = lower speed/travel gates and no static filtering, better for slow birds/balloons."
+                                    aria-label="Detection tester mode: default or sensitive">
+                                <option value="default" selected>Default</option>
+                                <option value="sensitive">Sensitive</option>
+                            </select>
+                        </div>
                         <div class="harness-buttons">
                             <button class="btn btn-secondary btn-compact"
                                     title="Inject a synthetic dark blob across a generated solar/lunar disc and check if the analyzer detects it"
