@@ -367,32 +367,36 @@
                     </div>
                     <div id="detectStats" class="detect-stats" style="display:none"></div>
                     <button id="detectToggleBtn" class="btn btn-primary btn-compact" onclick="toggleDetection()">▶ Start Detection</button>
+
+                    <!-- Detection Test Harness -->
+                    <div id="harnessPanel" class="harness-card">
+                        <div class="harness-card-title">🧪 Detection Tester</div>
+                        <div class="harness-buttons">
+                            <button class="btn btn-secondary btn-compact"
+                                    title="Inject a synthetic dark blob across a generated solar/lunar disc and check if the analyzer detects it"
+                                    aria-label="Inject a synthetic dark blob across a generated solar or lunar disc and check if the analyzer detects it"
+                                    onclick="runHarnessInject()">
+                                💉 Inject
+                            </button>
+                            <button class="btn btn-secondary btn-compact"
+                                    title="Sweep blob size × speed combinations to map detection sensitivity boundaries (takes ~2 min)"
+                                    aria-label="Sweep blob size by speed combinations to map detection sensitivity boundaries"
+                                    onclick="runHarnessSweep()">
+                                📊 Sweep
+                            </button>
+                            <button class="btn btn-secondary btn-compact"
+                                    title="Run the analyzer on all captured MP4s to check for missed transits"
+                                    aria-label="Run the analyzer on all captured MP4 files to check for missed transits"
+                                    onclick="runHarnessValidate()">
+                                ✅ Validate
+                            </button>
+                        </div>
+                        <div id="harnessStatus" class="harness-status" style="display:none"></div>
+                    </div>
+
                     <div id="detectEventLog" class="detect-event-log">
                         <p class="empty-state">No detections yet</p>
                     </div>
-                </div>
-
-                <!-- Detection Test Harness -->
-                <div class="sidebar-panel sidebar-panel-compact" id="harnessPanel">
-                    <h3>🧪 Detection Tester</h3>
-                    <div class="harness-buttons">
-                        <button class="btn btn-secondary btn-compact"
-                                title="Inject a synthetic dark blob across a generated solar/lunar disc and check if the analyzer detects it"
-                                onclick="runHarnessInject()">
-                            💉 Inject
-                        </button>
-                        <button class="btn btn-secondary btn-compact"
-                                title="Sweep blob size × speed combinations to map detection sensitivity boundaries (takes ~2 min)"
-                                onclick="runHarnessSweep()">
-                            📊 Sweep
-                        </button>
-                        <button class="btn btn-secondary btn-compact"
-                                title="Run the analyzer on all captured MP4s to check for missed transits"
-                                onclick="runHarnessValidate()">
-                            ✅ Validate
-                        </button>
-                    </div>
-                    <div id="harnessStatus" class="harness-status" style="display:none"></div>
                 </div>
             </div>
 

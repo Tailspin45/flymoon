@@ -1382,6 +1382,20 @@ canvas.video-thumb-canvas {
 .sidebar-left .setting-info { margin-top: 4px; font-size: 0.75em; }
 
 /* ── Detection Test Harness card ─────────────────────────────── */
+.harness-card {
+    margin: 6px 0 8px;
+    padding: 6px 8px;
+    border: 1px solid #2f2f2f;
+    border-radius: 6px;
+    background: rgba(0, 0, 0, 0.25);
+}
+.harness-card-title {
+    margin-bottom: 5px;
+    color: #039c9c;
+    font-size: 0.78em;
+    font-weight: 600;
+    letter-spacing: 0.4px;
+}
 .harness-buttons {
     display: flex;
     gap: 4px;
@@ -1529,7 +1543,7 @@ canvas.video-thumb-canvas {
 
 /* Detection event log */
 .detect-event-log {
-    max-height: 180px;
+    max-height: 120px;
     overflow-y: auto;
     font-size: 0.8em;
 }
