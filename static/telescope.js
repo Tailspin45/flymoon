@@ -3948,15 +3948,25 @@ async function runHarnessInject() {
         if (!data) { _harnessStatus('<span class="harness-miss">Request failed</span>'); return; }
         const icon = data.detected ? '✅' : '❌';
         const cls  = data.detected ? 'harness-hit' : 'harness-miss';
+        const badge = data.detected
+            ? '<span class="harness-badge harness-badge-hit">PASS</span>'
+            : '<span class="harness-badge harness-badge-miss">MISS</span>';
         let html = `<div class="harness-title">Inject Result</div>`;
         html += `<div class="harness-row"><span>${data.params.size}px @ ${data.params.speed}px/s</span>`;
-        html += `<span class="${cls}">${icon} ${data.detected ? 'Detected' : 'Missed'}</span></div>`;
+        html += `<span class="${cls}">${icon} ${data.detected ? 'Detected' : 'Missed'} ${badge}</span></div>`;
         if (data.matched_event) {
             const ev = data.matched_event;
             html += `<div class="harness-row harness-info"><span>${ev.start_seconds?.toFixed(2)}s–${ev.end_seconds?.toFixed(2)}s (${ev.duration_ms}ms, ${ev.confidence})</span></div>`;
         }
         html += `<div class="harness-row harness-info"><span>GT: ${data.gt_start}s–${data.gt_end}s · ${data.num_events} event(s)</span></div>`;
         _harnessStatus(html);
+        showStatus(
+            data.detected
+                ? `Inject test passed (${data.num_events} event${data.num_events === 1 ? '' : 's'})`
+                : 'Inject test missed synthetic transit',
+            data.detected ? 'success' : 'warning',
+            5000
+        );
     } catch (e) {
         _harnessStatus(`<span class="harness-miss">Error: ${e.message}</span>`);
     } finally {
@@ -3977,6 +3987,23 @@ async function runHarnessSweep() {
         const sizes = data.sizes;
         const speeds = data.speeds;
         const grid = data.grid;
+
+        const hasHit = (sz, sp) => {
+            const keys = [
+                `${sz},${sp}`,
+                `${Number(sz)},${Number(sp)}`,
+                `${Number(sz).toFixed(1)},${Number(sp).toFixed(1)}`
+            ];
+            for (const k of keys) {
+                if (Object.prototype.hasOwnProperty.call(grid, k)) return !!grid[k];
+            }
+            if (Array.isArray(data.results)) {
+                const found = data.results.find(r => Number(r.size) === Number(sz) && Number(r.speed) === Number(sp));
+                if (found) return !!found.detected;
+            }
+            return false;
+        };
+
         // Build ASCII grid
         let hdr = '     px  ';
         speeds.forEach(sp => hdr += String(sp).padStart(5));
@@ -3984,14 +4011,22 @@ async function runHarnessSweep() {
         sizes.forEach(sz => {
             let row = String(sz).padStart(6) + 'px ';
             speeds.forEach(sp => {
-                const hit = grid[`${sz},${sp}`];
+                const hit = hasHit(sz, sp);
                 row += (hit ? '  ✅' : '  ❌') + ' ';
             });
             rows += row + '\n';
         });
-        let html = `<div class="harness-title">Sweep: ${data.detected}/${data.total} detected (${(data.detection_rate*100).toFixed(0)}%)</div>`;
+        const badge = data.detected > 0
+            ? '<span class="harness-badge harness-badge-hit">HAS HITS</span>'
+            : '<span class="harness-badge harness-badge-miss">ALL MISSED</span>';
+        let html = `<div class="harness-title">Sweep: ${data.detected}/${data.total} detected (${(data.detection_rate*100).toFixed(0)}%) ${badge}</div>`;
         html += `<div class="harness-grid">${rows}</div>`;
         _harnessStatus(html);
+        showStatus(
+            `Sweep complete: ${data.detected}/${data.total} detected (${(data.detection_rate * 100).toFixed(0)}%)`,
+            data.detected > 0 ? 'success' : 'warning',
+            6000
+        );
     } catch (e) {
         _harnessStatus(`<span class="harness-miss">Error: ${e.message}</span>`);
     } finally {

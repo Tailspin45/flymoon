@@ -2138,9 +2138,23 @@ def harness_sweep():
             target=target,
         )
 
+        def _fmt_num(v):
+            fv = float(v)
+            return str(int(fv)) if fv.is_integer() else str(fv)
+
         grid = {}
+        rows = []
         for r in sweep.results:
-            grid[f"{r.params.blob_diameter},{r.params.speed_px_per_sec}"] = r.detected
+            s_key = _fmt_num(r.params.blob_diameter)
+            v_key = _fmt_num(r.params.speed_px_per_sec)
+            grid[f"{s_key},{v_key}"] = r.detected
+            rows.append(
+                {
+                    "size": float(r.params.blob_diameter),
+                    "speed": float(r.params.speed_px_per_sec),
+                    "detected": bool(r.detected),
+                }
+            )
 
         return jsonify(
             {
@@ -2149,6 +2163,7 @@ def harness_sweep():
                 "sizes": sizes,
                 "speeds": speeds,
                 "grid": grid,
+                "results": rows,
                 "total": sweep.total,
                 "detected": sweep.detected,
                 "missed": sweep.missed,

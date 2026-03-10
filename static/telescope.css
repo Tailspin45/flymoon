@@ -1422,6 +1422,26 @@ canvas.video-thumb-canvas {
 .harness-status .harness-miss { color: #f44336; }
 .harness-status .harness-info { color: #aaa; }
 .harness-status .harness-title { color: #039c9c; font-weight: 600; margin-bottom: 3px; }
+.harness-badge {
+    display: inline-block;
+    margin-left: 6px;
+    padding: 1px 5px;
+    border-radius: 999px;
+    font-size: 0.72em;
+    font-weight: 700;
+    letter-spacing: 0.3px;
+    vertical-align: middle;
+}
+.harness-badge-hit {
+    color: #b8ffd1;
+    background: rgba(28, 128, 71, 0.45);
+    border: 1px solid rgba(54, 194, 112, 0.6);
+}
+.harness-badge-miss {
+    color: #ffd5d5;
+    background: rgba(140, 34, 34, 0.45);
+    border: 1px solid rgba(220, 84, 84, 0.6);
+}
 .harness-status .harness-grid {
     font-family: monospace;
     font-size: 0.9em;
