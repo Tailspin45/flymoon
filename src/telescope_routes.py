@@ -265,10 +265,13 @@ def get_telescope_client() -> Optional[SeestarClient]:
                 def _make_horizon_check(client, lat, lon, elev, env_min_alt):
                     def _check():
                         # Prefer the value pushed from the browser; fall back to .env
-                        min_alt = _user_settings.get("min_reconnect_altitude") or env_min_alt
+                        min_alt = (
+                            _user_settings.get("min_reconnect_altitude") or env_min_alt
+                        )
                         return target_above_min_altitude(
                             client._viewing_mode, lat, lon, elev, min_alt
                         )
+
                     return _check
 
                 _telescope_client._above_horizon_check = _make_horizon_check(
@@ -1115,7 +1118,12 @@ def upload_telescope_file():
         orig_name = f.filename
         ext = os.path.splitext(orig_name)[1].lower()
         if ext not in _ALLOWED_EXTS:
-            return jsonify({"error": "Only .mp4, .jpg, .jpeg, and .png files are accepted"}), 400
+            return (
+                jsonify(
+                    {"error": "Only .mp4, .jpg, .jpeg, and .png files are accepted"}
+                ),
+                400,
+            )
 
         is_video = ext in _VIDEO_EXTS
         is_image = ext in _IMAGE_EXTS
@@ -1134,7 +1142,10 @@ def upload_telescope_file():
                 return jsonify({"error": "File does not appear to be a valid MP4"}), 400
         elif ext in (".jpg", ".jpeg"):
             if len(header) < 3 or header[:3] != b"\xff\xd8\xff":
-                return jsonify({"error": "File does not appear to be a valid JPEG"}), 400
+                return (
+                    jsonify({"error": "File does not appear to be a valid JPEG"}),
+                    400,
+                )
         elif ext == ".png":
             if len(header) < 8 or header[:8] != b"\x89PNG\r\n\x1a\n":
                 return jsonify({"error": "File does not appear to be a valid PNG"}), 400
@@ -1201,7 +1212,9 @@ def upload_telescope_file():
                     timeout=15,
                 )
                 if os.path.exists(thumb_path) and os.path.getsize(thumb_path) > 0:
-                    rel_thumb = os.path.relpath(thumb_path, "static").replace(os.sep, "/")
+                    rel_thumb = os.path.relpath(thumb_path, "static").replace(
+                        os.sep, "/"
+                    )
                     thumb_url = f"/static/{rel_thumb}"
                     logger.info(f"[Telescope] Thumbnail generated: {thumb_path}")
             except Exception as te:
@@ -1694,7 +1707,9 @@ def update_user_settings():
     data = request.get_json(silent=True) or {}
     if "min_reconnect_altitude" in data:
         try:
-            _user_settings["min_reconnect_altitude"] = float(data["min_reconnect_altitude"])
+            _user_settings["min_reconnect_altitude"] = float(
+                data["min_reconnect_altitude"]
+            )
             logger.info(
                 f"[Settings] min_reconnect_altitude updated to "
                 f"{_user_settings['min_reconnect_altitude']}°"
@@ -1717,8 +1732,12 @@ def register_routes(app):
         app: Flask application instance
     """
     # User settings sync (browser → server)
-    app.add_url_rule("/api/settings", "api_settings_post", update_user_settings, methods=["POST"])
-    app.add_url_rule("/api/settings", "api_settings_get", get_user_settings, methods=["GET"])
+    app.add_url_rule(
+        "/api/settings", "api_settings_post", update_user_settings, methods=["POST"]
+    )
+    app.add_url_rule(
+        "/api/settings", "api_settings_get", get_user_settings, methods=["GET"]
+    )
 
     # Connection management
     app.add_url_rule(
@@ -1886,6 +1905,26 @@ def register_routes(app):
         methods=["GET"],
     )
 
+    # ── Detection test harness endpoints ──────────────────────────────────
+    app.add_url_rule(
+        "/telescope/harness/inject",
+        "telescope_harness_inject",
+        harness_inject,
+        methods=["POST"],
+    )
+    app.add_url_rule(
+        "/telescope/harness/sweep",
+        "telescope_harness_sweep",
+        harness_sweep,
+        methods=["POST"],
+    )
+    app.add_url_rule(
+        "/telescope/harness/validate",
+        "telescope_harness_validate",
+        harness_validate,
+        methods=["POST"],
+    )
+
     logger.info("[Telescope] Routes registered")
 
     # Auto-connect if ENABLE_SEESTAR=true
@@ -2040,6 +2079,124 @@ def get_detection_events():
 
     except Exception as e:
         return handle_error(e)
+
+
+# ── Detection Test Harness Endpoints ──────────────────────────────────────────
+
+
+def harness_inject():
+    """POST /telescope/harness/inject — inject a synthetic blob and test detection."""
+    try:
+        from tests.test_detection_harness import InjectionParams, run_injection_test
+
+        req = request.json or {}
+        params = InjectionParams(
+            blob_diameter=float(req.get("size", 14)),
+            speed_px_per_sec=float(req.get("speed", 300)),
+            opacity=float(req.get("opacity", 1.0)),
+            aspect_ratio=float(req.get("aspect", 1.5)),
+            angle_deg=float(req.get("angle", 30)),
+        )
+        target = req.get("target", "sun")
+
+        r = run_injection_test(params, target=target)
+
+        return jsonify(
+            {
+                "success": True,
+                "detected": r.detected,
+                "num_events": r.num_events,
+                "gt_start": round(r.ground_truth_start_sec, 2),
+                "gt_end": round(r.ground_truth_end_sec, 2),
+                "matched_event": r.matched_event,
+                "params": {
+                    "size": params.blob_diameter,
+                    "speed": params.speed_px_per_sec,
+                    "opacity": params.opacity,
+                    "target": target,
+                },
+            }
+        )
+    except Exception as e:
+        logger.error(f"[Harness] Inject error: {e}")
+        return jsonify({"success": False, "error": str(e)}), 500
+
+
+def harness_sweep():
+    """POST /telescope/harness/sweep — sweep size × speed to map detection boundaries."""
+    try:
+        from tests.test_detection_harness import run_sweep
+
+        req = request.json or {}
+        target = req.get("target", "sun")
+        sizes = req.get("sizes", [6, 10, 14, 20])
+        speeds = req.get("speeds", [60, 100, 150, 200, 300])
+
+        sweep = run_sweep(
+            sizes=[float(s) for s in sizes],
+            speeds=[float(s) for s in speeds],
+            target=target,
+        )
+
+        grid = {}
+        for r in sweep.results:
+            grid[f"{r.params.blob_diameter},{r.params.speed_px_per_sec}"] = r.detected
+
+        return jsonify(
+            {
+                "success": True,
+                "target": target,
+                "sizes": sizes,
+                "speeds": speeds,
+                "grid": grid,
+                "total": sweep.total,
+                "detected": sweep.detected,
+                "missed": sweep.missed,
+                "detection_rate": round(sweep.detection_rate, 3),
+            }
+        )
+    except Exception as e:
+        logger.error(f"[Harness] Sweep error: {e}")
+        return jsonify({"success": False, "error": str(e)}), 500
+
+
+def harness_validate():
+    """POST /telescope/harness/validate — run analyzer on captured MP4s."""
+    try:
+        from tests.test_detection_harness import validate_real_videos
+
+        req = request.json or {}
+        target = req.get("target", "auto")
+
+        captures_dir = os.path.join("static", "captures")
+        video_paths = []
+        for root, _, files in os.walk(captures_dir):
+            for f in sorted(files):
+                if (
+                    f.lower().endswith(".mp4")
+                    and not f.startswith("analyzed_")
+                    and not f.endswith("_analyzed.mp4")
+                ):
+                    video_paths.append(os.path.join(root, f))
+
+        if not video_paths:
+            return jsonify(
+                {"success": True, "results": [], "message": "No MP4s found in captures"}
+            )
+
+        results = validate_real_videos(video_paths, target=target)
+
+        return jsonify(
+            {
+                "success": True,
+                "total": len(results),
+                "with_events": sum(1 for r in results if r["num_events"] > 0),
+                "results": results,
+            }
+        )
+    except Exception as e:
+        logger.error(f"[Harness] Validate error: {e}")
+        return jsonify({"success": False, "error": str(e)}), 500
 
 
 def get_transit_status():

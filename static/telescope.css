@@ -1134,10 +1134,17 @@ canvas.video-thumb-canvas {
 
 /* Status Message */
 .status-message {
+    position: fixed;
+    bottom: 20px;
+    left: 50%;
+    transform: translateX(-50%);
     padding: 12px 20px;
     border-radius: 6px;
-    margin: 10px 20px;
     font-weight: 500;
+    z-index: 9999;
+    pointer-events: none;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.5);
+    white-space: nowrap;
     display: none;
 }
 
@@ -1373,6 +1380,40 @@ canvas.video-thumb-canvas {
 .sidebar-left .sidebar-panel h3 { margin-bottom: 6px; font-size: 0.9em; }
 .sidebar-left .setting-item { margin-bottom: 6px; }
 .sidebar-left .setting-info { margin-top: 4px; font-size: 0.75em; }
+
+/* ── Detection Test Harness card ─────────────────────────────── */
+.harness-buttons {
+    display: flex;
+    gap: 4px;
+}
+.harness-buttons .btn {
+    flex: 1;
+    font-size: 0.75em;
+    padding: 5px 4px;
+    white-space: nowrap;
+}
+.harness-status {
+    margin-top: 6px;
+    padding: 6px 8px;
+    background: rgba(0, 0, 0, 0.3);
+    border: 1px solid #333;
+    border-radius: 4px;
+    font-size: 0.75em;
+    line-height: 1.4;
+    max-height: 120px;
+    overflow-y: auto;
+}
+.harness-status .harness-row { display: flex; justify-content: space-between; padding: 1px 0; }
+.harness-status .harness-hit  { color: #4caf50; }
+.harness-status .harness-miss { color: #f44336; }
+.harness-status .harness-info { color: #aaa; }
+.harness-status .harness-title { color: #039c9c; font-weight: 600; margin-bottom: 3px; }
+.harness-status .harness-grid {
+    font-family: monospace;
+    font-size: 0.9em;
+    white-space: pre;
+    line-height: 1.3;
+}
 
 /* ── Eclipse simulator controls ──────────────────────────────────── */
 .btn-eclipse {

@@ -141,7 +141,7 @@
         <p class="loading-text">Loading flight data...</p>
     </div>
 
-    <div id="transitCountdown" style="display: none; text-align: center; font-size: 1.5em; font-weight: bold; font-variant-numeric: tabular-nums; padding: 15px; margin: 10px 0; border-radius: 5px;"></div>
+    <div id="transitCountdown" style="display: none; position: fixed; top: 0; left: 0; right: 0; z-index: 1000; text-align: center; font-size: 1.5em; font-weight: bold; font-variant-numeric: tabular-nums; padding: 12px 20px; border-radius: 0 0 8px 8px; box-shadow: 0 4px 16px rgba(0,0,0,0.5); pointer-events: none;"></div>
 
     <div id="mapContainer" style="display: none;">
         <div style="display: flex; align-items: flex-start; gap: 0;">
@@ -370,6 +370,29 @@
                     <div id="detectEventLog" class="detect-event-log">
                         <p class="empty-state">No detections yet</p>
                     </div>
+                </div>
+
+                <!-- Detection Test Harness -->
+                <div class="sidebar-panel sidebar-panel-compact" id="harnessPanel">
+                    <h3>🧪 Detection Tester</h3>
+                    <div class="harness-buttons">
+                        <button class="btn btn-secondary btn-compact"
+                                title="Inject a synthetic dark blob across a generated solar/lunar disc and check if the analyzer detects it"
+                                onclick="runHarnessInject()">
+                            💉 Inject
+                        </button>
+                        <button class="btn btn-secondary btn-compact"
+                                title="Sweep blob size × speed combinations to map detection sensitivity boundaries (takes ~2 min)"
+                                onclick="runHarnessSweep()">
+                            📊 Sweep
+                        </button>
+                        <button class="btn btn-secondary btn-compact"
+                                title="Run the analyzer on all captured MP4s to check for missed transits"
+                                onclick="runHarnessValidate()">
+                            ✅ Validate
+                        </button>
+                    </div>
+                    <div id="harnessStatus" class="harness-status" style="display:none"></div>
                 </div>
             </div>
 

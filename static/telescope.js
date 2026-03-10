@@ -643,6 +643,18 @@ function updateRecordingUI() {
         }
         if (recordingDot) recordingDot.className = 'status-dot recording';
         if (recordingText) recordingText.textContent = 'Recording...';
+    } else if (transitCaptureActive) {
+        // Auto-capture is armed/waiting — show pending recording state on the button
+        if (startBtn) {
+            startBtn.disabled = true;
+            startBtn.style.display = 'none';
+        }
+        if (stopBtn) {
+            stopBtn.disabled = true;
+            stopBtn.style.display = 'inline-block';
+        }
+        if (recordingDot) recordingDot.className = 'status-dot recording';
+        if (recordingText) recordingText.textContent = 'Capture Armed...';
     } else {
         if (startBtn) {
             startBtn.disabled = !isConnected;
@@ -875,9 +887,9 @@ function downloadFile(url, filename) {
     showStatus(`Downloading ${filename}...`, 'info', 3000);
 }
 
-async function deleteFile(url, filename) {
+async function deleteFile(url, filename, skipConfirm) {
     console.log('[Telescope] deleteFile called:', url, filename);
-    if (!confirm(`Delete ${filename}?`)) {
+    if (!skipConfirm && !confirm(`Delete ${filename}?`)) {
         return;
     }
 
@@ -916,17 +928,9 @@ function showStatus(message, type = 'info', autohide = 0) {
     toast.textContent = message;
     toast.className = `status-toast status-toast-${type}`;
     toast.style.display = 'block';
-    // Also update inline status for non-modal context
-    const statusBox = document.getElementById('statusMessage');
-    if (statusBox) {
-        statusBox.textContent = message;
-        statusBox.className = `status-message ${type}`;
-        statusBox.style.display = 'block';
-    }
     if (autohide > 0) {
         setTimeout(() => {
             toast.style.display = 'none';
-            if (statusBox) statusBox.style.display = 'none';
         }, autohide);
     }
 }
@@ -1536,6 +1540,7 @@ async function recordTransit(flight, secondsUntil) {
 
     // Show overlay
     transitCaptureActive = true;
+    updateRecordingUI();
     const overlay = document.getElementById('transitOverlay');
     const overlayInfo = document.getElementById('transitOverlayInfo');
     if (overlay) {
@@ -1565,6 +1570,7 @@ async function recordTransit(flight, secondsUntil) {
     setTimeout(() => {
         if (overlay) overlay.style.display = 'none';
         transitCaptureActive = false;
+        updateRecordingUI();
     }, (secondsUntil + POST) * 1000);
 }
 
@@ -1583,12 +1589,21 @@ function dismissTransit(flight) {
     }
     document.addEventListener('keydown', (e) => {
         if (e.key === 'Escape') closeFileViewer();
-        // CMD/Ctrl + Delete in files grid
+        // CMD/Ctrl + Delete: delete without confirmation in any context
         if ((e.key === 'Delete' || e.key === 'Backspace') && (e.metaKey || e.ctrlKey)) {
+            // 1. File viewer lightbox is open
+            const viewer = document.getElementById('fileViewer');
+            if (viewer && viewer.style.display !== 'none') {
+                e.preventDefault();
+                viewerDelete(e);
+                return;
+            }
+            // 2. Files grid modal is open with selected items
             const modal = document.getElementById('filesModal');
             if (modal && modal.style.display !== 'none' && gridSelection.selected.size > 0) {
                 e.preventDefault();
                 gridDeleteSelectedSkipConfirm();
+                return;
             }
         }
     });
@@ -1653,7 +1668,7 @@ function updateFilmstrip(files) {
                 <div class="filmstrip-actions">
                     <button class="btn-icon btn-fav" data-fav-path="${file.path}" onclick="toggleFavorite('${file.path}', event)" title="${getFavorites().has(file.path) ? 'Unfavorite' : 'Favorite'}">${getFavorites().has(file.path) ? '❤️' : '🤍'}</button>
                     <button class="btn-icon" onclick="event.stopPropagation(); downloadFile('${file.path}', '${file.name}')" title="Download" ${isTemp ? 'disabled' : ''}>⬇️</button>
-                    <button class="btn-icon btn-danger" onclick="event.stopPropagation(); deleteFile('${file.path}', '${file.name}')" title="${getFavorites().has(file.path) ? 'Remove favorite first' : 'Delete'}" ${isTemp || getFavorites().has(file.path) ? 'disabled' : ''}>🗑️</button>
+                    <button class="btn-icon btn-danger" onclick="event.stopPropagation(); deleteFile('${file.path}', '${file.name}', event.metaKey || event.ctrlKey)" title="${getFavorites().has(file.path) ? 'Remove favorite first' : 'Delete (⌘/Ctrl+click to skip confirm)'}" ${isTemp || getFavorites().has(file.path) ? 'disabled' : ''}>🗑️</button>
                 </div>
             </div>
         </div>
@@ -1933,7 +1948,7 @@ function updateFilesGrid() {
                 <div class="file-actions">
                     <button class="btn-icon btn-fav" data-fav-path="${file.path}" onclick="toggleFavorite('${file.path}', event)" title="${getFavorites().has(file.path) ? 'Unfavorite' : 'Favorite'}">${getFavorites().has(file.path) ? '❤️' : '🤍'}</button>
                     <button class="btn-icon" onclick="event.stopPropagation(); downloadFile('${file.path}', '${file.name}')" title="Download">⬇️</button>
-                    <button class="btn-icon btn-danger" onclick="event.stopPropagation(); deleteFile('${file.path}', '${file.name}')" title="${getFavorites().has(file.path) ? 'Remove favorite first' : 'Delete'}" ${getFavorites().has(file.path) ? 'disabled' : ''}>🗑️</button>
+                    <button class="btn-icon btn-danger" onclick="event.stopPropagation(); deleteFile('${file.path}', '${file.name}', event.metaKey || event.ctrlKey)" title="${getFavorites().has(file.path) ? 'Remove favorite first' : 'Delete (⌘/Ctrl+click to skip confirm)'}" ${getFavorites().has(file.path) ? 'disabled' : ''}>🗑️</button>
                 </div>
             </div>
             ${thumbnail}
@@ -1991,6 +2006,7 @@ function generateVideoThumbnail(canvas) {
 
 // Track viewer state for navigation
 var _viewerIndex = -1;
+var _viewerFile = null;  // { path, name } of the currently open file
 var _loopSegment = null; // { start, end } for segment looping, or true for full loop
 
 function viewFile(path, name, opts) {
@@ -1998,6 +2014,7 @@ function viewFile(path, name, opts) {
     name = name || path.split('/').pop();
     const files = window.currentFiles || [];
     _viewerIndex = files.findIndex(f => f.path === path);
+    _viewerFile = { path, name };
 
     const isVideo = /\.(mp4|avi|mov|mkv|webm)$/i.test(name);
     const viewer = document.getElementById('fileViewer');
@@ -2084,6 +2101,7 @@ function closeFileViewer() {
     body.innerHTML = '';  // Stop video playback
     _setScanBanner(null);
     _viewerIndex = -1;
+    _viewerFile = null;
     _loopSegment = null;
 
     // Restore the files grid modal if it was open before the viewer
@@ -2149,8 +2167,9 @@ function viewerDownload() {
 
 async function viewerDelete(e) {
     const files = window.currentFiles || [];
-    if (_viewerIndex < 0 || _viewerIndex >= files.length) return;
-    const f = files[_viewerIndex];
+    // Use _viewerIndex if valid, otherwise fall back to _viewerFile
+    let f = (_viewerIndex >= 0 && _viewerIndex < files.length) ? files[_viewerIndex] : _viewerFile;
+    if (!f) return;
     if (getFavorites().has(f.path)) {
         showStatus('Remove favorite ❤️ first before deleting', 'warning', 3000);
         return;
@@ -3856,6 +3875,108 @@ async function syncDetectionUI() {
         // Detection endpoint may not exist yet — ignore
     }
     updateDetectionUI();
+}
+
+// ============================================================================
+// DETECTION TEST HARNESS
+// ============================================================================
+
+function _harnessStatus(html) {
+    const el = document.getElementById('harnessStatus');
+    if (!el) return;
+    el.style.display = html ? 'block' : 'none';
+    el.innerHTML = html || '';
+}
+
+function _harnessDisableButtons(disabled) {
+    document.querySelectorAll('#harnessPanel .btn').forEach(b => b.disabled = disabled);
+}
+
+async function runHarnessInject() {
+    _harnessDisableButtons(true);
+    _harnessStatus('<span class="harness-info">💉 Injecting synthetic transit…</span>');
+    try {
+        const data = await apiCall('/telescope/harness/inject', 'POST', {
+            size: 14, speed: 300, target: 'sun'
+        });
+        if (!data) { _harnessStatus('<span class="harness-miss">Request failed</span>'); return; }
+        const icon = data.detected ? '✅' : '❌';
+        const cls  = data.detected ? 'harness-hit' : 'harness-miss';
+        let html = `<div class="harness-title">Inject Result</div>`;
+        html += `<div class="harness-row"><span>${data.params.size}px @ ${data.params.speed}px/s</span>`;
+        html += `<span class="${cls}">${icon} ${data.detected ? 'Detected' : 'Missed'}</span></div>`;
+        if (data.matched_event) {
+            const ev = data.matched_event;
+            html += `<div class="harness-row harness-info"><span>${ev.start_seconds?.toFixed(2)}s–${ev.end_seconds?.toFixed(2)}s (${ev.duration_ms}ms, ${ev.confidence})</span></div>`;
+        }
+        html += `<div class="harness-row harness-info"><span>GT: ${data.gt_start}s–${data.gt_end}s · ${data.num_events} event(s)</span></div>`;
+        _harnessStatus(html);
+    } catch (e) {
+        _harnessStatus(`<span class="harness-miss">Error: ${e.message}</span>`);
+    } finally {
+        _harnessDisableButtons(false);
+    }
+}
+
+async function runHarnessSweep() {
+    _harnessDisableButtons(true);
+    _harnessStatus('<span class="harness-info">📊 Sweeping size × speed… (this takes a couple of minutes)</span>');
+    try {
+        const data = await apiCall('/telescope/harness/sweep', 'POST', {
+            target: 'sun',
+            sizes: [6, 10, 14, 20],
+            speeds: [60, 100, 200, 300],
+        });
+        if (!data) { _harnessStatus('<span class="harness-miss">Request failed</span>'); return; }
+        const sizes = data.sizes;
+        const speeds = data.speeds;
+        const grid = data.grid;
+        // Build ASCII grid
+        let hdr = '     px  ';
+        speeds.forEach(sp => hdr += String(sp).padStart(5));
+        let rows = hdr + '\n';
+        sizes.forEach(sz => {
+            let row = String(sz).padStart(6) + 'px ';
+            speeds.forEach(sp => {
+                const hit = grid[`${sz},${sp}`];
+                row += (hit ? '  ✅' : '  ❌') + ' ';
+            });
+            rows += row + '\n';
+        });
+        let html = `<div class="harness-title">Sweep: ${data.detected}/${data.total} detected (${(data.detection_rate*100).toFixed(0)}%)</div>`;
+        html += `<div class="harness-grid">${rows}</div>`;
+        _harnessStatus(html);
+    } catch (e) {
+        _harnessStatus(`<span class="harness-miss">Error: ${e.message}</span>`);
+    } finally {
+        _harnessDisableButtons(false);
+    }
+}
+
+async function runHarnessValidate() {
+    _harnessDisableButtons(true);
+    _harnessStatus('<span class="harness-info">✅ Validating captured videos…</span>');
+    try {
+        const data = await apiCall('/telescope/harness/validate', 'POST', {target: 'auto'});
+        if (!data) { _harnessStatus('<span class="harness-miss">Request failed</span>'); return; }
+        if (data.results.length === 0) {
+            _harnessStatus('<span class="harness-info">No MP4 captures found</span>');
+            return;
+        }
+        let html = `<div class="harness-title">Validated: ${data.with_events}/${data.total} files with events</div>`;
+        data.results.forEach(r => {
+            if (r.error) return;
+            const name = r.name.length > 28 ? r.name.slice(0, 25) + '…' : r.name;
+            const icon = r.num_events > 0 ? '✅' : '⬜';
+            const cls = r.num_events > 0 ? 'harness-hit' : 'harness-info';
+            html += `<div class="harness-row"><span>${icon} ${name}</span><span class="${cls}">${r.num_events} event(s)</span></div>`;
+        });
+        _harnessStatus(html);
+    } catch (e) {
+        _harnessStatus(`<span class="harness-miss">Error: ${e.message}</span>`);
+    } finally {
+        _harnessDisableButtons(false);
+    }
 }
 
 // ============================================================================
