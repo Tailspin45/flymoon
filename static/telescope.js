@@ -87,6 +87,7 @@ let _mismatchDismissedFor = null; // which opposite target the user dismissed
 window.initTelescope = function() {
     console.log('[Telescope] Initializing interface');
     destroyTelescope(); // clear any existing intervals
+    ensureHarnessUI();
 
     // Status polling (always poll while panel is open)
     statusPollInterval = setInterval(updateStatus, 2000);
@@ -3881,6 +3882,51 @@ async function syncDetectionUI() {
 // DETECTION TEST HARNESS
 // ============================================================================
 
+function ensureHarnessUI() {
+    const detectPanel = document.getElementById('detectPanel');
+    if (!detectPanel) return;
+
+    let panel = document.getElementById('harnessPanel');
+    if (!panel) {
+        panel = document.createElement('div');
+        panel.id = 'harnessPanel';
+        panel.className = 'harness-card';
+        panel.innerHTML = `
+            <div class="harness-card-title">🧪 Detection Tester</div>
+            <div class="harness-buttons">
+                <button class="btn btn-secondary btn-compact"
+                        title="Inject a synthetic dark blob across a generated solar/lunar disc and check if the analyzer detects it"
+                        aria-label="Inject a synthetic dark blob across a generated solar or lunar disc and check if the analyzer detects it"
+                        onclick="runHarnessInject()">💉 Inject</button>
+                <button class="btn btn-secondary btn-compact"
+                        title="Sweep blob size × speed combinations to map detection sensitivity boundaries (takes ~2 min)"
+                        aria-label="Sweep blob size by speed combinations to map detection sensitivity boundaries"
+                        onclick="runHarnessSweep()">📊 Sweep</button>
+                <button class="btn btn-secondary btn-compact"
+                        title="Run the analyzer on all captured MP4s to check for missed transits"
+                        aria-label="Run the analyzer on all captured MP4 files to check for missed transits"
+                        onclick="runHarnessValidate()">✅ Validate</button>
+            </div>
+            <div id="harnessStatus" class="harness-status" style="display:none"></div>
+        `;
+
+        const eventLog = document.getElementById('detectEventLog');
+        if (eventLog && eventLog.parentNode === detectPanel) {
+            detectPanel.insertBefore(panel, eventLog);
+        } else {
+            const detectBtn = document.getElementById('detectToggleBtn');
+            if (detectBtn && detectBtn.parentNode === detectPanel) {
+                detectBtn.insertAdjacentElement('afterend', panel);
+            } else {
+                detectPanel.appendChild(panel);
+            }
+        }
+    }
+
+    // Force visible even if stale markup/CSS hid it.
+    panel.style.display = 'block';
+}
+
 function _harnessStatus(html) {
     const el = document.getElementById('harnessStatus');
     if (!el) return;
@@ -3991,5 +4037,9 @@ window.destroyTelescope = function() {
     if (transitTickInterval)    { clearInterval(transitTickInterval);    transitTickInterval    = null; }
     if (detectionPollInterval)  { clearInterval(detectionPollInterval);  detectionPollInterval  = null; }
 };
+
+document.addEventListener('DOMContentLoaded', () => {
+    ensureHarnessUI();
+});
 
 console.log('[Telescope] Module loaded');
