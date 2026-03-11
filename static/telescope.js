@@ -2030,6 +2030,33 @@ var _markedFrames = new Set(); // frame indices marked for composite
 var _videoFps = 30; // detected fps of current video
 var _scrubSlider = null; // reference to the range input
 
+/** Build HTML strip showing diff heatmap and trigger frame below the video/image. */
+function _buildCompanionStrip(fileInfo) {
+    const parts = [];
+    if (fileInfo.diff_heatmap) {
+        parts.push(
+            `<div style="text-align:center;">` +
+            `<div style="color:#f80; font-size:0.75em; margin-bottom:2px;">🔥 Diff Heatmap</div>` +
+            `<img src="${fileInfo.diff_heatmap}?t=${Date.now()}" alt="Diff heatmap" ` +
+            `title="Diff heatmap — bright/warm pixels show motion between frames that triggered the detection." ` +
+            `style="max-height:180px; border:1px solid #444; border-radius:4px; cursor:pointer;" ` +
+            `onclick="window.open('${fileInfo.diff_heatmap}','_blank')">` +
+            `</div>`);
+    }
+    if (fileInfo.trigger_frame) {
+        parts.push(
+            `<div style="text-align:center;">` +
+            `<div style="color:#0cf; font-size:0.75em; margin-bottom:2px;">📷 Trigger Frame</div>` +
+            `<img src="${fileInfo.trigger_frame}?t=${Date.now()}" alt="Trigger frame" ` +
+            `title="Trigger frame — low-res detection frame captured when motion was detected." ` +
+            `style="max-height:180px; border:1px solid #444; border-radius:4px; cursor:pointer;" ` +
+            `onclick="window.open('${fileInfo.trigger_frame}','_blank')">` +
+            `</div>`);
+    }
+    if (parts.length === 0) return '';
+    return `<div style="display:flex; gap:12px; justify-content:center; padding:8px 0; border-top:1px solid #333; margin-top:4px;">${parts.join('')}</div>`;
+}
+
 function viewFile(path, name, opts) {
     opts = opts || {};
     name = name || path.split('/').pop();
@@ -2056,11 +2083,15 @@ function viewFile(path, name, opts) {
     _loopSegment = null;
     _markedFrames = new Set();
     _scrubSlider = null;
+    // Resolve companion images for this file
+    const curFileInfo = files.find(f => f.path === path) || {};
+    const companionHtml = _buildCompanionStrip(curFileInfo);
+
     if (isVideo) {
         const loopAttr = opts.loop ? ' loop' : '';
         body.innerHTML =
-            `<div style="position:relative; display:flex; flex-direction:column; align-items:center; max-width:90vw; max-height:80vh;">` +
-            `<video src="${path}" controls autoplay playsinline${loopAttr} style="max-width:90vw; max-height:70vh; flex-shrink:1;"></video>` +
+            `<div style="position:relative; display:flex; flex-direction:column; align-items:center; max-width:90vw; max-height:85vh; overflow-y:auto;">` +
+            `<video src="${path}" controls autoplay playsinline${loopAttr} style="max-width:90vw; max-height:60vh; flex-shrink:1;"></video>` +
             `<div id="videoPreciseTime" class="video-precise-time">0.00 / 0.00</div>` +
             `<div id="frameScrubber" style="display:none; width:100%; padding:6px 8px; background:#1a1a1a; border-top:1px solid #333;">` +
               `<div style="display:flex; align-items:center; gap:8px;">` +
@@ -2073,6 +2104,7 @@ function viewFile(path, name, opts) {
               `</div>` +
               `<div id="markedFrameBar" style="position:relative; width:100%; height:8px; background:#222; margin-top:4px; border-radius:4px; overflow:hidden;" title="Yellow ticks = marked frames"></div>` +
             `</div>` +
+            companionHtml +
             `</div>`;
         const vid = body.querySelector('video');
         const timeEl = document.getElementById('videoPreciseTime');
@@ -2125,14 +2157,6 @@ function viewFile(path, name, opts) {
         const replayBtn = hasAnalyzed
             ? `<button class="btn-viewer" onclick="openCompositeModal('${analyzedJpg}?t=${Date.now()}', null)">🖼 Composite</button>`
             : '';
-        // Show heatmap/trigger-frame buttons if companions exist for this detection video
-        const curFile = files.find(f => f.path === path) || {};
-        const heatmapBtn = curFile.diff_heatmap
-            ? `<button class="btn-viewer" onclick="viewFile('${curFile.diff_heatmap}', '${name.replace('.mp4','_diff.jpg')}')" title="View diff heatmap that triggered this detection">🔥 Heatmap</button>`
-            : '';
-        const triggerBtn = curFile.trigger_frame
-            ? `<button class="btn-viewer" onclick="viewFile('${curFile.trigger_frame}', '${name.replace('.mp4','_frame.jpg')}')" title="View low-res trigger frame">📷 Trigger</button>`
-            : '';
         const isFav = getFavorites().has(path);
         const favBtn = `<button class="btn-viewer" id="viewerFavBtn" data-fav-path="${path}" onclick="toggleFavorite('${path}', event)" title="Favorite">${isFav ? '❤️' : '🤍'}</button>`;
         const delDisabled = isFav ? 'disabled title="Remove favorite first"' : 'title="Delete (⌘/Ctrl+click to skip confirm)"';
@@ -2140,8 +2164,6 @@ function viewFile(path, name, opts) {
             `<button class="btn-viewer" onclick="viewerNav(-1)" title="Previous" ${hasPrev ? '' : 'disabled'}>◀</button>` +
             scanBtn +
             replayBtn +
-            heatmapBtn +
-            triggerBtn +
             favBtn +
             `<button class="btn-viewer" onclick="viewerDownload()" title="Download">⬇️ Download</button>` +
             `<button class="btn-viewer btn-viewer-danger" id="viewerDeleteBtn" onclick="viewerDelete(event)" ${delDisabled}>🗑️ Delete</button>` +
