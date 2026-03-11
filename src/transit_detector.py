@@ -555,22 +555,31 @@ class TransitDetector:
         self._emit_status("transit_detected")
 
     def _save_diagnostic_frames(self, event: DetectionEvent, ts: datetime) -> None:
-        """Save trigger frame and diff heatmap as diagnostic JPGs."""
+        """Save trigger frame and diff heatmap as diagnostic JPGs.
+
+        The detection runs at 160×90 for speed.  Diagnostic frames are
+        upscaled 4× before saving so they are legible in the gallery,
+        and the diff heatmap is labelled to avoid confusion with real
+        camera images.
+        """
         if self._current_frame is None:
             return
         try:
             year_month = os.path.join(self.capture_dir, str(ts.year), f"{ts.month:02d}")
             os.makedirs(year_month, exist_ok=True)
             base = f"det_{ts.strftime('%Y%m%d_%H%M%S')}"
+            UPSCALE = 4  # 160×90 → 640×360
 
-            # Raw trigger frame
+            # Raw trigger frame (upscaled)
             frame_file = os.path.join(year_month, f"{base}_frame.jpg")
             rgb = np.clip(self._current_frame, 0, 255).astype(np.uint8)
             bgr = cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR)
+            bgr = cv2.resize(bgr, (ANALYSIS_WIDTH * UPSCALE, ANALYSIS_HEIGHT * UPSCALE),
+                             interpolation=cv2.INTER_NEAREST)
             cv2.imwrite(frame_file, bgr)
             event.frame_path = frame_file
 
-            # Diff heatmap
+            # Diff heatmap (upscaled + labelled)
             if self._current_diff_b is not None:
                 diff_file = os.path.join(year_month, f"{base}_diff.jpg")
                 diff_gray = np.abs(self._current_diff_b).mean(axis=2)
@@ -580,6 +589,13 @@ class TransitDetector:
                 else:
                     diff_norm = np.zeros_like(diff_gray, dtype=np.uint8)
                 heatmap = cv2.applyColorMap(diff_norm, cv2.COLORMAP_JET)
+                heatmap = cv2.resize(heatmap, (ANALYSIS_WIDTH * UPSCALE, ANALYSIS_HEIGHT * UPSCALE),
+                                     interpolation=cv2.INTER_NEAREST)
+                # Label so it's obvious this is a diff heatmap, not a camera image
+                cv2.putText(heatmap, "DIFF HEATMAP", (8, 24),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
+                cv2.putText(heatmap, ts.strftime("%H:%M:%S"), (8, 50),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.6, (200, 200, 200), 1)
                 cv2.imwrite(diff_file, heatmap)
                 event.diff_path = diff_file
 
