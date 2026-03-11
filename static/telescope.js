@@ -2098,22 +2098,24 @@ function viewFile(path, name, opts) {
     if (isVideo) {
         const loopAttr = opts.loop ? ' loop' : '';
         body.innerHTML =
-            `<div style="display:flex; flex-direction:column; width:100%; max-height:85vh; overflow-y:auto;">` +
-              `<div style="display:flex; flex-direction:column; align-items:center; padding:4px 8px; flex-shrink:0;">` +
-                `<video src="${path}" playsinline${loopAttr} style="max-width:100%; max-height:50vh;"></video>` +
+            `<div style="display:flex; flex-direction:column; width:100%; max-height:85vh; overflow-y:auto;" id="frameViewerRoot">` +
+              `<video src="${path}" playsinline${loopAttr} style="display:none;" id="hiddenVid"></video>` +
+              `<div id="fivePanel" style="display:flex; justify-content:center; align-items:center; gap:3px; padding:4px 4px 0; flex-shrink:0; background:#000;">` +
+                `<span style="color:#555; font-size:0.85em;">Loading…</span>` +
               `</div>` +
               `<div id="frameScrubber" style="width:100%; padding:6px 12px; background:#1a1a1a; border-top:1px solid #333; flex-shrink:0;">` +
-                `<div style="display:flex; align-items:center; justify-content:center; gap:8px; margin-bottom:6px;">` +
+                `<div style="display:flex; align-items:center; justify-content:center; gap:8px; margin-bottom:4px;">` +
                   `<span id="frameCounter" style="color:#0ff; font-family:monospace; font-size:0.85em; min-width:120px;">Frame 0 / 0</span>` +
                   `<button id="markFrameBtn" class="btn-viewer" onclick="toggleMarkFrame()" ` +
                     `title="Mark/unmark this frame for composite (M key)" style="font-size:0.85em; padding:2px 8px;">📌 Mark</button>` +
                   `<span id="markedCount" style="color:#fd0; font-family:monospace; font-size:0.8em; min-width:70px;">0 marked</span>` +
                 `</div>` +
-                `<div id="contextStrip" style="display:flex; justify-content:center; gap:4px; min-height:60px; align-items:center;">` +
-                  `<span style="color:#555; font-size:0.75em;">Loading frames…</span>` +
-                `</div>` +
-                `<div style="color:#666; font-size:0.6em; text-align:center; margin-top:4px;">` +
-                  `←/→ step frame · Shift ±10 · Space play/pause · Click thumbnail to jump · M mark` +
+                `<input type="range" id="frameScrubSlider" min="0" max="100" value="0" step="1" ` +
+                  `style="width:100%; height:20px; accent-color:#0ff; cursor:pointer;" title="Drag to scrub frames">` +
+                `<div style="display:flex; justify-content:space-between; align-items:center; margin-top:4px;">` +
+                  `<div style="color:#666; font-size:0.6em;">` +
+                    `←/→ step · Shift ±10 · Space play/pause · M mark` +
+                  `</div>` +
                 `</div>` +
                 `<div id="markedFrameBar" style="position:relative; width:100%; height:8px; background:#222; margin-top:4px; border-radius:4px; overflow:hidden;" title="Yellow ticks = marked frames"></div>` +
               `</div>` +
@@ -2122,32 +2124,35 @@ function viewFile(path, name, opts) {
               `</div>` +
               (companionHtml ? `<div style="display:flex; gap:12px; justify-content:center; padding:6px 8px; border-top:1px solid #333; flex-shrink:0;">${companionHtml}</div>` : '') +
             `</div>`;
-        const vid = body.querySelector('video');
+        const vid = document.getElementById('hiddenVid');
         vid.pause();
-        const updateTime = () => {
+        _currentFrame = 0;
+
+        const slider = document.getElementById('frameScrubSlider');
+        slider.addEventListener('input', () => {
+            const f = parseInt(slider.value, 10);
+            _currentFrame = f;
+            vid.currentTime = f / _videoFps;
+        });
+
+        const updateAfterSeek = () => {
+            _currentFrame = Math.round(vid.currentTime * _videoFps);
+            _updateScrubPosition(vid);
+            _updateFivePanel();
+        };
+        vid.addEventListener('timeupdate', () => {
             if (_loopSegment && _loopSegment.start != null && vid.currentTime >= _loopSegment.end) {
                 vid.currentTime = _loopSegment.start;
             }
+            _currentFrame = Math.round(vid.currentTime * _videoFps);
             _updateScrubPosition(vid);
-            _updateContextStrip(vid);
-        };
-        vid.addEventListener('timeupdate', updateTime);
-        vid.addEventListener('seeked', updateTime);
-        vid.addEventListener('loadedmetadata', () => { _initFrameScrubber(vid); updateTime(); });
-        vid.addEventListener('loadeddata', () => { _initFrameScrubber(vid); updateTime(); });
-        if (vid.readyState >= 1) { _initFrameScrubber(vid); updateTime(); }
-        // Extract small thumbnails for context strip in background
+            _updateFivePanel();
+        });
+        vid.addEventListener('seeked', updateAfterSeek);
+        vid.addEventListener('loadedmetadata', () => { _initFrameScrubber(vid); updateAfterSeek(); });
+        vid.addEventListener('loadeddata', () => { _initFrameScrubber(vid); updateAfterSeek(); });
+        if (vid.readyState >= 1) { _initFrameScrubber(vid); updateAfterSeek(); }
         _extractFrameThumbs(vid);
-        // Keyboard: arrow keys step frames, space play/pause, M mark
-        function _viewerKeyHandler(e) {
-            if (e.target.tagName === 'INPUT' && e.target.type !== 'range') return;
-            if (e.key === 'ArrowLeft') { e.preventDefault(); frameStep(e.shiftKey ? -10 : -1); }
-            else if (e.key === 'ArrowRight') { e.preventDefault(); frameStep(e.shiftKey ? 10 : 1); }
-            else if (e.key === ' ') { e.preventDefault(); vid.paused ? vid.play() : vid.pause(); }
-            else if (e.key === 'm' || e.key === 'M') { e.preventDefault(); toggleMarkFrame(); }
-        }
-        document.addEventListener('keydown', _viewerKeyHandler);
-        vid._viewerKeyHandler = _viewerKeyHandler;
     } else {
         const isDiff = name.includes('_diff');
         const isFrame = name.includes('_frame');
@@ -2198,11 +2203,6 @@ function viewFile(path, name, opts) {
 function closeFileViewer() {
     const viewer = document.getElementById('fileViewer');
     const body = document.getElementById('fileViewerBody');
-    // Remove keyboard handler
-    const vid = body.querySelector('video');
-    if (vid && vid._viewerKeyHandler) {
-        document.removeEventListener('keydown', vid._viewerKeyHandler);
-    }
     viewer.style.display = 'none';
     body.innerHTML = '';
     _setScanBanner(null);
@@ -2212,12 +2212,12 @@ function closeFileViewer() {
     _markedFrames = new Set();
     _scrubSlider = null;
     _frameThumbs = [];
+    _currentFrame = 0;
     if (_thumbExtractorVid) {
         try { document.body.removeChild(_thumbExtractorVid); } catch (e) {}
         _thumbExtractorVid = null;
     }
 
-    // Restore the files grid modal if it was open before the viewer
     if (viewer._filesModalWasOpen) {
         const filesModal = document.getElementById('filesModal');
         if (filesModal) filesModal.style.display = 'flex';
@@ -2228,18 +2228,15 @@ function closeFileViewer() {
 var _frameStepTimer = null;
 
 function frameStep(dir) {
-    const vid = document.querySelector('#fileViewerBody video');
-    if (!vid) return;
-    vid.pause();
-    vid.currentTime = Math.max(0, Math.min(vid.duration, vid.currentTime + dir / 30));
+    _stepFrame(dir);
 }
 
 function frameStepStart(dir) {
     frameStepStop();
-    frameStep(dir); // immediate first step
-    let delay = 250; // initial repeat delay
+    _stepFrame(dir);
+    let delay = 250;
     const repeat = () => {
-        frameStep(dir);
+        _stepFrame(dir);
         delay = Math.max(50, delay * 0.8); // accelerate
         _frameStepTimer = setTimeout(repeat, delay);
     };
@@ -2254,19 +2251,39 @@ function frameStepStop() {
 // Frame scrubber with mark-for-composite
 // ---------------------------------------------------------------------------
 
+var _currentFrame = 0;
+
+function _stepFrame(dir) {
+    const vid = document.getElementById('hiddenVid');
+    if (!vid || !vid.duration) return;
+    vid.pause();
+    const newFrame = Math.max(0, Math.min(_frameTotalCount - 1, _currentFrame + dir));
+    _currentFrame = newFrame;
+    vid.currentTime = newFrame / _videoFps;
+}
+
 function _initFrameScrubber(vid) {
     if (!vid || !vid.duration) return;
     _videoFps = 30;
     _frameTotalCount = Math.round(vid.duration * _videoFps);
+    const slider = document.getElementById('frameScrubSlider');
+    if (slider) {
+        slider.max = _frameTotalCount - 1;
+        slider.value = _currentFrame;
+    }
     _updateScrubPosition(vid);
 }
 
 function _updateScrubPosition(vid) {
     const counter = document.getElementById('frameCounter');
+    const slider = document.getElementById('frameScrubSlider');
     if (!vid) return;
-    const frame = Math.round((vid.currentTime || 0) * _videoFps);
+    const frame = _currentFrame;
     if (counter) {
         counter.textContent = `Frame ${frame} / ${_frameTotalCount || '?'}`;
+    }
+    if (slider && !slider.matches(':active')) {
+        slider.value = frame;
     }
     const btn = document.getElementById('markFrameBtn');
     if (btn) {
@@ -2276,16 +2293,15 @@ function _updateScrubPosition(vid) {
 }
 
 // ---------------------------------------------------------------------------
-// Context strip: show ±2 frames around current as clickable thumbnails
+// Five-panel viewer: 5 equal big images showing ±2 around current frame
 // ---------------------------------------------------------------------------
 
-var _frameThumbs = [];      // small data-URL thumbnails (extracted in background)
+var _frameThumbs = [];      // full-quality data-URL images per frame
 var _frameTotalCount = 0;
 var _thumbExtractorVid = null;
 
-/** Extract all frames as small thumbnails using a hidden video element. */
+/** Extract all frames at display size using a hidden video element. */
 function _extractFrameThumbs(mainVid) {
-    // Clean up any previous extractor
     if (_thumbExtractorVid) {
         try { document.body.removeChild(_thumbExtractorVid); } catch (e) {}
         _thumbExtractorVid = null;
@@ -2306,36 +2322,38 @@ function _extractFrameThumbs(mainVid) {
         _frameTotalCount = total;
         _frameThumbs = new Array(total).fill(null);
 
+        const slider = document.getElementById('frameScrubSlider');
+        if (slider) slider.max = total - 1;
+
         const vw = extVid.videoWidth || 640;
         const vh = extVid.videoHeight || 480;
-        const thumbH = 80;
-        const thumbW = Math.round(thumbH * (vw / vh));
+        // Extract at a reasonable size (panel will be ~20% of viewport width)
+        const thumbW = Math.min(vw, 400);
+        const thumbH = Math.round(thumbW * (vh / vw));
         const canvas = document.createElement('canvas');
         canvas.width = thumbW;
         canvas.height = thumbH;
         const ctx = canvas.getContext('2d');
 
         let idx = 0;
-        const strip = document.getElementById('contextStrip');
+        const panel = document.getElementById('fivePanel');
         function next() {
-            if (idx >= total || !document.getElementById('contextStrip')) {
-                // Done or viewer closed
+            if (idx >= total || !document.getElementById('fivePanel')) {
                 try { document.body.removeChild(extVid); } catch (e) {}
                 _thumbExtractorVid = null;
-                // Show final strip
-                const mv = document.querySelector('#fileViewerBody video');
-                if (mv) _updateContextStrip(mv);
+                _updateFivePanel();
                 return;
             }
             extVid.currentTime = idx / fps;
             extVid.onseeked = () => {
                 ctx.drawImage(extVid, 0, 0, thumbW, thumbH);
-                _frameThumbs[idx] = canvas.toDataURL('image/jpeg', 0.6);
+                _frameThumbs[idx] = canvas.toDataURL('image/jpeg', 0.85);
                 idx++;
-                // Update progress
-                if (strip && idx % 30 === 0) {
-                    strip.innerHTML = `<span style="color:#555; font-size:0.75em;">Extracting ${idx}/${total}…</span>`;
+                if (panel && idx % 30 === 0) {
+                    panel.innerHTML = `<span style="color:#555; font-size:0.85em;">Extracting frames ${idx}/${total}…</span>`;
                 }
+                // Show the panel as soon as we have the first few frames
+                if (idx === 5) _updateFivePanel();
                 requestAnimationFrame(next);
             };
         }
@@ -2343,53 +2361,56 @@ function _extractFrameThumbs(mainVid) {
     }, { once: true });
 }
 
-/** Update the 5-thumbnail context strip around the current frame. */
-function _updateContextStrip(vid) {
-    const strip = document.getElementById('contextStrip');
-    if (!strip || !vid) return;
-    const curFrame = Math.round((vid.currentTime || 0) * _videoFps);
+/** Render 5 equal big panels: frames [cur-2, cur-1, cur, cur+1, cur+2] */
+function _updateFivePanel() {
+    const panel = document.getElementById('fivePanel');
+    if (!panel) return;
     const total = _frameTotalCount || 1;
+    const cur = _currentFrame;
 
-    // If no thumbnails extracted yet, show placeholder
-    if (!_frameThumbs.length || !_frameThumbs[0]) {
-        return; // still extracting
-    }
+    if (!_frameThumbs.length || !_frameThumbs[0]) return; // still extracting
 
     const offsets = [-2, -1, 0, 1, 2];
     let html = '';
     offsets.forEach(off => {
-        const f = curFrame + off;
+        const f = cur + off;
         const isCurrent = off === 0;
-        const border = isCurrent ? '2px solid #0ff' : '2px solid transparent';
-        const opacity = (f < 0 || f >= total) ? '0.15' : '1';
-        const cursor = (f >= 0 && f < total) ? 'pointer' : 'default';
+        const border = isCurrent ? '3px solid #0ff' : '3px solid #333';
+        const opacity = (f < 0 || f >= total) ? '0.12' : '1';
         const src = (f >= 0 && f < total && _frameThumbs[f]) ? _frameThumbs[f] : '';
         const marked = _markedFrames.has(f);
-        const markDot = marked ? `<div style="position:absolute;top:2px;right:2px;width:8px;height:8px;background:#fd0;border-radius:50%;"></div>` : '';
-        html += `<div style="position:relative; flex-shrink:0; border:${border}; border-radius:3px; opacity:${opacity}; cursor:${cursor}; transition:border-color 0.15s;" ` +
-                `onclick="if(${f}>=0 && ${f}<${total}){const v=document.querySelector('#fileViewerBody video');if(v){v.pause();v.currentTime=${f}/${_videoFps};}}" ` +
-                `title="Frame ${f}">` +
-                (src ? `<img src="${src}" style="display:block; height:80px; border-radius:2px;" draggable="false">` :
-                       `<div style="width:107px; height:80px; background:#111; border-radius:2px;"></div>`) +
-                `<div style="position:absolute;bottom:1px;left:0;right:0;text-align:center;color:${isCurrent?'#0ff':'#888'};font-size:0.6em;font-family:monospace;text-shadow:0 0 3px #000;">${f >= 0 && f < total ? f : ''}</div>` +
+        const markDot = marked ? `<div style="position:absolute;top:4px;right:4px;width:12px;height:12px;background:#fd0;border-radius:50%;border:1px solid #000;"></div>` : '';
+        const labelColor = isCurrent ? '#0ff' : '#888';
+        html += `<div style="position:relative; flex:1; min-width:0; border:${border}; border-radius:4px; opacity:${opacity}; cursor:pointer; overflow:hidden;" ` +
+                `onclick="_jumpToFrame(${f})" title="Frame ${f}">` +
+                (src ? `<img src="${src}" style="display:block; width:100%; height:auto;" draggable="false">` :
+                       `<div style="width:100%; padding-top:75%; background:#111;"></div>`) +
+                `<div style="position:absolute;bottom:2px;left:0;right:0;text-align:center;color:${labelColor};font-size:0.75em;font-weight:${isCurrent?'bold':'normal'};font-family:monospace;text-shadow:0 0 4px #000;">${f >= 0 && f < total ? f : ''}</div>` +
                 markDot +
                 `</div>`;
     });
-    strip.innerHTML = html;
+    panel.innerHTML = html;
+}
+
+function _jumpToFrame(f) {
+    const vid = document.getElementById('hiddenVid');
+    if (!vid || f < 0 || f >= _frameTotalCount) return;
+    vid.pause();
+    _currentFrame = f;
+    vid.currentTime = f / _videoFps;
 }
 
 function toggleMarkFrame() {
-    const vid = document.querySelector('#fileViewerBody video');
-    if (!vid) return;
-    const frame = Math.round(vid.currentTime * _videoFps);
+    const frame = _currentFrame;
     if (_markedFrames.has(frame)) {
         _markedFrames.delete(frame);
     } else {
         _markedFrames.add(frame);
     }
     _updateMarkedUI();
-    _updateScrubPosition(vid);
-    _updateContextStrip(vid);
+    const vid = document.getElementById('hiddenVid');
+    if (vid) _updateScrubPosition(vid);
+    _updateFivePanel();
 }
 
 function _updateMarkedUI() {
@@ -2459,25 +2480,22 @@ async function buildCompositeFromMarked() {
     }
 }
 
-// Keyboard shortcuts for frame scrubber (when viewer is open)
+// Keyboard shortcuts for frame viewer (when viewer is open)
 document.addEventListener('keydown', function(e) {
     const viewer = document.getElementById('fileViewer');
     if (!viewer || viewer.style.display === 'none') return;
-    const vid = document.querySelector('#fileViewerBody video');
+    const vid = document.getElementById('hiddenVid');
     if (!vid) return;
-    // Don't intercept if user is typing in an input
     if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
 
     switch (e.key) {
         case 'ArrowLeft':
             e.preventDefault();
-            vid.pause();
-            vid.currentTime = Math.max(0, vid.currentTime - (e.shiftKey ? 10 : 1) / _videoFps);
+            _stepFrame(e.shiftKey ? -10 : -1);
             break;
         case 'ArrowRight':
             e.preventDefault();
-            vid.pause();
-            vid.currentTime = Math.min(vid.duration, vid.currentTime + (e.shiftKey ? 10 : 1) / _videoFps);
+            _stepFrame(e.shiftKey ? 10 : 1);
             break;
         case 'm':
         case 'M':
