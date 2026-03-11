@@ -255,7 +255,7 @@ def get_telescope_client() -> Optional[SeestarClient]:
             # Gate reconnect attempts: only reconnect when the selected target
             # is at or above the minimum altitude the user set in the UI quadrant.
             try:
-                from src.astro import target_above_min_altitude, targets_above_horizon
+                from src.astro import target_above_min_altitude
 
                 lat = float(os.getenv("OBSERVER_LATITUDE", "0"))
                 lon = float(os.getenv("OBSERVER_LONGITUDE", "0"))
@@ -323,7 +323,6 @@ def handle_error(e: Exception, default_code: int = 500) -> tuple:
 def discover_seestar():
     """GET /telescope/discover - Scan local subnet for Seestar (port 4700)."""
     import concurrent.futures
-    import ipaddress
     import socket as _socket
 
     port = int(os.getenv("SEESTAR_PORT", "4700"))
@@ -699,7 +698,6 @@ def stop_recording():
         filepath = _recording_state.get("filepath", "")
 
         # Create metadata + thumbnail
-        thumbnail_url = None
         if filepath and os.path.exists(filepath):
             metadata = {
                 "timestamp": (
@@ -740,7 +738,7 @@ def stop_recording():
                 )
                 if os.path.exists(thumb_path) and os.path.getsize(thumb_path) > 0:
                     rel_thumb = os.path.relpath(thumb_path, "static")
-                    thumbnail_url = f"/static/{rel_thumb.replace(os.sep, '/')}"
+                    f"/static/{rel_thumb.replace(os.sep, '/')}"
                     logger.info(f"[Telescope] Thumbnail generated: {thumb_path}")
                 else:
                     logger.warning(
@@ -1011,6 +1009,53 @@ def analyze_file():
 
     except Exception as e:
         logger.error(f"[Telescope] Analysis error: {e}")
+        return handle_error(e)
+
+
+def composite_from_frames_route():
+    """POST /telescope/files/composite-from-frames
+
+    Build a composite image from user-selected video frames.
+    Body: { path: "captures/...", frame_indices: [0, 15, 30], fps: 30, target: "sun" }
+    """
+    logger.info("[Telescope] POST /telescope/files/composite-from-frames")
+    try:
+        req = request.get_json(force=True) if request.is_json else {}
+        rel_path = req.get("path", "")
+        if not rel_path:
+            return jsonify({"error": "Missing path"}), 400
+
+        captures_abs = os.path.abspath("static/captures")
+        file_path = os.path.abspath(os.path.join("static", rel_path))
+        if not file_path.startswith(captures_abs):
+            return jsonify({"error": "Forbidden"}), 403
+        if not os.path.exists(file_path):
+            return jsonify({"error": "File not found"}), 404
+
+        frame_indices = req.get("frame_indices", [])
+        if not frame_indices or not isinstance(frame_indices, list):
+            return jsonify({"error": "No frame_indices provided"}), 400
+
+        frame_indices = [int(f) for f in frame_indices]
+        fps = float(req.get("fps", 30))
+        target = req.get("target", "sun")
+
+        from src.transit_analyzer import composite_from_frames
+
+        result = composite_from_frames(
+            file_path,
+            frame_indices,
+            fps=fps,
+            target=target,
+        )
+
+        if result.get("error"):
+            return jsonify(result), 400
+
+        return jsonify({"success": True, **result})
+
+    except Exception as e:
+        logger.error(f"[Telescope] Composite-from-frames error: {e}")
         return handle_error(e)
 
 
@@ -1826,6 +1871,12 @@ def register_routes(app):
         "/telescope/files/analyze",
         "telescope_files_analyze",
         analyze_file,
+        methods=["POST"],
+    )
+    app.add_url_rule(
+        "/telescope/files/composite-from-frames",
+        "telescope_composite_from_frames",
+        composite_from_frames_route,
         methods=["POST"],
     )
 

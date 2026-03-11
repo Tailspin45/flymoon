@@ -2026,6 +2026,9 @@ function generateVideoThumbnail(canvas) {
 var _viewerIndex = -1;
 var _viewerFile = null;  // { path, name } of the currently open file
 var _loopSegment = null; // { start, end } for segment looping, or true for full loop
+var _markedFrames = new Set(); // frame indices marked for composite
+var _videoFps = 30; // detected fps of current video
+var _scrubSlider = null; // reference to the range input
 
 function viewFile(path, name, opts) {
     opts = opts || {};
@@ -2051,12 +2054,25 @@ function viewFile(path, name, opts) {
     nameEl.textContent = name;
     _setScanBanner(null); // clear any previous scan result
     _loopSegment = null;
+    _markedFrames = new Set();
+    _scrubSlider = null;
     if (isVideo) {
         const loopAttr = opts.loop ? ' loop' : '';
         body.innerHTML =
-            `<div style="position:relative; display:inline-block;">` +
-            `<video src="${path}" controls autoplay playsinline${loopAttr} style="max-width:90vw; max-height:80vh;"></video>` +
+            `<div style="position:relative; display:flex; flex-direction:column; align-items:center; max-width:90vw; max-height:80vh;">` +
+            `<video src="${path}" controls autoplay playsinline${loopAttr} style="max-width:90vw; max-height:70vh; flex-shrink:1;"></video>` +
             `<div id="videoPreciseTime" class="video-precise-time">0.00 / 0.00</div>` +
+            `<div id="frameScrubber" style="display:none; width:100%; padding:6px 8px; background:#1a1a1a; border-top:1px solid #333;">` +
+              `<div style="display:flex; align-items:center; gap:8px;">` +
+                `<span id="frameCounter" style="color:#0ff; font-family:monospace; font-size:0.85em; min-width:120px;">Frame 0 / 0</span>` +
+                `<input type="range" id="frameScrubSlider" min="0" max="0" value="0" step="1" ` +
+                  `style="flex:1; accent-color:#0ff; cursor:pointer;" title="Drag to scrub frames">` +
+                `<button id="markFrameBtn" class="btn-viewer" onclick="toggleMarkFrame()" ` +
+                  `title="Mark/unmark this frame for composite (M key)" style="font-size:0.85em; padding:2px 8px;">📌 Mark</button>` +
+                `<span id="markedCount" style="color:#fd0; font-family:monospace; font-size:0.8em; min-width:70px;">0 marked</span>` +
+              `</div>` +
+              `<div id="markedFrameBar" style="position:relative; width:100%; height:8px; background:#222; margin-top:4px; border-radius:4px; overflow:hidden;" title="Yellow ticks = marked frames"></div>` +
+            `</div>` +
             `</div>`;
         const vid = body.querySelector('video');
         const timeEl = document.getElementById('videoPreciseTime');
@@ -2068,10 +2084,15 @@ function viewFile(path, name, opts) {
             if (_loopSegment && _loopSegment.start != null && vid.currentTime >= _loopSegment.end) {
                 vid.currentTime = _loopSegment.start;
             }
+            // Update scrubber position
+            _updateScrubPosition(vid);
         };
         vid.addEventListener('timeupdate', updateTime);
         vid.addEventListener('seeked', updateTime);
-        vid.addEventListener('loadedmetadata', updateTime);
+        vid.addEventListener('loadedmetadata', () => {
+            updateTime();
+            _initFrameScrubber(vid);
+        });
     } else {
         const isDiff = name.includes('_diff');
         const isFrame = name.includes('_frame');
@@ -2091,7 +2112,8 @@ function viewFile(path, name, opts) {
             ? `<button class="btn-viewer" onmousedown="frameStepStart(-1)" onmouseup="frameStepStop()" onmouseleave="frameStepStop()" title="Back 1 frame (hold to repeat)">◁</button>` +
               `<button class="btn-viewer btn-viewer-sun" id="scanTransitBtn" onclick="scanTransit('sun')" title="Analyze for solar transit">☀️ Solar Transit</button>` +
               `<button class="btn-viewer btn-viewer-moon" onclick="scanTransit('moon')" title="Analyze for lunar transit">🌙 Lunar Transit</button>` +
-              `<button class="btn-viewer" onmousedown="frameStepStart(1)" onmouseup="frameStepStop()" onmouseleave="frameStepStop()" title="Forward 1 frame (hold to repeat)">▷</button>`
+              `<button class="btn-viewer" onmousedown="frameStepStart(1)" onmouseup="frameStepStop()" onmouseleave="frameStepStop()" title="Forward 1 frame (hold to repeat)">▷</button>` +
+              `<button class="btn-viewer" id="buildCompositeBtn" onclick="buildCompositeFromMarked()" title="Build composite from marked frames" style="display:none;">🖼 Build Composite (<span id="compositeCountBtn">0</span>)</button>`
             : '';
         // Show composite image button if an analyzed_xxx.jpg exists for this file
         const stem = path.replace(/^.*\//, '').replace('.mp4', '');
@@ -2128,6 +2150,8 @@ function closeFileViewer() {
     _viewerIndex = -1;
     _viewerFile = null;
     _loopSegment = null;
+    _markedFrames = new Set();
+    _scrubSlider = null;
 
     // Restore the files grid modal if it was open before the viewer
     if (viewer._filesModalWasOpen) {
@@ -2161,6 +2185,162 @@ function frameStepStart(dir) {
 function frameStepStop() {
     if (_frameStepTimer) { clearTimeout(_frameStepTimer); _frameStepTimer = null; }
 }
+
+// ---------------------------------------------------------------------------
+// Frame scrubber with mark-for-composite
+// ---------------------------------------------------------------------------
+
+function _initFrameScrubber(vid) {
+    const scrubber = document.getElementById('frameScrubber');
+    const slider = document.getElementById('frameScrubSlider');
+    if (!scrubber || !slider || !vid.duration) return;
+
+    _videoFps = 30; // HTML5 doesn't expose fps; 30 is typical for Seestar
+    const totalFrames = Math.round(vid.duration * _videoFps);
+    slider.max = totalFrames - 1;
+    slider.value = Math.round(vid.currentTime * _videoFps);
+    _scrubSlider = slider;
+
+    slider.addEventListener('input', () => {
+        const frame = parseInt(slider.value, 10);
+        vid.pause();
+        vid.currentTime = frame / _videoFps;
+    });
+
+    scrubber.style.display = 'block';
+    _updateScrubPosition(vid);
+}
+
+function _updateScrubPosition(vid) {
+    const slider = document.getElementById('frameScrubSlider');
+    const counter = document.getElementById('frameCounter');
+    if (!slider || !vid) return;
+    const frame = Math.round((vid.currentTime || 0) * _videoFps);
+    const total = parseInt(slider.max, 10) + 1;
+    if (!slider.matches(':active')) { // don't fight user dragging
+        slider.value = frame;
+    }
+    if (counter) {
+        counter.textContent = `Frame ${frame} / ${total}`;
+    }
+    // Highlight mark button if current frame is marked
+    const btn = document.getElementById('markFrameBtn');
+    if (btn) {
+        btn.style.background = _markedFrames.has(frame) ? '#fd0' : '';
+        btn.style.color = _markedFrames.has(frame) ? '#000' : '';
+    }
+}
+
+function toggleMarkFrame() {
+    const vid = document.querySelector('#fileViewerBody video');
+    if (!vid) return;
+    const frame = Math.round(vid.currentTime * _videoFps);
+    if (_markedFrames.has(frame)) {
+        _markedFrames.delete(frame);
+    } else {
+        _markedFrames.add(frame);
+    }
+    _updateMarkedUI();
+    _updateScrubPosition(vid);
+}
+
+function _updateMarkedUI() {
+    const count = _markedFrames.size;
+    const countEl = document.getElementById('markedCount');
+    if (countEl) countEl.textContent = `${count} marked`;
+
+    // Update "Build Composite" button visibility
+    const buildBtn = document.getElementById('buildCompositeBtn');
+    const buildCount = document.getElementById('compositeCountBtn');
+    if (buildBtn) {
+        buildBtn.style.display = count > 0 ? '' : 'none';
+        if (buildCount) buildCount.textContent = count;
+    }
+
+    // Draw tick marks on the marked-frame bar
+    const bar = document.getElementById('markedFrameBar');
+    const slider = document.getElementById('frameScrubSlider');
+    if (!bar || !slider) return;
+    const total = parseInt(slider.max, 10) + 1;
+    bar.innerHTML = '';
+    for (const f of _markedFrames) {
+        const pct = (f / Math.max(1, total - 1)) * 100;
+        const tick = document.createElement('div');
+        tick.style.cssText = `position:absolute; left:${pct}%; top:0; width:2px; height:100%; background:#fd0; border-radius:1px;`;
+        tick.title = `Frame ${f}`;
+        bar.appendChild(tick);
+    }
+}
+
+async function buildCompositeFromMarked() {
+    if (_markedFrames.size === 0) return;
+    const vid = document.querySelector('#fileViewerBody video');
+    if (!_viewerFile) return;
+
+    const apiPath = _viewerFile.path.replace(/^\/static\//, '');
+    const frames = Array.from(_markedFrames).sort((a, b) => a - b);
+
+    const btn = document.getElementById('buildCompositeBtn');
+    if (btn) { btn.disabled = true; btn.textContent = '⏳ Building…'; }
+    _setScanBanner('Building composite from ' + frames.length + ' frames…', 'info');
+
+    try {
+        const resp = await fetch('/telescope/files/composite-from-frames', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ path: apiPath, frame_indices: frames, fps: _videoFps }),
+            signal: AbortSignal.timeout(120000),
+        });
+        const data = await resp.json();
+        if (!resp.ok || data.error) {
+            _setScanBanner('Composite failed: ' + (data.error || resp.statusText), 'error');
+            return;
+        }
+        _setScanBanner(`Composite built from ${frames.length} frames`, 'success');
+        if (data.composite_image) {
+            refreshFiles();
+            setTimeout(() => {
+                openCompositeModal('/static/' + data.composite_image + '?t=' + Date.now(), null);
+            }, 500);
+        }
+    } catch (e) {
+        _setScanBanner('Composite failed: ' + e.message, 'error');
+    } finally {
+        if (btn) { btn.disabled = false; btn.textContent = '🖼 Build Composite (' + _markedFrames.size + ')'; }
+    }
+}
+
+// Keyboard shortcuts for frame scrubber (when viewer is open)
+document.addEventListener('keydown', function(e) {
+    const viewer = document.getElementById('fileViewer');
+    if (!viewer || viewer.style.display === 'none') return;
+    const vid = document.querySelector('#fileViewerBody video');
+    if (!vid) return;
+    // Don't intercept if user is typing in an input
+    if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
+
+    switch (e.key) {
+        case 'ArrowLeft':
+            e.preventDefault();
+            vid.pause();
+            vid.currentTime = Math.max(0, vid.currentTime - (e.shiftKey ? 10 : 1) / _videoFps);
+            break;
+        case 'ArrowRight':
+            e.preventDefault();
+            vid.pause();
+            vid.currentTime = Math.min(vid.duration, vid.currentTime + (e.shiftKey ? 10 : 1) / _videoFps);
+            break;
+        case 'm':
+        case 'M':
+            e.preventDefault();
+            toggleMarkFrame();
+            break;
+        case ' ':
+            e.preventDefault();
+            vid.paused ? vid.play() : vid.pause();
+            break;
+    }
+});
 
 function viewerNav(delta) {
     const files = window.currentFiles || [];

@@ -272,12 +272,12 @@ def analyze_video(
     _min_travel_px = (
         float(min_travel_px)
         if min_travel_px is not None
-        else (20.0 if is_moon else 40.0)
+        else (20.0 if is_moon else 25.0)
     )
     _min_speed_px_s = (
         float(min_speed_px_s)
         if min_speed_px_s is not None
-        else (40.0 if is_moon else 80.0)
+        else (40.0 if is_moon else 50.0)
     )
     _static_threshold_pct = (
         float(static_threshold_pct)
@@ -1344,12 +1344,15 @@ def _filter_transit_coherence(
                     used_ids.add(id(c))
 
         # ── 4. Evaluate each track ──────────────────────────────────────
+        _rejected = {"short": 0, "duration": 0, "travel": 0, "speed": 0, "linearity": 0, "aspect": 0}
         for track in tracks:
             if len(track) < 3:
+                _rejected["short"] += 1
                 continue  # need ≥3 points to confirm a path
 
             t_dur = track[-1].time_seconds - track[0].time_seconds
             if t_dur > max_duration_sec or t_dur <= 0:
+                _rejected["duration"] += 1
                 continue
 
             # Travel (3-frame averaged endpoints)
@@ -1361,20 +1364,22 @@ def _filter_transit_coherence(
             travel = math.hypot(cx1 - cx0, cy1 - cy0)
 
             if travel < min_travel_px:
+                _rejected["travel"] += 1
                 continue
 
             speed = travel / t_dur
             if speed < min_speed_px_s:
+                _rejected["speed"] += 1
                 continue
 
-            # Linearity: max deviation from straight line < 15% of travel
-            # (Reduced from 40% to reject curved telescope-slew artifacts)
+            # Linearity: max deviation from straight line < 25% of travel
             if travel > 10 and len(track) > 3:
                 vx, vy = cx1 - cx0, cy1 - cy0
                 vlen = math.hypot(vx, vy)
                 nx, ny = -vy / vlen, vx / vlen
                 max_dev = max(abs((d.x - cx0) * nx + (d.y - cy0) * ny) for d in track)
-                if max_dev > travel * 0.15:
+                if max_dev > travel * 0.25:
+                    _rejected["linearity"] += 1
                     continue
 
             # Aspect-ratio guard: reject tracks where the blob itself is
@@ -1386,10 +1391,18 @@ def _filter_transit_coherence(
                 track
             )
             if avg_blob_aspect > 5:
+                _rejected["aspect"] += 1
                 continue
 
             # This track is a real transit — keep all its detections
             kept.extend(track)
+
+        if not kept:
+            reasons = ", ".join(f"{k}={v}" for k, v in _rejected.items() if v > 0)
+            logger.info(
+                f"[Analyzer] Coherence: {len(tracks)} tracks rejected "
+                f"({reasons})"
+            )
 
     return kept
 
@@ -1464,6 +1477,139 @@ def _write_sidecar(result: AnalysisResult, path: Path):
     }
     with open(path, "w") as f:
         json.dump(data, f, indent=2)
+
+
+def composite_from_frames(
+    video_path: str,
+    frame_indices: List[int],
+    fps: float = 30.0,
+    disk_margin_pct: float = 0.12,
+    target: str = "sun",
+) -> dict:
+    """Build a composite image from user-selected video frames.
+
+    Instead of automatic blob detection, the user manually selects frames
+    that contain transit objects.  For each selected frame, the dark
+    silhouette (relative to a reference) is extracted and alpha-blended
+    onto a clean background.
+
+    Returns dict with keys: composite_image, error, frame_count.
+    """
+    path = Path(video_path)
+    if not path.exists():
+        return {"error": f"File not found: {video_path}", "composite_image": None}
+
+    is_moon = str(target).lower() == "moon"
+    cap = cv2.VideoCapture(str(path))
+    total = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+    w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+    h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+
+    if total == 0 or w == 0 or h == 0:
+        cap.release()
+        return {"error": "Could not read video", "composite_image": None}
+
+    # Validate frame indices
+    valid_frames = sorted(set(f for f in frame_indices if 0 <= f < total))
+    if not valid_frames:
+        cap.release()
+        return {"error": "No valid frame indices", "composite_image": None}
+
+    # Build reference from first N frames (avoiding selected frames if possible)
+    ref_count = min(90, total)
+    ref_stack = []
+    for i in range(ref_count):
+        ok, frm = cap.read()
+        if ok:
+            ref_stack.append(frm.astype(np.float32))
+    reference = np.median(np.stack(ref_stack), axis=0).astype(np.uint8)
+    ref_gray = cv2.cvtColor(reference, cv2.COLOR_BGR2GRAY)
+
+    # Detect disk
+    disk = _detect_disk(reference)
+    disk_cx = disk[0] if disk else w // 2
+    disk_cy = disk[1] if disk else h // 2
+    disk_r = disk[2] if disk else min(h, w) // 3
+
+    # Build disk mask (exclude limb)
+    inner_r = max(1, int(disk_r * (1.0 - disk_margin_pct)))
+    mask = np.zeros((h, w), dtype=np.uint8)
+    cv2.circle(mask, (disk_cx, disk_cy), inner_r, 255, -1)
+
+    # Use a clean reference frame as background (frame farthest from any selected frame)
+    bg_frame = reference.copy()
+
+    # Composite: overlay silhouettes from each selected frame
+    canvas = bg_frame.copy()
+    extracted = 0
+
+    for fi in valid_frames:
+        cap.set(cv2.CAP_PROP_POS_FRAMES, fi)
+        ok, frame = cap.read()
+        if not ok:
+            continue
+
+        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        # Extract darkened pixels (transit silhouette)
+        if is_moon:
+            diff = np.abs(ref_gray.astype(np.int16) - gray.astype(np.int16)).astype(
+                np.uint8
+            )
+        else:
+            diff = np.clip(
+                ref_gray.astype(np.int16) - gray.astype(np.int16), 0, 255
+            ).astype(np.uint8)
+
+        # Apply disk mask
+        diff = cv2.bitwise_and(diff, diff, mask=mask)
+
+        # Threshold to get silhouette
+        _, sil = cv2.threshold(diff, 10, 255, cv2.THRESH_BINARY)
+        # Cleanup
+        kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
+        sil = cv2.morphologyEx(sil, cv2.MORPH_OPEN, kernel)
+
+        if sil.sum() == 0:
+            continue
+
+        # Alpha-blend the source pixels where silhouette is detected
+        alpha = (sil.astype(np.float32) / 255.0)[:, :, np.newaxis]
+        canvas = (canvas * (1 - alpha) + frame * alpha).astype(np.uint8)
+        extracted += 1
+
+    cap.release()
+
+    # Draw disk outline and annotations
+    cv2.circle(canvas, (disk_cx, disk_cy), disk_r, (0, 180, 255), 1)
+    cv2.circle(canvas, (disk_cx, disk_cy), inner_r, (0, 255, 0), 1)
+
+    # Timestamp annotation
+    label = f"{extracted}/{len(valid_frames)} frames, manual composite"
+    cv2.putText(
+        canvas, label, (10, h - 15),
+        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (200, 200, 200), 1,
+    )
+
+    # Save
+    stem = path.stem.replace("analyzed_", "")
+    dst = path.with_name(f"composite_{stem}.jpg")
+    cv2.imwrite(str(dst), canvas, [cv2.IMWRITE_JPEG_QUALITY, 92])
+
+    # Relative path for frontend
+    rel = str(dst)
+    if "static/" in rel:
+        rel = rel[rel.index("static/") :]
+
+    logger.info(
+        f"[Analyzer] Manual composite: {extracted}/{len(valid_frames)} frames → {dst.name}"
+    )
+
+    return {
+        "composite_image": rel,
+        "frame_count": extracted,
+        "total_selected": len(valid_frames),
+        "error": None,
+    }
 
 
 # ── CLI entry point ──────────────────────────────────────────────────────────
