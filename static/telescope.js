@@ -2102,23 +2102,21 @@ function viewFile(path, name, opts) {
         const loopAttr = opts.loop ? ' loop' : '';
         body.innerHTML =
             `<div style="display:flex; flex-direction:column; width:100%; max-height:85vh; overflow-y:auto;">` +
-              `<div style="display:flex; min-height:0; gap:8px; padding:4px 8px; flex-shrink:0;">` +
-                `<div style="display:flex; flex-direction:column; align-items:center; min-width:0; flex:1;">` +
-                  `<video src="${path}" controls autoplay playsinline${loopAttr} style="max-width:100%; max-height:40vh; flex-shrink:1;"></video>` +
-                  `<div id="videoPreciseTime" class="video-precise-time">0.00 / 0.00</div>` +
-                `</div>` +
-                (companionHtml ? `<div style="display:flex; flex-direction:column; gap:6px; align-items:center; flex-shrink:0; justify-content:center;">${companionHtml}</div>` : '') +
+              `<div style="display:flex; flex-direction:column; align-items:center; padding:4px 8px; flex-shrink:0;">` +
+                `<video src="${path}" controls autoplay playsinline${loopAttr} style="max-width:100%; max-height:40vh;"></video>` +
+                `<div id="videoPreciseTime" class="video-precise-time">0.00 / 0.00</div>` +
               `</div>` +
+              (companionHtml ? `<div style="display:flex; gap:12px; justify-content:center; padding:4px 8px; border-top:1px solid #222; flex-shrink:0;">${companionHtml}</div>` : '') +
               `<div id="filmstripContainer" style="width:100%; border-top:1px solid #333; background:#0a0a0a; padding:4px 0; flex-shrink:0;">` +
                 `<div style="text-align:center; padding:6px;">` +
                   `<button class="btn-viewer" id="loadFilmstripBtn" onclick="_startFilmstrip()" title="Extract every frame for inspection">🎞️ Load Filmstrip (every frame)</button>` +
                 `</div>` +
               `</div>` +
-              `<div id="frameScrubber" style="width:100%; padding:6px 8px; background:#1a1a1a; border-top:1px solid #333; flex-shrink:0;">` +
+              `<div id="frameScrubber" style="width:100%; padding:8px 12px; background:#1a1a1a; border-top:1px solid #333; flex-shrink:0;">` +
                 `<div style="display:flex; align-items:center; gap:8px;">` +
                   `<span id="frameCounter" style="color:#0ff; font-family:monospace; font-size:0.85em; min-width:120px;">Frame 0 / 0</span>` +
                   `<input type="range" id="frameScrubSlider" min="0" max="100" value="0" step="1" ` +
-                    `style="flex:1; accent-color:#0ff; cursor:pointer;" title="Drag to scrub frames">` +
+                    `style="flex:1; min-width:200px; height:20px; accent-color:#0ff; cursor:pointer; -webkit-appearance:auto; appearance:auto;" title="Drag to scrub frames">` +
                   `<button id="markFrameBtn" class="btn-viewer" onclick="toggleMarkFrame()" ` +
                     `title="Mark/unmark this frame for composite (M key)" style="font-size:0.85em; padding:2px 8px;">📌 Mark</button>` +
                   `<span id="markedCount" style="color:#fd0; font-family:monospace; font-size:0.8em; min-width:70px;">0 marked</span>` +
