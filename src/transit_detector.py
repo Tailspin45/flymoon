@@ -981,41 +981,54 @@ class TransitDetector:
                     logger.warning("[Detector] No frames in buffer for recording")
                     return
 
-                # Decode first frame to get dimensions
-                arr = np.frombuffer(all_frames[0], dtype=np.uint8)
-                img = cv2.imdecode(arr, cv2.IMREAD_COLOR)
-                if img is None:
-                    logger.warning("[Detector] Failed to decode buffer frame")
-                    return
-                h, w = img.shape[:2]
                 fps = 30.0
+                written = len(all_frames)
 
-                # Write MP4
-                # avc1 (H.264) is natively supported on macOS via AVFoundation.
-                # mp4v (MPEG-4 Part 2) is NOT available in the default OpenCV
-                # build on macOS — VideoWriter silently fails to open and
-                # produces no file.
-                fourcc = cv2.VideoWriter_fourcc(*"avc1")
-                writer = cv2.VideoWriter(filepath, fourcc, fps, (w, h))
-                if not writer.isOpened():
+                # Pipe JPEG bytes as MJPEG directly into ffmpeg → H.264 MP4.
+                # This bypasses cv2.VideoWriter entirely, which on macOS uses
+                # AVFoundation and deadlocks when writer.release() is called
+                # from a background thread ("waiting to write video data").
+                # ffmpeg has no such threading restriction.
+                ffmpeg_cmd = [
+                    "ffmpeg", "-y",
+                    "-f", "mjpeg",
+                    "-r", str(fps),
+                    "-i", "pipe:0",
+                    "-c:v", "libx264",
+                    "-preset", "fast",
+                    "-crf", "23",
+                    "-pix_fmt", "yuv420p",
+                    "-movflags", "+faststart",
+                    filepath,
+                ]
+                proc = subprocess.Popen(
+                    ffmpeg_cmd,
+                    stdin=subprocess.PIPE,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                )
+                for jpeg_bytes in all_frames:
+                    try:
+                        proc.stdin.write(jpeg_bytes)
+                    except BrokenPipeError:
+                        break
+                proc.stdin.close()
+                try:
+                    proc.wait(timeout=30)
+                except subprocess.TimeoutExpired:
+                    proc.kill()
+                    logger.error("[Detector] ffmpeg encode timed out")
+                    return
+
+                if proc.returncode != 0:
                     logger.error(
-                        f"[Detector] VideoWriter failed to open {filepath} "
-                        f"(codec avc1 unavailable?). Dropping recording."
+                        f"[Detector] ffmpeg encode failed (rc={proc.returncode})"
                     )
                     return
-                written = 0
-                for jpeg_bytes in all_frames:
-                    arr = np.frombuffer(jpeg_bytes, dtype=np.uint8)
-                    img = cv2.imdecode(arr, cv2.IMREAD_COLOR)
-                    if img is not None:
-                        writer.write(img)
-                        written += 1
-                writer.release()
 
                 if not os.path.exists(filepath) or os.path.getsize(filepath) == 0:
                     logger.error(
-                        f"[Detector] Recording write appeared to succeed but "
-                        f"file is missing or empty: {filepath}"
+                        f"[Detector] Recording missing after encode: {filepath}"
                     )
                     return
 
