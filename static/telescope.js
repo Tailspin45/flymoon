@@ -2114,7 +2114,7 @@ function viewFile(path, name, opts) {
                   `<button class="btn-viewer" id="loadFilmstripBtn" onclick="_startFilmstrip()" title="Extract every frame for inspection">🎞️ Load Filmstrip (every frame)</button>` +
                 `</div>` +
               `</div>` +
-              `<div id="frameScrubber" style="display:none; width:100%; padding:6px 8px; background:#1a1a1a; border-top:1px solid #333; flex-shrink:0;">` +
+              `<div id="frameScrubber" style="width:100%; padding:6px 8px; background:#1a1a1a; border-top:1px solid #333; flex-shrink:0;">` +
                 `<div style="display:flex; align-items:center; gap:8px;">` +
                   `<span id="frameCounter" style="color:#0ff; font-family:monospace; font-size:0.85em; min-width:120px;">Frame 0 / 0</span>` +
                   `<input type="range" id="frameScrubSlider" min="0" max="0" value="0" step="1" ` +
@@ -2148,6 +2148,11 @@ function viewFile(path, name, opts) {
             updateTime();
             _initFrameScrubber(vid);
         });
+        // Fallback: if loadedmetadata already fired (cached video)
+        if (vid.readyState >= 1) {
+            updateTime();
+            _initFrameScrubber(vid);
+        }
     } else {
         const isDiff = name.includes('_diff');
         const isFrame = name.includes('_frame');
@@ -2264,7 +2269,6 @@ function _initFrameScrubber(vid) {
         vid.currentTime = frame / _videoFps;
     });
 
-    scrubber.style.display = 'block';
     _updateScrubPosition(vid);
 }
 
