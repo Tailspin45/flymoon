@@ -857,7 +857,7 @@ async function refreshFiles() {
     const files = result.files || [];
     
     // Store globally for modal
-    window.currentFiles = files.map(f => ({ path: f.url, name: f.name, thumbnail: f.thumbnail || null }));
+    window.currentFiles = files.map(f => ({ path: f.url, name: f.name, thumbnail: f.thumbnail || null, diff_heatmap: f.diff_heatmap || null, trigger_frame: f.trigger_frame || null }));
     
     // Update count badge
     if (fileCount) {
