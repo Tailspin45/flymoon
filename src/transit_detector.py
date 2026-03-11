@@ -991,8 +991,18 @@ class TransitDetector:
                 fps = 30.0
 
                 # Write MP4
-                fourcc = cv2.VideoWriter_fourcc(*"mp4v")
+                # avc1 (H.264) is natively supported on macOS via AVFoundation.
+                # mp4v (MPEG-4 Part 2) is NOT available in the default OpenCV
+                # build on macOS — VideoWriter silently fails to open and
+                # produces no file.
+                fourcc = cv2.VideoWriter_fourcc(*"avc1")
                 writer = cv2.VideoWriter(filepath, fourcc, fps, (w, h))
+                if not writer.isOpened():
+                    logger.error(
+                        f"[Detector] VideoWriter failed to open {filepath} "
+                        f"(codec avc1 unavailable?). Dropping recording."
+                    )
+                    return
                 written = 0
                 for jpeg_bytes in all_frames:
                     arr = np.frombuffer(jpeg_bytes, dtype=np.uint8)
@@ -1001,6 +1011,13 @@ class TransitDetector:
                         writer.write(img)
                         written += 1
                 writer.release()
+
+                if not os.path.exists(filepath) or os.path.getsize(filepath) == 0:
+                    logger.error(
+                        f"[Detector] Recording write appeared to succeed but "
+                        f"file is missing or empty: {filepath}"
+                    )
+                    return
 
                 logger.info(
                     f"[Detector] Recording saved: {written} frames "
