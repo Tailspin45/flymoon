@@ -2030,31 +2030,31 @@ var _markedFrames = new Set(); // frame indices marked for composite
 var _videoFps = 30; // detected fps of current video
 var _scrubSlider = null; // reference to the range input
 
-/** Build HTML strip showing diff heatmap and trigger frame below the video/image. */
+/** Build HTML strip showing diff heatmap and trigger frame beside the video. */
 function _buildCompanionStrip(fileInfo) {
     const parts = [];
     if (fileInfo.diff_heatmap) {
         parts.push(
             `<div style="text-align:center;">` +
-            `<div style="color:#f80; font-size:0.75em; margin-bottom:2px;">🔥 Diff Heatmap</div>` +
+            `<div style="color:#f80; font-size:0.7em; margin-bottom:2px;">🔥 Diff Heatmap</div>` +
             `<img src="${fileInfo.diff_heatmap}?t=${Date.now()}" alt="Diff heatmap" ` +
             `title="Diff heatmap — bright/warm pixels show motion between frames that triggered the detection." ` +
-            `style="max-height:180px; border:1px solid #444; border-radius:4px; cursor:pointer;" ` +
+            `style="max-height:140px; max-width:260px; border:1px solid #444; border-radius:4px; cursor:pointer;" ` +
             `onclick="window.open('${fileInfo.diff_heatmap}','_blank')">` +
             `</div>`);
     }
     if (fileInfo.trigger_frame) {
         parts.push(
             `<div style="text-align:center;">` +
-            `<div style="color:#0cf; font-size:0.75em; margin-bottom:2px;">📷 Trigger Frame</div>` +
+            `<div style="color:#0cf; font-size:0.7em; margin-bottom:2px;">📷 Trigger Frame</div>` +
             `<img src="${fileInfo.trigger_frame}?t=${Date.now()}" alt="Trigger frame" ` +
             `title="Trigger frame — low-res detection frame captured when motion was detected." ` +
-            `style="max-height:180px; border:1px solid #444; border-radius:4px; cursor:pointer;" ` +
+            `style="max-height:140px; max-width:260px; border:1px solid #444; border-radius:4px; cursor:pointer;" ` +
             `onclick="window.open('${fileInfo.trigger_frame}','_blank')">` +
             `</div>`);
     }
     if (parts.length === 0) return '';
-    return `<div style="display:flex; gap:12px; justify-content:center; padding:8px 0; border-top:1px solid #333; margin-top:4px;">${parts.join('')}</div>`;
+    return parts.join('');
 }
 
 function viewFile(path, name, opts) {
@@ -2083,6 +2083,8 @@ function viewFile(path, name, opts) {
     _loopSegment = null;
     _markedFrames = new Set();
     _scrubSlider = null;
+    _filmstripActive = false;
+    _filmstripHighlight = null;
     // Resolve companion images for this file
     const curFileInfo = files.find(f => f.path === path) || {};
     const companionHtml = _buildCompanionStrip(curFileInfo);
@@ -2090,21 +2092,28 @@ function viewFile(path, name, opts) {
     if (isVideo) {
         const loopAttr = opts.loop ? ' loop' : '';
         body.innerHTML =
-            `<div style="position:relative; display:flex; flex-direction:column; align-items:center; max-width:90vw; max-height:85vh; overflow-y:auto;">` +
-            `<video src="${path}" controls autoplay playsinline${loopAttr} style="max-width:90vw; max-height:60vh; flex-shrink:1;"></video>` +
-            `<div id="videoPreciseTime" class="video-precise-time">0.00 / 0.00</div>` +
-            `<div id="frameScrubber" style="display:none; width:100%; padding:6px 8px; background:#1a1a1a; border-top:1px solid #333;">` +
-              `<div style="display:flex; align-items:center; gap:8px;">` +
-                `<span id="frameCounter" style="color:#0ff; font-family:monospace; font-size:0.85em; min-width:120px;">Frame 0 / 0</span>` +
-                `<input type="range" id="frameScrubSlider" min="0" max="0" value="0" step="1" ` +
-                  `style="flex:1; accent-color:#0ff; cursor:pointer;" title="Drag to scrub frames">` +
-                `<button id="markFrameBtn" class="btn-viewer" onclick="toggleMarkFrame()" ` +
-                  `title="Mark/unmark this frame for composite (M key)" style="font-size:0.85em; padding:2px 8px;">📌 Mark</button>` +
-                `<span id="markedCount" style="color:#fd0; font-family:monospace; font-size:0.8em; min-width:70px;">0 marked</span>` +
+            `<div style="display:flex; flex-direction:column; width:100%; max-height:85vh; overflow:hidden;">` +
+              `<div style="display:flex; flex:1; min-height:0; gap:8px; padding:4px 8px;">` +
+                `<div style="flex:1; display:flex; flex-direction:column; align-items:center; min-width:0;">` +
+                  `<video src="${path}" controls autoplay playsinline${loopAttr} style="max-width:100%; max-height:55vh; flex-shrink:1;"></video>` +
+                  `<div id="videoPreciseTime" class="video-precise-time">0.00 / 0.00</div>` +
+                  `<div id="frameScrubber" style="display:none; width:100%; padding:6px 8px; background:#1a1a1a; border-top:1px solid #333;">` +
+                    `<div style="display:flex; align-items:center; gap:8px;">` +
+                      `<span id="frameCounter" style="color:#0ff; font-family:monospace; font-size:0.85em; min-width:120px;">Frame 0 / 0</span>` +
+                      `<input type="range" id="frameScrubSlider" min="0" max="0" value="0" step="1" ` +
+                        `style="flex:1; accent-color:#0ff; cursor:pointer;" title="Drag to scrub frames">` +
+                      `<button id="markFrameBtn" class="btn-viewer" onclick="toggleMarkFrame()" ` +
+                        `title="Mark/unmark this frame for composite (M key)" style="font-size:0.85em; padding:2px 8px;">📌 Mark</button>` +
+                      `<span id="markedCount" style="color:#fd0; font-family:monospace; font-size:0.8em; min-width:70px;">0 marked</span>` +
+                    `</div>` +
+                    `<div id="markedFrameBar" style="position:relative; width:100%; height:8px; background:#222; margin-top:4px; border-radius:4px; overflow:hidden;" title="Yellow ticks = marked frames"></div>` +
+                  `</div>` +
+                `</div>` +
+                (companionHtml ? `<div style="display:flex; flex-direction:column; gap:6px; align-items:center; flex-shrink:0; max-width:280px;">${companionHtml}</div>` : '') +
               `</div>` +
-              `<div id="markedFrameBar" style="position:relative; width:100%; height:8px; background:#222; margin-top:4px; border-radius:4px; overflow:hidden;" title="Yellow ticks = marked frames"></div>` +
-            `</div>` +
-            companionHtml +
+              `<div id="filmstripContainer" style="width:100%; border-top:1px solid #333; background:#0a0a0a; padding:4px 0; flex-shrink:0;">` +
+                `<div style="color:#888; font-size:0.75em; text-align:center; padding:2px;">Loading filmstrip…</div>` +
+              `</div>` +
             `</div>`;
         const vid = body.querySelector('video');
         const timeEl = document.getElementById('videoPreciseTime');
@@ -2184,6 +2193,8 @@ function closeFileViewer() {
     _loopSegment = null;
     _markedFrames = new Set();
     _scrubSlider = null;
+    _filmstripActive = false;
+    _filmstripHighlight = null;
 
     // Restore the files grid modal if it was open before the viewer
     if (viewer._filesModalWasOpen) {
@@ -2241,6 +2252,123 @@ function _initFrameScrubber(vid) {
 
     scrubber.style.display = 'block';
     _updateScrubPosition(vid);
+    _buildFilmstrip(vid);
+}
+
+var _filmstripActive = false; // prevent concurrent filmstrip builds
+var _filmstripHighlight = null; // currently highlighted thumb element
+
+/**
+ * Extract frame thumbnails from video and render as a scrollable filmstrip.
+ * Samples every Nth frame to keep thumbnail count manageable (max ~120).
+ */
+function _buildFilmstrip(vid) {
+    const container = document.getElementById('filmstripContainer');
+    if (!container || !vid.duration || _filmstripActive) return;
+    _filmstripActive = true;
+
+    const fps = _videoFps;
+    const totalFrames = Math.round(vid.duration * fps);
+    // Target ~100 thumbnails; step by at least 1 frame
+    const step = Math.max(1, Math.round(totalFrames / 100));
+    const thumbH = 64;
+    // Aspect ratio from video dimensions (fallback 16:9)
+    const aspect = (vid.videoWidth && vid.videoHeight) ? vid.videoWidth / vid.videoHeight : 16 / 9;
+    const thumbW = Math.round(thumbH * aspect);
+
+    const canvas = document.createElement('canvas');
+    canvas.width = thumbW;
+    canvas.height = thumbH;
+    const ctx = canvas.getContext('2d', { willReadFrequently: true });
+
+    const frames = []; // { frameIdx, time }
+    for (let f = 0; f < totalFrames; f += step) {
+        frames.push({ frameIdx: f, time: f / fps });
+    }
+
+    // Build scrollable strip
+    container.innerHTML =
+        `<div id="filmstripStrip" style="display:flex; overflow-x:auto; overflow-y:hidden; gap:1px; padding:2px 4px; height:${thumbH + 16}px; align-items:end; cursor:pointer; scroll-behavior:smooth;">` +
+        `</div>` +
+        `<div style="color:#666; font-size:0.65em; text-align:center; padding:1px 0;">` +
+        `Click frame to seek · Scroll to browse · ${frames.length} frames sampled (every ${step})` +
+        `</div>`;
+    const strip = document.getElementById('filmstripStrip');
+
+    // Save original video time to restore after extraction
+    const origTime = vid.currentTime;
+    const origPaused = vid.paused;
+    vid.pause();
+
+    let idx = 0;
+
+    function extractNext() {
+        if (idx >= frames.length) {
+            // Done — restore video position
+            vid.currentTime = origTime;
+            if (!origPaused) vid.play();
+            _filmstripActive = false;
+            _highlightFilmstripFrame(vid);
+            return;
+        }
+        const info = frames[idx];
+        vid.currentTime = info.time;
+        // Wait for seek to complete, then grab frame
+        vid.onseeked = function () {
+            vid.onseeked = null;
+            ctx.drawImage(vid, 0, 0, thumbW, thumbH);
+            const dataUrl = canvas.toDataURL('image/jpeg', 0.6);
+
+            const thumb = document.createElement('div');
+            thumb.dataset.frameIdx = info.frameIdx;
+            thumb.dataset.time = info.time;
+            thumb.style.cssText = `flex-shrink:0; width:${thumbW}px; height:${thumbH}px; position:relative; border:2px solid transparent; border-radius:2px; transition:border-color 0.15s;`;
+            thumb.innerHTML =
+                `<img src="${dataUrl}" width="${thumbW}" height="${thumbH}" style="display:block; border-radius:2px;" draggable="false">` +
+                `<div style="position:absolute; bottom:0; left:0; right:0; background:rgba(0,0,0,0.7); color:#aaa; font-size:0.55em; text-align:center; line-height:1.3; padding:1px 0;">` +
+                `#${info.frameIdx}` +
+                `</div>`;
+
+            thumb.addEventListener('click', () => {
+                vid.currentTime = info.time;
+                vid.pause();
+            });
+
+            strip.appendChild(thumb);
+            idx++;
+            // Use requestAnimationFrame to keep UI responsive
+            requestAnimationFrame(extractNext);
+        };
+    }
+
+    extractNext();
+
+    // Sync filmstrip highlight on timeupdate
+    vid.addEventListener('timeupdate', () => _highlightFilmstripFrame(vid));
+}
+
+/** Highlight the filmstrip thumbnail closest to current video time. */
+function _highlightFilmstripFrame(vid) {
+    const strip = document.getElementById('filmstripStrip');
+    if (!strip || !vid) return;
+    const curFrame = Math.round((vid.currentTime || 0) * _videoFps);
+    const thumbs = strip.children;
+    let best = null, bestDist = Infinity;
+    for (const t of thumbs) {
+        const fi = parseInt(t.dataset.frameIdx, 10);
+        const d = Math.abs(fi - curFrame);
+        if (d < bestDist) { bestDist = d; best = t; }
+    }
+    // Remove old highlight
+    if (_filmstripHighlight && _filmstripHighlight !== best) {
+        _filmstripHighlight.style.borderColor = 'transparent';
+    }
+    if (best) {
+        best.style.borderColor = '#0ff';
+        _filmstripHighlight = best;
+        // Scroll into view if needed
+        best.scrollIntoView({ block: 'nearest', inline: 'center', behavior: 'smooth' });
+    }
 }
 
 function _updateScrubPosition(vid) {
