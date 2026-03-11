@@ -393,7 +393,7 @@ def check_transit(
 
         # Early exit: if diff has been consistently increasing for ~3 min, skip rest
         if no_decreasing_count >= _no_decrease_limit:
-            logger.info(f"diff is increasing, stop checking, min={round(minute, 2)}")
+            logger.debug(f"diff is increasing, stop checking, min={round(minute, 2)}")
             break
 
         if diff_combined < min_diff_combined:
@@ -531,7 +531,7 @@ def get_transits(
     alt_threshold = float(alt_threshold)
     az_threshold = float(az_threshold)
 
-    logger.info(f"{latitude=}, {longitude=}, {elevation=}")
+    logger.debug(f"{latitude=}, {longitude=}, {elevation=}")
 
     MY_POSITION = get_my_pos(
         lat=latitude,
@@ -543,7 +543,7 @@ def get_transits(
     window_time = np.linspace(
         0, TOP_MINUTE, TOP_MINUTE * (NUM_SECONDS_PER_MIN // INTERVAL_IN_SECS)
     )
-    logger.info(f"number of times to check for each flight: {len(window_time)}")
+    logger.debug(f"number of times to check for each flight: {len(window_time)}")
     # Get the local timezone using tzlocal
     local_timezone = get_localzone_name()
     naive_datetime_now = datetime.now()
@@ -554,7 +554,7 @@ def get_transits(
     celestial_obj.update_position(ref_datetime=ref_datetime)
     current_target_coordinates = celestial_obj.get_coordinates()
 
-    logger.info(celestial_obj.__str__())
+    logger.debug(celestial_obj.__str__())
 
     data = list()
 
@@ -578,7 +578,7 @@ def get_transits(
             target_alt_deg=t_alt,
             target_az_deg=t_az,
         )
-        logger.info(
+        logger.debug(
             f"[Bbox] Dynamic corridor: "
             f"({bbox.lat_lower_left:.2f},{bbox.long_lower_left:.2f}) → "
             f"({bbox.lat_upper_right:.2f},{bbox.long_upper_right:.2f})"
@@ -784,7 +784,6 @@ def get_transits(
                 result = future.result()
                 if result is not None:
                     data.append(result)
-                    logger.info(result)
 
         # Add aircraft excluded by pre-filter as position-only rows (no transit analysis)
         for f in excluded:

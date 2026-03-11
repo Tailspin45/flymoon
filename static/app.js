@@ -502,10 +502,11 @@ function renderRichFlightRow(item, bodyTable) {
     const skyCell = document.createElement('td');
     skyCell.style.whiteSpace = 'nowrap';
     if (item.alt_diff != null && item.az_diff != null) {
-        const ad = Math.round(item.alt_diff), azd = Math.round(item.az_diff);
-        const altAbs = Math.abs(item.alt_diff), azAbs = Math.abs(item.az_diff);
-        const c = (altAbs <= 1.5 && azAbs <= 1.5) ? '#4caf50' : (altAbs <= 2.5 && azAbs <= 2.5) ? '#ff9800' : '#888';
-        skyCell.innerHTML = `<span style="color:${c}">↕${ad}° ↔${azd}°</span>`;
+        const ad = item.alt_diff.toFixed(1), azd = item.az_diff.toFixed(1);
+        const sep = item.angular_separation;
+        // Color by angular separation: HIGH ≤2°, MEDIUM ≤4°
+        const c = (sep != null && sep <= 2.0) ? '#4caf50' : (sep != null && sep <= 4.0) ? '#ff9800' : '#888';
+        skyCell.innerHTML = `<span style="color:${c}" title="Δalt ${ad}°, Δaz ${azd}°${sep != null ? ', sep ' + sep.toFixed(1) + '°' : ''}">↕${ad}° ↔${azd}°</span>`;
     } else {
         skyCell.innerHTML = '<span style="color:#444">—</span>';
     }
@@ -797,12 +798,12 @@ function updateFlightTableFull(flights) {
             cells[8].textContent = flight.plane_az.toFixed(1) + "º";
         }
         if (flight.alt_diff !== null && cells[9]) {
-            cells[9].textContent = Math.round(flight.alt_diff) + "º";
-            cells[9].style.color = Math.abs(Math.round(flight.alt_diff)) >= 3 ? "#888" : "";
+            cells[9].textContent = flight.alt_diff.toFixed(1) + "º";
+            cells[9].style.color = Math.abs(flight.alt_diff) >= 5 ? "#888" : "";
         }
         if (flight.az_diff !== null && cells[10]) {
-            cells[10].textContent = Math.round(flight.az_diff) + "º";
-            cells[10].style.color = Math.abs(Math.round(flight.az_diff)) >= 3 ? "#888" : "";
+            cells[10].textContent = flight.az_diff.toFixed(1) + "º";
+            cells[10].style.color = Math.abs(flight.az_diff) >= 5 ? "#888" : "";
         }
         if (flight.distance_nm !== null && cells[14]) {
             const km = (flight.distance_nm * 1.852).toFixed(1);
@@ -2199,8 +2200,8 @@ function fetchFlights() {
                 } else if (column === "alt_diff" || column === "az_diff") {
                     const displayValue = value.toFixed(1);
                     val.textContent = displayValue + "º";
-                    // Grey if >= 3°
-                    if (Math.abs(value) >= 3) {
+                    // Grey if >= 5°
+                    if (Math.abs(value) >= 5) {
                         val.style.color = "#888";
                     }
                 } else if (column === "target_alt" || column === "target_az") {
