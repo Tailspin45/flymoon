@@ -1,6 +1,6 @@
 import logging
 import sys
 
-# INFO shows transit detection pipeline details; change to WARNING for quiet mode
-logging.basicConfig(stream=sys.stdout, level=logging.INFO)
+# WARNING = quiet terminal; INFO = transit pipeline details; DEBUG = verbose
+logging.basicConfig(stream=sys.stdout, level=logging.WARNING)
 logger = logging.getLogger(name="app")
