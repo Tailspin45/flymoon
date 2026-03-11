@@ -759,11 +759,18 @@ class TransitDetector:
     # FlightAware enrichment
     # ------------------------------------------------------------------
 
+    # Shared enrichment cache: avoid hitting FA for every false-positive detection.
+    # Stores (timestamp, parsed_flights) from the most recent bbox query.
+    _enrich_cache: Optional[tuple] = None
+    _enrich_cache_ttl: float = 120.0  # reuse flight list for 2 minutes
+
     def _enrich_event(self, event: DetectionEvent) -> None:
         """
-        Query FlightAware for flights overhead at detection time.
+        Identify what aircraft was overhead at detection time.
 
-        Runs in a background thread so it doesn't block detection.
+        Prefers OpenSky (free) over FlightAware (paid).  Caches the result
+        for _enrich_cache_ttl seconds so bursts of false-positive detections
+        don't each trigger a separate API call.
         """
         try:
             lat = float(os.getenv("OBSERVER_LATITUDE", "0"))
@@ -771,28 +778,29 @@ class TransitDetector:
             if lat == 0 and lon == 0:
                 return
 
-            # Use the bounding box from env
             lat_ll = float(os.getenv("LAT_LOWER_LEFT", str(lat - 1)))
             lon_ll = float(os.getenv("LONG_LOWER_LEFT", str(lon - 1)))
             lat_ur = float(os.getenv("LAT_UPPER_RIGHT", str(lat + 1)))
             lon_ur = float(os.getenv("LONG_UPPER_RIGHT", str(lon + 1)))
 
-            from src.constants import API_URL, get_aeroapi_key
-            from src.flight_data import get_flight_data, parse_fligh_data
-            from src.position import AreaBoundingBox
+            now = time.time()
 
-            api_key = get_aeroapi_key()
-            if not api_key:
-                return
-
-            bbox = AreaBoundingBox(
-                lat_lower_left=lat_ll,
-                long_lower_left=lon_ll,
-                lat_upper_right=lat_ur,
-                long_upper_right=lon_ur,
-            )
-            raw = get_flight_data(bbox, API_URL, api_key)
-            flights = [parse_fligh_data(f) for f in raw.get("flights", [])]
+            # ── Try cached flight list first ──
+            if (
+                TransitDetector._enrich_cache
+                and (now - TransitDetector._enrich_cache[0]) < self._enrich_cache_ttl
+            ):
+                flights = TransitDetector._enrich_cache[1]
+                logger.debug(
+                    f"[Detector] enrich: reusing cached flight list "
+                    f"({len(flights)} aircraft, age {now - TransitDetector._enrich_cache[0]:.0f}s)"
+                )
+            else:
+                # ── Prefer OpenSky (free) for enrichment ──
+                flights = self._fetch_flights_for_enrichment(
+                    lat_ll, lon_ll, lat_ur, lon_ur
+                )
+                TransitDetector._enrich_cache = (now, flights)
 
             if flights:
                 # Find the flight closest to the observer's target line-of-sight
@@ -843,17 +851,9 @@ class TransitDetector:
                                 my_pos,
                                 tz_aware_dt,
                             )
-                            alt_diff = abs(f_alt - target_alt)
-                            az_diff = abs(f_az - target_az)
-                            if az_diff > 180:
-                                az_diff = 360 - az_diff
-                            # Cosine-weighted separation
-                            import math
+                            from src.transit import angular_separation
 
-                            sep = math.sqrt(
-                                alt_diff**2
-                                + (az_diff * math.cos(math.radians(target_alt))) ** 2
-                            )
+                            sep = angular_separation(target_alt, target_az, f_alt, f_az)
                             if sep < best_sep:
                                 best_sep = sep
                                 best = {
@@ -877,6 +877,72 @@ class TransitDetector:
 
         except Exception as e:
             logger.warning(f"[Detector] Enrichment failed: {e}")
+
+    @staticmethod
+    def _fetch_flights_for_enrichment(
+        lat_ll: float, lon_ll: float, lat_ur: float, lon_ur: float
+    ) -> list:
+        """Fetch aircraft list for enrichment — prefers OpenSky (free) over FA (paid)."""
+        # 1) Try OpenSky first (free, ~60s cache built-in)
+        try:
+            from src.opensky import fetch_opensky_positions
+
+            os_data = fetch_opensky_positions(lat_ll, lon_ll, lat_ur, lon_ur)
+            if os_data:
+                flights = []
+                for callsign, pos in os_data.items():
+                    if pos.get("on_ground"):
+                        continue
+                    lat, lon = pos.get("lat"), pos.get("lon")
+                    if lat is None or lon is None:
+                        continue
+                    flights.append(
+                        {
+                            "name": callsign.strip(),
+                            "latitude": lat,
+                            "longitude": lon,
+                            "elevation": pos.get("alt", 10000) or 10000,
+                            "elevation_feet": int(
+                                (pos.get("alt", 10000) or 10000) / 0.3048
+                            ),
+                            "aircraft_type": "",
+                            "origin": "",
+                            "destination": "",
+                        }
+                    )
+                if flights:
+                    logger.info(
+                        f"[Detector] enrich: got {len(flights)} aircraft from OpenSky (free)"
+                    )
+                    return flights
+        except Exception as exc:
+            logger.debug(f"[Detector] OpenSky enrichment failed: {exc}")
+
+        # 2) Fall back to FlightAware only if OpenSky returned nothing
+        try:
+            from src.constants import API_URL, get_aeroapi_key
+            from src.flight_data import get_flight_data, parse_fligh_data
+            from src.position import AreaBoundingBox
+
+            api_key = get_aeroapi_key()
+            if not api_key:
+                return []
+
+            bbox = AreaBoundingBox(
+                lat_lower_left=lat_ll,
+                long_lower_left=lon_ll,
+                lat_upper_right=lat_ur,
+                long_upper_right=lon_ur,
+            )
+            raw = get_flight_data(bbox, API_URL, api_key)
+            flights = [parse_fligh_data(f) for f in raw.get("flights", [])]
+            logger.info(
+                f"[Detector] enrich: got {len(flights)} aircraft from FA (OpenSky unavailable)"
+            )
+            return flights
+        except Exception as exc:
+            logger.warning(f"[Detector] FA enrichment fallback failed: {exc}")
+            return []
 
     # ------------------------------------------------------------------
     # Status emission
