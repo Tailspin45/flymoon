@@ -1726,10 +1726,11 @@ function gridSelectNone() {
     _syncGridSelectionUI();
 }
 
-async function gridDeleteSelected() {
+async function gridDeleteSelected(e) {
     const paths = [...gridSelection.selected];
     const n = paths.length;
     if (n === 0) return;
+    const skipConfirm = e && (e.metaKey || e.ctrlKey);
     const favs = getFavorites();
     const protected_ = paths.filter(p => favs.has(p));
     const deletable = paths.filter(p => !favs.has(p));
@@ -1737,10 +1738,12 @@ async function gridDeleteSelected() {
         showStatus(`${protected_.length} file${protected_.length > 1 ? 's are' : ' is'} favorited — remove ❤️ first`, 'warning', 4000);
         return;
     }
-    const msg = protected_.length > 0
-        ? `Delete ${deletable.length} file${deletable.length > 1 ? 's' : ''}? (${protected_.length} favorited file${protected_.length > 1 ? 's' : ''} will be skipped)`
-        : `Delete ${deletable.length} file${deletable.length > 1 ? 's' : ''}?`;
-    if (!confirm(msg)) return;
+    if (!skipConfirm) {
+        const msg = protected_.length > 0
+            ? `Delete ${deletable.length} file${deletable.length > 1 ? 's' : ''}? (${protected_.length} favorited file${protected_.length > 1 ? 's' : ''} will be skipped)`
+            : `Delete ${deletable.length} file${deletable.length > 1 ? 's' : ''}?`;
+        if (!confirm(msg)) return;
+    }
     let deleted = 0;
     for (const filePath of deletable) {
         try {
