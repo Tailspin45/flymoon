@@ -19,6 +19,7 @@ import time
 from datetime import datetime
 from typing import Any, Callable, Deque, Dict, List, Optional
 
+import cv2
 import numpy as np
 
 from src import logger
@@ -35,14 +36,31 @@ FRAME_BYTES = ANALYSIS_WIDTH * ANALYSIS_HEIGHT * 3  # RGB24
 HISTORY_SECONDS = 20
 HISTORY_SIZE = ANALYSIS_FPS * HISTORY_SECONDS  # ~300 frames
 
-# Reference frame update interval (frames)
-REF_UPDATE_INTERVAL = ANALYSIS_FPS * 10  # every 10 s
-
-# Cooldown between detections (seconds)
-DETECTION_COOLDOWN = 30
+# Cooldown between detections (seconds) — configurable via DETECTION_COOLDOWN env var
+DETECTION_COOLDOWN = int(os.getenv("DETECTION_COOLDOWN", "30"))
 
 # Recording duration when transit detected (seconds)
 DETECTION_RECORD_DURATION = 10
+
+# --- Phase 1 algorithm parameters ---
+# Consecutive frames both signals must exceed threshold before firing.
+# At 15 fps, 5 frames ≈ 333 ms — filters insects (<100 ms) while catching
+# aircraft transits (0.5–2 s).  Configurable via CONSEC_FRAMES_REQUIRED env var.
+CONSEC_FRAMES_REQUIRED = int(os.getenv("CONSEC_FRAMES_REQUIRED", "5"))
+
+# EMA blending factor for reference frame (0 = never update, 1 = full replace)
+EMA_ALPHA = 0.02
+
+# Freeze reference updates for this many frames after a detection
+REF_FREEZE_FRAMES = ANALYSIS_FPS * 5  # 5 seconds
+
+# Minimum centre-to-edge signal ratio to accept detection — configurable via env
+CENTRE_EDGE_RATIO_MIN = float(os.getenv("CENTRE_EDGE_RATIO_MIN", "1.5"))
+
+# Signal trace logging (1fps = every ANALYSIS_FPS frames)
+SIGNAL_TRACE_INTERVAL = ANALYSIS_FPS
+SIGNAL_TRACE_SECONDS = 60
+SIGNAL_TRACE_SIZE = SIGNAL_TRACE_SECONDS  # 1 entry per second
 
 
 def _build_centre_weight(h: int, w: int) -> np.ndarray:
@@ -57,6 +75,19 @@ def _build_centre_weight(h: int, w: int) -> np.ndarray:
 CENTRE_WEIGHT = _build_centre_weight(ANALYSIS_HEIGHT, ANALYSIS_WIDTH)
 
 
+def _build_spatial_masks(h: int, w: int) -> tuple:
+    """Build boolean masks for centre 50% and outer edge of frame."""
+    centre = np.zeros((h, w), dtype=bool)
+    y1, y2 = h // 4, h * 3 // 4
+    x1, x2 = w // 4, w * 3 // 4
+    centre[y1:y2, x1:x2] = True
+    edge = ~centre
+    return centre, edge
+
+
+CENTRE_MASK, EDGE_MASK = _build_spatial_masks(ANALYSIS_HEIGHT, ANALYSIS_WIDTH)
+
+
 class DetectionEvent:
     """A single transit detection event."""
 
@@ -69,6 +100,11 @@ class DetectionEvent:
         "recording_file",
         "flight_info",
         "frame_idx",
+        "confidence",
+        "centre_ratio",
+        "frame_path",
+        "diff_path",
+        "signal_trace",
     )
 
     def __init__(
@@ -79,6 +115,8 @@ class DetectionEvent:
         threshold_a: float,
         threshold_b: float,
         frame_idx: int,
+        confidence: str = "weak",
+        centre_ratio: float = 0.0,
     ):
         self.timestamp = timestamp
         self.signal_a = signal_a
@@ -86,11 +124,16 @@ class DetectionEvent:
         self.threshold_a = threshold_a
         self.threshold_b = threshold_b
         self.frame_idx = frame_idx
+        self.confidence = confidence
+        self.centre_ratio = centre_ratio
         self.recording_file: Optional[str] = None
         self.flight_info: Optional[Dict] = None
+        self.frame_path: Optional[str] = None
+        self.diff_path: Optional[str] = None
+        self.signal_trace: Optional[List[Dict]] = None
 
     def to_dict(self) -> Dict[str, Any]:
-        return {
+        d: Dict[str, Any] = {
             "timestamp": self.timestamp.isoformat(),
             "signal_a": round(self.signal_a, 4),
             "signal_b": round(self.signal_b, 4),
@@ -99,7 +142,16 @@ class DetectionEvent:
             "frame_idx": self.frame_idx,
             "recording_file": self.recording_file,
             "flight_info": self.flight_info,
+            "confidence": self.confidence,
+            "centre_ratio": round(self.centre_ratio, 2),
         }
+        if self.frame_path:
+            d["frame_path"] = self.frame_path
+        if self.diff_path:
+            d["diff_path"] = self.diff_path
+        if self.signal_trace:
+            d["signal_trace"] = self.signal_trace
+        return d
 
 
 class TransitDetector:
@@ -137,7 +189,14 @@ class TransitDetector:
         self._prev_frame: Optional[np.ndarray] = None
         self._ref_frame: Optional[np.ndarray] = None
         self._frame_idx = 0
-        self._ref_countdown = 0  # frames until next ref update
+        self._current_frame: Optional[np.ndarray] = None
+        self._current_diff_b: Optional[np.ndarray] = None
+
+        # Consecutive-frame confirmation counter
+        self._consec_above = 0
+
+        # Freeze reference updates after detection
+        self._ref_freeze_until = 0
 
         # Adaptive threshold history
         self._scores_a: Deque[float] = collections.deque(maxlen=HISTORY_SIZE)
@@ -154,6 +213,9 @@ class TransitDetector:
         # Event log (last N events)
         self.events: List[DetectionEvent] = []
         self._max_events = 100
+
+        # Signal trace ring buffer (1fps, last 60s)
+        self._signal_trace: Deque[Dict] = collections.deque(maxlen=SIGNAL_TRACE_SIZE)
 
         # Active recording process (for auto-record on detection)
         self._rec_process: Optional[subprocess.Popen] = None
@@ -179,9 +241,13 @@ class TransitDetector:
         self._frame_idx = 0
         self._prev_frame = None
         self._ref_frame = None
-        self._ref_countdown = 0
+        self._current_frame = None
+        self._current_diff_b = None
+        self._consec_above = 0
+        self._ref_freeze_until = 0
         self._scores_a.clear()
         self._scores_b.clear()
+        self._signal_trace.clear()
 
         self._thread = threading.Thread(
             target=self._reader_loop, name="transit-detector", daemon=True
@@ -322,40 +388,62 @@ class TransitDetector:
 
         Computes signal A (consecutive diff) and signal B (reference diff).
         Both use mean-subtraction for scintillation immunity.
-        Checks adaptive threshold and fires detection if exceeded.
+        Requires both signals above adaptive threshold for CONSEC_FRAMES_REQUIRED
+        consecutive frames, with spatial concentration check, before firing.
         """
+        self._current_frame = frame
+
         # --- Signal A: consecutive-frame diff ---
         score_a = 0.0
         if self._prev_frame is not None:
             diff_a = frame - self._prev_frame
-            # Subtract per-channel mean (scintillation immunity)
             mean_shift = diff_a.mean(axis=(0, 1), keepdims=True)
             diff_a -= mean_shift
             score_a = float(np.abs(diff_a).mean())
 
-        # --- Reference frame management ---
+        # --- EMA reference blending (replaces hard swap) ---
         if self._ref_frame is None:
             self._ref_frame = frame.copy()
-            self._ref_countdown = REF_UPDATE_INTERVAL
-        else:
-            self._ref_countdown -= 1
-            if self._ref_countdown <= 0:
-                self._ref_frame = frame.copy()
-                self._ref_countdown = REF_UPDATE_INTERVAL
+        elif self._frame_idx > self._ref_freeze_until:
+            self._ref_frame = (1 - EMA_ALPHA) * self._ref_frame + EMA_ALPHA * frame
 
         # --- Signal B: centre-weighted reference diff ---
         diff_b = frame - self._ref_frame
         mean_shift_b = diff_b.mean(axis=(0, 1), keepdims=True)
         diff_b -= mean_shift_b
-        # Apply centre weight (broadcast over channels)
+        self._current_diff_b = diff_b
         weighted = np.abs(diff_b) * CENTRE_WEIGHT[:, :, np.newaxis]
         score_b = float(weighted.mean())
+
+        # --- Spatial concentration: centre vs edge ---
+        abs_diff_gray = np.abs(diff_b).mean(axis=2)  # H×W
+        centre_score = float(abs_diff_gray[CENTRE_MASK].mean())
+        edge_score = float(abs_diff_gray[EDGE_MASK].mean())
+        centre_ratio = centre_score / max(edge_score, 0.001)
 
         self._prev_frame = frame.copy()
 
         # --- Store scores ---
         self._scores_a.append(score_a)
         self._scores_b.append(score_b)
+
+        # --- Signal trace (1fps) ---
+        if self._frame_idx % SIGNAL_TRACE_INTERVAL == 0:
+            if len(self._scores_a) >= ANALYSIS_FPS * 3:
+                t_a = self._adaptive_threshold(self._scores_a) * self.sensitivity_scale
+                t_b = self._adaptive_threshold(self._scores_b) * self.sensitivity_scale
+            else:
+                t_a = t_b = 0.0
+            self._signal_trace.append(
+                {
+                    "t": round(time.time(), 3),
+                    "a": round(score_a, 5),
+                    "b": round(score_b, 5),
+                    "ta": round(t_a, 5),
+                    "tb": round(t_b, 5),
+                    "cr": round(centre_ratio, 2),
+                }
+            )
 
         # Need enough history for adaptive threshold
         if len(self._scores_a) < ANALYSIS_FPS * 3:  # ~3 seconds warmup
@@ -365,14 +453,25 @@ class TransitDetector:
         thresh_a = self._adaptive_threshold(self._scores_a) * self.sensitivity_scale
         thresh_b = self._adaptive_threshold(self._scores_b) * self.sensitivity_scale
 
-        # --- Detection check ---
-        triggered = (score_a > thresh_a) and (score_b > thresh_b)
+        # --- Consecutive-frame confirmation ---
+        triggered = (
+            score_a > thresh_a
+            and score_b > thresh_b
+            and centre_ratio >= CENTRE_EDGE_RATIO_MIN
+        )
 
         if triggered:
+            self._consec_above += 1
+        else:
+            self._consec_above = 0
+
+        if self._consec_above == CONSEC_FRAMES_REQUIRED:
             now = time.time()
             if now - self._last_detection_time >= DETECTION_COOLDOWN:
                 self._last_detection_time = now
-                self._fire_detection(score_a, score_b, thresh_a, thresh_b)
+                # Freeze reference to prevent transit frames corrupting baseline
+                self._ref_freeze_until = self._frame_idx + REF_FREEZE_FRAMES
+                self._fire_detection(score_a, score_b, thresh_a, thresh_b, centre_ratio)
 
     @staticmethod
     def _adaptive_threshold(scores: Deque[float]) -> float:
@@ -391,11 +490,20 @@ class TransitDetector:
     # ------------------------------------------------------------------
 
     def _fire_detection(
-        self, score_a: float, score_b: float, thresh_a: float, thresh_b: float
+        self,
+        score_a: float,
+        score_b: float,
+        thresh_a: float,
+        thresh_b: float,
+        centre_ratio: float,
     ) -> None:
         """Handle a confirmed transit detection."""
         self._detection_count += 1
         ts = datetime.now()
+
+        # Confidence based on signal-to-threshold ratio
+        sig_ratio = min(score_a / max(thresh_a, 0.001), score_b / max(thresh_b, 0.001))
+        confidence = "strong" if sig_ratio > 2.0 else "weak"
 
         event = DetectionEvent(
             timestamp=ts,
@@ -404,12 +512,23 @@ class TransitDetector:
             threshold_a=thresh_a,
             threshold_b=thresh_b,
             frame_idx=self._frame_idx,
+            confidence=confidence,
+            centre_ratio=centre_ratio,
         )
 
         logger.info(
-            f"[Detector] 🎯 TRANSIT DETECTED at {ts.strftime('%H:%M:%S')} "
-            f"(A={score_a:.4f}/{thresh_a:.4f}, B={score_b:.4f}/{thresh_b:.4f})"
+            f"[Detector] 🎯 TRANSIT DETECTED at {ts.strftime('%H:%M:%S.%f')[:-3]} "
+            f"[{confidence}] "
+            f"(A={score_a:.4f}/{thresh_a:.4f}, B={score_b:.4f}/{thresh_b:.4f}, "
+            f"CR={centre_ratio:.2f}, "
+            f"consec={CONSEC_FRAMES_REQUIRED}f/{CONSEC_FRAMES_REQUIRED/ANALYSIS_FPS:.0f}ms)"
         )
+
+        # Save diagnostic frames
+        self._save_diagnostic_frames(event, ts)
+
+        # Snapshot signal trace
+        event.signal_trace = list(self._signal_trace)
 
         # Auto-record
         if self.record_on_detect:
@@ -434,6 +553,39 @@ class TransitDetector:
                 logger.error(f"[Detector] on_detection callback error: {e}")
 
         self._emit_status("transit_detected")
+
+    def _save_diagnostic_frames(self, event: DetectionEvent, ts: datetime) -> None:
+        """Save trigger frame and diff heatmap as diagnostic JPGs."""
+        if self._current_frame is None:
+            return
+        try:
+            year_month = os.path.join(self.capture_dir, str(ts.year), f"{ts.month:02d}")
+            os.makedirs(year_month, exist_ok=True)
+            base = f"det_{ts.strftime('%Y%m%d_%H%M%S')}"
+
+            # Raw trigger frame
+            frame_file = os.path.join(year_month, f"{base}_frame.jpg")
+            rgb = np.clip(self._current_frame, 0, 255).astype(np.uint8)
+            bgr = cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR)
+            cv2.imwrite(frame_file, bgr)
+            event.frame_path = frame_file
+
+            # Diff heatmap
+            if self._current_diff_b is not None:
+                diff_file = os.path.join(year_month, f"{base}_diff.jpg")
+                diff_gray = np.abs(self._current_diff_b).mean(axis=2)
+                mx = diff_gray.max()
+                if mx > 0:
+                    diff_norm = np.clip(diff_gray / mx * 255, 0, 255).astype(np.uint8)
+                else:
+                    diff_norm = np.zeros_like(diff_gray, dtype=np.uint8)
+                heatmap = cv2.applyColorMap(diff_norm, cv2.COLORMAP_JET)
+                cv2.imwrite(diff_file, heatmap)
+                event.diff_path = diff_file
+
+            logger.info(f"[Detector] Diagnostic frames saved: {base}")
+        except Exception as e:
+            logger.warning(f"[Detector] Diagnostic frame save failed: {e}")
 
     def _start_detection_recording(self, ts: datetime) -> Optional[str]:
         """Launch a full-res RTSP recording for DETECTION_RECORD_DURATION seconds."""
@@ -487,7 +639,9 @@ class TransitDetector:
             logger.error(f"[Detector] Failed to start recording: {e}")
             return None
 
-    def _peak_scene_time(self, filepath: str, search_secs: float = 3.0) -> Optional[float]:
+    def _peak_scene_time(
+        self, filepath: str, search_secs: float = 3.0
+    ) -> Optional[float]:
         """Return the timestamp (seconds) of the frame with the highest scene-change
         score in the first *search_secs* of *filepath*.
 
@@ -503,10 +657,15 @@ class TransitDetector:
             r = subprocess.run(
                 [
                     "ffmpeg",
-                    "-i", filepath,
-                    "-t", str(search_secs),
-                    "-vf", "scdet=threshold=2,showinfo",
-                    "-f", "null", "-",
+                    "-i",
+                    filepath,
+                    "-t",
+                    str(search_secs),
+                    "-vf",
+                    "scdet=threshold=2,showinfo",
+                    "-f",
+                    "null",
+                    "-",
                 ],
                 capture_output=True,
                 text=True,
@@ -555,7 +714,9 @@ class TransitDetector:
             seek_time = self._peak_scene_time(filepath)
             seek_args = ["-ss", str(seek_time)] if seek_time is not None else []
             if seek_time is not None:
-                logger.info(f"[Detector] Thumbnail seek to peak-scene frame at {seek_time:.2f}s")
+                logger.info(
+                    f"[Detector] Thumbnail seek to peak-scene frame at {seek_time:.2f}s"
+                )
             subprocess.run(
                 [
                     "ffmpeg",
@@ -616,9 +777,9 @@ class TransitDetector:
             lat_ur = float(os.getenv("LAT_UPPER_RIGHT", str(lat + 1)))
             lon_ur = float(os.getenv("LONG_UPPER_RIGHT", str(lon + 1)))
 
+            from src.constants import API_URL, get_aeroapi_key
             from src.flight_data import get_flight_data, parse_fligh_data
             from src.position import AreaBoundingBox
-            from src.constants import API_URL, get_aeroapi_key
 
             api_key = get_aeroapi_key()
             if not api_key:
@@ -636,8 +797,8 @@ class TransitDetector:
             if flights:
                 # Find the flight closest to the observer's target line-of-sight
                 from src.astro import CelestialObject
-                from src.position import geographic_to_altaz, get_my_pos
                 from src.constants import ASTRO_EPHEMERIS
+                from src.position import geographic_to_altaz, get_my_pos
 
                 my_pos = get_my_pos(
                     lat,
@@ -661,19 +822,26 @@ class TransitDetector:
                         if coords["altitude"] < 5:
                             continue
                         target_alt = coords["altitude"]
-                        target_az = coords["azimuth"]
+                        target_az = coords["azimuthal"]
                     except Exception:
                         continue
 
                     for flight in flights:
                         try:
+                            from zoneinfo import ZoneInfo
+
+                            from tzlocal import get_localzone_name
+
+                            tz_aware_dt = datetime.now(
+                                tz=ZoneInfo(get_localzone_name())
+                            )
                             f_alt, f_az = geographic_to_altaz(
                                 flight["latitude"],
                                 flight["longitude"],
                                 flight.get("elevation", 10000),
-                                lat,
-                                lon,
-                                float(os.getenv("OBSERVER_ELEVATION", "0")),
+                                ASTRO_EPHEMERIS["earth"],
+                                my_pos,
+                                tz_aware_dt,
                             )
                             alt_diff = abs(f_alt - target_alt)
                             az_diff = abs(f_az - target_az)

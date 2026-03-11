@@ -3,7 +3,9 @@ import threading
 import time as _time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timedelta
-from math import cos, radians, sqrt
+from math import acos, cos
+from math import degrees as _degrees
+from math import radians, sin, sqrt
 from typing import Any, Dict, List, Optional, Tuple
 from zoneinfo import ZoneInfo
 
@@ -22,7 +24,6 @@ from src.constants import (
     NUM_SECONDS_PER_MIN,
     TEST_DATA_PATH,
     TOP_MINUTE,
-    Altitude,
     PossibilityLevel,
     get_aeroapi_key,
 )
@@ -233,41 +234,32 @@ _fallback_bbox = AreaBoundingBox(
 )
 
 
-def get_thresholds(altitude: float) -> Tuple[float, float]:
-    """Receives target altitude and return the suggested threshold for both coordinates:
-    altitude and azimuthal.
-    """
-    if Altitude.LOW(altitude):
-        return (5.0, 10.0)
-    elif Altitude.MEDIUM(altitude):
-        return (10.0, 20.0)
-    elif Altitude.MEDIUM_HIGH(altitude):
-        return (10.0, 15.0)
-    elif Altitude.HIGH(altitude):
-        return (8.0, 180.0)
+def angular_separation(alt1: float, az1: float, alt2: float, az2: float) -> float:
+    """Great-circle angular separation using the spherical law of cosines.
 
-    logger.warning(f"{altitude=}")
-    raise Exception("Given altitude is not valid!")
-
-
-def _angular_separation(alt_diff: float, az_diff: float, target_alt: float) -> float:
-    """Great-circle angular separation in alt-az space.
-
-    Near the zenith, azimuth differences are geometrically compressed
-    (all azimuths converge to a point), so a raw az_diff of 10° at
-    alt=88° is practically meaningless.  Multiplying by cos(alt) corrects
-    for this, giving the true on-sky angle between the two directions.
+    Numerically stable for all separations and altitudes, including
+    near the zenith where azimuth differences are geometrically compressed.
 
     Parameters
     ----------
-    alt_diff  : altitude difference in degrees
-    az_diff   : azimuth difference in degrees
-    target_alt: target altitude in degrees (used as the reference latitude)
+    alt1, az1 : altitude and azimuth of first object (degrees)
+    alt2, az2 : altitude and azimuth of second object (degrees)
 
     Returns
     -------
     Angular separation in degrees.
     """
+    a1 = radians(alt1)
+    a2 = radians(alt2)
+    daz = radians(abs(az1 - az2))
+    cos_theta = sin(a1) * sin(a2) + cos(a1) * cos(a2) * cos(daz)
+    cos_theta = min(1.0, max(-1.0, cos_theta))
+    return _degrees(acos(cos_theta))
+
+
+# Backward-compatible alias used by some callers
+def _angular_separation(alt_diff: float, az_diff: float, target_alt: float) -> float:
+    """Deprecated — use angular_separation() instead."""
     return sqrt(alt_diff**2 + (az_diff * cos(radians(target_alt))) ** 2)
 
 
@@ -279,27 +271,24 @@ def calculate_angular_separation(alt_diff: float, az_diff: float) -> float:
     return sqrt(alt_diff**2 + az_diff**2)
 
 
-def get_possibility_level(altitude: float, alt_diff: float, az_diff: float) -> str:
-    """
-    Determine transit possibility level based on true angular separation.
+def get_possibility_level(sep: float) -> str:
+    """Classify transit probability based on angular separation.
 
-    Uses great-circle separation in alt-az space so that azimuth tolerance
-    is automatically reduced near the zenith (where az differences are
-    geometrically meaningless).
+    Uses generous thresholds so near-misses are visible for pipeline
+    validation.  An aircraft at 10° is definitely not transiting, but
+    seeing it classified LOW confirms the geometry is working.
 
     Thresholds (on-sky degrees):
-    - HIGH:   ≤1.5° — direct transit very likely
-    - MEDIUM: ≤2.5° — near miss, worth recording
-    - LOW:    ≤3.0° — possible distant transit
-    - UNLIKELY: >3°
+    - HIGH:     ≤2.0° — direct transit very likely
+    - MEDIUM:   ≤4.0° — near miss, worth recording
+    - LOW:      ≤12.0° — possible distant transit / near-miss
+    - UNLIKELY: >12°
     """
-    sep = _angular_separation(alt_diff, az_diff, altitude)
-
-    if sep <= 1.5:
+    if sep <= 2.0:
         return PossibilityLevel.HIGH.value
-    elif sep <= 2.5:
+    elif sep <= 4.0:
         return PossibilityLevel.MEDIUM.value
-    elif sep <= 3.0:
+    elif sep <= 12.0:
         return PossibilityLevel.LOW.value
     return PossibilityLevel.UNLIKELY.value
 
@@ -360,7 +349,7 @@ def check_transit(
             minutes=minute,
         )
 
-        future_time = ref_datetime + timedelta(minutes=int(minute))
+        future_time = ref_datetime + timedelta(minutes=minute)
 
         # Convert future position of plane to alt-azimuthal coordinates
         # Support both 'elevation' (internal) and 'aircraft_elevation' (API response) field names
@@ -423,56 +412,56 @@ def check_transit(
         else:
             no_decreasing_count += 1
 
-        # Use true angular separation (corrected for altitude) instead of two
-        # independent thresholds.  This avoids false negatives near zenith
-        # where azimuth differences are geometrically compressed.
-        sep = _angular_separation(alt_diff, az_diff, t_alt)
-        combined_threshold = max(alt_threshold, az_threshold)
-        if future_alt > 0 and sep < combined_threshold:
+        # Compute true angular separation (spherical law of cosines)
+        sep = angular_separation(t_alt, t_az, future_alt, future_az)
 
-            if sep < min_sep_seen:
-                min_sep_seen = sep
-                response = {
-                    "id": flight.get("name") or flight.get("id", ""),
-                    "fa_flight_id": flight.get("fa_flight_id", ""),
-                    "origin": flight.get("origin", ""),
-                    "destination": flight.get("destination", ""),
-                    "latitude": flight["latitude"],
-                    "longitude": flight["longitude"],
-                    "aircraft_elevation": flight.get("elevation")
-                    or flight.get("aircraft_elevation", 0),
-                    "aircraft_type": flight.get("aircraft_type", "N/A"),
-                    "speed": flight.get("speed", 0),
-                    "alt_diff": round(float(alt_diff), 3),
-                    "az_diff": round(float(az_diff), 3),
-                    "time": round(float(minute), 3),
-                    "target_alt": round(float(t_alt), 2),
-                    "plane_alt": round(float(future_alt), 2),
-                    "target_az": round(float(t_az), 2),
-                    "plane_az": round(float(future_az), 2),
-                    "is_possible_transit": 1,
-                    "possibility_level": get_possibility_level(
-                        t_alt, alt_diff, az_diff
-                    ),
-                    "elevation_change": CHANGE_ELEVATION.get(
-                        flight.get("elevation_change"),
-                        flight.get(
-                            "elevation_change"
-                        ),  # pass through OpenSky full words
-                    ),
-                    "vertical_rate": flight.get("vertical_rate"),
-                    "category": flight.get("category"),
-                    "squawk": flight.get("squawk"),
-                    "on_ground": flight.get("on_ground", False),
-                    "icao24": flight.get("icao24", ""),
-                    "origin_country": flight.get("origin_country"),
-                    "direction": flight.get("direction", 0),
-                    "waypoints": flight.get("waypoints", []),
-                    "position_source": flight.get("position_source", "flightaware"),
-                    "position_age_s": flight.get("position_age_s"),
-                }
+        # Track closest approach for ALL aircraft above horizon
+        # (no hard gate — classification handles thresholds)
+        if future_alt > 0 and sep < min_sep_seen:
+            min_sep_seen = sep
+            response = {
+                "id": flight.get("name") or flight.get("id", ""),
+                "fa_flight_id": flight.get("fa_flight_id", ""),
+                "origin": flight.get("origin", ""),
+                "destination": flight.get("destination", ""),
+                "latitude": flight["latitude"],
+                "longitude": flight["longitude"],
+                "aircraft_elevation": flight.get("elevation")
+                or flight.get("aircraft_elevation", 0),
+                "aircraft_type": flight.get("aircraft_type", "N/A"),
+                "speed": flight.get("speed", 0),
+                "alt_diff": round(float(alt_diff), 3),
+                "az_diff": round(float(az_diff), 3),
+                "angular_separation": round(float(sep), 3),
+                "time": round(float(minute), 3),
+                "target_alt": round(float(t_alt), 2),
+                "plane_alt": round(float(future_alt), 2),
+                "target_az": round(float(t_az), 2),
+                "plane_az": round(float(future_az), 2),
+                "is_possible_transit": 1,  # corrected after loop
+                "possibility_level": get_possibility_level(sep),
+                "elevation_change": CHANGE_ELEVATION.get(
+                    flight.get("elevation_change"),
+                    flight.get("elevation_change"),  # pass through OpenSky full words
+                ),
+                "vertical_rate": flight.get("vertical_rate"),
+                "category": flight.get("category"),
+                "squawk": flight.get("squawk"),
+                "on_ground": flight.get("on_ground", False),
+                "icao24": flight.get("icao24", ""),
+                "origin_country": flight.get("origin_country"),
+                "direction": flight.get("direction", 0),
+                "waypoints": flight.get("waypoints", []),
+                "position_source": flight.get("position_source", "flightaware"),
+                "position_age_s": flight.get("position_age_s"),
+            }
 
     if response:
+        # Set is_possible_transit based on classification
+        level = response["possibility_level"]
+        response["is_possible_transit"] = (
+            0 if level == PossibilityLevel.UNLIKELY.value else 1
+        )
         return response
 
     # Return closest approach data even if threshold not met
@@ -734,10 +723,7 @@ def get_transits(
             except Exception:
                 prefiltered.append(f)  # keep on error
                 continue
-            az_diff_raw = abs(f_az - t_az)
-            sep = _angular_separation(
-                abs(f_alt - t_alt), min(az_diff_raw, 360 - az_diff_raw), t_alt
-            )
+            sep = angular_separation(t_alt, t_az, f_alt, f_az)
             if sep <= _COARSE_SEP:
                 prefiltered.append(f)
             else:
@@ -860,6 +846,39 @@ def get_transits(
         logger.debug(
             f"{target_name} target is under horizon, skipping checking for transits..."
         )
+
+    # ── Transit summary logging ───────────────────────────────────────────
+    # Critical observability: nearest-miss + per-level counts
+    if data:
+        level_counts = {
+            "HIGH": 0,
+            "MEDIUM": 0,
+            "LOW": 0,
+            "UNLIKELY": 0,
+        }
+        nearest_sep = float("inf")
+        nearest_id = ""
+        for d in data:
+            level = d.get("possibility_level")
+            for name, enum_val in PossibilityLevel.__members__.items():
+                if enum_val.value == level:
+                    level_counts[name] = level_counts.get(name, 0) + 1
+                    break
+            d_sep = d.get("angular_separation")
+            if d_sep is not None and d_sep < nearest_sep:
+                nearest_sep = d_sep
+                nearest_id = d.get("id", "?")
+
+        logger.info(
+            f"[Transit Summary] {len(data)} aircraft total → "
+            f"HIGH={level_counts['HIGH']}, MEDIUM={level_counts['MEDIUM']}, "
+            f"LOW={level_counts['LOW']}, UNLIKELY={level_counts['UNLIKELY']}"
+        )
+        if nearest_sep < float("inf"):
+            logger.info(
+                f"[Transit Summary] Nearest: {nearest_id} at "
+                f"{nearest_sep:.2f}° from {target_name}"
+            )
 
     return {
         "flights": data,
