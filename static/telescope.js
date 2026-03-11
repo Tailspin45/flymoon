@@ -2100,17 +2100,20 @@ function viewFile(path, name, opts) {
         body.innerHTML =
             `<div style="display:flex; flex-direction:column; width:100%; max-height:85vh; overflow-y:auto;">` +
               `<div style="display:flex; flex-direction:column; align-items:center; padding:4px 8px; flex-shrink:0;">` +
-                `<video src="${path}" controls playsinline${loopAttr} style="max-width:100%; max-height:50vh;"></video>` +
-                `<div id="videoPreciseTime" class="video-precise-time">0.00 / 0.00</div>` +
+                `<video src="${path}" playsinline${loopAttr} style="max-width:100%; max-height:50vh;"></video>` +
               `</div>` +
-              `<div id="frameScrubber" style="width:100%; padding:8px 12px; background:#1a1a1a; border-top:1px solid #333; flex-shrink:0;">` +
-                `<div style="display:flex; align-items:center; gap:8px;">` +
+              `<div id="frameScrubber" style="width:100%; padding:6px 12px; background:#1a1a1a; border-top:1px solid #333; flex-shrink:0;">` +
+                `<div style="display:flex; align-items:center; justify-content:center; gap:8px; margin-bottom:6px;">` +
                   `<span id="frameCounter" style="color:#0ff; font-family:monospace; font-size:0.85em; min-width:120px;">Frame 0 / 0</span>` +
-                  `<input type="range" id="frameScrubSlider" min="0" max="100" value="0" step="1" ` +
-                    `style="flex:1; min-width:200px; height:20px;" title="Drag to scrub frames">` +
                   `<button id="markFrameBtn" class="btn-viewer" onclick="toggleMarkFrame()" ` +
                     `title="Mark/unmark this frame for composite (M key)" style="font-size:0.85em; padding:2px 8px;">📌 Mark</button>` +
                   `<span id="markedCount" style="color:#fd0; font-family:monospace; font-size:0.8em; min-width:70px;">0 marked</span>` +
+                `</div>` +
+                `<div id="contextStrip" style="display:flex; justify-content:center; gap:4px; min-height:60px; align-items:center;">` +
+                  `<span style="color:#555; font-size:0.75em;">Loading frames…</span>` +
+                `</div>` +
+                `<div style="color:#666; font-size:0.6em; text-align:center; margin-top:4px;">` +
+                  `←/→ step frame · Shift ±10 · Space play/pause · Click thumbnail to jump · M mark` +
                 `</div>` +
                 `<div id="markedFrameBar" style="position:relative; width:100%; height:8px; background:#222; margin-top:4px; border-radius:4px; overflow:hidden;" title="Yellow ticks = marked frames"></div>` +
               `</div>` +
@@ -2120,22 +2123,31 @@ function viewFile(path, name, opts) {
               (companionHtml ? `<div style="display:flex; gap:12px; justify-content:center; padding:6px 8px; border-top:1px solid #333; flex-shrink:0;">${companionHtml}</div>` : '') +
             `</div>`;
         const vid = body.querySelector('video');
-        vid.pause(); // start paused for frame inspection
-        const timeEl = document.getElementById('videoPreciseTime');
+        vid.pause();
         const updateTime = () => {
-            const cur = (vid.currentTime || 0).toFixed(2);
-            const dur = (vid.duration || 0).toFixed(2);
-            timeEl.textContent = `${cur} / ${dur}`;
             if (_loopSegment && _loopSegment.start != null && vid.currentTime >= _loopSegment.end) {
                 vid.currentTime = _loopSegment.start;
             }
             _updateScrubPosition(vid);
+            _updateContextStrip(vid);
         };
         vid.addEventListener('timeupdate', updateTime);
         vid.addEventListener('seeked', updateTime);
-        vid.addEventListener('loadedmetadata', () => { updateTime(); _initFrameScrubber(vid); });
-        vid.addEventListener('loadeddata', () => _initFrameScrubber(vid));
-        if (vid.readyState >= 1) { updateTime(); _initFrameScrubber(vid); }
+        vid.addEventListener('loadedmetadata', () => { _initFrameScrubber(vid); updateTime(); });
+        vid.addEventListener('loadeddata', () => { _initFrameScrubber(vid); updateTime(); });
+        if (vid.readyState >= 1) { _initFrameScrubber(vid); updateTime(); }
+        // Extract small thumbnails for context strip in background
+        _extractFrameThumbs(vid);
+        // Keyboard: arrow keys step frames, space play/pause, M mark
+        function _viewerKeyHandler(e) {
+            if (e.target.tagName === 'INPUT' && e.target.type !== 'range') return;
+            if (e.key === 'ArrowLeft') { e.preventDefault(); frameStep(e.shiftKey ? -10 : -1); }
+            else if (e.key === 'ArrowRight') { e.preventDefault(); frameStep(e.shiftKey ? 10 : 1); }
+            else if (e.key === ' ') { e.preventDefault(); vid.paused ? vid.play() : vid.pause(); }
+            else if (e.key === 'm' || e.key === 'M') { e.preventDefault(); toggleMarkFrame(); }
+        }
+        document.addEventListener('keydown', _viewerKeyHandler);
+        vid._viewerKeyHandler = _viewerKeyHandler;
     } else {
         const isDiff = name.includes('_diff');
         const isFrame = name.includes('_frame');
@@ -2186,14 +2198,24 @@ function viewFile(path, name, opts) {
 function closeFileViewer() {
     const viewer = document.getElementById('fileViewer');
     const body = document.getElementById('fileViewerBody');
+    // Remove keyboard handler
+    const vid = body.querySelector('video');
+    if (vid && vid._viewerKeyHandler) {
+        document.removeEventListener('keydown', vid._viewerKeyHandler);
+    }
     viewer.style.display = 'none';
-    body.innerHTML = '';  // Stop video playback
+    body.innerHTML = '';
     _setScanBanner(null);
     _viewerIndex = -1;
     _viewerFile = null;
     _loopSegment = null;
     _markedFrames = new Set();
     _scrubSlider = null;
+    _frameThumbs = [];
+    if (_thumbExtractorVid) {
+        try { document.body.removeChild(_thumbExtractorVid); } catch (e) {}
+        _thumbExtractorVid = null;
+    }
 
     // Restore the files grid modal if it was open before the viewer
     if (viewer._filesModalWasOpen) {
@@ -2233,43 +2255,127 @@ function frameStepStop() {
 // ---------------------------------------------------------------------------
 
 function _initFrameScrubber(vid) {
-    const scrubber = document.getElementById('frameScrubber');
-    const slider = document.getElementById('frameScrubSlider');
-    if (!scrubber || !slider || !vid.duration) return;
-
-    _videoFps = 30; // HTML5 doesn't expose fps; 30 is typical for Seestar
-    const totalFrames = Math.round(vid.duration * _videoFps);
-    slider.max = totalFrames - 1;
-    slider.value = Math.round(vid.currentTime * _videoFps);
-    _scrubSlider = slider;
-
-    slider.addEventListener('input', () => {
-        const frame = parseInt(slider.value, 10);
-        vid.pause();
-        vid.currentTime = frame / _videoFps;
-    });
-
+    if (!vid || !vid.duration) return;
+    _videoFps = 30;
+    _frameTotalCount = Math.round(vid.duration * _videoFps);
     _updateScrubPosition(vid);
 }
 
 function _updateScrubPosition(vid) {
-    const slider = document.getElementById('frameScrubSlider');
     const counter = document.getElementById('frameCounter');
-    if (!slider || !vid) return;
+    if (!vid) return;
     const frame = Math.round((vid.currentTime || 0) * _videoFps);
-    const total = parseInt(slider.max, 10) + 1;
-    if (!slider.matches(':active')) { // don't fight user dragging
-        slider.value = frame;
-    }
     if (counter) {
-        counter.textContent = `Frame ${frame} / ${total}`;
+        counter.textContent = `Frame ${frame} / ${_frameTotalCount || '?'}`;
     }
-    // Highlight mark button if current frame is marked
     const btn = document.getElementById('markFrameBtn');
     if (btn) {
         btn.style.background = _markedFrames.has(frame) ? '#fd0' : '';
         btn.style.color = _markedFrames.has(frame) ? '#000' : '';
     }
+}
+
+// ---------------------------------------------------------------------------
+// Context strip: show ±2 frames around current as clickable thumbnails
+// ---------------------------------------------------------------------------
+
+var _frameThumbs = [];      // small data-URL thumbnails (extracted in background)
+var _frameTotalCount = 0;
+var _thumbExtractorVid = null;
+
+/** Extract all frames as small thumbnails using a hidden video element. */
+function _extractFrameThumbs(mainVid) {
+    // Clean up any previous extractor
+    if (_thumbExtractorVid) {
+        try { document.body.removeChild(_thumbExtractorVid); } catch (e) {}
+        _thumbExtractorVid = null;
+    }
+    _frameThumbs = [];
+
+    const extVid = document.createElement('video');
+    extVid.src = mainVid.src;
+    extVid.muted = true;
+    extVid.preload = 'auto';
+    extVid.style.cssText = 'position:absolute;left:-9999px;width:1px;height:1px;';
+    document.body.appendChild(extVid);
+    _thumbExtractorVid = extVid;
+
+    extVid.addEventListener('loadeddata', () => {
+        const fps = _videoFps || 30;
+        const total = Math.round(extVid.duration * fps);
+        _frameTotalCount = total;
+        _frameThumbs = new Array(total).fill(null);
+
+        const vw = extVid.videoWidth || 640;
+        const vh = extVid.videoHeight || 480;
+        const thumbH = 80;
+        const thumbW = Math.round(thumbH * (vw / vh));
+        const canvas = document.createElement('canvas');
+        canvas.width = thumbW;
+        canvas.height = thumbH;
+        const ctx = canvas.getContext('2d');
+
+        let idx = 0;
+        const strip = document.getElementById('contextStrip');
+        function next() {
+            if (idx >= total || !document.getElementById('contextStrip')) {
+                // Done or viewer closed
+                try { document.body.removeChild(extVid); } catch (e) {}
+                _thumbExtractorVid = null;
+                // Show final strip
+                const mv = document.querySelector('#fileViewerBody video');
+                if (mv) _updateContextStrip(mv);
+                return;
+            }
+            extVid.currentTime = idx / fps;
+            extVid.onseeked = () => {
+                ctx.drawImage(extVid, 0, 0, thumbW, thumbH);
+                _frameThumbs[idx] = canvas.toDataURL('image/jpeg', 0.6);
+                idx++;
+                // Update progress
+                if (strip && idx % 30 === 0) {
+                    strip.innerHTML = `<span style="color:#555; font-size:0.75em;">Extracting ${idx}/${total}…</span>`;
+                }
+                requestAnimationFrame(next);
+            };
+        }
+        next();
+    }, { once: true });
+}
+
+/** Update the 5-thumbnail context strip around the current frame. */
+function _updateContextStrip(vid) {
+    const strip = document.getElementById('contextStrip');
+    if (!strip || !vid) return;
+    const curFrame = Math.round((vid.currentTime || 0) * _videoFps);
+    const total = _frameTotalCount || 1;
+
+    // If no thumbnails extracted yet, show placeholder
+    if (!_frameThumbs.length || !_frameThumbs[0]) {
+        return; // still extracting
+    }
+
+    const offsets = [-2, -1, 0, 1, 2];
+    let html = '';
+    offsets.forEach(off => {
+        const f = curFrame + off;
+        const isCurrent = off === 0;
+        const border = isCurrent ? '2px solid #0ff' : '2px solid transparent';
+        const opacity = (f < 0 || f >= total) ? '0.15' : '1';
+        const cursor = (f >= 0 && f < total) ? 'pointer' : 'default';
+        const src = (f >= 0 && f < total && _frameThumbs[f]) ? _frameThumbs[f] : '';
+        const marked = _markedFrames.has(f);
+        const markDot = marked ? `<div style="position:absolute;top:2px;right:2px;width:8px;height:8px;background:#fd0;border-radius:50%;"></div>` : '';
+        html += `<div style="position:relative; flex-shrink:0; border:${border}; border-radius:3px; opacity:${opacity}; cursor:${cursor}; transition:border-color 0.15s;" ` +
+                `onclick="if(${f}>=0 && ${f}<${total}){const v=document.querySelector('#fileViewerBody video');if(v){v.pause();v.currentTime=${f}/${_videoFps};}}" ` +
+                `title="Frame ${f}">` +
+                (src ? `<img src="${src}" style="display:block; height:80px; border-radius:2px;" draggable="false">` :
+                       `<div style="width:107px; height:80px; background:#111; border-radius:2px;"></div>`) +
+                `<div style="position:absolute;bottom:1px;left:0;right:0;text-align:center;color:${isCurrent?'#0ff':'#888'};font-size:0.6em;font-family:monospace;text-shadow:0 0 3px #000;">${f >= 0 && f < total ? f : ''}</div>` +
+                markDot +
+                `</div>`;
+    });
+    strip.innerHTML = html;
 }
 
 function toggleMarkFrame() {
@@ -2283,6 +2389,7 @@ function toggleMarkFrame() {
     }
     _updateMarkedUI();
     _updateScrubPosition(vid);
+    _updateContextStrip(vid);
 }
 
 function _updateMarkedUI() {
@@ -2300,15 +2407,16 @@ function _updateMarkedUI() {
 
     // Draw tick marks on the marked-frame bar
     const bar = document.getElementById('markedFrameBar');
-    const slider = document.getElementById('frameScrubSlider');
-    if (!bar || !slider) return;
-    const total = parseInt(slider.max, 10) + 1;
+    if (!bar) return;
+    const total = _frameTotalCount || 1;
     bar.innerHTML = '';
     for (const f of _markedFrames) {
         const pct = (f / Math.max(1, total - 1)) * 100;
         const tick = document.createElement('div');
         tick.style.cssText = `position:absolute; left:${pct}%; top:0; width:2px; height:100%; background:#fd0; border-radius:1px;`;
         tick.title = `Frame ${f}`;
+        tick.style.cursor = 'pointer';
+        tick.onclick = () => { const v = document.querySelector('#fileViewerBody video'); if (v) { v.pause(); v.currentTime = f / _videoFps; } };
         bar.appendChild(tick);
     }
 }

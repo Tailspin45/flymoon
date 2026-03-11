@@ -1628,17 +1628,7 @@ canvas.video-thumb-canvas {
     font-weight: normal;
 }
 
-/* Frame scrubber range slider — ensure handle is always visible */
-#frameScrubSlider {
-    -webkit-appearance: auto;
-    appearance: auto;
-    height: 20px;
-    cursor: pointer;
-    accent-color: #0ff;
-}
-#frameScrubSlider::-webkit-slider-thumb {
-    -webkit-appearance: auto;
-    width: 16px;
-    height: 16px;
-    cursor: pointer;
+/* Context strip thumbnail hover */
+#contextStrip > div:hover {
+    border-color: #0ff !important;
 }
