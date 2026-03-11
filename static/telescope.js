@@ -1654,11 +1654,18 @@ function updateFilmstrip(files) {
         const badge = isTemp ? '<span class="temp-badge">TEMP</span>' : '';
         const itemClass = isTemp ? 'filmstrip-item temp-file' : 'filmstrip-item';
         const isVideo = file.path.match(/\.(mp4|avi|mov)$/i);
+        const isDiff = file.name.includes('_diff');
+        const isFrame = file.name.includes('_frame');
+        const imgTitle = isDiff
+            ? 'Diff heatmap — shows pixel changes between frames. Bright/warm = motion. Blue = no change.'
+            : isFrame
+            ? 'Trigger frame — low-res detection frame at the moment motion was detected.'
+            : file.name;
         const thumbnail = file.thumbnail
-            ? `<img src="${file.thumbnail}" alt="${file.name}" class="filmstrip-thumbnail">`
+            ? `<img src="${file.thumbnail}" alt="${file.name}" title="${imgTitle}" class="filmstrip-thumbnail">`
             : isVideo
                 ? `<canvas class="filmstrip-thumbnail video-thumb-canvas" data-video-src="${file.path}"></canvas>`
-                : `<img src="${file.path}" alt="${file.name}" class="filmstrip-thumbnail">`;
+                : `<img src="${file.path}" alt="${file.name}" title="${imgTitle}" class="filmstrip-thumbnail">`;
         
         return `
         <div class="${itemClass}" onclick="viewFile('${file.path}', '${file.name}')">
@@ -1939,11 +1946,18 @@ function updateFilesGrid() {
     grid.innerHTML = files.map((file, idx) => {
         const isVideo = file.path.match(/\.(mp4|avi|mov)$/i);
         const sel = gridSelection.selected.has(file.path) ? ' selected' : '';
+        const isDiff = file.name.includes('_diff');
+        const isFrame = file.name.includes('_frame');
+        const imgTitle = isDiff
+            ? 'Diff heatmap — shows pixel changes between frames. Bright/warm areas = motion detected. Blue = no change. Used to visualise what triggered a detection event.'
+            : isFrame
+            ? 'Trigger frame — the low-res detection frame captured at the moment motion was detected.'
+            : file.name;
         const thumbnail = file.thumbnail
-            ? `<img src="${file.thumbnail}" alt="${file.name}" class="file-thumbnail">`
+            ? `<img src="${file.thumbnail}" alt="${file.name}" title="${imgTitle}" class="file-thumbnail">`
             : isVideo
                 ? `<canvas class="file-thumbnail video-thumb-canvas" data-video-src="${file.path}"></canvas>`
-                : `<img src="${file.path}" alt="${file.name}" class="file-thumbnail">`;
+                : `<img src="${file.path}" alt="${file.name}" title="${imgTitle}" class="file-thumbnail">`;
         return `
         <div class="file-item${sel}" data-file-path="${file.path}" data-file-idx="${idx}"
              onclick="gridSelectItem(${idx}, '${file.path}', event)">
@@ -2059,7 +2073,14 @@ function viewFile(path, name, opts) {
         vid.addEventListener('seeked', updateTime);
         vid.addEventListener('loadedmetadata', updateTime);
     } else {
-        body.innerHTML = `<img src="${path}" alt="${name}" style="max-width:100%; max-height:100%; height:auto; display:block; margin:auto;">`;
+        const isDiff = name.includes('_diff');
+        const isFrame = name.includes('_frame');
+        const imgTooltip = isDiff
+            ? 'Diff heatmap — shows pixel-level changes between consecutive frames. Bright/warm colours indicate motion (potential transit). Blue/cool areas had no change. This is NOT a camera image — it visualises what triggered the detection.'
+            : isFrame
+            ? 'Trigger frame — the low-resolution (160×90, upscaled 4×) detection frame captured at the exact moment motion was detected. This is from the detection pipeline, not the full-resolution telescope feed.'
+            : '';
+        body.innerHTML = `<img src="${path}" alt="${name}" title="${imgTooltip}" style="max-width:100%; max-height:100%; height:auto; display:block; margin:auto;">`;
     }
 
     // Build action buttons (download, delete, prev/next, find transit)
