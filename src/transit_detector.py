@@ -723,7 +723,8 @@ class TransitDetector:
         The detection runs at 160×90 for speed.  Diagnostic frames are
         upscaled 4× before saving so they are legible in the gallery,
         and the diff heatmap is labelled to avoid confusion with real
-        camera images.
+        camera images.  Both include the detector frame index so the user
+        can locate the transit in the corresponding MP4.
         """
         if self._current_frame is None:
             return
@@ -733,12 +734,22 @@ class TransitDetector:
             base = f"det_{ts.strftime('%Y%m%d_%H%M%S')}"
             UPSCALE = 4  # 160×90 → 640×360
 
-            # Raw trigger frame (upscaled)
+            # The recording starts ~now, so the transit is near the start.
+            # CONSEC_FRAMES_REQUIRED frames ago is when the trigger sequence
+            # began, which at ~30fps recording ≈ first few seconds.
+            frame_label = f"det frame #{self._frame_idx}"
+
+            # Raw trigger frame (upscaled + labelled with frame number)
             frame_file = os.path.join(year_month, f"{base}_frame.jpg")
             rgb = np.clip(self._current_frame, 0, 255).astype(np.uint8)
             bgr = cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR)
             bgr = cv2.resize(bgr, (ANALYSIS_WIDTH * UPSCALE, ANALYSIS_HEIGHT * UPSCALE),
                              interpolation=cv2.INTER_NEAREST)
+            # Annotate with frame number and timestamp
+            cv2.putText(bgr, frame_label, (8, 24),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 255, 255), 1)
+            cv2.putText(bgr, ts.strftime("%H:%M:%S"), (8, 48),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (200, 200, 200), 1)
             cv2.imwrite(frame_file, bgr)
             event.frame_path = frame_file
 
@@ -757,8 +768,8 @@ class TransitDetector:
                 # Label so it's obvious this is a diff heatmap, not a camera image
                 cv2.putText(heatmap, "DIFF HEATMAP", (8, 24),
                             cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
-                cv2.putText(heatmap, ts.strftime("%H:%M:%S"), (8, 50),
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.6, (200, 200, 200), 1)
+                cv2.putText(heatmap, f"{ts.strftime('%H:%M:%S')}  {frame_label}", (8, 50),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.5, (200, 200, 200), 1)
                 # Draw detected disk outline and margin if available
                 if self._disk_detected and self._disk_radius:
                     dcx = self._disk_cx * UPSCALE

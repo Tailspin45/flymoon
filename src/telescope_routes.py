@@ -804,6 +804,16 @@ def _find_video_thumbnail(full_path: str):
     return None
 
 
+def _find_companion(full_path: str, suffix: str):
+    """Return URL for a companion file (e.g. _diff.jpg, _frame.jpg) if it exists."""
+    base = full_path.rsplit(".", 1)[0]
+    companion = base + suffix
+    if os.path.exists(companion):
+        rel = os.path.relpath(companion, "static").replace(os.sep, "/")
+        return f"/static/{rel}"
+    return None
+
+
 def list_telescope_files():
     """GET /telescope/files - List locally captured files."""
     logger.info("[Telescope] GET /telescope/files")
@@ -824,6 +834,11 @@ def list_telescope_files():
                         and "_thumb." not in filename.lower()
                         and "_tmp."
                         not in filename.lower()  # skip in-progress temp files
+                        and "_diff." not in filename.lower()  # skip diff heatmaps
+                        and "_frame." not in filename.lower()  # skip trigger frames
+                        and not filename.lower().endswith(
+                            "_analysis.json"
+                        )  # skip sidecar JSON
                     ):
                         full_path = os.path.join(root, filename)
                         rel_path = os.path.relpath(full_path, "static")
@@ -837,6 +852,8 @@ def list_telescope_files():
                                 "url": f"/static/{rel_path.replace(os.sep, '/')}",
                                 "mtime": mtime,
                                 "thumbnail": _find_video_thumbnail(full_path),
+                                "diff_heatmap": _find_companion(full_path, "_diff.jpg"),
+                                "trigger_frame": _find_companion(full_path, "_frame.jpg"),
                             }
                         )
 

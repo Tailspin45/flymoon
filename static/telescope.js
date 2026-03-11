@@ -2125,6 +2125,14 @@ function viewFile(path, name, opts) {
         const replayBtn = hasAnalyzed
             ? `<button class="btn-viewer" onclick="openCompositeModal('${analyzedJpg}?t=${Date.now()}', null)">🖼 Composite</button>`
             : '';
+        // Show heatmap/trigger-frame buttons if companions exist for this detection video
+        const curFile = files.find(f => f.path === path) || {};
+        const heatmapBtn = curFile.diff_heatmap
+            ? `<button class="btn-viewer" onclick="viewFile('${curFile.diff_heatmap}', '${name.replace('.mp4','_diff.jpg')}')" title="View diff heatmap that triggered this detection">🔥 Heatmap</button>`
+            : '';
+        const triggerBtn = curFile.trigger_frame
+            ? `<button class="btn-viewer" onclick="viewFile('${curFile.trigger_frame}', '${name.replace('.mp4','_frame.jpg')}')" title="View low-res trigger frame">📷 Trigger</button>`
+            : '';
         const isFav = getFavorites().has(path);
         const favBtn = `<button class="btn-viewer" id="viewerFavBtn" data-fav-path="${path}" onclick="toggleFavorite('${path}', event)" title="Favorite">${isFav ? '❤️' : '🤍'}</button>`;
         const delDisabled = isFav ? 'disabled title="Remove favorite first"' : 'title="Delete (⌘/Ctrl+click to skip confirm)"';
@@ -2132,6 +2140,8 @@ function viewFile(path, name, opts) {
             `<button class="btn-viewer" onclick="viewerNav(-1)" title="Previous" ${hasPrev ? '' : 'disabled'}>◀</button>` +
             scanBtn +
             replayBtn +
+            heatmapBtn +
+            triggerBtn +
             favBtn +
             `<button class="btn-viewer" onclick="viewerDownload()" title="Download">⬇️ Download</button>` +
             `<button class="btn-viewer btn-viewer-danger" id="viewerDeleteBtn" onclick="viewerDelete(event)" ${delDisabled}>🗑️ Delete</button>` +
