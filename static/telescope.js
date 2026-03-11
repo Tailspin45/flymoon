@@ -2099,9 +2099,11 @@ function viewFile(path, name, opts) {
         const loopAttr = opts.loop ? ' loop' : '';
         body.innerHTML =
             `<div style="display:flex; flex-direction:column; width:100%; max-height:85vh; overflow-y:auto;" id="frameViewerRoot">` +
-              `<video src="${path}" playsinline${loopAttr} style="display:none;" id="hiddenVid"></video>` +
-              `<div id="fivePanel" style="position:relative; display:flex; justify-content:center; align-items:center; gap:3px; padding:4px 4px 0; flex-shrink:0; background:#000;">` +
-                `<span style="color:#555; font-size:0.85em;">Loading…</span>` +
+              `<video src="${path}" playsinline${loopAttr} muted style="position:absolute;left:-9999px;width:1px;height:1px;" id="hiddenVid"></video>` +
+              `<div style="position:relative; flex-shrink:0;">` +
+                `<div id="fivePanel" style="display:flex; justify-content:center; align-items:center; gap:3px; padding:4px 4px 0; background:#000;">` +
+                  `<span style="color:#555; font-size:0.85em;">Loading…</span>` +
+                `</div>` +
                 (companionHtml ? `<div id="companionOverlay" style="position:absolute; top:8px; right:8px; display:flex; flex-direction:column; gap:4px; z-index:10; opacity:0.85;">${companionHtml}</div>` : '') +
               `</div>` +
               `<div id="frameScrubber" style="width:100%; padding:6px 12px; background:#1a1a1a; border-top:1px solid #333; flex-shrink:0;">` +
