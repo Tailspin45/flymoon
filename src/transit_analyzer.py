@@ -1515,13 +1515,31 @@ def composite_from_frames(
         cap.release()
         return {"error": "No valid frame indices", "composite_image": None}
 
-    # Build reference from first N frames (avoiding selected frames if possible)
-    ref_count = min(90, total)
-    ref_stack = []
-    for i in range(ref_count):
+    # Read all frames sequentially up to the last selected frame.
+    # CAP_PROP_POS_FRAMES seeking is unreliable for mp4v-encoded files on
+    # macOS (AVFoundation backend), so sequential reading is the only safe
+    # approach that guarantees we get the right frame content.
+    max_frame_needed = valid_frames[-1]
+    ref_count = min(90, valid_frames[0] if valid_frames[0] > 10 else 90)
+    ref_stack: List = []
+    selected_frames: dict = {}
+    frame_idx = 0
+
+    while frame_idx <= max_frame_needed:
         ok, frm = cap.read()
-        if ok:
+        if not ok:
+            break
+        if frame_idx < ref_count:
             ref_stack.append(frm.astype(np.float32))
+        if frame_idx in valid_frames:
+            selected_frames[frame_idx] = frm
+        frame_idx += 1
+
+    cap.release()
+
+    if not ref_stack:
+        return {"error": "Could not read video frames", "composite_image": None}
+
     reference = np.median(np.stack(ref_stack), axis=0).astype(np.uint8)
     ref_gray = cv2.cvtColor(reference, cv2.COLOR_BGR2GRAY)
 
@@ -1536,17 +1554,12 @@ def composite_from_frames(
     mask = np.zeros((h, w), dtype=np.uint8)
     cv2.circle(mask, (disk_cx, disk_cy), inner_r, 255, -1)
 
-    # Use a clean reference frame as background (frame farthest from any selected frame)
-    bg_frame = reference.copy()
-
-    # Composite: overlay silhouettes from each selected frame
-    canvas = bg_frame.copy()
+    canvas = reference.copy()
     extracted = 0
 
     for fi in valid_frames:
-        cap.set(cv2.CAP_PROP_POS_FRAMES, fi)
-        ok, frame = cap.read()
-        if not ok:
+        frame = selected_frames.get(fi)
+        if frame is None:
             continue
 
         gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
@@ -1576,8 +1589,6 @@ def composite_from_frames(
         alpha = (sil.astype(np.float32) / 255.0)[:, :, np.newaxis]
         canvas = (canvas * (1 - alpha) + frame * alpha).astype(np.uint8)
         extracted += 1
-
-    cap.release()
 
     # Draw disk outline and annotations
     cv2.circle(canvas, (disk_cx, disk_cy), disk_r, (0, 180, 255), 1)

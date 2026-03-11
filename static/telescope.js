@@ -2488,7 +2488,10 @@ document.addEventListener('keydown', function(e) {
     if (!viewer || viewer.style.display === 'none') return;
     const vid = document.getElementById('hiddenVid');
     if (!vid) return;
-    if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
+    // Note: do NOT bail on INPUT here — the slider has focus after dragging and
+    // would swallow all arrow/space keys. Only skip character shortcuts (m/M).
+    const inTextInput = e.target.tagName === 'TEXTAREA' ||
+        (e.target.tagName === 'INPUT' && e.target.type === 'text');
 
     switch (e.key) {
         case 'ArrowLeft':
@@ -2501,12 +2504,17 @@ document.addEventListener('keydown', function(e) {
             break;
         case 'm':
         case 'M':
+            if (inTextInput) return;
             e.preventDefault();
             toggleMarkFrame();
             break;
         case ' ':
             e.preventDefault();
-            vid.paused ? vid.play() : vid.pause();
+            if (vid.paused) {
+                vid.play().catch(() => {});
+            } else {
+                vid.pause();
+            }
             break;
     }
 });
