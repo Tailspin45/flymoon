@@ -2,9 +2,15 @@
 Real-time transit detection from telescope RTSP stream.
 
 Reads the live video feed via ffmpeg, processes frames at ~15 fps on a
-160×90 canvas using the same dual-signal algorithm as the gallery scanner
-(consecutive-frame diff + centre-weighted reference diff, both with
-mean-subtraction for scintillation immunity).
+160×90 canvas using a dual-signal algorithm (consecutive-frame diff +
+disk-weighted reference diff, both with mean-subtraction for scintillation
+immunity).
+
+**Disk-aware detection**: Every 2 seconds, Hough circle detection locates
+the Sun/Moon disk in the frame.  Signals are computed only within the
+inner disk (excluding a configurable limb margin, default 12%), which
+eliminates false positives from atmospheric shimmer at the disk edge.
+Falls back to rectangular centre/edge masks if no disk is found.
 
 When a transit is detected it auto-triggers a full-resolution recording
 and optionally enriches the event with FlightAware flight data.
@@ -62,9 +68,17 @@ SIGNAL_TRACE_INTERVAL = ANALYSIS_FPS
 SIGNAL_TRACE_SECONDS = 60
 SIGNAL_TRACE_SIZE = SIGNAL_TRACE_SECONDS  # 1 entry per second
 
+# Disk detection: re-detect every N frames (2s at 15fps)
+DISK_DETECT_INTERVAL = ANALYSIS_FPS * 2
+# Edge margin: exclude outermost 12% of disk radius (atmospheric shimmer zone)
+DISK_MARGIN_PCT = float(os.getenv("DETECTOR_DISK_MARGIN", "0.12"))
+
 
 def _build_centre_weight(h: int, w: int) -> np.ndarray:
-    """Gaussian-ish centre weight: 1.0 at centre → 0.3 at corners."""
+    """Gaussian-ish centre weight: 1.0 at centre → 0.3 at corners.
+
+    Used as a fallback when no disk has been detected yet.
+    """
     cy, cx = h / 2, w / 2
     y = np.arange(h).reshape(-1, 1)
     x = np.arange(w).reshape(1, -1)
@@ -76,7 +90,10 @@ CENTRE_WEIGHT = _build_centre_weight(ANALYSIS_HEIGHT, ANALYSIS_WIDTH)
 
 
 def _build_spatial_masks(h: int, w: int) -> tuple:
-    """Build boolean masks for centre 50% and outer edge of frame."""
+    """Build boolean masks for centre 50% and outer edge of frame.
+
+    Fallback masks used when no disk has been detected.
+    """
     centre = np.zeros((h, w), dtype=bool)
     y1, y2 = h // 4, h * 3 // 4
     x1, x2 = w // 4, w * 3 // 4
@@ -86,6 +103,81 @@ def _build_spatial_masks(h: int, w: int) -> tuple:
 
 
 CENTRE_MASK, EDGE_MASK = _build_spatial_masks(ANALYSIS_HEIGHT, ANALYSIS_WIDTH)
+
+
+# ---------------------------------------------------------------------------
+# Disk detection and disk-aware masks
+# ---------------------------------------------------------------------------
+
+def _detect_disk(gray: np.ndarray) -> Optional[tuple]:
+    """Find the Sun/Moon disk in a 160×90 grayscale frame.
+
+    Returns (cx, cy, radius) or None if no disk found.
+    Uses Hough circle detection with a bright-threshold fallback,
+    matching the approach in transit_analyzer.py but tuned for 160×90.
+    """
+    h, w = gray.shape[:2]
+    blurred = cv2.GaussianBlur(gray, (5, 5), 1)
+    min_r = min(h, w) // 8   # ~11 px
+    max_r = min(h, w) // 2   # ~45 px
+
+    circles = cv2.HoughCircles(
+        blurred,
+        cv2.HOUGH_GRADIENT,
+        dp=1.0,
+        minDist=min(h, w) // 2,
+        param1=30,
+        param2=15,
+        minRadius=min_r,
+        maxRadius=max_r,
+    )
+    if circles is not None:
+        c = np.round(circles[0][0]).astype(int)
+        return int(c[0]), int(c[1]), int(c[2])
+
+    # Fallback: threshold bright region + min enclosing circle
+    _, bright = cv2.threshold(blurred, 180, 255, cv2.THRESH_BINARY)
+    contours, _ = cv2.findContours(bright, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    if contours:
+        largest = max(contours, key=cv2.contourArea)
+        if cv2.contourArea(largest) > np.pi * min_r * min_r:
+            (cx, cy), radius = cv2.minEnclosingCircle(largest)
+            return int(cx), int(cy), int(radius)
+
+    return None
+
+
+def _build_disk_masks(
+    h: int, w: int, cx: int, cy: int, radius: int, margin_pct: float
+) -> tuple:
+    """Build circular disk mask and limb mask from detected disk.
+
+    Returns (disk_bool, limb_bool, weight_2d):
+      - disk_bool: True inside disk minus margin (where transits happen)
+      - limb_bool: True in the excluded limb ring (atmospheric shimmer zone)
+      - weight_2d: float32 H×W, 1.0 inside disk → 0.0 outside
+    """
+    inner_r = max(1, int(radius * (1.0 - margin_pct)))
+
+    # Inner disk mask (where we look for transits)
+    disk_u8 = np.zeros((h, w), dtype=np.uint8)
+    cv2.circle(disk_u8, (cx, cy), inner_r, 255, -1)
+    disk_bool = disk_u8 > 0
+
+    # Limb ring mask (excluded zone — atmospheric shimmer)
+    full_u8 = np.zeros((h, w), dtype=np.uint8)
+    cv2.circle(full_u8, (cx, cy), radius, 255, -1)
+    limb_bool = (full_u8 > 0) & ~disk_bool
+
+    # Smooth weight: 1.0 inside inner disk, falls to 0 at full radius edge
+    y = np.arange(h).reshape(-1, 1)
+    x = np.arange(w).reshape(1, -1)
+    dist = np.sqrt((x - cx) ** 2 + (y - cy) ** 2).astype(np.float32)
+    weight = np.clip(1.0 - (dist - inner_r) / max(1, radius - inner_r), 0.0, 1.0)
+    # Zero everything outside the full disk
+    weight[full_u8 == 0] = 0.0
+
+    return disk_bool, limb_bool, weight
 
 
 class DetectionEvent:
@@ -217,6 +309,15 @@ class TransitDetector:
         # Signal trace ring buffer (1fps, last 60s)
         self._signal_trace: Deque[Dict] = collections.deque(maxlen=SIGNAL_TRACE_SIZE)
 
+        # Disk detection state
+        self._disk_cx: Optional[int] = None
+        self._disk_cy: Optional[int] = None
+        self._disk_radius: Optional[int] = None
+        self._disk_mask: Optional[np.ndarray] = None   # bool H×W — inner disk
+        self._limb_mask: Optional[np.ndarray] = None   # bool H×W — excluded limb ring
+        self._disk_weight: Optional[np.ndarray] = None  # float32 H×W — smooth weight
+        self._disk_detected = False
+
         # Active recording process (for auto-record on detection)
         self._rec_process: Optional[subprocess.Popen] = None
         self._rec_file: Optional[str] = None
@@ -248,6 +349,13 @@ class TransitDetector:
         self._scores_a.clear()
         self._scores_b.clear()
         self._signal_trace.clear()
+        self._disk_cx = None
+        self._disk_cy = None
+        self._disk_radius = None
+        self._disk_mask = None
+        self._limb_mask = None
+        self._disk_weight = None
+        self._disk_detected = False
 
         self._thread = threading.Thread(
             target=self._reader_loop, name="transit-detector", daemon=True
@@ -295,6 +403,15 @@ class TransitDetector:
             "recent_events": [e.to_dict() for e in self.events[-10:]],
             "recording_active": self._rec_process is not None
             and self._rec_process.poll() is None,
+            "disk_detected": self._disk_detected,
+            "disk_info": {
+                "cx": self._disk_cx,
+                "cy": self._disk_cy,
+                "radius": self._disk_radius,
+                "margin_pct": DISK_MARGIN_PCT,
+            }
+            if self._disk_detected
+            else None,
         }
 
     # ------------------------------------------------------------------
@@ -388,10 +505,44 @@ class TransitDetector:
 
         Computes signal A (consecutive diff) and signal B (reference diff).
         Both use mean-subtraction for scintillation immunity.
-        Requires both signals above adaptive threshold for CONSEC_FRAMES_REQUIRED
-        consecutive frames, with spatial concentration check, before firing.
+
+        When a disk is detected (Sun/Moon), signals are computed only within
+        the inner disk (excluding the atmospheric limb margin).  The spatial
+        concentration check compares inner-disk signal vs limb-ring signal,
+        rejecting atmospheric shimmer that dominates the disk edge.
+
+        Falls back to the original rectangular centre/edge masks if no disk
+        is found in the frame.
         """
         self._current_frame = frame
+
+        # --- Periodic disk detection (every 2s) ---
+        if self._frame_idx % DISK_DETECT_INTERVAL == 0:
+            gray = np.clip(frame.mean(axis=2), 0, 255).astype(np.uint8)
+            result = _detect_disk(gray)
+            if result is not None:
+                cx, cy, r = result
+                if not self._disk_detected:
+                    logger.info(
+                        f"[Detector] Disk found: centre=({cx},{cy}), "
+                        f"radius={r}px, margin={DISK_MARGIN_PCT*100:.0f}%"
+                    )
+                self._disk_cx, self._disk_cy, self._disk_radius = cx, cy, r
+                self._disk_mask, self._limb_mask, self._disk_weight = (
+                    _build_disk_masks(
+                        ANALYSIS_HEIGHT, ANALYSIS_WIDTH, cx, cy, r, DISK_MARGIN_PCT
+                    )
+                )
+                self._disk_detected = True
+            elif self._disk_detected:
+                logger.debug("[Detector] Disk lost — falling back to rectangular masks")
+                self._disk_detected = False
+
+        # Select masks: disk-aware if available, else rectangular fallback
+        use_disk = self._disk_detected and self._disk_mask is not None
+        inner_mask = self._disk_mask if use_disk else CENTRE_MASK
+        outer_mask = self._limb_mask if use_disk else EDGE_MASK
+        weight_2d = self._disk_weight if use_disk else CENTRE_WEIGHT
 
         # --- Signal A: consecutive-frame diff ---
         score_a = 0.0
@@ -399,7 +550,12 @@ class TransitDetector:
             diff_a = frame - self._prev_frame
             mean_shift = diff_a.mean(axis=(0, 1), keepdims=True)
             diff_a -= mean_shift
-            score_a = float(np.abs(diff_a).mean())
+            # Mask to inner disk only
+            abs_a = np.abs(diff_a).mean(axis=2)
+            if inner_mask.any():
+                score_a = float(abs_a[inner_mask].mean())
+            else:
+                score_a = float(abs_a.mean())
 
         # --- EMA reference blending (replaces hard swap) ---
         if self._ref_frame is None:
@@ -407,19 +563,25 @@ class TransitDetector:
         elif self._frame_idx > self._ref_freeze_until:
             self._ref_frame = (1 - EMA_ALPHA) * self._ref_frame + EMA_ALPHA * frame
 
-        # --- Signal B: centre-weighted reference diff ---
+        # --- Signal B: disk-weighted reference diff ---
         diff_b = frame - self._ref_frame
         mean_shift_b = diff_b.mean(axis=(0, 1), keepdims=True)
         diff_b -= mean_shift_b
         self._current_diff_b = diff_b
-        weighted = np.abs(diff_b) * CENTRE_WEIGHT[:, :, np.newaxis]
+        weighted = np.abs(diff_b) * weight_2d[:, :, np.newaxis]
         score_b = float(weighted.mean())
 
-        # --- Spatial concentration: centre vs edge ---
+        # --- Spatial concentration: inner disk vs limb/edge ---
         abs_diff_gray = np.abs(diff_b).mean(axis=2)  # H×W
-        centre_score = float(abs_diff_gray[CENTRE_MASK].mean())
-        edge_score = float(abs_diff_gray[EDGE_MASK].mean())
-        centre_ratio = centre_score / max(edge_score, 0.001)
+        if inner_mask.any():
+            inner_score = float(abs_diff_gray[inner_mask].mean())
+        else:
+            inner_score = float(abs_diff_gray.mean())
+        if outer_mask is not None and outer_mask.any():
+            outer_score = float(abs_diff_gray[outer_mask].mean())
+        else:
+            outer_score = 0.001
+        centre_ratio = inner_score / max(outer_score, 0.001)
 
         self._prev_frame = frame.copy()
 
@@ -442,6 +604,7 @@ class TransitDetector:
                     "ta": round(t_a, 5),
                     "tb": round(t_b, 5),
                     "cr": round(centre_ratio, 2),
+                    "disk": self._disk_detected,
                 }
             )
 
@@ -596,6 +759,21 @@ class TransitDetector:
                             cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
                 cv2.putText(heatmap, ts.strftime("%H:%M:%S"), (8, 50),
                             cv2.FONT_HERSHEY_SIMPLEX, 0.6, (200, 200, 200), 1)
+                # Draw detected disk outline and margin if available
+                if self._disk_detected and self._disk_radius:
+                    dcx = self._disk_cx * UPSCALE
+                    dcy = self._disk_cy * UPSCALE
+                    dr = self._disk_radius * UPSCALE
+                    inner_r = max(1, int(dr * (1.0 - DISK_MARGIN_PCT)))
+                    # Full disk outline (yellow)
+                    cv2.circle(heatmap, (dcx, dcy), dr, (0, 255, 255), 1)
+                    # Inner margin boundary (green) — only inside this counts
+                    cv2.circle(heatmap, (dcx, dcy), inner_r, (0, 255, 0), 1)
+                    cv2.putText(heatmap, f"disk r={self._disk_radius}px margin={DISK_MARGIN_PCT*100:.0f}%",
+                                (8, 74), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (0, 255, 0), 1)
+                else:
+                    cv2.putText(heatmap, "no disk (rect fallback)",
+                                (8, 74), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (100, 100, 255), 1)
                 cv2.imwrite(diff_file, heatmap)
                 event.diff_path = diff_file
 
