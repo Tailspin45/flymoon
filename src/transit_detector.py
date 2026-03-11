@@ -48,6 +48,11 @@ DETECTION_COOLDOWN = int(os.getenv("DETECTION_COOLDOWN", "30"))
 # Recording duration when transit detected (seconds)
 DETECTION_RECORD_DURATION = 10
 
+# Pre-buffer: seconds of video to keep BEFORE detection trigger
+PRE_BUFFER_SECONDS = int(os.getenv("DETECTION_PRE_BUFFER", "5"))
+# Post-buffer: seconds of video to keep AFTER detection trigger
+POST_BUFFER_SECONDS = int(os.getenv("DETECTION_POST_BUFFER", "5"))
+
 # --- Phase 1 algorithm parameters ---
 # Consecutive frames both signals must exceed threshold before firing.
 # At 15 fps, 5 frames ≈ 333 ms — filters insects (<100 ms) while catching
@@ -322,6 +327,16 @@ class TransitDetector:
         self._rec_process: Optional[subprocess.Popen] = None
         self._rec_file: Optional[str] = None
 
+        # Full-res circular buffer for pre-trigger capture
+        self._hires_buffer: Deque[bytes] = collections.deque(
+            maxlen=PRE_BUFFER_SECONDS * 30  # ~30fps full-res, JPEG-compressed
+        )
+        self._hires_fps: float = 30.0
+        self._hires_width: int = 0
+        self._hires_height: int = 0
+        self._hires_process: Optional[subprocess.Popen] = None
+        self._hires_thread: Optional[threading.Thread] = None
+
     # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
@@ -361,6 +376,15 @@ class TransitDetector:
             target=self._reader_loop, name="transit-detector", daemon=True
         )
         self._thread.start()
+
+        # Start full-res circular buffer reader alongside detection
+        if self.record_on_detect:
+            self._hires_buffer.clear()
+            self._hires_thread = threading.Thread(
+                target=self._hires_reader_loop, name="hires-buffer", daemon=True
+            )
+            self._hires_thread.start()
+
         logger.info(f"[Detector] Started — reading {self.rtsp_url}")
         self._emit_status("running")
         return True
@@ -369,7 +393,7 @@ class TransitDetector:
         """Stop the detection loop and clean up."""
         self._running = False
 
-        # Kill ffmpeg reader
+        # Kill ffmpeg reader (low-res detection)
         if self._process and self._process.poll() is None:
             try:
                 self._process.kill()
@@ -378,10 +402,22 @@ class TransitDetector:
                 pass
         self._process = None
 
-        # Wait for thread
+        # Kill hi-res buffer reader
+        if self._hires_process and self._hires_process.poll() is None:
+            try:
+                self._hires_process.kill()
+                self._hires_process.wait(timeout=5)
+            except Exception:
+                pass
+        self._hires_process = None
+
+        # Wait for threads
         if self._thread and self._thread.is_alive():
             self._thread.join(timeout=5)
         self._thread = None
+        if self._hires_thread and self._hires_thread.is_alive():
+            self._hires_thread.join(timeout=5)
+        self._hires_thread = None
 
         logger.info("[Detector] Stopped")
         self._emit_status("stopped")
@@ -401,8 +437,7 @@ class TransitDetector:
             "fps": round(fps, 1),
             "detections": self._detection_count,
             "recent_events": [e.to_dict() for e in self.events[-10:]],
-            "recording_active": self._rec_process is not None
-            and self._rec_process.poll() is None,
+            "recording_active": self._rec_process is not None,
             "disk_detected": self._disk_detected,
             "disk_info": {
                 "cx": self._disk_cx,
@@ -494,6 +529,103 @@ class TransitDetector:
             reconnect_delay = min(reconnect_delay * 2, max_reconnect_delay)
 
         logger.info("[Detector] Reader loop exited")
+
+    # ------------------------------------------------------------------
+    # Internal: full-resolution circular buffer
+    # ------------------------------------------------------------------
+
+    def _hires_reader_loop(self) -> None:
+        """Continuously read full-res MJPEG frames into a circular buffer.
+
+        Runs alongside the low-res detection reader. Each frame is stored
+        as JPEG bytes in a bounded deque so the last PRE_BUFFER_SECONDS of
+        video are always available when a detection fires.
+        """
+        cmd = [
+            "ffmpeg",
+            "-rtsp_transport", "tcp",
+            "-timeout", "10000000",
+            "-i", self.rtsp_url,
+            "-f", "mjpeg",
+            "-q:v", "3",       # high quality JPEG
+            "-r", "30",        # 30 fps
+            "-an",
+            "pipe:1",
+        ]
+
+        reconnect_delay = 2
+
+        while self._running:
+            try:
+                logger.info("[HiRes] Starting full-res buffer reader")
+                self._hires_process = subprocess.Popen(
+                    cmd,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.DEVNULL,
+                    bufsize=1024 * 1024,
+                )
+
+                reconnect_delay = 2
+                buf = b""
+                SOI = b"\xff\xd8"
+                EOI = b"\xff\xd9"
+                got_dimensions = False
+
+                while self._running:
+                    chunk = self._hires_process.stdout.read(65536)
+                    if not chunk:
+                        break
+                    buf += chunk
+
+                    # Extract complete JPEG frames from the MJPEG stream
+                    while True:
+                        soi_pos = buf.find(SOI)
+                        if soi_pos < 0:
+                            buf = b""
+                            break
+                        eoi_pos = buf.find(EOI, soi_pos + 2)
+                        if eoi_pos < 0:
+                            # Trim before SOI marker to avoid unbounded growth
+                            buf = buf[soi_pos:]
+                            break
+                        jpeg_data = buf[soi_pos:eoi_pos + 2]
+                        buf = buf[eoi_pos + 2:]
+
+                        self._hires_buffer.append(jpeg_data)
+
+                        # Get dimensions from first frame
+                        if not got_dimensions:
+                            try:
+                                arr = np.frombuffer(jpeg_data, dtype=np.uint8)
+                                img = cv2.imdecode(arr, cv2.IMREAD_COLOR)
+                                if img is not None:
+                                    self._hires_height, self._hires_width = img.shape[:2]
+                                    got_dimensions = True
+                                    logger.info(
+                                        f"[HiRes] Buffer active: {self._hires_width}×{self._hires_height} "
+                                        f"capacity={self._hires_buffer.maxlen} frames "
+                                        f"({PRE_BUFFER_SECONDS}s)"
+                                    )
+                            except Exception:
+                                pass
+
+            except Exception as e:
+                logger.error(f"[HiRes] Buffer reader error: {e}")
+
+            if self._hires_process and self._hires_process.poll() is None:
+                try:
+                    self._hires_process.kill()
+                    self._hires_process.wait(timeout=3)
+                except Exception:
+                    pass
+
+            if not self._running:
+                break
+
+            time.sleep(reconnect_delay)
+            reconnect_delay = min(reconnect_delay * 2, 30)
+
+        logger.info("[HiRes] Buffer reader exited")
 
     # ------------------------------------------------------------------
     # Internal: frame processing (dual-signal detection)
@@ -793,56 +925,101 @@ class TransitDetector:
             logger.warning(f"[Detector] Diagnostic frame save failed: {e}")
 
     def _start_detection_recording(self, ts: datetime) -> Optional[str]:
-        """Launch a full-res RTSP recording for DETECTION_RECORD_DURATION seconds."""
+        """Save pre-buffer frames + capture post-buffer from the circular buffer.
+
+        The hi-res reader continuously fills _hires_buffer with JPEG frames.
+        On detection we:
+          1. Snapshot the current buffer (PRE_BUFFER_SECONDS of video)
+          2. Continue capturing POST_BUFFER_SECONDS more frames
+          3. Write everything to an MP4 via cv2.VideoWriter
+        This guarantees the transit frame is IN the video.
+        """
         # Don't start if one is already running
-        if self._rec_process and self._rec_process.poll() is None:
+        if self._rec_process is not None:
             logger.info("[Detector] Recording already active, skipping")
             return self._rec_file
+
+        # Use a sentinel to block concurrent recordings
+        self._rec_process = True  # type: ignore[assignment]
 
         year_month = os.path.join(self.capture_dir, str(ts.year), f"{ts.month:02d}")
         os.makedirs(year_month, exist_ok=True)
 
         filename = f"det_{ts.strftime('%Y%m%d_%H%M%S')}.mp4"
         filepath = os.path.join(year_month, filename)
+        self._rec_file = filepath
 
-        duration = DETECTION_RECORD_DURATION
-        cmd = [
-            "ffmpeg",
-            "-rtsp_transport",
-            "tcp",
-            "-timeout",
-            str((duration + 15) * 1000000),
-            "-i",
-            self.rtsp_url,
-            "-t",
-            str(duration),
-            "-c",
-            "copy",
-            "-movflags",
-            "frag_keyframe+empty_moov",
-            "-y",
-            filepath,
-        ]
+        # Snapshot the pre-buffer
+        pre_frames = list(self._hires_buffer)
+        pre_count = len(pre_frames)
 
-        try:
-            self._rec_process = subprocess.Popen(
-                cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE
-            )
-            self._rec_file = filepath
-            logger.info(f"[Detector] Recording started: {filepath} ({duration}s)")
+        logger.info(
+            f"[Detector] Recording: {pre_count} pre-buffer frames + "
+            f"{POST_BUFFER_SECONDS}s post-buffer → {filepath}"
+        )
 
-            # Schedule thumbnail + metadata generation when done
-            threading.Thread(
-                target=self._finalize_recording,
-                args=(filepath, ts, duration),
-                name="detect-finalize",
-                daemon=True,
-            ).start()
+        # Collect post-buffer in a background thread
+        def _capture_and_write():
+            try:
+                # Collect post-buffer frames
+                post_frames = []
+                target_post = int(POST_BUFFER_SECONDS * 30)
+                deadline = time.monotonic() + POST_BUFFER_SECONDS + 2
+                buf_snapshot_len = len(self._hires_buffer)
 
-            return filepath
-        except Exception as e:
-            logger.error(f"[Detector] Failed to start recording: {e}")
-            return None
+                while len(post_frames) < target_post and time.monotonic() < deadline:
+                    current_len = len(self._hires_buffer)
+                    if current_len > buf_snapshot_len:
+                        # New frames arrived — grab them
+                        new_frames = list(self._hires_buffer)[-( current_len - buf_snapshot_len):]
+                        post_frames.extend(new_frames)
+                        buf_snapshot_len = current_len
+                    time.sleep(0.03)
+
+                all_frames = pre_frames + post_frames
+                if not all_frames:
+                    logger.warning("[Detector] No frames in buffer for recording")
+                    return
+
+                # Decode first frame to get dimensions
+                arr = np.frombuffer(all_frames[0], dtype=np.uint8)
+                img = cv2.imdecode(arr, cv2.IMREAD_COLOR)
+                if img is None:
+                    logger.warning("[Detector] Failed to decode buffer frame")
+                    return
+                h, w = img.shape[:2]
+                fps = 30.0
+
+                # Write MP4
+                fourcc = cv2.VideoWriter_fourcc(*"mp4v")
+                writer = cv2.VideoWriter(filepath, fourcc, fps, (w, h))
+                written = 0
+                for jpeg_bytes in all_frames:
+                    arr = np.frombuffer(jpeg_bytes, dtype=np.uint8)
+                    img = cv2.imdecode(arr, cv2.IMREAD_COLOR)
+                    if img is not None:
+                        writer.write(img)
+                        written += 1
+                writer.release()
+
+                logger.info(
+                    f"[Detector] Recording saved: {written} frames "
+                    f"({pre_count} pre + {written - pre_count} post) "
+                    f"= {written/fps:.1f}s → {filepath}"
+                )
+
+                self._finalize_recording(filepath, ts, 0)
+
+            except Exception as e:
+                logger.error(f"[Detector] Buffer recording failed: {e}")
+            finally:
+                self._rec_process = None
+
+        threading.Thread(
+            target=_capture_and_write, name="detect-buffer-write", daemon=True
+        ).start()
+
+        return filepath
 
     def _peak_scene_time(
         self, filepath: str, search_secs: float = 3.0
@@ -899,14 +1076,7 @@ class TransitDetector:
             return None
 
     def _finalize_recording(self, filepath: str, ts: datetime, duration: int) -> None:
-        """Wait for recording to finish, then generate thumbnail + metadata."""
-        if self._rec_process:
-            try:
-                self._rec_process.wait(timeout=duration + 15)
-            except subprocess.TimeoutExpired:
-                self._rec_process.kill()
-                self._rec_process.wait()
-
+        """Generate thumbnail + metadata after buffer recording is written."""
         if not os.path.exists(filepath):
             logger.warning(f"[Detector] Recording file missing: {filepath}")
             return
