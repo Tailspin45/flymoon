@@ -1666,10 +1666,13 @@ function updateFilmstrip(files) {
             : isVideo
                 ? `<canvas class="filmstrip-thumbnail video-thumb-canvas" data-video-src="${file.path}"></canvas>`
                 : `<img src="${file.path}" alt="${file.name}" title="${imgTitle}" class="filmstrip-thumbnail">`;
+        const detBadge2 = file.diff_heatmap
+            ? '<span style="position:absolute; top:1px; right:1px; font-size:0.9em; filter:drop-shadow(0 0 2px #000);" title="Has heatmap">🔥</span>'
+            : '';
         
         return `
-        <div class="${itemClass}" onclick="viewFile('${file.path}', '${file.name}')">
-            ${badge}
+        <div class="${itemClass}" onclick="viewFile('${file.path}', '${file.name}')" style="position:relative;">
+            ${badge}${detBadge2}
             <div class="filmstrip-name" title="${file.name}">${file.name}</div>
             ${thumbnail}
             <div class="filmstrip-info">
@@ -1958,9 +1961,13 @@ function updateFilesGrid() {
             : isVideo
                 ? `<canvas class="file-thumbnail video-thumb-canvas" data-video-src="${file.path}"></canvas>`
                 : `<img src="${file.path}" alt="${file.name}" title="${imgTitle}" class="file-thumbnail">`;
+        const detBadge = file.diff_heatmap
+            ? `<span style="position:absolute; top:2px; right:2px; font-size:1.1em; filter:drop-shadow(0 0 2px #000);" title="Detection has heatmap &amp; trigger frame">🔥</span>`
+            : '';
         return `
         <div class="file-item${sel}" data-file-path="${file.path}" data-file-idx="${idx}"
-             onclick="gridSelectItem(${idx}, '${file.path}', event)">
+             onclick="gridSelectItem(${idx}, '${file.path}', event)" style="position:relative;">
+            ${detBadge}
             <div class="file-info">
                 <span class="file-name" title="${file.name}">${file.name}</span>
                 <div class="file-actions">
@@ -2085,7 +2092,8 @@ function viewFile(path, name, opts) {
     _markedFrames = new Set();
     _scrubSlider = null;
     _filmstripActive = false;
-    _filmstripHighlight = null;
+    _filmstripFrames = [];
+    _filmstripCanvas = null;
     // Resolve companion images for this file
     const curFileInfo = files.find(f => f.path === path) || {};
     const companionHtml = _buildCompanionStrip(curFileInfo);
@@ -2199,7 +2207,8 @@ function closeFileViewer() {
     _markedFrames = new Set();
     _scrubSlider = null;
     _filmstripActive = false;
-    _filmstripHighlight = null;
+    _filmstripFrames = [];
+    _filmstripCanvas = null;
 
     // Restore the files grid modal if it was open before the viewer
     if (viewer._filesModalWasOpen) {
@@ -2259,10 +2268,13 @@ function _initFrameScrubber(vid) {
     _updateScrubPosition(vid);
 }
 
-var _filmstripActive = false; // prevent concurrent filmstrip builds
-var _filmstripHighlight = null; // currently highlighted thumb element
+var _filmstripActive = false;
+var _filmstripCanvas = null; // offscreen canvas for frame extraction
+var _filmstripFrames = []; // array of data URLs (null until extracted)
+var _filmstripTotal = 0;
+var _filmstripCurIdx = 0;
 
-/** User-triggered filmstrip load (every frame). */
+/** User-triggered filmstrip load. */
 function _startFilmstrip() {
     const vid = document.querySelector('#fileViewerBody video');
     if (!vid || !vid.duration) return;
@@ -2272,9 +2284,9 @@ function _startFilmstrip() {
 }
 
 /**
- * Extract EVERY frame from video and render as a scrollable filmstrip.
- * Detection videos are typically ~10s / 300 frames — all are shown so
- * no transit is missed even if it lasts only 1-2 frames.
+ * Extract every frame from video into memory, then display a full-size
+ * single-frame viewer with scrubber below.  Detection videos are typically
+ * ~10s / 300 frames — all are captured so even 1-frame transits are visible.
  */
 function _buildFilmstrip(vid) {
     const container = document.getElementById('filmstripContainer');
@@ -2283,68 +2295,43 @@ function _buildFilmstrip(vid) {
 
     const fps = _videoFps;
     const totalFrames = Math.round(vid.duration * fps);
-    const thumbH = 80;
-    const aspect = (vid.videoWidth && vid.videoHeight) ? vid.videoWidth / vid.videoHeight : 16 / 9;
-    const thumbW = Math.round(thumbH * aspect);
+    _filmstripTotal = totalFrames;
+    _filmstripFrames = new Array(totalFrames).fill(null);
+    _filmstripCurIdx = 0;
 
+    // Use full video resolution for extraction
+    const vw = vid.videoWidth || 1920;
+    const vh = vid.videoHeight || 1080;
     const canvas = document.createElement('canvas');
-    canvas.width = thumbW;
-    canvas.height = thumbH;
+    canvas.width = vw;
+    canvas.height = vh;
+    _filmstripCanvas = canvas;
     const ctx = canvas.getContext('2d', { willReadFrequently: true });
 
-    // Every single frame
-    const frames = [];
-    for (let f = 0; f < totalFrames; f++) {
-        frames.push({ frameIdx: f, time: f / fps });
-    }
-
     container.innerHTML =
-        `<div id="filmstripStrip" style="display:flex; overflow-x:auto; overflow-y:hidden; gap:1px; padding:2px 4px; height:${thumbH + 18}px; align-items:end; cursor:pointer;">` +
-        `</div>` +
-        `<div id="filmstripProgress" style="color:#0ff; font-size:0.7em; text-align:center; padding:2px 0;">` +
+        `<div id="filmstripProgress" style="color:#0ff; font-size:0.75em; text-align:center; padding:4px 0;">` +
         `Extracting frame 0 / ${totalFrames}…` +
         `</div>`;
-    const strip = document.getElementById('filmstripStrip');
     const progressEl = document.getElementById('filmstripProgress');
 
     const origTime = vid.currentTime;
-    const origPaused = vid.paused;
     vid.pause();
 
     let idx = 0;
 
     function extractNext() {
-        if (idx >= frames.length) {
-            vid.currentTime = origTime;
-            if (!origPaused) vid.play();
+        if (idx >= totalFrames) {
             _filmstripActive = false;
-            if (progressEl) progressEl.textContent = `${totalFrames} frames · Click to seek · Scroll to browse`;
-            _highlightFilmstripFrame(vid);
+            vid.currentTime = origTime;
+            // Show the frame viewer
+            _showFilmstripViewer(container, vid, vw, vh);
             return;
         }
-        const info = frames[idx];
-        vid.currentTime = info.time;
+        vid.currentTime = idx / fps;
         vid.onseeked = function () {
             vid.onseeked = null;
-            ctx.drawImage(vid, 0, 0, thumbW, thumbH);
-            const dataUrl = canvas.toDataURL('image/jpeg', 0.65);
-
-            const thumb = document.createElement('div');
-            thumb.dataset.frameIdx = info.frameIdx;
-            thumb.dataset.time = info.time;
-            thumb.style.cssText = `flex-shrink:0; width:${thumbW}px; height:${thumbH}px; position:relative; border:2px solid transparent; border-radius:2px;`;
-            thumb.innerHTML =
-                `<img src="${dataUrl}" width="${thumbW}" height="${thumbH}" style="display:block; border-radius:2px;" draggable="false">` +
-                `<div style="position:absolute; bottom:0; left:0; right:0; background:rgba(0,0,0,0.65); color:#ccc; font-size:0.55em; text-align:center; line-height:1.2; padding:1px 0;">` +
-                `#${info.frameIdx}` +
-                `</div>`;
-
-            thumb.addEventListener('click', () => {
-                vid.currentTime = info.time;
-                vid.pause();
-            });
-
-            strip.appendChild(thumb);
+            ctx.drawImage(vid, 0, 0, vw, vh);
+            _filmstripFrames[idx] = canvas.toDataURL('image/jpeg', 0.85);
             idx++;
             if (progressEl) progressEl.textContent = `Extracting frame ${idx} / ${totalFrames}…`;
             requestAnimationFrame(extractNext);
@@ -2352,31 +2339,77 @@ function _buildFilmstrip(vid) {
     }
 
     extractNext();
-    vid.addEventListener('timeupdate', () => _highlightFilmstripFrame(vid));
 }
 
-/** Highlight the filmstrip thumbnail closest to current video time. */
-function _highlightFilmstripFrame(vid) {
-    const strip = document.getElementById('filmstripStrip');
-    if (!strip || !vid) return;
-    const curFrame = Math.round((vid.currentTime || 0) * _videoFps);
-    const thumbs = strip.children;
-    let best = null, bestDist = Infinity;
-    for (const t of thumbs) {
-        const fi = parseInt(t.dataset.frameIdx, 10);
-        const d = Math.abs(fi - curFrame);
-        if (d < bestDist) { bestDist = d; best = t; }
+/** Show the full-size frame viewer with scrubber. */
+function _showFilmstripViewer(container, vid, vw, vh) {
+    const aspect = vw / vh;
+    // Scale to fit available width while preserving aspect ratio
+    container.innerHTML =
+        `<div style="display:flex; flex-direction:column; align-items:center; width:100%;">` +
+          `<div style="position:relative; width:100%; max-height:45vh; display:flex; justify-content:center; background:#000; overflow:hidden;">` +
+            `<img id="filmstripImg" style="max-width:100%; max-height:45vh; object-fit:contain;" draggable="false">` +
+            `<div id="filmstripLabel" style="position:absolute; top:4px; left:8px; color:#0ff; font-size:0.85em; font-family:monospace; background:rgba(0,0,0,0.6); padding:2px 6px; border-radius:3px;">Frame #0</div>` +
+          `</div>` +
+          `<div style="width:100%; padding:4px 8px; background:#111; border-top:1px solid #333;">` +
+            `<input type="range" id="filmstripSlider" min="0" max="${_filmstripTotal - 1}" value="0" step="1" ` +
+              `style="width:100%; accent-color:#0ff; cursor:pointer;" title="Scrub through every frame">` +
+          `</div>` +
+          `<div style="color:#888; font-size:0.65em; text-align:center; padding:2px 0;">` +
+            `${_filmstripTotal} frames · ←/→ step · Click frame image to mark for composite` +
+          `</div>` +
+        `</div>`;
+
+    const img = document.getElementById('filmstripImg');
+    const label = document.getElementById('filmstripLabel');
+    const slider = document.getElementById('filmstripSlider');
+
+    function showFrame(idx) {
+        idx = Math.max(0, Math.min(_filmstripTotal - 1, idx));
+        _filmstripCurIdx = idx;
+        if (_filmstripFrames[idx]) img.src = _filmstripFrames[idx];
+        if (label) label.textContent = `Frame #${idx} / ${_filmstripTotal}`;
+        slider.value = idx;
+        // Also sync the video
+        vid.currentTime = idx / _videoFps;
+        // Update mark button highlight
+        const markBtn = document.getElementById('markFrameBtn');
+        if (markBtn) {
+            markBtn.style.background = _markedFrames.has(idx) ? '#fd0' : '';
+            markBtn.style.color = _markedFrames.has(idx) ? '#000' : '';
+        }
     }
-    // Remove old highlight
-    if (_filmstripHighlight && _filmstripHighlight !== best) {
-        _filmstripHighlight.style.borderColor = 'transparent';
+
+    slider.addEventListener('input', () => showFrame(parseInt(slider.value, 10)));
+
+    // Click image to mark/unmark
+    img.addEventListener('click', () => {
+        if (_markedFrames.has(_filmstripCurIdx)) {
+            _markedFrames.delete(_filmstripCurIdx);
+        } else {
+            _markedFrames.add(_filmstripCurIdx);
+        }
+        _updateMarkedUI();
+        showFrame(_filmstripCurIdx);
+    });
+    img.style.cursor = 'pointer';
+    img.title = 'Click to mark/unmark this frame for composite';
+
+    // Keyboard: arrow keys step frames
+    function filmstripKeyHandler(e) {
+        if (e.target.tagName === 'INPUT' && e.target.type !== 'range') return;
+        if (e.key === 'ArrowLeft') { e.preventDefault(); showFrame(_filmstripCurIdx - (e.shiftKey ? 10 : 1)); }
+        else if (e.key === 'ArrowRight') { e.preventDefault(); showFrame(_filmstripCurIdx + (e.shiftKey ? 10 : 1)); }
+        else if (e.key === 'm' || e.key === 'M') {
+            e.preventDefault();
+            img.click(); // toggle mark
+        }
     }
-    if (best) {
-        best.style.borderColor = '#0ff';
-        _filmstripHighlight = best;
-        // Scroll into view if needed
-        best.scrollIntoView({ block: 'nearest', inline: 'center', behavior: 'smooth' });
-    }
+    document.addEventListener('keydown', filmstripKeyHandler);
+    // Store handler for cleanup
+    container._filmstripKeyHandler = filmstripKeyHandler;
+
+    showFrame(0);
 }
 
 function _updateScrubPosition(vid) {
