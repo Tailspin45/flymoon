@@ -2117,7 +2117,7 @@ function viewFile(path, name, opts) {
               `<div id="frameScrubber" style="width:100%; padding:6px 8px; background:#1a1a1a; border-top:1px solid #333; flex-shrink:0;">` +
                 `<div style="display:flex; align-items:center; gap:8px;">` +
                   `<span id="frameCounter" style="color:#0ff; font-family:monospace; font-size:0.85em; min-width:120px;">Frame 0 / 0</span>` +
-                  `<input type="range" id="frameScrubSlider" min="0" max="0" value="0" step="1" ` +
+                  `<input type="range" id="frameScrubSlider" min="0" max="100" value="0" step="1" ` +
                     `style="flex:1; accent-color:#0ff; cursor:pointer;" title="Drag to scrub frames">` +
                   `<button id="markFrameBtn" class="btn-viewer" onclick="toggleMarkFrame()" ` +
                     `title="Mark/unmark this frame for composite (M key)" style="font-size:0.85em; padding:2px 8px;">📌 Mark</button>` +
@@ -2148,6 +2148,7 @@ function viewFile(path, name, opts) {
             updateTime();
             _initFrameScrubber(vid);
         });
+        vid.addEventListener('loadeddata', () => _initFrameScrubber(vid));
         // Fallback: if loadedmetadata already fired (cached video)
         if (vid.readyState >= 1) {
             updateTime();
