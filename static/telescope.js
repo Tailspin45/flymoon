@@ -2033,13 +2033,14 @@ var _scrubSlider = null; // reference to the range input
 /** Build HTML strip showing diff heatmap and trigger frame beside the video. */
 function _buildCompanionStrip(fileInfo) {
     const parts = [];
+    const imgStyle = 'width:200px; height:150px; object-fit:contain; border:1px solid #444; border-radius:4px; cursor:pointer; background:#000;';
     if (fileInfo.diff_heatmap) {
         parts.push(
             `<div style="text-align:center;">` +
             `<div style="color:#f80; font-size:0.7em; margin-bottom:2px;">🔥 Diff Heatmap</div>` +
             `<img src="${fileInfo.diff_heatmap}?t=${Date.now()}" alt="Diff heatmap" ` +
             `title="Diff heatmap — bright/warm pixels show motion between frames that triggered the detection." ` +
-            `style="max-height:140px; max-width:260px; border:1px solid #444; border-radius:4px; cursor:pointer;" ` +
+            `style="${imgStyle}" ` +
             `onclick="window.open('${fileInfo.diff_heatmap}','_blank')">` +
             `</div>`);
     }
@@ -2049,7 +2050,7 @@ function _buildCompanionStrip(fileInfo) {
             `<div style="color:#0cf; font-size:0.7em; margin-bottom:2px;">📷 Trigger Frame</div>` +
             `<img src="${fileInfo.trigger_frame}?t=${Date.now()}" alt="Trigger frame" ` +
             `title="Trigger frame — low-res detection frame captured when motion was detected." ` +
-            `style="max-height:140px; max-width:260px; border:1px solid #444; border-radius:4px; cursor:pointer;" ` +
+            `style="${imgStyle}" ` +
             `onclick="window.open('${fileInfo.trigger_frame}','_blank')">` +
             `</div>`);
     }
@@ -2093,26 +2094,31 @@ function viewFile(path, name, opts) {
         const loopAttr = opts.loop ? ' loop' : '';
         body.innerHTML =
             `<div style="display:flex; flex-direction:column; width:100%; max-height:85vh; overflow:hidden;">` +
-              `<div style="display:flex; flex:1; min-height:0; gap:8px; padding:4px 8px;">` +
-                `<div style="flex:1; display:flex; flex-direction:column; align-items:center; min-width:0;">` +
-                  `<video src="${path}" controls autoplay playsinline${loopAttr} style="max-width:100%; max-height:55vh; flex-shrink:1;"></video>` +
+              `<div style="display:flex; min-height:0; gap:8px; padding:4px 8px; flex-shrink:0;">` +
+                `<div style="display:flex; flex-direction:column; align-items:center; min-width:0; flex:1;">` +
+                  `<video src="${path}" controls autoplay playsinline${loopAttr} style="max-width:100%; max-height:40vh; flex-shrink:1;"></video>` +
                   `<div id="videoPreciseTime" class="video-precise-time">0.00 / 0.00</div>` +
-                  `<div id="frameScrubber" style="display:none; width:100%; padding:6px 8px; background:#1a1a1a; border-top:1px solid #333;">` +
-                    `<div style="display:flex; align-items:center; gap:8px;">` +
-                      `<span id="frameCounter" style="color:#0ff; font-family:monospace; font-size:0.85em; min-width:120px;">Frame 0 / 0</span>` +
-                      `<input type="range" id="frameScrubSlider" min="0" max="0" value="0" step="1" ` +
-                        `style="flex:1; accent-color:#0ff; cursor:pointer;" title="Drag to scrub frames">` +
-                      `<button id="markFrameBtn" class="btn-viewer" onclick="toggleMarkFrame()" ` +
-                        `title="Mark/unmark this frame for composite (M key)" style="font-size:0.85em; padding:2px 8px;">📌 Mark</button>` +
-                      `<span id="markedCount" style="color:#fd0; font-family:monospace; font-size:0.8em; min-width:70px;">0 marked</span>` +
-                    `</div>` +
-                    `<div id="markedFrameBar" style="position:relative; width:100%; height:8px; background:#222; margin-top:4px; border-radius:4px; overflow:hidden;" title="Yellow ticks = marked frames"></div>` +
-                  `</div>` +
                 `</div>` +
-                (companionHtml ? `<div style="display:flex; flex-direction:column; gap:6px; align-items:center; flex-shrink:0; max-width:280px;">${companionHtml}</div>` : '') +
+                (companionHtml ? `<div style="display:flex; flex-direction:column; gap:6px; align-items:center; flex-shrink:0; justify-content:center;">${companionHtml}</div>` : '') +
               `</div>` +
               `<div id="filmstripContainer" style="width:100%; border-top:1px solid #333; background:#0a0a0a; padding:4px 0; flex-shrink:0;">` +
-                `<div style="color:#888; font-size:0.75em; text-align:center; padding:2px;">Loading filmstrip…</div>` +
+                `<div style="text-align:center; padding:6px;">` +
+                  `<button class="btn-viewer" id="loadFilmstripBtn" onclick="_startFilmstrip()" title="Extract every frame for inspection">🎞️ Load Filmstrip (every frame)</button>` +
+                `</div>` +
+              `</div>` +
+              `<div id="frameScrubber" style="display:none; width:100%; padding:6px 8px; background:#1a1a1a; border-top:1px solid #333; flex-shrink:0;">` +
+                `<div style="display:flex; align-items:center; gap:8px;">` +
+                  `<span id="frameCounter" style="color:#0ff; font-family:monospace; font-size:0.85em; min-width:120px;">Frame 0 / 0</span>` +
+                  `<input type="range" id="frameScrubSlider" min="0" max="0" value="0" step="1" ` +
+                    `style="flex:1; accent-color:#0ff; cursor:pointer;" title="Drag to scrub frames">` +
+                  `<button id="markFrameBtn" class="btn-viewer" onclick="toggleMarkFrame()" ` +
+                    `title="Mark/unmark this frame for composite (M key)" style="font-size:0.85em; padding:2px 8px;">📌 Mark</button>` +
+                  `<span id="markedCount" style="color:#fd0; font-family:monospace; font-size:0.8em; min-width:70px;">0 marked</span>` +
+                `</div>` +
+                `<div id="markedFrameBar" style="position:relative; width:100%; height:8px; background:#222; margin-top:4px; border-radius:4px; overflow:hidden;" title="Yellow ticks = marked frames"></div>` +
+              `</div>` +
+              `<div id="buildCompositeRow" style="display:none; padding:4px 8px; background:#1a1a1a; border-top:1px solid #222; text-align:center; flex-shrink:0;">` +
+                `<button class="btn-viewer" id="buildCompositeBtn" onclick="buildCompositeFromMarked()">🖼 Build Composite (<span id="compositeCountBtn">0</span>)</button>` +
               `</div>` +
             `</div>`;
         const vid = body.querySelector('video');
@@ -2153,8 +2159,7 @@ function viewFile(path, name, opts) {
             ? `<button class="btn-viewer" onmousedown="frameStepStart(-1)" onmouseup="frameStepStop()" onmouseleave="frameStepStop()" title="Back 1 frame (hold to repeat)">◁</button>` +
               `<button class="btn-viewer btn-viewer-sun" id="scanTransitBtn" onclick="scanTransit('sun')" title="Analyze for solar transit">☀️ Solar Transit</button>` +
               `<button class="btn-viewer btn-viewer-moon" onclick="scanTransit('moon')" title="Analyze for lunar transit">🌙 Lunar Transit</button>` +
-              `<button class="btn-viewer" onmousedown="frameStepStart(1)" onmouseup="frameStepStop()" onmouseleave="frameStepStop()" title="Forward 1 frame (hold to repeat)">▷</button>` +
-              `<button class="btn-viewer" id="buildCompositeBtn" onclick="buildCompositeFromMarked()" title="Build composite from marked frames" style="display:none;">🖼 Build Composite (<span id="compositeCountBtn">0</span>)</button>`
+              `<button class="btn-viewer" onmousedown="frameStepStart(1)" onmouseup="frameStepStop()" onmouseleave="frameStepStop()" title="Forward 1 frame (hold to repeat)">▷</button>`
             : '';
         // Show composite image button if an analyzed_xxx.jpg exists for this file
         const stem = path.replace(/^.*\//, '').replace('.mp4', '');
@@ -2252,15 +2257,24 @@ function _initFrameScrubber(vid) {
 
     scrubber.style.display = 'block';
     _updateScrubPosition(vid);
-    _buildFilmstrip(vid);
 }
 
 var _filmstripActive = false; // prevent concurrent filmstrip builds
 var _filmstripHighlight = null; // currently highlighted thumb element
 
+/** User-triggered filmstrip load (every frame). */
+function _startFilmstrip() {
+    const vid = document.querySelector('#fileViewerBody video');
+    if (!vid || !vid.duration) return;
+    const btn = document.getElementById('loadFilmstripBtn');
+    if (btn) btn.disabled = true;
+    _buildFilmstrip(vid);
+}
+
 /**
- * Extract frame thumbnails from video and render as a scrollable filmstrip.
- * Samples every Nth frame to keep thumbnail count manageable (max ~120).
+ * Extract EVERY frame from video and render as a scrollable filmstrip.
+ * Detection videos are typically ~10s / 300 frames — all are shown so
+ * no transit is missed even if it lasts only 1-2 frames.
  */
 function _buildFilmstrip(vid) {
     const container = document.getElementById('filmstripContainer');
@@ -2269,10 +2283,7 @@ function _buildFilmstrip(vid) {
 
     const fps = _videoFps;
     const totalFrames = Math.round(vid.duration * fps);
-    // Target ~100 thumbnails; step by at least 1 frame
-    const step = Math.max(1, Math.round(totalFrames / 100));
-    const thumbH = 64;
-    // Aspect ratio from video dimensions (fallback 16:9)
+    const thumbH = 80;
     const aspect = (vid.videoWidth && vid.videoHeight) ? vid.videoWidth / vid.videoHeight : 16 / 9;
     const thumbW = Math.round(thumbH * aspect);
 
@@ -2281,21 +2292,21 @@ function _buildFilmstrip(vid) {
     canvas.height = thumbH;
     const ctx = canvas.getContext('2d', { willReadFrequently: true });
 
-    const frames = []; // { frameIdx, time }
-    for (let f = 0; f < totalFrames; f += step) {
+    // Every single frame
+    const frames = [];
+    for (let f = 0; f < totalFrames; f++) {
         frames.push({ frameIdx: f, time: f / fps });
     }
 
-    // Build scrollable strip
     container.innerHTML =
-        `<div id="filmstripStrip" style="display:flex; overflow-x:auto; overflow-y:hidden; gap:1px; padding:2px 4px; height:${thumbH + 16}px; align-items:end; cursor:pointer; scroll-behavior:smooth;">` +
+        `<div id="filmstripStrip" style="display:flex; overflow-x:auto; overflow-y:hidden; gap:1px; padding:2px 4px; height:${thumbH + 18}px; align-items:end; cursor:pointer;">` +
         `</div>` +
-        `<div style="color:#666; font-size:0.65em; text-align:center; padding:1px 0;">` +
-        `Click frame to seek · Scroll to browse · ${frames.length} frames sampled (every ${step})` +
+        `<div id="filmstripProgress" style="color:#0ff; font-size:0.7em; text-align:center; padding:2px 0;">` +
+        `Extracting frame 0 / ${totalFrames}…` +
         `</div>`;
     const strip = document.getElementById('filmstripStrip');
+    const progressEl = document.getElementById('filmstripProgress');
 
-    // Save original video time to restore after extraction
     const origTime = vid.currentTime;
     const origPaused = vid.paused;
     vid.pause();
@@ -2304,28 +2315,27 @@ function _buildFilmstrip(vid) {
 
     function extractNext() {
         if (idx >= frames.length) {
-            // Done — restore video position
             vid.currentTime = origTime;
             if (!origPaused) vid.play();
             _filmstripActive = false;
+            if (progressEl) progressEl.textContent = `${totalFrames} frames · Click to seek · Scroll to browse`;
             _highlightFilmstripFrame(vid);
             return;
         }
         const info = frames[idx];
         vid.currentTime = info.time;
-        // Wait for seek to complete, then grab frame
         vid.onseeked = function () {
             vid.onseeked = null;
             ctx.drawImage(vid, 0, 0, thumbW, thumbH);
-            const dataUrl = canvas.toDataURL('image/jpeg', 0.6);
+            const dataUrl = canvas.toDataURL('image/jpeg', 0.65);
 
             const thumb = document.createElement('div');
             thumb.dataset.frameIdx = info.frameIdx;
             thumb.dataset.time = info.time;
-            thumb.style.cssText = `flex-shrink:0; width:${thumbW}px; height:${thumbH}px; position:relative; border:2px solid transparent; border-radius:2px; transition:border-color 0.15s;`;
+            thumb.style.cssText = `flex-shrink:0; width:${thumbW}px; height:${thumbH}px; position:relative; border:2px solid transparent; border-radius:2px;`;
             thumb.innerHTML =
                 `<img src="${dataUrl}" width="${thumbW}" height="${thumbH}" style="display:block; border-radius:2px;" draggable="false">` +
-                `<div style="position:absolute; bottom:0; left:0; right:0; background:rgba(0,0,0,0.7); color:#aaa; font-size:0.55em; text-align:center; line-height:1.3; padding:1px 0;">` +
+                `<div style="position:absolute; bottom:0; left:0; right:0; background:rgba(0,0,0,0.65); color:#ccc; font-size:0.55em; text-align:center; line-height:1.2; padding:1px 0;">` +
                 `#${info.frameIdx}` +
                 `</div>`;
 
@@ -2336,14 +2346,12 @@ function _buildFilmstrip(vid) {
 
             strip.appendChild(thumb);
             idx++;
-            // Use requestAnimationFrame to keep UI responsive
+            if (progressEl) progressEl.textContent = `Extracting frame ${idx} / ${totalFrames}…`;
             requestAnimationFrame(extractNext);
         };
     }
 
     extractNext();
-
-    // Sync filmstrip highlight on timeupdate
     vid.addEventListener('timeupdate', () => _highlightFilmstripFrame(vid));
 }
 
@@ -2409,11 +2417,11 @@ function _updateMarkedUI() {
     const countEl = document.getElementById('markedCount');
     if (countEl) countEl.textContent = `${count} marked`;
 
-    // Update "Build Composite" button visibility
-    const buildBtn = document.getElementById('buildCompositeBtn');
+    // Update "Build Composite" row visibility
+    const buildRow = document.getElementById('buildCompositeRow');
     const buildCount = document.getElementById('compositeCountBtn');
-    if (buildBtn) {
-        buildBtn.style.display = count > 0 ? '' : 'none';
+    if (buildRow) {
+        buildRow.style.display = count > 0 ? '' : 'none';
         if (buildCount) buildCount.textContent = count;
     }
 
