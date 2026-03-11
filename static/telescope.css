@@ -1632,6 +1632,12 @@ canvas.video-thumb-canvas {
 #fivePanel > div:hover {
     border-color: #0ff !important;
 }
+#companionOverlay {
+    transition: opacity 0.2s;
+}
+#companionOverlay:hover {
+    opacity: 1 !important;
+}
 #frameScrubSlider {
     -webkit-appearance: auto;
     appearance: auto;

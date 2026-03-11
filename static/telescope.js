@@ -2040,13 +2040,13 @@ var _scrubSlider = null; // reference to the range input
 /** Build HTML strip showing diff heatmap and trigger frame beside the video. */
 function _buildCompanionStrip(fileInfo) {
     const parts = [];
-    const imgStyle = 'width:200px; height:150px; object-fit:contain; border:1px solid #444; border-radius:4px; cursor:pointer; background:#000;';
+    const imgStyle = 'width:120px; height:auto; object-fit:contain; border:1px solid #555; border-radius:3px; cursor:pointer; background:#000;';
     if (fileInfo.diff_heatmap) {
         parts.push(
             `<div style="text-align:center;">` +
-            `<div style="color:#f80; font-size:0.7em; margin-bottom:2px;">🔥 Diff Heatmap</div>` +
+            `<div style="color:#f80; font-size:0.6em; margin-bottom:1px;">🔥 Heatmap</div>` +
             `<img src="${fileInfo.diff_heatmap}?t=${Date.now()}" alt="Diff heatmap" ` +
-            `title="Diff heatmap — bright/warm pixels show motion between frames that triggered the detection." ` +
+            `title="Diff heatmap — bright/warm pixels show motion that triggered detection." ` +
             `style="${imgStyle}" ` +
             `onclick="window.open('${fileInfo.diff_heatmap}','_blank')">` +
             `</div>`);
@@ -2054,9 +2054,9 @@ function _buildCompanionStrip(fileInfo) {
     if (fileInfo.trigger_frame) {
         parts.push(
             `<div style="text-align:center;">` +
-            `<div style="color:#0cf; font-size:0.7em; margin-bottom:2px;">📷 Trigger Frame</div>` +
+            `<div style="color:#0cf; font-size:0.6em; margin-bottom:1px;">📷 Trigger</div>` +
             `<img src="${fileInfo.trigger_frame}?t=${Date.now()}" alt="Trigger frame" ` +
-            `title="Trigger frame — low-res detection frame captured when motion was detected." ` +
+            `title="Trigger frame — low-res detection frame at moment of detection." ` +
             `style="${imgStyle}" ` +
             `onclick="window.open('${fileInfo.trigger_frame}','_blank')">` +
             `</div>`);
@@ -2100,8 +2100,9 @@ function viewFile(path, name, opts) {
         body.innerHTML =
             `<div style="display:flex; flex-direction:column; width:100%; max-height:85vh; overflow-y:auto;" id="frameViewerRoot">` +
               `<video src="${path}" playsinline${loopAttr} style="display:none;" id="hiddenVid"></video>` +
-              `<div id="fivePanel" style="display:flex; justify-content:center; align-items:center; gap:3px; padding:4px 4px 0; flex-shrink:0; background:#000;">` +
+              `<div id="fivePanel" style="position:relative; display:flex; justify-content:center; align-items:center; gap:3px; padding:4px 4px 0; flex-shrink:0; background:#000;">` +
                 `<span style="color:#555; font-size:0.85em;">Loading…</span>` +
+                (companionHtml ? `<div id="companionOverlay" style="position:absolute; top:8px; right:8px; display:flex; flex-direction:column; gap:4px; z-index:10; opacity:0.85;">${companionHtml}</div>` : '') +
               `</div>` +
               `<div id="frameScrubber" style="width:100%; padding:6px 12px; background:#1a1a1a; border-top:1px solid #333; flex-shrink:0;">` +
                 `<div style="display:flex; align-items:center; justify-content:center; gap:8px; margin-bottom:4px;">` +
@@ -2122,7 +2123,6 @@ function viewFile(path, name, opts) {
               `<div id="buildCompositeRow" style="display:none; padding:4px 8px; background:#1a1a1a; border-top:1px solid #222; text-align:center; flex-shrink:0;">` +
                 `<button class="btn-viewer" id="buildCompositeBtn" onclick="buildCompositeFromMarked()">🖼 Build Composite (<span id="compositeCountBtn">0</span>)</button>` +
               `</div>` +
-              (companionHtml ? `<div style="display:flex; gap:12px; justify-content:center; padding:6px 8px; border-top:1px solid #333; flex-shrink:0;">${companionHtml}</div>` : '') +
             `</div>`;
         const vid = document.getElementById('hiddenVid');
         vid.pause();
