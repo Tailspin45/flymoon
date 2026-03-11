@@ -55,9 +55,10 @@ POST_BUFFER_SECONDS = int(os.getenv("DETECTION_POST_BUFFER", "5"))
 
 # --- Phase 1 algorithm parameters ---
 # Consecutive frames both signals must exceed threshold before firing.
-# At 15 fps, 5 frames ≈ 333 ms — filters insects (<100 ms) while catching
-# aircraft transits (0.5–2 s).  Configurable via CONSEC_FRAMES_REQUIRED env var.
-CONSEC_FRAMES_REQUIRED = int(os.getenv("CONSEC_FRAMES_REQUIRED", "5"))
+# At 15 fps, 7 frames ≈ 466 ms — filters insects (<100 ms) and brief
+# atmospheric shimmer (typically 1–3 frames) while safely catching aircraft
+# transits (0.5–2 s = 8–30 frames).  Configurable via CONSEC_FRAMES_REQUIRED.
+CONSEC_FRAMES_REQUIRED = int(os.getenv("CONSEC_FRAMES_REQUIRED", "7"))
 
 # EMA blending factor for reference frame (0 = never update, 1 = full replace)
 EMA_ALPHA = 0.02
@@ -65,8 +66,12 @@ EMA_ALPHA = 0.02
 # Freeze reference updates for this many frames after a detection
 REF_FREEZE_FRAMES = ANALYSIS_FPS * 5  # 5 seconds
 
-# Minimum centre-to-edge signal ratio to accept detection — configurable via env
-CENTRE_EDGE_RATIO_MIN = float(os.getenv("CENTRE_EDGE_RATIO_MIN", "1.5"))
+# Minimum centre-to-edge signal ratio to accept detection.
+# 1.5 was too permissive — atmospheric seeing creates disk-wide speckles that
+# still pass a weak ratio.  2.5 requires the inner disk to be clearly more
+# active than the limb ring, which genuine transits (dark silhouette crossing
+# the bright interior) reliably produce.
+CENTRE_EDGE_RATIO_MIN = float(os.getenv("CENTRE_EDGE_RATIO_MIN", "2.5"))
 
 # Signal trace logging (1fps = every ANALYSIS_FPS frames)
 SIGNAL_TRACE_INTERVAL = ANALYSIS_FPS
@@ -75,8 +80,12 @@ SIGNAL_TRACE_SIZE = SIGNAL_TRACE_SECONDS  # 1 entry per second
 
 # Disk detection: re-detect every N frames (2s at 15fps)
 DISK_DETECT_INTERVAL = ANALYSIS_FPS * 2
-# Edge margin: exclude outermost 12% of disk radius (atmospheric shimmer zone)
-DISK_MARGIN_PCT = float(os.getenv("DETECTOR_DISK_MARGIN", "0.12"))
+# Edge margin: exclude outermost 25% of disk radius from detection.
+# 12% was too narrow — solar limb darkening, atmospheric jitter, and seeing
+# turbulence concentrate right at the edge and bled into the inner mask.
+# 25% creates a wide buffer zone; the solar disk interior is still well-sampled
+# and aircraft cross it reliably.
+DISK_MARGIN_PCT = float(os.getenv("DETECTOR_DISK_MARGIN", "0.25"))
 
 
 def _build_centre_weight(h: int, w: int) -> np.ndarray:
