@@ -2101,7 +2101,7 @@ function viewFile(path, name, opts) {
     if (isVideo) {
         const loopAttr = opts.loop ? ' loop' : '';
         body.innerHTML =
-            `<div style="display:flex; flex-direction:column; width:100%; max-height:85vh; overflow:hidden;">` +
+            `<div style="display:flex; flex-direction:column; width:100%; max-height:85vh; overflow-y:auto;">` +
               `<div style="display:flex; min-height:0; gap:8px; padding:4px 8px; flex-shrink:0;">` +
                 `<div style="display:flex; flex-direction:column; align-items:center; min-width:0; flex:1;">` +
                   `<video src="${path}" controls autoplay playsinline${loopAttr} style="max-width:100%; max-height:40vh; flex-shrink:1;"></video>` +
