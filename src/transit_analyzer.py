@@ -15,11 +15,9 @@ Usage (API):
 """
 
 import json
-import os
 import platform
 import subprocess
-import time
-from dataclasses import asdict, dataclass, field
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import List, Optional, Tuple
 
@@ -380,15 +378,14 @@ def analyze_video(
     mask = _disk_mask((h, w), disk_cx, disk_cy, disk_radius, _disk_margin_pct)
 
     # ── Output writer — write to temp file, re-encode to H.264 via FFmpeg ────
-    out = None
     base_stem = path.stem.replace("_analyzed", "")  # always derive from original name
     temp_path = path.with_name(base_stem + "_analyzed_tmp.mp4")
-    out_path = path.with_name(base_stem + "_analyzed.mp4")
+    path.with_name(base_stem + "_analyzed.mp4")
     temp_path.parent.mkdir(parents=True, exist_ok=True)
     temp_path.unlink(missing_ok=True)  # remove any stale tmp from previous failed run
     if output_annotated:
         fourcc, _ = _best_fourcc()
-        out = cv2.VideoWriter(str(temp_path), fourcc, fps, (w, h))
+        cv2.VideoWriter(str(temp_path), fourcc, fps, (w, h))
 
     # ── Detection helpers ───────────────────────────────────────────────────
     ref_blur_cached = [None]  # mutable container so inner fn can cache
@@ -526,7 +523,7 @@ def analyze_video(
             detections, proximity_px=30, static_threshold_pct=_static_threshold_pct
         )
     moving_detections = [d for d in detections if not d.is_static]
-    n_static = sum(1 for d in detections if d.is_static)
+    sum(1 for d in detections if d.is_static)
 
     # ── Filter moving detections for transit coherence ──────────────────────
     # A real transit traces a roughly linear path in under ~2 seconds.
@@ -706,7 +703,7 @@ def _write_composite_image(
         progress_cb(0.75)
 
     # Separate static (sunspot) and transit detections
-    static_dets = [d for d in detections if d.is_static]
+    [d for d in detections if d.is_static]
     transit_dets = [d for d in detections if not d.is_static]
     # Solar annotation circles are collected during the render loop and drawn
     # last (after disk masking) so they are never occluded.
@@ -1298,9 +1295,8 @@ def _filter_transit_coherence(
         frame_ids = sorted(by_frame.keys())
 
         if len(frame_ids) < 2:
-            # Single-frame: keep only large blobs (likely real object)
-            if run[0].area_px >= 200:
-                kept.extend(run)
+            # Single-frame blobs cannot be transits — real aircraft cross
+            # the disk over multiple frames at 15fps.
             continue
 
         # ── 3. Greedy nearest-neighbor tracking ─────────────────────────

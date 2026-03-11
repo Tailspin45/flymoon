@@ -651,6 +651,9 @@ def recalculate_transits_endpoint():
         if not flights:
             return jsonify({"flights": [], "targetCoordinates": {}}), 200
 
+        # Respect disabled targets from the UI toggle buttons
+        disabled_targets = set(data.get("disabled_targets", []))
+
         # Apply track-velocity overrides before recalculating.
         # When a flight's track has been viewed, we have a measured velocity
         # (speed + heading from last two ADS-B fixes) that's more accurate
@@ -697,6 +700,10 @@ def recalculate_transits_endpoint():
             targets_to_check = [target]
 
         for target_name in targets_to_check:
+            # Skip if user has toggled this target off in the UI
+            if target_name in disabled_targets:
+                continue
+
             # Check altitude
             celestial_obj = CelestialObject(
                 name=target_name, observer_position=MY_POSITION
@@ -948,10 +955,12 @@ if __name__ == "__main__":
     # Allow immediate port reuse and clean shutdown on Ctrl-C / SIGTERM
     import signal
     import threading
+
     from werkzeug.serving import BaseWSGIServer, WSGIRequestHandler
 
     class ReusableWSGIServer(BaseWSGIServer):
         """Threaded WSGI server with SO_REUSEADDR/SO_REUSEPORT set before bind."""
+
         allow_reuse_address = True
         daemon_threads = True
         request_queue_size = 128
@@ -966,8 +975,11 @@ if __name__ == "__main__":
 
         def process_request(self, request, client_address):
             """Handle each request in a new daemon thread."""
-            t = threading.Thread(target=self.process_request_thread,
-                                 args=(request, client_address), daemon=True)
+            t = threading.Thread(
+                target=self.process_request_thread,
+                args=(request, client_address),
+                daemon=True,
+            )
             t.start()
 
         def process_request_thread(self, request, client_address):
@@ -978,8 +990,7 @@ if __name__ == "__main__":
             finally:
                 self.shutdown_request(request)
 
-    server = ReusableWSGIServer("0.0.0.0", port, app,
-                                handler=WSGIRequestHandler)
+    server = ReusableWSGIServer("0.0.0.0", port, app, handler=WSGIRequestHandler)
 
     def _shutdown(sig, frame):
         print("\n🛑 Shutting down…")

@@ -689,6 +689,10 @@ async function softRefresh() {
             return;
         }
         
+        const disabledForRecalc = [];
+        if (!sunEnabled)  disabledForRecalc.push('sun');
+        if (!moonEnabled) disabledForRecalc.push('moon');
+
         const response = await fetch('/transits/recalculate', {
             method: 'POST',
             headers: {'Content-Type': 'application/json'},
@@ -698,7 +702,8 @@ async function softRefresh() {
                 longitude: longitude,
                 elevation: elevation,
                 target: target,
-                min_altitude: getMinAltitudeAllQuadrants()
+                min_altitude: getMinAltitudeAllQuadrants(),
+                disabled_targets: disabledForRecalc
             })
         });
         
