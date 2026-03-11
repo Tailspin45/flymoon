@@ -1967,6 +1967,12 @@ def register_routes(app):
         methods=["GET"],
     )
     app.add_url_rule(
+        "/telescope/detect/settings",
+        "telescope_detect_settings",
+        update_detection_settings,
+        methods=["PATCH"],
+    )
+    app.add_url_rule(
         "/telescope/detect/events",
         "telescope_detect_events",
         get_detection_events,
@@ -2069,20 +2075,26 @@ def start_detection():
         # Optional params
         record = True
         sensitivity_scale = 1.0
+        extra_settings = {}
         try:
             if request.is_json and request.json:
-                record = request.json.get("record_on_detect", True)
-                diff_threshold = request.json.get("diff_threshold")
+                body = request.json
+                record = body.get("record_on_detect", True)
+                diff_threshold = body.get("diff_threshold")
                 if diff_threshold is not None:
-                    # Map diff_threshold (1-30, default 5) → sensitivity_scale
-                    # Lower diff_threshold = more sensitive = lower scale
                     sensitivity_scale = float(diff_threshold) / 5.0
+                # Accept settings bundle sent by UI on start
+                for key in ("disk_margin_pct", "centre_ratio_min", "consec_frames"):
+                    if key in body:
+                        extra_settings[key] = body[key]
         except Exception:
             pass
 
         det = start_detector(
             rtsp_url, record_on_detect=record, sensitivity_scale=sensitivity_scale
         )
+        if extra_settings:
+            det.update_settings(**extra_settings)
         return jsonify({"success": True, **det.get_status()}), 200
 
     except Exception as e:
@@ -2117,10 +2129,47 @@ def get_detection_status():
         det = get_detector()
         if not det:
             return (
-                jsonify({"running": False, "detections": 0, "recent_events": []}),
+                jsonify({"running": False, "detections": 0, "recent_events": [],
+                         "settings": {
+                             "disk_margin_pct": float(os.getenv("DETECTOR_DISK_MARGIN", "0.25")),
+                             "centre_ratio_min": float(os.getenv("CENTRE_EDGE_RATIO_MIN", "2.5")),
+                             "consec_frames": int(os.getenv("CONSEC_FRAMES_REQUIRED", "7")),
+                             "sensitivity_scale": 1.0,
+                         }}),
                 200,
             )
         return jsonify(det.get_status()), 200
+
+    except Exception as e:
+        return handle_error(e)
+
+
+def update_detection_settings():
+    """PATCH /telescope/detect/settings - Update live detection parameters."""
+    try:
+        from src.transit_detector import get_detector, DISK_MARGIN_PCT, CENTRE_EDGE_RATIO_MIN, CONSEC_FRAMES_REQUIRED
+
+        body = request.get_json(force=True) or {}
+        det = get_detector()
+
+        if det and det.is_running:
+            # Update running detector immediately
+            settings = det.update_settings(
+                disk_margin_pct=body.get("disk_margin_pct"),
+                centre_ratio_min=body.get("centre_ratio_min"),
+                consec_frames=body.get("consec_frames"),
+                sensitivity_scale=body.get("sensitivity_scale"),
+            )
+        else:
+            # No detector running — just echo back what was sent (used by UI
+            # to persist values for the next start)
+            settings = {
+                "disk_margin_pct": body.get("disk_margin_pct", DISK_MARGIN_PCT),
+                "centre_ratio_min": body.get("centre_ratio_min", CENTRE_EDGE_RATIO_MIN),
+                "consec_frames": body.get("consec_frames", CONSEC_FRAMES_REQUIRED),
+                "sensitivity_scale": body.get("sensitivity_scale", 1.0),
+            }
+        return jsonify({"success": True, "settings": settings}), 200
 
     except Exception as e:
         return handle_error(e)

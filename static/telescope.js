@@ -88,6 +88,7 @@ window.initTelescope = function() {
     console.log('[Telescope] Initializing interface');
     destroyTelescope(); // clear any existing intervals
     ensureHarnessUI();
+    ensureTuningUI();
 
     // Status polling (always poll while panel is open)
     statusPollInterval = setInterval(updateStatus, 2000);
@@ -4037,21 +4038,19 @@ async function startDetection() {
     if (btn) btn.disabled = true;
 
     try {
-        // Read sensitivity from the shared tuning sliders (if visible)
-        const dtEl = document.getElementById('sliderDiffThreshold');
-        const diffThreshold = dtEl ? parseInt(dtEl.value) : (parseInt(localStorage.getItem('transit_slider_sliderDiffThreshold')) || 5);
-
+        const tuning = _loadTuning();
         const result = await apiCall('/telescope/detect/start', 'POST', {
             record_on_detect: true,
-            diff_threshold: diffThreshold,
+            ...tuning,
         });
         if (result && !result.error) {
             isDetecting = true;
             showStatus('🎯 Transit detection started', 'success', 3000);
-            // Start polling detection status
             if (!detectionPollInterval) {
                 detectionPollInterval = setInterval(pollDetectionStatus, 2000);
             }
+            // Sync sliders to what the detector actually started with
+            if (result.settings) _syncTuningSliders(result.settings);
         } else {
             showStatus(result?.error || 'Failed to start detection', 'error', 5000);
         }
@@ -4248,15 +4247,145 @@ async function syncDetectionUI() {
             if (!detectionPollInterval) {
                 detectionPollInterval = setInterval(pollDetectionStatus, 2000);
             }
-            // Populate event log with recent events
             if (result.recent_events) {
                 result.recent_events.forEach(e => appendDetectionEvent(e));
             }
+        }
+        // Sync tuning sliders from live detector (overrides localStorage when running)
+        if (result && result.settings) {
+            _syncTuningSliders(result.settings);
         }
     } catch (e) {
         // Detection endpoint may not exist yet — ignore
     }
     updateDetectionUI();
+}
+
+// ============================================================================
+// LIVE DETECTION TUNING
+// ============================================================================
+
+// Default values must match src/transit_detector.py constants
+const TUNING_DEFAULTS = {
+    disk_margin_pct: 0.25,
+    centre_ratio_min: 2.5,
+    consec_frames: 7,
+};
+
+/** Load saved tuning from localStorage (fallback to defaults). */
+function _loadTuning() {
+    return {
+        disk_margin_pct: parseFloat(localStorage.getItem('det_disk_margin') ?? TUNING_DEFAULTS.disk_margin_pct),
+        centre_ratio_min: parseFloat(localStorage.getItem('det_centre_ratio') ?? TUNING_DEFAULTS.centre_ratio_min),
+        consec_frames: parseInt(localStorage.getItem('det_consec_frames') ?? TUNING_DEFAULTS.consec_frames),
+    };
+}
+
+/** Push current slider values to the live detector API. */
+async function _applyDetectionSettings(settings) {
+    try {
+        await fetch('/telescope/detect/settings', {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(settings),
+        });
+    } catch (_) {}
+}
+
+/** Populate sliders from a settings object (from API or localStorage). */
+function _syncTuningSliders(s) {
+    const m = document.getElementById('tunMargin');
+    const r = document.getElementById('tunRatio');
+    const c = document.getElementById('tunConsec');
+    if (m) { m.value = Math.round((s.disk_margin_pct ?? TUNING_DEFAULTS.disk_margin_pct) * 100); _updateTuningLabel('tunMargin'); }
+    if (r) { r.value = s.centre_ratio_min ?? TUNING_DEFAULTS.centre_ratio_min; _updateTuningLabel('tunRatio'); }
+    if (c) { c.value = s.consec_frames ?? TUNING_DEFAULTS.consec_frames; _updateTuningLabel('tunConsec'); }
+}
+
+function _updateTuningLabel(id) {
+    const el = document.getElementById(id);
+    const lbl = document.getElementById(id + 'Val');
+    if (el && lbl) lbl.textContent = el.value;
+}
+
+function ensureTuningUI() {
+    const detectPanel = document.getElementById('detectPanel');
+    if (!detectPanel) return;
+    if (document.getElementById('tuningCard')) return;
+
+    const saved = _loadTuning();
+
+    const card = document.createElement('div');
+    card.id = 'tuningCard';
+    card.className = 'harness-card';
+    card.innerHTML = `
+        <div class="harness-card-title">⚙️ Detection Tuning</div>
+        <div style="font-size:0.82em; color:#888; margin-bottom:8px;">Changes apply immediately to the live detector.</div>
+        ${_tuningSliderRow('tunMargin',  'Edge Margin %', 5, 50, Math.round(saved.disk_margin_pct*100),
+            'Exclude the outermost N% of disk radius (limb zone). Higher = fewer false positives from limb jitter.')}
+        ${_tuningSliderRow('tunRatio',   'Centre Ratio', 0.5, 6, saved.centre_ratio_min, 0.1,
+            'Inner-disk signal must be N× the limb signal. Higher = stricter concentration requirement.')}
+        ${_tuningSliderRow('tunConsec',  'Consec Frames', 2, 20, saved.consec_frames, 1,
+            'Consecutive frames above threshold before firing. Higher = longer minimum event duration.')}
+        <button class="btn btn-secondary btn-compact" style="margin-top:6px; width:100%;" onclick="_resetTuning()">↩ Reset to defaults</button>
+    `;
+
+    // Insert before the harness panel (or event log)
+    const harness = document.getElementById('harnessPanel');
+    const eventLog = document.getElementById('detectEventLog');
+    const ref = harness || eventLog;
+    if (ref && ref.parentNode === detectPanel) {
+        detectPanel.insertBefore(card, ref);
+    } else {
+        detectPanel.appendChild(card);
+    }
+
+    // Wire up sliders
+    ['tunMargin', 'tunRatio', 'tunConsec'].forEach(id => {
+        const el = document.getElementById(id);
+        if (!el) return;
+        el.addEventListener('input', () => {
+            _updateTuningLabel(id);
+            _debouncedApplyTuning();
+        });
+    });
+}
+
+let _tuningDebounceTimer = null;
+function _debouncedApplyTuning() {
+    clearTimeout(_tuningDebounceTimer);
+    _tuningDebounceTimer = setTimeout(() => {
+        const m = document.getElementById('tunMargin');
+        const r = document.getElementById('tunRatio');
+        const c = document.getElementById('tunConsec');
+        const settings = {
+            disk_margin_pct: m ? parseFloat(m.value) / 100 : TUNING_DEFAULTS.disk_margin_pct,
+            centre_ratio_min: r ? parseFloat(r.value) : TUNING_DEFAULTS.centre_ratio_min,
+            consec_frames: c ? parseInt(c.value) : TUNING_DEFAULTS.consec_frames,
+        };
+        localStorage.setItem('det_disk_margin', settings.disk_margin_pct);
+        localStorage.setItem('det_centre_ratio', settings.centre_ratio_min);
+        localStorage.setItem('det_consec_frames', settings.consec_frames);
+        _applyDetectionSettings(settings);
+    }, 300);
+}
+
+function _resetTuning() {
+    localStorage.removeItem('det_disk_margin');
+    localStorage.removeItem('det_centre_ratio');
+    localStorage.removeItem('det_consec_frames');
+    _syncTuningSliders(TUNING_DEFAULTS);
+    _applyDetectionSettings(TUNING_DEFAULTS);
+}
+
+function _tuningSliderRow(id, label, min, max, val, step, tooltip) {
+    if (step === undefined) step = (max - min > 10) ? 1 : 0.1;
+    return `<div style="margin-bottom:8px;" title="${tooltip}">` +
+        `<div style="display:flex; justify-content:space-between; font-size:0.85em; color:#ccc;">` +
+        `<span>${label}</span><span id="${id}Val">${val}</span></div>` +
+        `<input type="range" id="${id}" min="${min}" max="${max}" step="${step}" value="${val}" ` +
+        `style="width:100%; accent-color:#4dff88; margin-top:3px;">` +
+        `</div>`;
 }
 
 // ============================================================================

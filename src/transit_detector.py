@@ -286,6 +286,12 @@ class TransitDetector:
         self.record_on_detect = record_on_detect
         self.sensitivity_scale = max(0.1, float(sensitivity_scale))
 
+        # Live-tunable detection parameters (match module-level defaults,
+        # can be updated at runtime via update_settings())
+        self.disk_margin_pct: float = DISK_MARGIN_PCT
+        self.centre_ratio_min: float = CENTRE_EDGE_RATIO_MIN
+        self.consec_frames_required: int = CONSEC_FRAMES_REQUIRED
+
         self._running = False
         self._process: Optional[subprocess.Popen] = None
         self._thread: Optional[threading.Thread] = None
@@ -452,11 +458,47 @@ class TransitDetector:
                 "cx": self._disk_cx,
                 "cy": self._disk_cy,
                 "radius": self._disk_radius,
-                "margin_pct": DISK_MARGIN_PCT,
+                "margin_pct": self.disk_margin_pct,
             }
             if self._disk_detected
             else None,
+            "settings": {
+                "disk_margin_pct": self.disk_margin_pct,
+                "centre_ratio_min": self.centre_ratio_min,
+                "consec_frames": self.consec_frames_required,
+                "sensitivity_scale": self.sensitivity_scale,
+            },
         }
+
+    def update_settings(
+        self,
+        disk_margin_pct: Optional[float] = None,
+        centre_ratio_min: Optional[float] = None,
+        consec_frames: Optional[int] = None,
+        sensitivity_scale: Optional[float] = None,
+    ) -> Dict[str, Any]:
+        """Update live detection parameters without restarting the detector.
+
+        margin change forces a disk-mask rebuild on the next disk-detect cycle.
+        """
+        if disk_margin_pct is not None:
+            self.disk_margin_pct = float(max(0.0, min(0.6, disk_margin_pct)))
+            # Force disk mask rebuild on next detection cycle
+            self._disk_mask = None
+            self._limb_mask = None
+            self._disk_weight = None
+        if centre_ratio_min is not None:
+            self.centre_ratio_min = float(max(0.5, min(10.0, centre_ratio_min)))
+        if consec_frames is not None:
+            self.consec_frames_required = int(max(1, min(30, consec_frames)))
+        if sensitivity_scale is not None:
+            self.sensitivity_scale = float(max(0.1, min(10.0, sensitivity_scale)))
+        logger.info(
+            f"[Detector] Settings updated: margin={self.disk_margin_pct:.0%} "
+            f"ratio_min={self.centre_ratio_min} consec={self.consec_frames_required} "
+            f"sens={self.sensitivity_scale:.2f}"
+        )
+        return self.get_status()["settings"]
 
     # ------------------------------------------------------------------
     # Internal: frame reading
@@ -657,8 +699,9 @@ class TransitDetector:
         """
         self._current_frame = frame
 
-        # --- Periodic disk detection (every 2s) ---
-        if self._frame_idx % DISK_DETECT_INTERVAL == 0:
+        # --- Periodic disk detection (every 2s), or immediate rebuild if mask cleared ---
+        rebuild_needed = self._disk_mask is None and self._disk_cx is not None
+        if self._frame_idx % DISK_DETECT_INTERVAL == 0 or rebuild_needed:
             gray = np.clip(frame.mean(axis=2), 0, 255).astype(np.uint8)
             result = _detect_disk(gray)
             if result is not None:
@@ -666,12 +709,12 @@ class TransitDetector:
                 if not self._disk_detected:
                     logger.info(
                         f"[Detector] Disk found: centre=({cx},{cy}), "
-                        f"radius={r}px, margin={DISK_MARGIN_PCT*100:.0f}%"
+                        f"radius={r}px, margin={self.disk_margin_pct*100:.0f}%"
                     )
                 self._disk_cx, self._disk_cy, self._disk_radius = cx, cy, r
                 self._disk_mask, self._limb_mask, self._disk_weight = (
                     _build_disk_masks(
-                        ANALYSIS_HEIGHT, ANALYSIS_WIDTH, cx, cy, r, DISK_MARGIN_PCT
+                        ANALYSIS_HEIGHT, ANALYSIS_WIDTH, cx, cy, r, self.disk_margin_pct
                     )
                 )
                 self._disk_detected = True
@@ -761,7 +804,7 @@ class TransitDetector:
         triggered = (
             score_a > thresh_a
             and score_b > thresh_b
-            and centre_ratio >= CENTRE_EDGE_RATIO_MIN
+            and centre_ratio >= self.centre_ratio_min
         )
 
         if triggered:
@@ -769,7 +812,7 @@ class TransitDetector:
         else:
             self._consec_above = 0
 
-        if self._consec_above == CONSEC_FRAMES_REQUIRED:
+        if self._consec_above == self.consec_frames_required:
             now = time.time()
             if now - self._last_detection_time >= DETECTION_COOLDOWN:
                 self._last_detection_time = now
@@ -825,7 +868,7 @@ class TransitDetector:
             f"[{confidence}] "
             f"(A={score_a:.4f}/{thresh_a:.4f}, B={score_b:.4f}/{thresh_b:.4f}, "
             f"CR={centre_ratio:.2f}, "
-            f"consec={CONSEC_FRAMES_REQUIRED}f/{CONSEC_FRAMES_REQUIRED/ANALYSIS_FPS:.0f}ms)"
+            f"consec={self.consec_frames_required}f/{self.consec_frames_required/ANALYSIS_FPS:.0f}ms)"
         )
 
         # Save diagnostic frames
@@ -916,12 +959,12 @@ class TransitDetector:
                     dcx = self._disk_cx * UPSCALE
                     dcy = self._disk_cy * UPSCALE
                     dr = self._disk_radius * UPSCALE
-                    inner_r = max(1, int(dr * (1.0 - DISK_MARGIN_PCT)))
+                    inner_r = max(1, int(dr * (1.0 - self.disk_margin_pct)))
                     # Full disk outline (yellow)
                     cv2.circle(heatmap, (dcx, dcy), dr, (0, 255, 255), 1)
                     # Inner margin boundary (green) — only inside this counts
                     cv2.circle(heatmap, (dcx, dcy), inner_r, (0, 255, 0), 1)
-                    cv2.putText(heatmap, f"disk r={self._disk_radius}px margin={DISK_MARGIN_PCT*100:.0f}%",
+                    cv2.putText(heatmap, f"disk r={self._disk_radius}px margin={self.disk_margin_pct*100:.0f}%",
                                 (8, 74), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (0, 255, 0), 1)
                 else:
                     cv2.putText(heatmap, "no disk (rect fallback)",
