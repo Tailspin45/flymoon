@@ -1629,16 +1629,14 @@ canvas.video-thumb-canvas {
 }
 
 /* Frame scrubber range slider — ensure handle is always visible */
-#frameScrubSlider,
-#filmstripSlider {
+#frameScrubSlider {
     -webkit-appearance: auto;
     appearance: auto;
     height: 20px;
     cursor: pointer;
     accent-color: #0ff;
 }
-#frameScrubSlider::-webkit-slider-thumb,
-#filmstripSlider::-webkit-slider-thumb {
+#frameScrubSlider::-webkit-slider-thumb {
     -webkit-appearance: auto;
     width: 16px;
     height: 16px;
