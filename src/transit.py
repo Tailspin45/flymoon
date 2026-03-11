@@ -1,4 +1,5 @@
 import os
+import threading
 import time as _time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timedelta
@@ -33,6 +34,14 @@ from src.flight_data import get_flight_data, load_existing_flight_data, parse_fl
 # Only populated for HIGH-probability transits — avoids per-refresh FA charges.
 _FA_ENRICHMENT_CACHE: Dict[str, dict] = {}
 _FA_ENRICHMENT_TTL: float = 7200.0  # 2 hours
+_FA_ENRICHMENT_ERROR_TTL: float = (
+    180.0  # short cache for transient HTTP/transport errors
+)
+_FA_ENRICHMENT_429_BACKOFF: float = 300.0  # global cooldown after AeroAPI rate limit
+_FA_ENRICHMENT_BACKOFF_UNTIL: float = 0.0
+_FA_ENRICHMENT_LAST_BACKOFF_LOG: float = 0.0
+_FA_ENRICHMENT_BACKOFF_LOG_EVERY: float = 60.0
+_FA_ENRICHMENT_LOCK = threading.Lock()
 
 
 def _enrich_from_fa(callsign: str, api_key: str) -> dict:
@@ -45,16 +54,46 @@ def _enrich_from_fa(callsign: str, api_key: str) -> dict:
     if not api_key:
         return {}
 
+    global _FA_ENRICHMENT_BACKOFF_UNTIL, _FA_ENRICHMENT_LAST_BACKOFF_LOG
+
     now = _time.time()
-    cached = _FA_ENRICHMENT_CACHE.get(callsign)
-    if cached and (now - cached["ts"]) < _FA_ENRICHMENT_TTL:
+
+    with _FA_ENRICHMENT_LOCK:
+        cached = _FA_ENRICHMENT_CACHE.get(callsign)
+    if cached and (now - cached["ts"]) < float(cached.get("ttl", _FA_ENRICHMENT_TTL)):
         if cached["data"]:
             logger.info(f"[FA-enrich] cache HIT for {callsign}")
         else:
-            logger.debug(
-                f"[FA-enrich] cached miss for {callsign} (VFR/untracked) — skipping FA call"
-            )
+            reason = cached.get("reason", "cached_miss")
+            if reason == "untracked":
+                logger.debug(
+                    f"[FA-enrich] cached miss for {callsign} (VFR/untracked) — skipping FA call"
+                )
+            elif reason == "rate_limited":
+                logger.debug(f"[FA-enrich] cached 429 backoff for {callsign}")
+            else:
+                logger.debug(f"[FA-enrich] cached miss for {callsign} ({reason})")
         return cached["data"]
+
+    if now < _FA_ENRICHMENT_BACKOFF_UNTIL:
+        remaining = int(_FA_ENRICHMENT_BACKOFF_UNTIL - now)
+        if (now - _FA_ENRICHMENT_LAST_BACKOFF_LOG) >= _FA_ENRICHMENT_BACKOFF_LOG_EVERY:
+            logger.warning(
+                f"[FA-enrich] global 429 backoff active ({remaining}s left) — skipping {callsign}"
+            )
+            _FA_ENRICHMENT_LAST_BACKOFF_LOG = now
+        else:
+            logger.debug(
+                f"[FA-enrich] backoff active ({remaining}s left), skip {callsign}"
+            )
+        with _FA_ENRICHMENT_LOCK:
+            _FA_ENRICHMENT_CACHE[callsign] = {
+                "data": {},
+                "ts": now,
+                "ttl": min(_FA_ENRICHMENT_ERROR_TTL, max(1.0, remaining)),
+                "reason": "rate_limited",
+            }
+        return {}
 
     url = f"https://aeroapi.flightaware.com/aeroapi/flights/{callsign}"
     headers = {"Accept": "application/json; charset=UTF-8", "x-apikey": api_key}
@@ -70,19 +109,66 @@ def _enrich_from_fa(callsign: str, api_key: str) -> dict:
                     "origin": (f.get("origin") or {}).get("city") or "N/A",
                     "destination": (f.get("destination") or {}).get("city") or "N/D",
                 }
-                _FA_ENRICHMENT_CACHE[callsign] = {"data": data, "ts": now}
+                with _FA_ENRICHMENT_LOCK:
+                    _FA_ENRICHMENT_CACHE[callsign] = {
+                        "data": data,
+                        "ts": now,
+                        "ttl": _FA_ENRICHMENT_TTL,
+                        "reason": "ok",
+                    }
                 logger.info(f"[FA-enrich] fetched {callsign}: {data}")
                 return data
             # VFR or untracked — no flight plan on file; cache the miss so we
             # don't burn another FA result-set on the next transit detection.
-            _FA_ENRICHMENT_CACHE[callsign] = {"data": {}, "ts": now}
+            with _FA_ENRICHMENT_LOCK:
+                _FA_ENRICHMENT_CACHE[callsign] = {
+                    "data": {},
+                    "ts": now,
+                    "ttl": _FA_ENRICHMENT_TTL,
+                    "reason": "untracked",
+                }
             logger.debug(
                 f"[FA-enrich] no flight records for {callsign} (VFR/untracked) — cached miss"
             )
+        elif resp.status_code == 429:
+            with _FA_ENRICHMENT_LOCK:
+                _FA_ENRICHMENT_BACKOFF_UNTIL = max(
+                    _FA_ENRICHMENT_BACKOFF_UNTIL, now + _FA_ENRICHMENT_429_BACKOFF
+                )
+                _FA_ENRICHMENT_CACHE[callsign] = {
+                    "data": {},
+                    "ts": now,
+                    "ttl": _FA_ENRICHMENT_429_BACKOFF,
+                    "reason": "rate_limited",
+                }
+            logger.warning(
+                f"[FA-enrich] HTTP 429 for {callsign} — backing off "
+                f"{int(_FA_ENRICHMENT_429_BACKOFF)}s"
+            )
         else:
-            logger.warning(f"[FA-enrich] HTTP {resp.status_code} for {callsign}")
+            with _FA_ENRICHMENT_LOCK:
+                _FA_ENRICHMENT_CACHE[callsign] = {
+                    "data": {},
+                    "ts": now,
+                    "ttl": _FA_ENRICHMENT_ERROR_TTL,
+                    "reason": f"http_{resp.status_code}",
+                }
+            logger.warning(
+                f"[FA-enrich] HTTP {resp.status_code} for {callsign} — "
+                f"cooldown {int(_FA_ENRICHMENT_ERROR_TTL)}s"
+            )
     except Exception as exc:
-        logger.warning(f"[FA-enrich] exception for {callsign}: {exc}")
+        with _FA_ENRICHMENT_LOCK:
+            _FA_ENRICHMENT_CACHE[callsign] = {
+                "data": {},
+                "ts": now,
+                "ttl": _FA_ENRICHMENT_ERROR_TTL,
+                "reason": "exception",
+            }
+        logger.warning(
+            f"[FA-enrich] exception for {callsign}: {exc} "
+            f"(cooldown {int(_FA_ENRICHMENT_ERROR_TTL)}s)"
+        )
     return {}
 
 
