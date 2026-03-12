@@ -281,11 +281,12 @@ def _resolve_min_altitude(azimuth_deg: float, args_or_data, default: float = 15.
             return None
 
     az = ((azimuth_deg or 0) % 360 + 360) % 360
-    if az >= 315 or az < 45:
+    # Quadrants: N=0-90° (NE), E=90-180° (SE), S=180-270° (SW), W=270-360° (NW)
+    if az < 90:
         quadrant_val = _get("min_alt_n")
-    elif az < 135:
+    elif az < 180:
         quadrant_val = _get("min_alt_e")
-    elif az < 225:
+    elif az < 270:
         quadrant_val = _get("min_alt_s")
     else:
         quadrant_val = _get("min_alt_w")

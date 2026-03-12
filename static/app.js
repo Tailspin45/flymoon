@@ -40,7 +40,7 @@ const MS_IN_A_MIN = 60000;
 const LOW_LEVEL = 1, MEDIUM_LEVEL = 2, HIGH_LEVEL = 3;
 
 // Get minimum altitude based on azimuth (in degrees)
-// Azimuth: 0° = N, 90° = E, 180° = S, 270° = W
+// Quadrants: N=0-90° (NE), E=90-180° (SE), S=180-270° (SW), W=270-360° (NW)
 function getMinAltitudeForAzimuth(azimuth) {
     // Default values if not set
     const defaultMinAlt = 15;
@@ -69,14 +69,14 @@ function getMinAltitudeForAzimuth(azimuth) {
     azimuth = ((azimuth % 360) + 360) % 360;
 
     // Determine quadrant
-    if (azimuth >= 315 || azimuth < 45) {
-        return minAltN;  // North: 315° to 45°
-    } else if (azimuth >= 45 && azimuth < 135) {
-        return minAltE;  // East: 45° to 135°
-    } else if (azimuth >= 135 && azimuth < 225) {
-        return minAltS;  // South: 135° to 225°
+    if (azimuth < 90) {
+        return minAltN;   // NE: 0° to 90°
+    } else if (azimuth < 180) {
+        return minAltE;   // SE: 90° to 180°
+    } else if (azimuth < 270) {
+        return minAltS;   // SW: 180° to 270°
     } else {
-        return minAltW;  // West: 225° to 315°
+        return minAltW;   // NW: 270° to 360°
     }
 }
 
