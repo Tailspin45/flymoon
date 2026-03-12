@@ -19,6 +19,7 @@ from src.astro import CelestialObject
 from src.constants import ASTRO_EPHEMERIS
 from src.position import get_my_pos
 from src.seestar_client import SeestarClient
+from src.solar_timelapse import get_timelapse
 
 # Get EARTH reference for position calculations
 EARTH = ASTRO_EPHEMERIS["earth"]
@@ -786,6 +787,85 @@ def get_recording_status():
 
         return jsonify(status), 200
 
+    except Exception as e:
+        return handle_error(e)
+
+
+# ── Solar Timelapse Endpoints ──────────────────────────────────────────
+
+
+def start_timelapse():
+    """POST /telescope/timelapse/start — begin day-long solar timelapse."""
+    logger.info("[Telescope] POST /telescope/timelapse/start")
+    try:
+        client = get_telescope_client()
+        if not client or not client.is_connected():
+            return jsonify({"error": "Not connected to telescope"}), 400
+
+        data = request.get_json(silent=True) or {}
+        interval = float(data.get("interval", 120))
+
+        tl = get_timelapse()
+        result = tl.start(host=client.host, interval=interval)
+        if "error" in result:
+            return jsonify(result), 400
+        return jsonify(result), 200
+    except Exception as e:
+        return handle_error(e)
+
+
+def stop_timelapse():
+    """POST /telescope/timelapse/stop — stop timelapse and assemble video."""
+    logger.info("[Telescope] POST /telescope/timelapse/stop")
+    try:
+        tl = get_timelapse()
+        result = tl.stop(assemble=True)
+        if "error" in result:
+            return jsonify(result), 400
+        return jsonify(result), 200
+    except Exception as e:
+        return handle_error(e)
+
+
+def get_timelapse_status():
+    """GET /telescope/timelapse/status — current timelapse state."""
+    try:
+        return jsonify(get_timelapse().status()), 200
+    except Exception as e:
+        return handle_error(e)
+
+
+def update_timelapse_settings():
+    """PATCH /telescope/timelapse/settings — update interval mid-capture."""
+    logger.info("[Telescope] PATCH /telescope/timelapse/settings")
+    try:
+        data = request.get_json(silent=True) or {}
+        interval = data.get("interval")
+        if interval is None:
+            return jsonify({"error": "interval required"}), 400
+        result = get_timelapse().update_interval(float(interval))
+        return jsonify(result), 200
+    except Exception as e:
+        return handle_error(e)
+
+
+def pause_timelapse():
+    """POST /telescope/timelapse/pause — pause capture for transit event."""
+    try:
+        tl = get_timelapse()
+        reason = (request.get_json(silent=True) or {}).get("reason", "transit")
+        tl.pause(reason)
+        return jsonify(tl.status()), 200
+    except Exception as e:
+        return handle_error(e)
+
+
+def resume_timelapse():
+    """POST /telescope/timelapse/resume — resume after transit event."""
+    try:
+        tl = get_timelapse()
+        tl.resume()
+        return jsonify(tl.status()), 200
     except Exception as e:
         return handle_error(e)
 
@@ -1856,6 +1936,44 @@ def register_routes(app):
         "telescope_recording_status",
         get_recording_status,
         methods=["GET"],
+    )
+
+    # Solar Timelapse
+    app.add_url_rule(
+        "/telescope/timelapse/start",
+        "telescope_timelapse_start",
+        start_timelapse,
+        methods=["POST"],
+    )
+    app.add_url_rule(
+        "/telescope/timelapse/stop",
+        "telescope_timelapse_stop",
+        stop_timelapse,
+        methods=["POST"],
+    )
+    app.add_url_rule(
+        "/telescope/timelapse/status",
+        "telescope_timelapse_status",
+        get_timelapse_status,
+        methods=["GET"],
+    )
+    app.add_url_rule(
+        "/telescope/timelapse/settings",
+        "telescope_timelapse_settings",
+        update_timelapse_settings,
+        methods=["PATCH"],
+    )
+    app.add_url_rule(
+        "/telescope/timelapse/pause",
+        "telescope_timelapse_pause",
+        pause_timelapse,
+        methods=["POST"],
+    )
+    app.add_url_rule(
+        "/telescope/timelapse/resume",
+        "telescope_timelapse_resume",
+        resume_timelapse,
+        methods=["POST"],
     )
 
     # Photo capture

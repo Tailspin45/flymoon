@@ -119,6 +119,9 @@ window.initTelescope = function() {
     checkTransits();
     transitPollInterval = setInterval(checkTransits, 15000);
 
+    // Check if timelapse is already running (e.g. after page reload)
+    _pollTimelapseStatus();
+
     // 1-second local tick
     transitTickInterval = setInterval(() => {
         if (upcomingTransits.length > 0) {
@@ -255,7 +258,8 @@ function updateButtonStates() {
         'capturePhotoBtn',
         'startRecordingBtn',
         'stopRecordingBtn',
-        'refreshFilesBtn'
+        'refreshFilesBtn',
+        'startTimelapseBtn'
     ];
     
     buttons.forEach(id => {
@@ -670,6 +674,124 @@ function updateRecordingUI() {
         if (recordingText) recordingText.textContent = 'Not Recording';
     }
 }
+
+// ============================================================================
+// SOLAR TIMELAPSE
+// ============================================================================
+
+let _timelapseRunning = false;
+let _timelapsePollInterval = null;
+
+async function startTimelapse() {
+    const intervalInput = document.getElementById('timelapseInterval');
+    const interval = intervalInput ? parseFloat(intervalInput.value) : 120;
+    showStatus('Starting timelapse...', 'info');
+
+    const result = await apiCall('/telescope/timelapse/start', 'POST', { interval });
+    if (result && !result.error) {
+        _timelapseRunning = true;
+        updateTimelapseUI();
+        _startTimelapsePoll();
+        showStatus(`Timelapse started (${interval}s interval)`, 'success', 5000);
+    } else {
+        showStatus(result?.error || 'Failed to start timelapse', 'error', 5000);
+    }
+}
+
+async function stopTimelapse() {
+    showStatus('Stopping timelapse & assembling video...', 'info');
+    const result = await apiCall('/telescope/timelapse/stop', 'POST');
+    if (result && !result.error) {
+        _timelapseRunning = false;
+        updateTimelapseUI();
+        _stopTimelapsePoll();
+        showStatus('Timelapse stopped — assembling video', 'success', 5000);
+        // Refresh file list after assembly has time to complete
+        setTimeout(refreshFiles, 5000);
+    }
+}
+
+function _startTimelapsePoll() {
+    _stopTimelapsePoll();
+    _timelapsePollInterval = setInterval(_pollTimelapseStatus, 5000);
+}
+
+function _stopTimelapsePoll() {
+    if (_timelapsePollInterval) {
+        clearInterval(_timelapsePollInterval);
+        _timelapsePollInterval = null;
+    }
+}
+
+async function _pollTimelapseStatus() {
+    try {
+        const resp = await fetch('/telescope/timelapse/status');
+        if (!resp.ok) return;
+        const data = await resp.json();
+        _timelapseRunning = data.running;
+        updateTimelapseUI(data);
+        if (!data.running) {
+            _stopTimelapsePoll();
+        }
+    } catch (e) { /* ignore */ }
+}
+
+function updateTimelapseUI(data) {
+    const startBtn = document.getElementById('startTimelapseBtn');
+    const stopBtn = document.getElementById('stopTimelapseBtn');
+    const dot = document.getElementById('timelapseDot');
+    const text = document.getElementById('timelapseText');
+    const info = document.getElementById('timelapseInfo');
+    const intervalInput = document.getElementById('timelapseInterval');
+
+    if (_timelapseRunning) {
+        if (startBtn) { startBtn.disabled = true; startBtn.style.display = 'none'; }
+        if (stopBtn) { stopBtn.disabled = false; stopBtn.style.display = 'inline-block'; }
+        if (dot) dot.className = 'status-dot recording';
+
+        if (data) {
+            const paused = data.paused ? ' (paused)' : '';
+            if (text) text.textContent = `Capturing${paused}`;
+            if (info) {
+                const frames = data.frame_count || 0;
+                const elapsed = data.elapsed || 0;
+                const hrs = Math.floor(elapsed / 3600);
+                const mins = Math.floor((elapsed % 3600) / 60);
+                const nextIn = data.next_capture_in || 0;
+                info.textContent = `${frames} frames · ${hrs}h${mins}m · next in ${nextIn}s`;
+            }
+        } else {
+            if (text) text.textContent = 'Running...';
+        }
+    } else {
+        if (startBtn) { startBtn.disabled = !isConnected; startBtn.style.display = 'inline-block'; }
+        if (stopBtn) { stopBtn.disabled = true; stopBtn.style.display = 'none'; }
+        if (dot) dot.className = 'status-dot';
+        if (text) text.textContent = 'Idle';
+        if (info) info.textContent = '';
+    }
+}
+
+// Apply interval changes live
+(function() {
+    let _intervalDebounce = null;
+    document.addEventListener('DOMContentLoaded', () => {
+        const input = document.getElementById('timelapseInterval');
+        if (input) {
+            input.addEventListener('change', () => {
+                if (!_timelapseRunning) return;
+                clearTimeout(_intervalDebounce);
+                _intervalDebounce = setTimeout(async () => {
+                    const val = parseFloat(input.value);
+                    if (val >= 10) {
+                        await apiCall('/telescope/timelapse/settings', 'PATCH', { interval: val });
+                        showStatus(`Timelapse interval → ${val}s`, 'success', 3000);
+                    }
+                }, 500);
+            });
+        }
+    });
+})();
 
 // ============================================================================
 // LIVE PREVIEW
@@ -1527,6 +1649,11 @@ function _hideEclipseCard() {
 }
 
 async function recordTransit(flight, secondsUntil) {
+    // Pause timelapse during transit capture
+    if (_timelapseRunning) {
+        try { await fetch('/telescope/timelapse/pause', { method: 'POST' }); } catch {}
+    }
+
     // Stop any current recording (normally checkAutoCapture handles preemption,
     // but guard here too for manual triggers)
     if (isRecording) {
@@ -1568,11 +1695,15 @@ async function recordTransit(flight, secondsUntil) {
         await doRecord();
     }
 
-    // Hide overlay after transit + post buffer
+    // Hide overlay after transit + post buffer, resume timelapse
     setTimeout(() => {
         if (overlay) overlay.style.display = 'none';
         transitCaptureActive = false;
         updateRecordingUI();
+        // Resume timelapse if it was running
+        if (_timelapseRunning) {
+            fetch('/telescope/timelapse/resume', { method: 'POST' }).catch(() => {});
+        }
     }, (secondsUntil + POST) * 1000);
 }
 

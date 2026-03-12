@@ -553,6 +553,26 @@
                             <button id="stopRecordingBtn" class="btn btn-danger btn-compact" onclick="stopRecording()" disabled style="display: none;">⏹️ Stop</button>
                         </div>
                     </div>
+
+                    <!-- Solar Timelapse -->
+                    <div class="capture-compact">
+                        <div class="capture-header-compact">
+                            <span>🌅 Solar Timelapse</span>
+                        </div>
+                        <div class="input-row">
+                            <input type="number" id="timelapseInterval" value="120" min="10" max="600" step="10" class="input-compact" title="Seconds between frames">
+                            <span class="input-label" style="align-self:center;">sec interval</span>
+                        </div>
+                        <div class="recording-status-compact" id="timelapseStatus">
+                            <span class="status-dot" id="timelapseDot"></span>
+                            <span id="timelapseText">Idle</span>
+                            <span id="timelapseInfo" style="font-size:0.75em; opacity:0.7;"></span>
+                        </div>
+                        <div class="button-group">
+                            <button id="startTimelapseBtn" class="btn btn-primary btn-compact" onclick="startTimelapse()" disabled>▶️ Start</button>
+                            <button id="stopTimelapseBtn" class="btn btn-danger btn-compact" onclick="stopTimelapse()" disabled style="display:none;">⏹️ Stop</button>
+                        </div>
+                    </div>
                 </div>
 
             </div>
