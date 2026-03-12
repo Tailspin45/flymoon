@@ -83,14 +83,14 @@ function getMinAltitudeForAzimuth(azimuth) {
 // Get minimum of all quadrant min altitudes (used only for reconnect logic)
 function getMinAltitudeAllQuadrants() {
     const q = getQuadrantMinAltitudes();
-    return Math.min(q.n, q.e, q.s, q.w);
+    return Math.min(q.min_alt_n, q.min_alt_e, q.min_alt_s, q.min_alt_w);
 }
 
 // Return all four quadrant min-altitude values as an object
 function getQuadrantMinAltitudes() {
     const d = 15;
     const v = id => { const el = document.getElementById(id); const n = parseFloat(el && el.value); return isNaN(n) ? d : n; };
-    return { n: v('minAltN'), e: v('minAltE'), s: v('minAltS'), w: v('minAltW') };
+    return { min_alt_n: v('minAltN'), min_alt_e: v('minAltE'), min_alt_s: v('minAltS'), min_alt_w: v('minAltW') };
 }
 
 // Track last alerted transit to avoid spamming alerts
@@ -1876,10 +1876,10 @@ function fetchFlights() {
         + `&latitude=${encodeURIComponent(latitude)}`
         + `&longitude=${encodeURIComponent(longitude)}`
         + `&elevation=${encodeURIComponent(elevation)}`
-        + `&min_alt_n=${encodeURIComponent(minAltQ.n)}`
-        + `&min_alt_e=${encodeURIComponent(minAltQ.e)}`
-        + `&min_alt_s=${encodeURIComponent(minAltQ.s)}`
-        + `&min_alt_w=${encodeURIComponent(minAltQ.w)}`
+        + `&min_alt_n=${encodeURIComponent(minAltQ.min_alt_n)}`
+        + `&min_alt_e=${encodeURIComponent(minAltQ.min_alt_e)}`
+        + `&min_alt_s=${encodeURIComponent(minAltQ.min_alt_s)}`
+        + `&min_alt_w=${encodeURIComponent(minAltQ.min_alt_w)}`
         + `&alt_threshold=${encodeURIComponent(altThreshold)}`
         + `&az_threshold=${encodeURIComponent(azThreshold)}`
         + `&send-notification=true`
