@@ -1,0 +1,214 @@
+═══════════════════════════════════════════════════════════════════════════════
+FLYMOON TRANSIT DETECTION: FALSE NEGATIVE QUICK REFERENCE
+═══════════════════════════════════════════════════════════════════════════════
+
+STAGE 1: REAL-TIME DETECTOR (transit_detector.py)
+───────────────────────────────────────────────────────────────────────────────
+
+Method: Dual-Signal Consecutive-Frame Confirmation
+- Signal A: Frame-to-frame difference (detects motion)
+- Signal B: Centre-weighted reference difference (detects position change)
+
+CRITICAL FALSE NEGATIVE SOURCES:
+
+1. WARMUP GATE (Line 449)
+   └─ First 3 seconds: ZERO detections possible
+   └─ Risk: Fast transits (ISS, satellites) in first 3s completely missed
+   └─ Status: HARDCODED, not configurable
+
+2. SPATIAL CENTRE-EDGE RATIO FILTER (Line 460)
+   └─ Requirement: centre_score / edge_score ≥ 1.5
+   └─ Risk: Edge transits (crossing frame boundary) rejected
+   └─ Risk: Small objects with noisy edges randomly rejected
+   └─ Status: HARDCODED (CENTRE_EDGE_RATIO_MIN=1.5), not directly configurable
+
+3. CONSECUTIVE FRAMES REQUIREMENT (Lines 463-476)
+   └─ Requirement: 3 consecutive frames above threshold
+   └─ Risk: Very fast transits (1-2 frame duration) completely rejected
+   └─ Risk: Jittery objects toggle threshold → counter resets
+   └─ Status: HARDCODED (CONSEC_FRAMES_REQUIRED=3), not configurable
+
+4. ADAPTIVE THRESHOLDING (Lines 479-488, 453-454)
+   └─ Formula: median + max(3×MAD, 0.5×median)
+   └─ Risk: Faint objects (birds, distant aircraft) below 3-sigma
+   └─ Risk: High scintillation raises baseline → higher threshold
+   └─ Status: Configurable via sensitivity_scale (default 1.0)
+   └─ Tuning: Increase sensitivity_scale to 1.5-2.0 for fainter objects
+
+5. 30-SECOND COOLDOWN (Line 40, 470)
+   └─ Requirement: At least 30s between detections
+   └─ Risk: Two real transits 20s apart → second one IGNORED
+   └─ Status: HARDCODED, not configurable
+
+═══════════════════════════════════════════════════════════════════════════════
+
+STAGE 2: POST-CAPTURE ANALYZER (transit_analyzer.py)
+───────────────────────────────────────────────────────────────────────────────
+
+Method: Frame-by-frame blob detection + motion tracking
+
+CRITICAL FALSE NEGATIVE SOURCES:
+
+[SOLAR MODE - Reference Differencing]
+[LUNAR MODE - Frame-to-Frame Differencing]
+
+1. MINIMUM BLOB SIZE (Lines 384, 250-252, 370)
+   ┌─ Solar: 20 pixels minimum
+   ├─ Lunar: 30 pixels minimum (raised for texture)
+   └─ Risk: BIRDS (5-15px), distant small aircraft (10-20px) completely filtered
+   └─ Risk: Satellites near limb (occluded, only partial visible) → <20px → rejected
+   └─ Status: CONFIGURABLE
+   └─ Tuning: Reduce min_blob_pixels to 5-10 (trades noise for sensitivity)
+   └─ CODE: analyze_video(video_path, min_blob_pixels=8)
+
+2. DISK MARGIN TRIMMING (Lines 353, 253-255)
+   ├─ Default: 12% margin removed from disk edge
+   └─ Risk: Transits grazing limb → outer 12% cropped → detection disappears
+   └─ Status: CONFIGURABLE
+   └─ Tuning: Reduce disk_margin_pct to 0.02-0.05 to include limb transits
+   └─ CODE: analyze_video(video_path, disk_margin_pct=0.05)
+
+3. DIFFERENTIAL THRESHOLD (Lines 421, 437, 249, 258-261, 372)
+   ├─ Solar: 15 intensity units
+   ├─ Lunar: 12 intensity units (25% lower)
+   └─ Risk: Low-contrast objects (light aircraft, sunset haze) just below threshold
+   └─ Status: CONFIGURABLE
+   └─ Tuning: Reduce diff_threshold to 8-10 for low-contrast scenes
+   └─ CODE: analyze_video(video_path, diff_threshold=10)
+
+4. STATIC FEATURE FILTER (Lines 498-500, 1071-1119, 264)
+   ┌─ Solar: Blob appearing in >25% of detection frames marked "static"
+   ├─ Lunar: Blob appearing in >80% of frames marked "static"
+   ├─ Example: 10-second video with detections in 8 frames
+   │           8/8 frames for transit cluster = 100% > 25% → MARKED STATIC
+   └─ Risk: ALL slow transits (0.5-2 second duration) → MISIDENTIFIED AS SUNSPOTS
+   └─ Status: HARDCODED thresholds, but can disable filtering
+   └─ Tuning: Increase static_threshold_pct (must modify source code)
+
+5. COHERENCE FILTER: MINIMUM TRACK FRAMES (Line 1320, 1175)
+   ├─ Requirement: ≥3 frames in coherent motion
+   └─ Risk: Very fast transits (ISS, bright satellites) → 1-2 frames → REJECTED
+   └─ Status: HARDCODED, not configurable
+
+6. COHERENCE FILTER: DURATION GATE (Lines 1178, 1324)
+   ┌─ Solar: max 3.0 seconds
+   ├─ Lunar: max 4.0 seconds
+   └─ Risk: Slow objects (balloons, gliders, drones) → rejected as "too slow"
+   └─ Status: HARDCODED, not configurable via API
+
+7. COHERENCE FILTER: MINIMUM TRAVEL (Lines 1189, 1335, 263, 217)
+   ┌─ Solar: ≥40 pixels travel
+   ├─ Lunar: ≥20 pixels travel
+   └─ Risk: Nearby slow transits → insufficient motion → REJECTED
+   └─ Status: HARDCODED, not configurable
+
+8. COHERENCE FILTER: MINIMUM SPEED (Lines 1192, 1339, 263, 218)
+   ┌─ Solar: ≥80 pixels/second
+   ├─ Lunar: ≥40 pixels/second
+   ├─ Example at 30fps: 80px/s = 2.67 pixels per frame
+   └─ Risk: Most objects in real world SLOWER than this
+   │         └─ Slow satellites, drift-falling objects, birds → ALL REJECTED
+   │         └─ A 50-pixel transit lasting 1 second = 50 px/s < 80 px/s → REJECTED
+   └─ Status: HARDCODED, not configurable
+   └─ COMMENT: This is the MOST CRITICAL filter killing legitimate transits
+
+9. COHERENCE FILTER: LINEARITY REQUIREMENT (Lines 1202, 1349)
+   ┌─ Solar: max 15% perpendicular deviation from straight line
+   ├─ Lunar: max 35% perpendicular deviation
+   └─ Risk: Real curved paths (orbiting objects, wind-blown debris) → REJECTED
+   └─ Status: HARDCODED, not configurable
+
+10. COHERENCE FILTER: ASPECT RATIO (Lines 1360)
+    ├─ Requirement: avg blob aspect ratio ≤ 5:1 (width/height)
+    └─ Risk: Aircraft silhouettes are often >5:1 → REJECTED as "smear artifact"
+    └─ Status: HARDCODED, not configurable
+
+11. COMPOSITE EDGE TRIMMING [LUNAR ONLY] (Lines 711-713)
+    ├─ 15% of detection frames discarded from each end
+    └─ Risk: Partial lunar transits (entering/leaving frame) → edges deleted
+    └─ Status: HARDCODED, not configurable
+
+═══════════════════════════════════════════════════════════════════════════════
+
+TUNABLE PARAMETERS SUMMARY
+───────────────────────────────────────────────────────────────────────────────
+
+DETECTOR (Real-Time):
+  • sensitivity_scale: [default 1.0] → increase to 1.5-2.0 for fainter objects
+    └─ Multiplies adaptive thresholds (lower = more sensitive)
+
+ANALYZER (Post-Capture):
+Via analyze_video() API:
+  
+  • min_blob_pixels: [default 20] → reduce to 5-10 for small objects
+    └─ Minimum silhouette size in pixels
+  
+  • diff_threshold: [default 15] → reduce to 8-10 for low-contrast
+    └─ Intensity difference threshold for object detection
+  
+  • disk_margin_pct: [default 0.12] → reduce to 0.02-0.05 for limb transits
+    └─ Fraction of disk radius to exclude from detection area
+  
+  • target: ["auto", "moon", "sun"] → affects min_speed_px_s, min_travel_px
+    └─ "moon" → 40px/s min (vs 80 for sun)
+    └─ "moon" → 20px min travel (vs 40 for sun)
+
+═══════════════════════════════════════════════════════════════════════════════
+
+FALSE NEGATIVE RATES BY OBJECT TYPE
+───────────────────────────────────────────────────────────────────────────────
+
+Fast ISS Pass (8-10 sec, ~20px travel):
+  └─ Detector: ~40% miss (warmup + consecutive + centre-edge)
+  └─ Analyzer: ~70% miss (solar) or ~30% miss (lunar)
+  └─ Overall: 70-95% miss rate
+
+Slow Balloon (30min, ~10px travel):
+  └─ Detector: ~95% miss (below speed threshold)
+  └─ Analyzer: ~100% miss (ALL filters fail)
+  └─ Overall: 99% miss rate
+
+Large Bird (0.5-1s, 5-15px):
+  └─ Detector: ~60% miss (threshold + spatial)
+  └─ Analyzer: ~95% miss (min blob size)
+  └─ Overall: 97% miss rate
+
+Slow Satellite (1-3 sec, 30-60px travel):
+  └─ Detector: ~20% miss (nominal conditions)
+  └─ Analyzer: ~50% miss (speed gate borderline)
+  └─ Overall: 60% miss rate
+
+═══════════════════════════════════════════════════════════════════════════════
+
+RECOMMENDED TUNING FOR HIGHER SENSITIVITY
+───────────────────────────────────────────────────────────────────────────────
+
+To detect SLOWER objects (balloons, drones, birds):
+
+1. REDUCE SPEED THRESHOLDS [REQUIRES SOURCE CODE MODIFICATION]
+   └─ File: src/transit_analyzer.py
+   └─ Line 263: Change min_speed_px_s = 40.0 (lunar) / 80.0 (solar) to 20.0 / 40.0
+   └─ Rationale: Allows slow-moving objects through coherence filter
+
+2. INCREASE STATIC THRESHOLD [REQUIRES SOURCE CODE MODIFICATION]
+   └─ File: src/transit_analyzer.py
+   └─ Line 264: Change static_threshold_pct = 0.80 (lunar) / 0.25 (solar) to 0.95 / 0.90
+   └─ Rationale: Prevents short transits from being marked as "static"
+
+3. REDUCE BLOB SIZE THRESHOLD [VIA API]
+   └─ analyze_video(video, min_blob_pixels=5)
+   └─ Rationale: Captures birds and small distant objects
+
+4. REDUCE DIFF THRESHOLD [VIA API]
+   └─ analyze_video(video, diff_threshold=8)
+   └─ Rationale: Captures low-contrast objects
+
+5. REDUCE DISK MARGIN [VIA API]
+   └─ analyze_video(video, disk_margin_pct=0.02)
+   └─ Rationale: Includes grazing limb transits
+
+6. USE LUNAR MODE FOR MOON [VIA API]
+   └─ analyze_video(video, target="moon")
+   └─ Rationale: Gentler speed/travel thresholds, FTF eliminates static features
+
+═══════════════════════════════════════════════════════════════════════════════

@@ -36,7 +36,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
-from dataclasses import asdict, dataclass
+from dataclasses import dataclass
 from pathlib import Path
 from typing import List, Optional, Tuple
 
@@ -47,7 +47,7 @@ import numpy as np
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(_PROJECT_ROOT))
 
-from src.transit_analyzer import AnalysisResult, analyze_video
+from src.transit_analyzer import analyze_video
 
 # ── Constants ─────────────────────────────────────────────────────────────────
 

@@ -19,12 +19,13 @@ Prerequisites:
 
 import time
 from datetime import datetime
+
 from dotenv import load_dotenv
 
 # Load environment variables from .env file
 load_dotenv()
 
-from src.seestar_client import SeestarClient, TransitRecorder, create_client_from_env
+from src.seestar_client import TransitRecorder, create_client_from_env
 from src.transit import get_transits
 
 
@@ -82,6 +83,7 @@ def monitor_and_trigger(
 
     # Create transit recorder with timing buffers
     import os
+
     pre_buffer = int(os.getenv("SEESTAR_PRE_BUFFER", "10"))
     post_buffer = int(os.getenv("SEESTAR_POST_BUFFER", "10"))
     recorder = TransitRecorder(client, pre_buffer, post_buffer)
@@ -110,8 +112,10 @@ def monitor_and_trigger(
                 ]
 
                 if high_prob_transits:
-                    timestamp = datetime.now().strftime('%H:%M:%S')
-                    print(f"[{timestamp}] Found {len(high_prob_transits)} high-probability transits")
+                    timestamp = datetime.now().strftime("%H:%M:%S")
+                    print(
+                        f"[{timestamp}] Found {len(high_prob_transits)} high-probability transits"
+                    )
 
                     for flight in high_prob_transits:
                         flight_id = flight.get("id")
@@ -119,7 +123,9 @@ def monitor_and_trigger(
                         prob = flight.get("possibility_level")
 
                         # Only trigger if we haven't already and ETA is reasonable
-                        if flight_id not in triggered_flights and 0 < eta < 300:  # Within 5 minutes
+                        if (
+                            flight_id not in triggered_flights and 0 < eta < 300
+                        ):  # Within 5 minutes
                             origin = flight.get("origin", "???")
                             dest = flight.get("destination", "???")
 
@@ -266,11 +272,17 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(
         description="Automated Seestar telescope triggering for transit capture"
     )
-    parser.add_argument("--test", action="store_true", help="Test Seestar connection only")
-    parser.add_argument("--discover", action="store_true", help="Show command discovery guide")
+    parser.add_argument(
+        "--test", action="store_true", help="Test Seestar connection only"
+    )
+    parser.add_argument(
+        "--discover", action="store_true", help="Show command discovery guide"
+    )
     parser.add_argument("--latitude", type=float, help="Observer latitude")
     parser.add_argument("--longitude", type=float, help="Observer longitude")
-    parser.add_argument("--elevation", type=float, default=0, help="Observer elevation (m)")
+    parser.add_argument(
+        "--elevation", type=float, default=0, help="Observer elevation (m)"
+    )
     parser.add_argument(
         "--target",
         choices=["moon", "sun", "auto"],
@@ -278,7 +290,10 @@ if __name__ == "__main__":
         help="Target celestial body",
     )
     parser.add_argument(
-        "--interval", type=int, default=60, help="Check interval in seconds (default: 60)"
+        "--interval",
+        type=int,
+        default=60,
+        help="Check interval in seconds (default: 60)",
     )
 
     args = parser.parse_args()

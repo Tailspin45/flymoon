@@ -66,7 +66,9 @@ class SeestarClient:
         self._heartbeat_thread: Optional[threading.Thread] = None
         self._heartbeat_running = False
         self._socket_lock = threading.Lock()  # Prevent concurrent socket access
-        self._above_horizon_check = None  # Optional[Callable[[], bool]] — set by app startup
+        self._above_horizon_check = (
+            None  # Optional[Callable[[], bool]] — set by app startup
+        )
 
         logger.info(f"Initialized Seestar client for {host}:{port}")
 
@@ -217,7 +219,7 @@ class SeestarClient:
     # Discovered via live traffic capture. New events are logged at DEBUG level
     # so they appear in logs when --debug is active, making future discovery easy.
     _VIEW_START_EVENTS = {"ImagingViewStart", "SolarViewStart", "LunarViewStart"}
-    _VIEW_STOP_EVENTS  = {"ImagingViewStop",  "SolarViewStop",  "LunarViewStop"}
+    _VIEW_STOP_EVENTS = {"ImagingViewStop", "SolarViewStop", "LunarViewStop"}
 
     def _handle_event(self, event: dict) -> None:
         """Parse unsolicited Event messages from the Seestar firmware.
@@ -239,7 +241,9 @@ class SeestarClient:
                 logger.info("Seestar event: lunar viewing mode active")
         elif name in self._VIEW_STOP_EVENTS:
             if self._viewing_mode is not None:
-                logger.info(f"Seestar event: viewing mode stopped (was {self._viewing_mode})")
+                logger.info(
+                    f"Seestar event: viewing mode stopped (was {self._viewing_mode})"
+                )
                 self._viewing_mode = None
         # Recording state changes
         elif name == "RecordingStart":
@@ -316,7 +320,9 @@ class SeestarClient:
 
             try:
                 self._send_command(
-                    "scope_get_equ_coord", expect_response=True, quiet=True,
+                    "scope_get_equ_coord",
+                    expect_response=True,
+                    quiet=True,
                     timeout_override=5,  # short timeout for keepalive pings
                 )
                 hard_fail_count = 0  # successful ping
@@ -355,7 +361,9 @@ class SeestarClient:
                     # Don't count toward disconnect; log once to avoid spam.
                     hard_fail_count = 0  # timeout proves TCP is up, reset hard counter
                     if not _timeout_logged:
-                        logger.info(f"Heartbeat: scope not responding to ping (will keep trying quietly): {e}")
+                        logger.info(
+                            f"Heartbeat: scope not responding to ping (will keep trying quietly): {e}"
+                        )
                         _timeout_logged = True
 
             # Sleep in small intervals to allow quick shutdown
@@ -455,8 +463,15 @@ class SeestarClient:
             # On host-down / unreachable errors, try auto-discovering the
             # Seestar on the local subnet before giving up.
             import errno as _errno
-            host_down = hasattr(e, "errno") and e.errno in (_errno.EHOSTDOWN, _errno.EHOSTUNREACH, 64)
-            timed_out  = isinstance(e, socket.timeout) or (hasattr(e, "errno") and e.errno == _errno.ETIMEDOUT)
+
+            host_down = hasattr(e, "errno") and e.errno in (
+                _errno.EHOSTDOWN,
+                _errno.EHOSTUNREACH,
+                64,
+            )
+            timed_out = isinstance(e, socket.timeout) or (
+                hasattr(e, "errno") and e.errno == _errno.ETIMEDOUT
+            )
 
             if host_down or timed_out:
                 discovered = self._auto_discover()

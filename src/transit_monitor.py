@@ -13,9 +13,9 @@ from typing import Dict, List, Optional
 from zoneinfo import ZoneInfo
 
 from src import logger
+from src.astro import targets_above_horizon
 from src.constants import POSSIBLE_TRANSITS_LOGFILENAME, PossibilityLevel
 from src.flight_data import save_possible_transits
-from src.astro import targets_above_horizon
 from src.transit import get_transits
 
 

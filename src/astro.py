@@ -106,9 +106,7 @@ def targets_above_horizon(lat: float, lon: float, elevation: float = 0) -> bool:
         now = EARTH_TIMESCALE.from_datetime(datetime.now(tz=timezone.utc))
         for body_name in ("sun", "moon"):
             body = ASTRO_EPHEMERIS[body_name]
-            alt, _, _ = (
-                observer.at(now).observe(body).apparent().altaz()
-            )
+            alt, _, _ = observer.at(now).observe(body).apparent().altaz()
             if alt.degrees > 0:
                 return True
         return False
@@ -117,7 +115,11 @@ def targets_above_horizon(lat: float, lon: float, elevation: float = 0) -> bool:
 
 
 def target_above_min_altitude(
-    target: str, lat: float, lon: float, elevation: float = 0, min_altitude: float = 10.0
+    target: str,
+    lat: float,
+    lon: float,
+    elevation: float = 0,
+    min_altitude: float = 10.0,
 ) -> bool:
     """Return True if *target* is currently at or above *min_altitude* degrees.
 
