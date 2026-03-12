@@ -5,6 +5,9 @@ Captures one JPEG frame at a configurable interval (default 120s) from the
 telescope's RTSP stream, stores frames on disk, and assembles them into an
 MP4 timelapse at sunset or on manual stop.
 
+Each frame is annotated with detected sunspots (circled in grey) using the
+same CLAHE + adaptive-threshold pipeline as the transit analyzer.
+
 The capture loop runs in a background daemon thread and automatically
 pauses/resumes when transit events (predicted or detected) need the
 recording pipeline.
@@ -18,6 +21,8 @@ import time
 from datetime import datetime
 from typing import Optional
 
+import cv2
+import numpy as np
 from tzlocal import get_localzone
 
 from src import logger
@@ -26,6 +31,130 @@ from src.constants import ASTRO_EPHEMERIS
 from src.position import get_my_pos
 
 EARTH = ASTRO_EPHEMERIS["earth"]
+
+# Sunspot annotation color (grey circles, matching transit_analyzer)
+SPOT_COLOR = (140, 140, 140)
+
+
+def _detect_disk(frame: np.ndarray):
+    """Return (cx, cy, radius) of the solar disk, or None.
+
+    Uses Hough circle detection with a contour-based fallback.
+    Mirrors transit_analyzer._detect_disk().
+    """
+    gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+    blurred = cv2.GaussianBlur(gray, (9, 9), 2)
+    h, w = blurred.shape
+    min_r = min(h, w) // 8
+    max_r = min(h, w) // 2
+
+    circles = cv2.HoughCircles(
+        blurred, cv2.HOUGH_GRADIENT,
+        dp=1.2, minDist=min(h, w) // 2,
+        param1=50, param2=30,
+        minRadius=min_r, maxRadius=max_r,
+    )
+    if circles is not None:
+        c = np.round(circles[0][0]).astype(int)
+        return int(c[0]), int(c[1]), int(c[2])
+
+    _, thresh = cv2.threshold(blurred, 200, 255, cv2.THRESH_BINARY)
+    contours, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    if contours:
+        largest = max(contours, key=cv2.contourArea)
+        if cv2.contourArea(largest) > (min_r ** 2 * np.pi):
+            (cx, cy), radius = cv2.minEnclosingCircle(largest)
+            return int(cx), int(cy), int(radius)
+    return None
+
+
+def annotate_sunspots(frame: np.ndarray) -> np.ndarray:
+    """Detect sunspots on the solar disk and draw grey circles around them.
+
+    Uses CLAHE enhancement + adaptive thresholding + darkness verification,
+    matching the pipeline in transit_analyzer._write_composite_image().
+
+    Returns an annotated copy of the frame (original is not modified).
+    """
+    disk = _detect_disk(frame)
+    if disk is None:
+        return frame.copy()
+
+    cx, cy, radius = disk
+    canvas = frame.copy()
+    h, w = canvas.shape[:2]
+    gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+
+    # CLAHE to enhance contrast for sunspot detection
+    clahe = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(8, 8))
+    enhanced = clahe.apply(gray)
+    blur_e = cv2.GaussianBlur(enhanced, (3, 3), 0)
+
+    # Detect spots inside the disk (98% radius to exclude limb)
+    spot_inner_r = int(radius * 0.98)
+    spot_mask = np.zeros(gray.shape[:2], dtype=np.uint8)
+    cv2.circle(spot_mask, (cx, cy), spot_inner_r, 255, -1)
+
+    adapt = cv2.adaptiveThreshold(
+        blur_e, 255,
+        cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY_INV,
+        blockSize=51, C=6,
+    )
+    adapt = cv2.bitwise_and(adapt, spot_mask)
+    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
+    adapt = cv2.morphologyEx(adapt, cv2.MORPH_CLOSE, kernel)
+
+    contours, _ = cv2.findContours(adapt, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+
+    # Verify each candidate is darker than local on-disk mean
+    blur_ref = cv2.GaussianBlur(gray, (5, 5), 0)
+    verify_mask = np.zeros(gray.shape[:2], dtype=np.uint8)
+    cv2.circle(verify_mask, (cx, cy), radius, 255, -1)
+
+    spot_count = 0
+    for cnt in contours:
+        area = cv2.contourArea(cnt)
+        if area < 5:
+            continue
+        M = cv2.moments(cnt)
+        if M["m00"] == 0:
+            continue
+        sx = int(M["m10"] / M["m00"])
+        sy = int(M["m01"] / M["m00"])
+
+        local_val = int(blur_ref[sy, sx])
+        patch_r = 25
+        py1, py2 = max(0, sy - patch_r), min(h, sy + patch_r)
+        px1, px2 = max(0, sx - patch_r), min(w, sx + patch_r)
+        patch = blur_ref[py1:py2, px1:px2]
+        mask_patch = verify_mask[py1:py2, px1:px2]
+        on_disk = patch[mask_patch > 0]
+        if len(on_disk) == 0:
+            continue
+        local_mean = float(on_disk.mean())
+        if local_val >= local_mean - 3:
+            continue  # not darker than surroundings
+
+        _, _, sw, sh = cv2.boundingRect(cnt)
+        sr = max(10, max(sw, sh) // 2 + 6)
+        cv2.circle(canvas, (sx, sy), sr, SPOT_COLOR, 2)
+        spot_count += 1
+
+    # Mask outside disk to black for a clean look
+    disk_mask = np.zeros((h, w), dtype=np.uint8)
+    cv2.circle(disk_mask, (cx, cy), radius + 2, 255, -1)
+    canvas[disk_mask == 0] = 0
+
+    # Timestamp overlay
+    ts = datetime.now().strftime("%H:%M:%S")
+    font = cv2.FONT_HERSHEY_SIMPLEX
+    scale = max(0.4, radius / 300)
+    thick = max(1, int(scale * 2))
+    tx = cx - radius + 10
+    ty = cy + radius - 10
+    cv2.putText(canvas, ts, (tx, ty), font, scale, (255, 255, 255), thick)
+
+    return canvas
 
 
 class SolarTimelapse:
@@ -162,19 +291,35 @@ class SolarTimelapse:
         return self._paused
 
     def build_preview(self) -> Optional[str]:
-        """Assemble current frames into a preview MP4. Returns web path or None."""
+        """Assemble annotated frames into a preview MP4. Returns web path or None.
+
+        Prefers annotated frames (with sunspot circles). Falls back to raw.
+        """
         frames_dir = self._frames_dir
         if not frames_dir or not os.path.isdir(frames_dir):
             return None
 
+        # Prefer annotated frames
+        ann_dir = os.path.join(frames_dir, "annotated")
+        if os.path.isdir(ann_dir):
+            ann_frames = sorted(f for f in os.listdir(ann_dir) if f.endswith(".jpg"))
+            if len(ann_frames) >= 2:
+                preview_path = self._output_path.rsplit(".", 1)[0] + "_preview.mp4"
+                pattern = os.path.join(ann_dir, "frame_%05d.jpg")
+                return self._build_preview_mp4(pattern, preview_path, len(ann_frames))
+
+        # Fall back to raw frames
         frames = sorted(f for f in os.listdir(frames_dir) if f.endswith(".jpg"))
         if len(frames) < 2:
             return None
-
         preview_path = self._output_path.rsplit(".", 1)[0] + "_preview.mp4"
         pattern = os.path.join(frames_dir, "frame_%05d.jpg")
-        fps = max(1, len(frames) / 30)
+        return self._build_preview_mp4(pattern, preview_path, len(frames))
 
+    def _build_preview_mp4(self, pattern: str, output: str,
+                           frame_count: int) -> Optional[str]:
+        """Encode a preview MP4 and return its web URL."""
+        fps = max(1, frame_count / 30)
         cmd = [
             "ffmpeg",
             "-framerate", str(round(fps, 2)),
@@ -184,17 +329,16 @@ class SolarTimelapse:
             "-crf", "23",
             "-preset", "fast",
             "-y",
-            preview_path,
+            output,
         ]
-
         try:
             result = subprocess.run(
                 cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, timeout=60
             )
-            if result.returncode == 0 and os.path.exists(preview_path):
-                rel = os.path.relpath(preview_path, "static").replace(os.sep, "/")
+            if result.returncode == 0 and os.path.exists(output):
+                rel = os.path.relpath(output, "static").replace(os.sep, "/")
                 logger.info(
-                    f"[Timelapse] Preview built: {len(frames)} frames → {preview_path}"
+                    f"[Timelapse] Preview built: {frame_count} frames → {output}"
                 )
                 return f"/static/{rel}"
         except Exception as e:
@@ -202,10 +346,24 @@ class SolarTimelapse:
         return None
 
     def get_latest_frame_url(self) -> Optional[str]:
-        """Return web URL for the most recently captured frame."""
+        """Return web URL for the most recently captured frame.
+
+        Prefers the annotated version (with sunspot circles).
+        """
         frames_dir = self._frames_dir
         if not frames_dir or not os.path.isdir(frames_dir):
             return None
+
+        # Prefer annotated frame
+        ann_dir = os.path.join(frames_dir, "annotated")
+        if os.path.isdir(ann_dir):
+            ann_frames = sorted(f for f in os.listdir(ann_dir) if f.endswith(".jpg"))
+            if ann_frames:
+                latest = os.path.join(ann_dir, ann_frames[-1])
+                rel = os.path.relpath(latest, "static").replace(os.sep, "/")
+                return f"/static/{rel}"
+
+        # Fall back to raw
         frames = sorted(f for f in os.listdir(frames_dir) if f.endswith(".jpg"))
         if not frames:
             return None
@@ -264,7 +422,11 @@ class SolarTimelapse:
                 self._assemble_video()
 
     def _grab_frame(self) -> bool:
-        """Grab a single JPEG frame from the RTSP stream via ffmpeg."""
+        """Grab a single JPEG frame from the RTSP stream via ffmpeg.
+
+        After capture, annotates the frame with sunspot circles and a
+        timestamp overlay, saving the annotated version alongside the raw.
+        """
         if not self._host:
             return False
 
@@ -297,8 +459,11 @@ class SolarTimelapse:
                 logger.warning(f"[Timelapse] Frame too small or missing: {filepath}")
                 return False
 
+            # Annotate with sunspot detection
+            self._annotate_frame(filepath, seq)
+
             if seq % 10 == 0 or seq == 1:
-                logger.info(f"[Timelapse] Frame {seq} captured")
+                logger.info(f"[Timelapse] Frame {seq} captured + annotated")
             return True
 
         except subprocess.TimeoutExpired:
@@ -308,29 +473,59 @@ class SolarTimelapse:
             logger.warning(f"[Timelapse] Frame grab error: {e}")
             return False
 
+    def _annotate_frame(self, raw_path: str, seq: int):
+        """Create an annotated copy with sunspot circles and timestamp."""
+        try:
+            frame = cv2.imread(raw_path)
+            if frame is None:
+                return
+            annotated = annotate_sunspots(frame)
+            ann_dir = os.path.join(self._frames_dir, "annotated")
+            os.makedirs(ann_dir, exist_ok=True)
+            ann_path = os.path.join(ann_dir, f"frame_{seq:05d}.jpg")
+            cv2.imwrite(ann_path, annotated, [cv2.IMWRITE_JPEG_QUALITY, 92])
+        except Exception as e:
+            logger.warning(f"[Timelapse] Annotation failed for frame {seq}: {e}")
+
     def _assemble_video(self):
-        """Stitch JPEG frames into an MP4 timelapse using ffmpeg."""
+        """Stitch JPEG frames into MP4 timelapses (raw + annotated)."""
         if not self._frames_dir or not os.path.isdir(self._frames_dir):
             return
 
-        frames = sorted(
+        raw_frames = sorted(
             f for f in os.listdir(self._frames_dir) if f.endswith(".jpg")
         )
-        if len(frames) < 2:
+        if len(raw_frames) < 2:
             logger.info("[Timelapse] Not enough frames to assemble video")
             return
 
-        output = self._output_path
-        logger.info(
-            f"[Timelapse] Assembling {len(frames)} frames → {output}"
+        fps = max(1, len(raw_frames) / 30)
+
+        # Assemble raw frames
+        self._encode_sequence(
+            os.path.join(self._frames_dir, "frame_%05d.jpg"),
+            self._output_path, len(raw_frames), fps, "raw"
         )
 
-        # Use glob pattern for sequential frames
-        pattern = os.path.join(self._frames_dir, "frame_%05d.jpg")
+        # Assemble annotated frames (sunspot-annotated version)
+        ann_dir = os.path.join(self._frames_dir, "annotated")
+        if os.path.isdir(ann_dir):
+            ann_frames = sorted(
+                f for f in os.listdir(ann_dir) if f.endswith(".jpg")
+            )
+            if len(ann_frames) >= 2:
+                ann_output = self._output_path.rsplit(".", 1)[0] + "_sunspots.mp4"
+                self._encode_sequence(
+                    os.path.join(ann_dir, "frame_%05d.jpg"),
+                    ann_output, len(ann_frames), fps, "annotated"
+                )
 
-        # Target ~30 seconds for the output regardless of frame count
-        # fps = frame_count / desired_duration
-        fps = max(1, len(frames) / 30)
+    def _encode_sequence(self, pattern: str, output: str,
+                         frame_count: int, fps: float, label: str):
+        """Encode a numbered JPEG sequence into an MP4."""
+        logger.info(
+            f"[Timelapse] Assembling {frame_count} {label} frames → {output}"
+        )
 
         cmd = [
             "ffmpeg",
@@ -351,16 +546,16 @@ class SolarTimelapse:
             if result.returncode == 0 and os.path.exists(output):
                 size_mb = os.path.getsize(output) / (1024 * 1024)
                 logger.info(
-                    f"[Timelapse] Video assembled: {output} "
-                    f"({len(frames)} frames, {size_mb:.1f} MB)"
+                    f"[Timelapse] {label.title()} video: {output} "
+                    f"({frame_count} frames, {size_mb:.1f} MB)"
                 )
-                self._write_metadata(len(frames), fps)
+                self._write_metadata(frame_count, fps)
                 self._generate_thumbnail(output)
             else:
                 stderr_tail = result.stderr.decode(errors="replace")[-300:]
-                logger.error(f"[Timelapse] Assembly failed: {stderr_tail}")
+                logger.error(f"[Timelapse] {label.title()} assembly failed: {stderr_tail}")
         except Exception as e:
-            logger.error(f"[Timelapse] Assembly error: {e}", exc_info=True)
+            logger.error(f"[Timelapse] {label.title()} assembly error: {e}", exc_info=True)
 
     def _write_metadata(self, frame_count: int, fps: float):
         """Write a sidecar JSON metadata file."""
