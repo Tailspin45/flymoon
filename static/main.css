@@ -238,6 +238,12 @@ body {
 
 .possibleTransitHighlightLow {
     background-color: rgb(236, 224, 113) !important;
+    color: #111 !important;
+}
+.possibleTransitHighlightLow td,
+.possibleTransitHighlightLow td span,
+.possibleTransitHighlightLow td strong {
+    color: #111 !important;
 }
 
 /* Map styles */

@@ -462,6 +462,23 @@ function renderRichFlightRow(item, bodyTable) {
     tgtCell.textContent = item.target === 'sun' ? '☀️' : item.target === 'moon' ? '🌙' : '';
     row.appendChild(tgtCell);
 
+    // Col 3b — Target altitude above horizon
+    const tgtAltCell = document.createElement('td');
+    tgtAltCell.style.whiteSpace = 'nowrap';
+    if (item.target_alt != null) {
+        const alt = item.target_alt;
+        tgtAltCell.textContent = alt.toFixed(1) + '°';
+        if (alt < 0) {
+            tgtAltCell.style.color = '#888';
+            tgtAltCell.style.fontStyle = 'italic';
+        } else if (alt < 10) {
+            tgtAltCell.style.color = '#ff9800';  // orange — low on horizon
+        }
+    } else {
+        tgtAltCell.innerHTML = '<span style="color:#444">—</span>';
+    }
+    row.appendChild(tgtAltCell);
+
     // Col 4 — Aircraft (callsign + type)
     const acCell = document.createElement('td');
     const type = (item.aircraft_type && item.aircraft_type !== 'N/A') ? item.aircraft_type : '';
