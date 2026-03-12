@@ -2041,7 +2041,7 @@ function fetchFlights() {
             // Clear stale flight data so we don't show predictions that can't happen
             window.lastFlightData = [];
             window.lastSoftFlightData = [];
-            updateTable([]);
+            updateFlightTable([]);
             if (typeof window.clearAllFlightMarkers === 'function') window.clearAllFlightMarkers();
         }
 
