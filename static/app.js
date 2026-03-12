@@ -2019,7 +2019,16 @@ function fetchFlights() {
 
         // Check if any targets are trackable; clear flight table when nothing is up
         if(data.trackingTargets && data.trackingTargets.length === 0) {
-            alertNoResults.innerHTML = "Sun and Moon are below the horizon — no transits possible";
+            // Distinguish: is the target genuinely below the horizon, or just below the user's min angle?
+            const coords = data.targetCoordinates || {};
+            const sunAlt  = coords.sun  ? coords.sun.altitude  : null;
+            const moonAlt = coords.moon ? coords.moon.altitude : null;
+            const anyAboveHorizon = (sunAlt != null && sunAlt > 0) || (moonAlt != null && moonAlt > 0);
+            if (anyAboveHorizon) {
+                alertNoResults.innerHTML = "Sun/Moon is above the horizon but below your Min Angle setting — lower the Min Angle to see transits";
+            } else {
+                alertNoResults.innerHTML = "Sun and Moon are below the horizon — no transits possible";
+            }
             // Clear stale flight data so we don't show predictions that can't happen
             window.lastFlightData = [];
             window.lastSoftFlightData = [];
