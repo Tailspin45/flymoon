@@ -262,6 +262,41 @@ def cache_stats():
     return jsonify(cache.get_stats())
 
 
+def _resolve_min_altitude(azimuth_deg: float, args_or_data, default: float = 15.0) -> float:
+    """Return the directional min-altitude threshold for *azimuth_deg*.
+
+    Reads ``min_alt_n/e/s/w`` from *args_or_data* (a Flask ``request.args``
+    or a plain ``dict``).  Falls back to the legacy ``min_altitude`` key, then
+    to *default*.  This ensures the correct quadrant value is used rather than
+    collapsing all four down to their minimum.
+    """
+    def _get(key):
+        if hasattr(args_or_data, 'get'):
+            v = args_or_data.get(key)
+        else:
+            v = args_or_data.get(key)
+        try:
+            return float(v) if v is not None else None
+        except (TypeError, ValueError):
+            return None
+
+    az = ((azimuth_deg or 0) % 360 + 360) % 360
+    if az >= 315 or az < 45:
+        quadrant_val = _get("min_alt_n")
+    elif az < 135:
+        quadrant_val = _get("min_alt_e")
+    elif az < 225:
+        quadrant_val = _get("min_alt_s")
+    else:
+        quadrant_val = _get("min_alt_w")
+
+    if quadrant_val is not None:
+        return quadrant_val
+    # Legacy single-value fallback
+    legacy = _get("min_altitude")
+    return legacy if legacy is not None else default
+
+
 @app.route("/flights")
 def get_all_flights():
     try:
@@ -280,13 +315,8 @@ def get_all_flights():
         latitude = float(_lat_raw)
         longitude = float(_lon_raw)
         elevation = float(request.args.get("elevation") or 0)
-        min_altitude = float(request.args.get("min_altitude", 15))
         alt_threshold = float(request.args.get("alt_threshold", 5.0))
         az_threshold = float(request.args.get("az_threshold", 10.0))
-
-        logger.debug(
-            f"Parameter types: min_altitude={type(min_altitude)}, alt_threshold={type(alt_threshold)}, az_threshold={type(az_threshold)}"
-        )
 
         has_send_notification = request.args.get("send-notification") == "true"
 
@@ -345,11 +375,12 @@ def get_all_flights():
                 )
                 continue
 
-            # Only check transits if above minimum altitude
+            # Only check transits if above the directional minimum altitude
+            min_altitude = _resolve_min_altitude(coords.get("azimuthal", 0), request.args)
             if coords["altitude"] >= min_altitude:
                 tracking_targets.append(target)  # Add to tracking list
                 logger.info(
-                    f"Checking transits for {target} (altitude: {coords['altitude']:.1f}°, thresholds: alt={alt_threshold}°, az={az_threshold}°)"
+                    f"Checking transits for {target} (altitude: {coords['altitude']:.1f}°, min for az {coords.get('azimuthal',0):.0f}°: {min_altitude}°, thresholds: alt={alt_threshold}°, az={az_threshold}°)"
                 )
                 # Only enrich HIGH transits via FA when the telescope is
                 # connected and can actually act on the data.
@@ -399,7 +430,7 @@ def get_all_flights():
                 all_flights.extend(data["flights"])
             else:
                 logger.info(
-                    f"{target.capitalize()} below minimum altitude ({coords['altitude']:.1f}° < {float(min_altitude)}°), skipping transit check"
+                    f"{target.capitalize()} below directional minimum altitude ({coords['altitude']:.1f}° < {min_altitude}° for az {coords.get('azimuthal',0):.0f}°), skipping transit check"
                 )
 
         # Deduplicate: sun+moon calls both include excluded aircraft — keep the
@@ -640,7 +671,6 @@ def recalculate_transits_endpoint():
         longitude = float(_lon_raw)
         elevation = float(data.get("elevation", 0))
         target = data.get("target", "auto")
-        min_altitude = float(data.get("min_altitude", 15.0))
         alt_threshold = float(
             data.get("alt_threshold", float(os.getenv("ALT_THRESHOLD", "1.0")))
         )
@@ -712,10 +742,12 @@ def recalculate_transits_endpoint():
             coords = celestial_obj.get_coordinates()
             target_coordinates[target_name] = coords
 
+            # Check altitude against directional threshold
+            min_altitude = _resolve_min_altitude(coords.get("azimuthal", 0), data)
             if coords["altitude"] >= min_altitude:
                 tracking_targets.append(target_name)
                 logger.info(
-                    f"Recalculating transits for {target_name} (altitude: {coords['altitude']:.1f}°)"
+                    f"Recalculating transits for {target_name} (altitude: {coords['altitude']:.1f}°, min for az {coords.get('azimuthal',0):.0f}°: {min_altitude}°)"
                 )
 
                 result = recalculate_transits(

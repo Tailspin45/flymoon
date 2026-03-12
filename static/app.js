@@ -80,25 +80,17 @@ function getMinAltitudeForAzimuth(azimuth) {
     }
 }
 
-// Get minimum of all quadrant min altitudes
+// Get minimum of all quadrant min altitudes (used only for reconnect logic)
 function getMinAltitudeAllQuadrants() {
-    const defaultMinAlt = 15;
+    const q = getQuadrantMinAltitudes();
+    return Math.min(q.n, q.e, q.s, q.w);
+}
 
-    const minAltNEl = document.getElementById("minAltN");
-    const minAltEEl = document.getElementById("minAltE");
-    const minAltSEl = document.getElementById("minAltS");
-    const minAltWEl = document.getElementById("minAltW");
-
-    // If elements don't exist, return default
-    if (!minAltNEl || !minAltEEl || !minAltSEl || !minAltWEl) {
-        return defaultMinAlt;
-    }
-
-    const minAltN = ((v => isNaN(v) ? defaultMinAlt : v)(parseFloat(minAltNEl.value)));
-    const minAltE = ((v => isNaN(v) ? defaultMinAlt : v)(parseFloat(minAltEEl.value)));
-    const minAltS = ((v => isNaN(v) ? defaultMinAlt : v)(parseFloat(minAltSEl.value)));
-    const minAltW = ((v => isNaN(v) ? defaultMinAlt : v)(parseFloat(minAltWEl.value)));
-    return Math.min(minAltN, minAltE, minAltS, minAltW);
+// Return all four quadrant min-altitude values as an object
+function getQuadrantMinAltitudes() {
+    const d = 15;
+    const v = id => { const el = document.getElementById(id); const n = parseFloat(el && el.value); return isNaN(n) ? d : n; };
+    return { n: v('minAltN'), e: v('minAltE'), s: v('minAltS'), w: v('minAltW') };
 }
 
 // Track last alerted transit to avoid spamming alerts
@@ -719,7 +711,7 @@ async function softRefresh() {
                 longitude: longitude,
                 elevation: elevation,
                 target: target,
-                min_altitude: getMinAltitudeAllQuadrants(),
+                ...getQuadrantMinAltitudes(),  // min_alt_n/e/s/w
                 disabled_targets: disabledForRecalc
             })
         });
@@ -1863,7 +1855,7 @@ function fetchFlights() {
     alertNoResults.innerHTML = '';
     alertTargetUnderHorizon = '';
 
-    const minAltitude = getMinAltitudeAllQuadrants();
+    const minAltQ = getQuadrantMinAltitudes();
     // Use wide outer-search thresholds so all classifiable transits are returned.
     // HIGH=≤1.5°, MEDIUM=≤2.5°, LOW=≤3.0° — combined_threshold must be ≥3.0°
     // or flights between 1.0° and 1.5° separation (which are HIGH) get dropped.
@@ -1875,7 +1867,10 @@ function fetchFlights() {
         + `&latitude=${encodeURIComponent(latitude)}`
         + `&longitude=${encodeURIComponent(longitude)}`
         + `&elevation=${encodeURIComponent(elevation)}`
-        + `&min_altitude=${encodeURIComponent(minAltitude)}`
+        + `&min_alt_n=${encodeURIComponent(minAltQ.n)}`
+        + `&min_alt_e=${encodeURIComponent(minAltQ.e)}`
+        + `&min_alt_s=${encodeURIComponent(minAltQ.s)}`
+        + `&min_alt_w=${encodeURIComponent(minAltQ.w)}`
         + `&alt_threshold=${encodeURIComponent(altThreshold)}`
         + `&az_threshold=${encodeURIComponent(azThreshold)}`
         + `&send-notification=true`
