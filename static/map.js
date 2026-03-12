@@ -630,6 +630,10 @@ function updateSingleAircraftMarker(flight) {
             .addTo(aircraftLayer);
 
         marker.getElement()?.style.setProperty('filter', `drop-shadow(0 0 8px ${color}) drop-shadow(0 0 4px rgba(0,0,0,0.8))`);
+        // Dim transit markers for targets below quadrant min altitude
+        if (flight.target_below_min_alt && flight.is_possible_transit === 1) {
+            marker.getElement()?.style.setProperty('opacity', '0.4');
+        }
         marker.flightId = normalizedId;
 
         marker.on('click', function() {

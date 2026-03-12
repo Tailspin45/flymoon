@@ -397,6 +397,13 @@ function renderRichFlightRow(item, bodyTable) {
     const catTint = CATEGORY_TINT[item.category];
     if (catTint) row.style.backgroundColor = catTint;
 
+    // Dim transits where target is below quadrant min altitude (visible but not trackable)
+    const belowMinAlt = item.target_below_min_alt === true;
+    if (belowMinAlt && possibilityLevel > 0) {
+        row.style.opacity = '0.45';
+        row.title = `${(item.target || '').toUpperCase()} is below your minimum altitude for this quadrant`;
+    }
+
     // Emergency row styling
     const sq = item.squawk || '';
     if (sq === '7700' || sq === '7500') {
@@ -1959,12 +1966,16 @@ function fetchFlights() {
             }
         }
         
-        // Auto-pause if no targets being tracked
-        if (data.trackingTargets && data.trackingTargets.length === 0) {
+        // Auto-pause only when ALL targets are below the physical horizon (or disabled).
+        // Do NOT pause when targets are merely below the quadrant min-altitude
+        // because we still show those transits (dimmed).
+        const anyTargetUp = data.targetCoordinates && Object.entries(data.targetCoordinates).some(
+            ([name, c]) => c.altitude > 0 && !(data.disabledTargets || []).includes(name)
+        );
+        if (!anyTargetUp) {
             console.log("⏸️  No targets above horizon, pausing auto-refresh");
             if (autoGoInterval) clearInterval(autoGoInterval);
             if (softRefreshInterval) clearInterval(softRefreshInterval);
-            // Will resume automatically on next fetch when targets rise
         }
 
         // LINE 1: Tracking status - Sun and Moon with weather
@@ -1974,8 +1985,13 @@ function fetchFlights() {
         if(data.targetCoordinates && data.targetCoordinates.sun) {
             const isDisabled = data.disabledTargets && data.disabledTargets.includes('sun');
             const isTracking = !isDisabled && data.trackingTargets && data.trackingTargets.includes('sun');
+            const alt = data.targetCoordinates.sun.altitude;
+            const belowHorizon = alt <= 0;
+            const belowMinAlt = !belowHorizon && !isTracking && !isDisabled;
             const status = isDisabled ? '<span style="opacity:0.5">Sun: Off</span>'
                          : isTracking ? `<span style="color: #FFD700">Sun: Tracking</span>`
+                         : belowHorizon ? 'Sun: Below horizon'
+                         : belowMinAlt ? `<span style="color: #ff9800">Sun: Below min alt</span>`
                          : 'Sun: Not tracking';
             trackingParts.push(status);
         }
@@ -1984,8 +2000,13 @@ function fetchFlights() {
         if(data.targetCoordinates && data.targetCoordinates.moon) {
             const isDisabled = data.disabledTargets && data.disabledTargets.includes('moon');
             const isTracking = !isDisabled && data.trackingTargets && data.trackingTargets.includes('moon');
+            const alt = data.targetCoordinates.moon.altitude;
+            const belowHorizon = alt <= 0;
+            const belowMinAlt = !belowHorizon && !isTracking && !isDisabled;
             const status = isDisabled ? '<span style="opacity:0.5">Moon: Off</span>'
                          : isTracking ? `<span style="color: #FFD700">Moon: Tracking</span>`
+                         : belowHorizon ? 'Moon: Below horizon'
+                         : belowMinAlt ? `<span style="color: #ff9800">Moon: Below min alt</span>`
                          : 'Moon: Not tracking';
             trackingParts.push(status);
         }
@@ -2080,9 +2101,10 @@ function fetchFlights() {
             }
         });
 
-        // Find next HIGH or MEDIUM probability transit for countdown
+        // Find next HIGH or MEDIUM probability transit for countdown (skip below-min-alt)
         nextTransit = null;
         filteredFlights.forEach(flight => {
+            if (flight.target_below_min_alt === true) return;
             const level = flight.is_possible_transit === 1 ? parseInt(flight.possibility_level) : 0;
             if (level === HIGH_LEVEL || level === MEDIUM_LEVEL) {
                 const etaSeconds = flight.transit_eta_seconds || (flight.time * 60);
@@ -2288,16 +2310,25 @@ function fetchFlights() {
                 const possibilityLevel = parseInt(item["possibility_level"]);
                 highlightPossibleTransit(possibilityLevel, row);
 
+                // Dim classic row when target is below quadrant min altitude
+                if (item.target_below_min_alt === true) {
+                    row.style.opacity = '0.45';
+                    row.title = `${(item.target || '').toUpperCase()} is below your minimum altitude for this quadrant`;
+                }
+
                 if(possibilityLevel == MEDIUM_LEVEL || possibilityLevel == HIGH_LEVEL) {
-                    hasVeryPossibleTransits = true;
-                    // Collect details for notification
-                    transitDetails.push({
-                        flight: item["id"],
-                        level: possibilityLevel === HIGH_LEVEL ? "HIGH" : "MEDIUM",
-                        time: item["time"],
-                        altDiff: item["alt_diff"],
-                        azDiff: item["az_diff"]
-                    });
+                    // Don't count below-min-alt transits for notifications
+                    if (item.target_below_min_alt !== true) {
+                        hasVeryPossibleTransits = true;
+                        // Collect details for notification
+                        transitDetails.push({
+                            flight: item["id"],
+                            level: possibilityLevel === HIGH_LEVEL ? "HIGH" : "MEDIUM",
+                            time: item["time"],
+                            altDiff: item["alt_diff"],
+                            azDiff: item["az_diff"]
+                        });
+                    }
                 }
             }
 

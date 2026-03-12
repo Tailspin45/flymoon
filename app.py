@@ -376,17 +376,27 @@ def get_all_flights():
                 )
                 continue
 
-            # Only check transits if above the directional minimum altitude
+            # Check directional minimum altitude for this target
             min_altitude = _resolve_min_altitude(coords.get("azimuthal", 0), request.args)
-            if coords["altitude"] >= min_altitude:
-                tracking_targets.append(target)  # Add to tracking list
+            target_above_min = coords["altitude"] >= min_altitude
+            target_above_horizon = coords["altitude"] > 0
+
+            if target_above_min:
+                tracking_targets.append(target)
+
+            # Compute transits for any target above the horizon (even if below
+            # the quadrant min-altitude).  Flights against a below-min target
+            # are tagged so the UI can dim them.
+            if target_above_horizon:
                 logger.info(
-                    f"Checking transits for {target} (altitude: {coords['altitude']:.1f}°, min for az {coords.get('azimuthal',0):.0f}°: {min_altitude}°, thresholds: alt={alt_threshold}°, az={az_threshold}°)"
+                    f"Checking transits for {target} (altitude: {coords['altitude']:.1f}°, "
+                    f"min for az {coords.get('azimuthal',0):.0f}°: {min_altitude}°, "
+                    f"above_min={target_above_min}, thresholds: alt={alt_threshold}°, az={az_threshold}°)"
                 )
                 # Only enrich HIGH transits via FA when the telescope is
                 # connected and can actually act on the data.
                 tc = telescope_routes.get_telescope_client()
-                enrich = bool(tc and tc.is_connected())
+                enrich = bool(tc and tc.is_connected()) and target_above_min
                 data = get_transits(
                     latitude,
                     longitude,
@@ -405,6 +415,7 @@ def get_all_flights():
                 # Tag each flight with which target it's for
                 for flight in data["flights"]:
                     flight["target"] = target
+                    flight["target_below_min_alt"] = not target_above_min
                     # Add computed fields for display
                     if "aircraft_elevation" in flight:
                         flight["aircraft_elevation_feet"] = int(
@@ -431,7 +442,7 @@ def get_all_flights():
                 all_flights.extend(data["flights"])
             else:
                 logger.info(
-                    f"{target.capitalize()} below directional minimum altitude ({coords['altitude']:.1f}° < {min_altitude}° for az {coords.get('azimuthal',0):.0f}°), skipping transit check"
+                    f"{target.capitalize()} below horizon ({coords['altitude']:.1f}°), skipping transit check"
                 )
 
         # Deduplicate: sun+moon calls both include excluded aircraft — keep the
@@ -460,7 +471,7 @@ def get_all_flights():
             }
         else:
             _bbox_for_client = (
-                None  # both targets below min altitude — no API query made
+                None  # both targets below horizon — no API query made
             )
 
         # Combine results
@@ -505,7 +516,9 @@ def get_all_flights():
                     logger.error(f"Error saving possible transits: {e}")
             if send_notif:
                 try:
-                    asyncio.run(send_telegram_notification(flights_snapshot, None))
+                    # Only send notifications for transits where the target is trackable
+                    notifiable = [f for f in flights_snapshot if not f.get("target_below_min_alt")]
+                    asyncio.run(send_telegram_notification(notifiable, None))
                 except Exception as e:
                     logger.error(f"Error sending Telegram notification: {e}")
 
@@ -516,6 +529,8 @@ def get_all_flights():
                 now_ts = time.time()
                 for f in flights_snapshot:
                     if f.get("possibility_level") != PossibilityLevel.HIGH.value:
+                        continue
+                    if f.get("target_below_min_alt"):
                         continue
                     fid = f.get("fa_flight_id") or ""
                     if not fid:
@@ -745,10 +760,17 @@ def recalculate_transits_endpoint():
 
             # Check altitude against directional threshold
             min_altitude = _resolve_min_altitude(coords.get("azimuthal", 0), data)
-            if coords["altitude"] >= min_altitude:
+            target_above_min = coords["altitude"] >= min_altitude
+            target_above_horizon = coords["altitude"] > 0
+
+            if target_above_min:
                 tracking_targets.append(target_name)
+
+            # Recalculate for any target above the horizon
+            if target_above_horizon:
                 logger.info(
-                    f"Recalculating transits for {target_name} (altitude: {coords['altitude']:.1f}°, min for az {coords.get('azimuthal',0):.0f}°: {min_altitude}°)"
+                    f"Recalculating transits for {target_name} (altitude: {coords['altitude']:.1f}°, "
+                    f"min for az {coords.get('azimuthal',0):.0f}°: {min_altitude}°, above_min={target_above_min})"
                 )
 
                 result = recalculate_transits(
@@ -764,6 +786,7 @@ def recalculate_transits_endpoint():
                 # Tag each flight with target and add computed fields
                 for flight in result["flights"]:
                     flight["target"] = target_name
+                    flight["target_below_min_alt"] = not target_above_min
                     if "aircraft_elevation" in flight:
                         flight["aircraft_elevation_feet"] = int(
                             flight["aircraft_elevation"] * 3.28084
