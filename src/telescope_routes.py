@@ -870,6 +870,19 @@ def resume_timelapse():
         return handle_error(e)
 
 
+def preview_timelapse():
+    """POST /telescope/timelapse/preview — build preview video from frames so far."""
+    logger.info("[Telescope] POST /telescope/timelapse/preview")
+    try:
+        tl = get_timelapse()
+        url = tl.build_preview()
+        if url:
+            return jsonify({"success": True, "url": url}), 200
+        return jsonify({"error": "Not enough frames for preview (need ≥2)"}), 400
+    except Exception as e:
+        return handle_error(e)
+
+
 # File Management Endpoint
 
 
@@ -1973,6 +1986,12 @@ def register_routes(app):
         "/telescope/timelapse/resume",
         "telescope_timelapse_resume",
         resume_timelapse,
+        methods=["POST"],
+    )
+    app.add_url_rule(
+        "/telescope/timelapse/preview",
+        "telescope_timelapse_preview",
+        preview_timelapse,
         methods=["POST"],
     )
 

@@ -711,6 +711,32 @@ async function stopTimelapse() {
     }
 }
 
+async function previewTimelapse() {
+    const btn = document.getElementById('previewTimelapseBtn');
+    if (btn) { btn.disabled = true; btn.textContent = '⏳ Building...'; }
+    showStatus('Building timelapse preview...', 'info');
+
+    const result = await apiCall('/telescope/timelapse/preview', 'POST');
+    if (btn) { btn.disabled = false; btn.textContent = '👁️ Preview'; }
+
+    if (result && result.url) {
+        showStatus('Preview ready', 'success', 3000);
+        // Open in the file viewer if available, otherwise new tab
+        const viewerBody = document.getElementById('fileViewerBody');
+        if (viewerBody) {
+            const viewer = document.getElementById('fileViewer');
+            const viewerName = document.getElementById('fileViewerName');
+            viewerBody.innerHTML = `<video src="${result.url}" controls autoplay style="max-width:100%;max-height:80vh;"></video>`;
+            if (viewerName) viewerName.textContent = 'Timelapse Preview (so far)';
+            if (viewer) viewer.style.display = 'flex';
+        } else {
+            window.open(result.url);
+        }
+    } else {
+        showStatus(result?.error || 'Preview failed', 'error', 5000);
+    }
+}
+
 function _startTimelapsePoll() {
     _stopTimelapsePoll();
     _timelapsePollInterval = setInterval(_pollTimelapseStatus, 5000);
@@ -739,10 +765,12 @@ async function _pollTimelapseStatus() {
 function updateTimelapseUI(data) {
     const startBtn = document.getElementById('startTimelapseBtn');
     const stopBtn = document.getElementById('stopTimelapseBtn');
+    const previewBtn = document.getElementById('previewTimelapseBtn');
     const dot = document.getElementById('timelapseDot');
     const text = document.getElementById('timelapseText');
     const info = document.getElementById('timelapseInfo');
-    const intervalInput = document.getElementById('timelapseInterval');
+    const thumbWrap = document.getElementById('timelapseThumb');
+    const thumbImg = document.getElementById('timelapseLatestFrame');
 
     if (_timelapseRunning) {
         if (startBtn) { startBtn.disabled = true; startBtn.style.display = 'none'; }
@@ -752,13 +780,23 @@ function updateTimelapseUI(data) {
         if (data) {
             const paused = data.paused ? ' (paused)' : '';
             if (text) text.textContent = `Capturing${paused}`;
+            const frames = data.frame_count || 0;
             if (info) {
-                const frames = data.frame_count || 0;
                 const elapsed = data.elapsed || 0;
                 const hrs = Math.floor(elapsed / 3600);
                 const mins = Math.floor((elapsed % 3600) / 60);
                 const nextIn = data.next_capture_in || 0;
                 info.textContent = `${frames} frames · ${hrs}h${mins}m · next in ${nextIn}s`;
+            }
+            // Show preview button once we have ≥2 frames
+            if (previewBtn) {
+                previewBtn.disabled = frames < 2;
+                previewBtn.style.display = frames >= 2 ? 'inline-block' : 'none';
+            }
+            // Show latest frame thumbnail
+            if (data.latest_frame && thumbWrap && thumbImg) {
+                thumbImg.src = data.latest_frame + '?t=' + Date.now();
+                thumbWrap.style.display = 'block';
             }
         } else {
             if (text) text.textContent = 'Running...';
@@ -766,9 +804,11 @@ function updateTimelapseUI(data) {
     } else {
         if (startBtn) { startBtn.disabled = !isConnected; startBtn.style.display = 'inline-block'; }
         if (stopBtn) { stopBtn.disabled = true; stopBtn.style.display = 'none'; }
+        if (previewBtn) { previewBtn.disabled = true; previewBtn.style.display = 'none'; }
         if (dot) dot.className = 'status-dot';
         if (text) text.textContent = 'Idle';
         if (info) info.textContent = '';
+        if (thumbWrap) thumbWrap.style.display = 'none';
     }
 }
 

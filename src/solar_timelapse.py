@@ -138,7 +138,7 @@ class SolarTimelapse:
                 since_last = time.monotonic() - self._last_capture
                 next_in = max(0, self._interval - since_last)
 
-            return {
+            result = {
                 "running": self._running,
                 "paused": self._paused,
                 "interval": self._interval,
@@ -149,6 +149,10 @@ class SolarTimelapse:
                 "output_path": self._output_path if self._output_path else None,
             }
 
+        # Filesystem access outside lock
+        result["latest_frame"] = self.get_latest_frame_url()
+        return result
+
     @property
     def is_running(self) -> bool:
         return self._running
@@ -156,6 +160,58 @@ class SolarTimelapse:
     @property
     def is_paused(self) -> bool:
         return self._paused
+
+    def build_preview(self) -> Optional[str]:
+        """Assemble current frames into a preview MP4. Returns web path or None."""
+        frames_dir = self._frames_dir
+        if not frames_dir or not os.path.isdir(frames_dir):
+            return None
+
+        frames = sorted(f for f in os.listdir(frames_dir) if f.endswith(".jpg"))
+        if len(frames) < 2:
+            return None
+
+        preview_path = self._output_path.rsplit(".", 1)[0] + "_preview.mp4"
+        pattern = os.path.join(frames_dir, "frame_%05d.jpg")
+        fps = max(1, len(frames) / 30)
+
+        cmd = [
+            "ffmpeg",
+            "-framerate", str(round(fps, 2)),
+            "-i", pattern,
+            "-c:v", "libx264",
+            "-pix_fmt", "yuv420p",
+            "-crf", "23",
+            "-preset", "fast",
+            "-y",
+            preview_path,
+        ]
+
+        try:
+            result = subprocess.run(
+                cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, timeout=60
+            )
+            if result.returncode == 0 and os.path.exists(preview_path):
+                rel = os.path.relpath(preview_path, "static").replace(os.sep, "/")
+                logger.info(
+                    f"[Timelapse] Preview built: {len(frames)} frames → {preview_path}"
+                )
+                return f"/static/{rel}"
+        except Exception as e:
+            logger.warning(f"[Timelapse] Preview build failed: {e}")
+        return None
+
+    def get_latest_frame_url(self) -> Optional[str]:
+        """Return web URL for the most recently captured frame."""
+        frames_dir = self._frames_dir
+        if not frames_dir or not os.path.isdir(frames_dir):
+            return None
+        frames = sorted(f for f in os.listdir(frames_dir) if f.endswith(".jpg"))
+        if not frames:
+            return None
+        latest = os.path.join(frames_dir, frames[-1])
+        rel = os.path.relpath(latest, "static").replace(os.sep, "/")
+        return f"/static/{rel}"
 
     # ── Internal ────────────────────────────────────────────────────────
 
