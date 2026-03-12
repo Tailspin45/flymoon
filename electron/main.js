@@ -124,6 +124,31 @@ function configToEnv(cfg) {
 
 // ─── Flask Server ────────────────────────────────────────────────────────────
 
+function detectFfmpeg() {
+    // Check common locations for ffmpeg
+    const { execFileSync } = require('child_process');
+    const candidates = ['ffmpeg'];
+    if (process.platform === 'darwin') {
+        candidates.push('/opt/homebrew/bin/ffmpeg', '/usr/local/bin/ffmpeg');
+    } else if (process.platform === 'win32') {
+        candidates.push(
+            path.join(RESOURCES, 'ffmpeg.exe'),
+            'C:\\ffmpeg\\bin\\ffmpeg.exe'
+        );
+    }
+    // Also check if bundled with the app
+    const bundled = path.join(RESOURCES, process.platform === 'win32' ? 'ffmpeg.exe' : 'ffmpeg');
+    if (fs.existsSync(bundled)) return bundled;
+
+    for (const cmd of candidates) {
+        try {
+            execFileSync(cmd, ['-version'], { stdio: 'ignore', timeout: 5000 });
+            return cmd;
+        } catch { /* not found, try next */ }
+    }
+    return null;
+}
+
 async function startFlask(cfg) {
     flaskPort = await findFreePort();
     cfg.flask_port = flaskPort;
@@ -144,6 +169,15 @@ async function startFlask(cfg) {
     }
 
     env.PORT = String(flaskPort);
+
+    // Detect ffmpeg and pass its path to Flask
+    const ffmpegPath = detectFfmpeg();
+    if (ffmpegPath) {
+        env.FFMPEG_PATH = ffmpegPath;
+        console.log(`[ffmpeg] Found at: ${ffmpegPath}`);
+    } else {
+        console.warn('[ffmpeg] Not found — telescope recording/detection disabled');
+    }
 
     flaskProcess = spawn(cmd, args, {
         cwd,

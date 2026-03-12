@@ -16,7 +16,9 @@ from flask import Response, jsonify, request
 
 from src import logger
 from src.astro import CelestialObject
-from src.constants import ASTRO_EPHEMERIS
+from src.constants import ASTRO_EPHEMERIS, get_ffmpeg_path
+
+FFMPEG = get_ffmpeg_path() or "ffmpeg"
 from src.position import get_my_pos
 from src.seestar_client import SeestarClient
 from src.solar_timelapse import get_timelapse
@@ -589,7 +591,7 @@ def start_recording():
         # Common RTSP input options — keep the connection alive for the
         # full recording duration (Seestar closes idle streams quickly).
         rtsp_input = [
-            "ffmpeg",
+            FFMPEG,
             "-rtsp_transport",
             "tcp",
             "-timeout",
@@ -722,7 +724,7 @@ def stop_recording():
             try:
                 result = subprocess.run(
                     [
-                        "ffmpeg",
+                        FFMPEG,
                         "-i",
                         filepath,
                         "-frames:v",
@@ -1351,7 +1353,7 @@ def upload_telescope_file():
             try:
                 result = subprocess.run(
                     [
-                        "ffmpeg",
+                        FFMPEG,
                         "-i",
                         dest_path,
                         "-frames:v",
@@ -1427,7 +1429,7 @@ def capture_photo():
 
         # Use FFmpeg to grab a single frame from RTSP stream
         cmd = [
-            "ffmpeg",
+            FFMPEG,
             "-rtsp_transport",
             "tcp",
             "-i",
@@ -1706,7 +1708,7 @@ def telescope_preview_stream():
             """Generate MJPEG frames from RTSP stream using FFmpeg."""
             # FFmpeg command to transcode RTSP → individual JPEG frames
             cmd = [
-                "ffmpeg",
+                FFMPEG,
                 "-rtsp_transport",
                 "tcp",
                 "-timeout",

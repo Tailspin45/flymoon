@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <!-- Allow JIT compilation (needed by V8/Electron) -->
+  <key>com.apple.security.cs.allow-jit</key>
+  <true/>
+
+  <!-- Allow unsigned executable memory (needed by PyInstaller binary) -->
+  <key>com.apple.security.cs.allow-unsigned-executable-memory</key>
+  <true/>
+
+  <!-- Allow dyld environment variables (needed for bundled libs) -->
+  <key>com.apple.security.cs.allow-dyld-environment-variables</key>
+  <true/>
+
+  <!-- Allow loading unsigned plugins/frameworks (PyInstaller) -->
+  <key>com.apple.security.cs.disable-library-validation</key>
+  <true/>
+
+  <!-- Network client (API calls to FlightAware, Telegram, OpenSky) -->
+  <key>com.apple.security.network.client</key>
+  <true/>
+
+  <!-- Network server (Flask binds localhost for internal use) -->
+  <key>com.apple.security.network.server</key>
+  <true/>
+</dict>
+</plist>

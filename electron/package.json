@@ -19,18 +19,58 @@
       "output": "../dist-electron"
     },
     "extraResources": [
-      { "from": "../static",    "to": "static" },
-      { "from": "../templates", "to": "templates" },
-      { "from": "../src",       "to": "src" },
-      { "from": "../app.py",    "to": "app.py" },
-      { "from": "../de421.bsp", "to": "de421.bsp" },
-      { "from": "../README.md", "to": "docs/README.md" },
-      { "from": "../SETUP.md",  "to": "docs/SETUP.md" },
-      { "from": "../QUICKSTART.md", "to": "docs/QUICKSTART.md" },
-      { "from": "../QUICK_REFERENCE.md", "to": "docs/QUICK_REFERENCE.md" },
-      { "from": "../docs/Flymoon-article.pdf",            "to": "docs/Flymoon-article.pdf" },
-      { "from": "../docs/transit_capture_position_paper.pdf", "to": "docs/transit_capture_position_paper.pdf" },
-      { "from": "../docs/TELESCOPE_GUIDE.md", "to": "docs/TELESCOPE_GUIDE.md" }
+      {
+        "from": "../flymoon-server*",
+        "to": "."
+      },
+      {
+        "from": "../static",
+        "to": "static"
+      },
+      {
+        "from": "../templates",
+        "to": "templates"
+      },
+      {
+        "from": "../src",
+        "to": "src"
+      },
+      {
+        "from": "../app.py",
+        "to": "app.py"
+      },
+      {
+        "from": "../de421.bsp",
+        "to": "de421.bsp"
+      },
+      {
+        "from": "../README.md",
+        "to": "docs/README.md"
+      },
+      {
+        "from": "../SETUP.md",
+        "to": "docs/SETUP.md"
+      },
+      {
+        "from": "../QUICKSTART.md",
+        "to": "docs/QUICKSTART.md"
+      },
+      {
+        "from": "../QUICK_REFERENCE.md",
+        "to": "docs/QUICK_REFERENCE.md"
+      },
+      {
+        "from": "../docs/Flymoon-article.pdf",
+        "to": "docs/Flymoon-article.pdf"
+      },
+      {
+        "from": "../docs/transit_capture_position_paper.pdf",
+        "to": "docs/transit_capture_position_paper.pdf"
+      },
+      {
+        "from": "../docs/TELESCOPE_GUIDE.md",
+        "to": "docs/TELESCOPE_GUIDE.md"
+      }
     ],
     "files": [
       "main.js",
@@ -41,21 +81,49 @@
     ],
     "mac": {
       "icon": "assets/icon.icns",
-      "target": [{ "target": "dmg", "arch": ["arm64", "x64"] }],
+      "target": [
+        {
+          "target": "dmg",
+          "arch": [
+            "arm64",
+            "x64"
+          ]
+        }
+      ],
       "category": "public.app-category.utilities",
-      "darkModeSupport": true
+      "darkModeSupport": true,
+      "hardenedRuntime": true,
+      "gatekeeperAssess": false,
+      "entitlements": "entitlements.mac.plist",
+      "entitlementsInherit": "entitlements.mac.plist",
+      "notarize": true
     },
     "dmg": {
       "title": "Flymoon",
       "background": "assets/dmg-background.png",
       "contents": [
-        { "x": 130, "y": 220 },
-        { "x": 410, "y": 220, "type": "link", "path": "/Applications" }
+        {
+          "x": 130,
+          "y": 220
+        },
+        {
+          "x": 410,
+          "y": 220,
+          "type": "link",
+          "path": "/Applications"
+        }
       ]
     },
     "win": {
       "icon": "assets/icon.ico",
-      "target": [{ "target": "nsis", "arch": ["x64"] }]
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ]
     },
     "nsis": {
       "oneClick": false,
@@ -67,12 +135,19 @@
     },
     "linux": {
       "icon": "assets/icon.png",
-      "target": [{ "target": "AppImage", "arch": ["x64"] }],
+      "target": [
+        {
+          "target": "AppImage",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
       "category": "Science"
     }
   },
   "devDependencies": {
-    "electron": "^28.0.0",
+    "electron": "^33.4.11",
     "electron-builder": "^24.0.0"
   }
 }

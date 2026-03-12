@@ -25,6 +25,9 @@ import cv2
 import numpy as np
 
 from src import logger
+from src.constants import get_ffmpeg_path
+
+FFMPEG = get_ffmpeg_path() or "ffmpeg"
 
 # ── Default tunable parameters (can be overridden per-call) ───────────────────
 REFERENCE_WINDOW = 90  # frames in rolling reference (≈3 s at 30 fps)
@@ -143,7 +146,7 @@ def _reencode_h264(src: Path, dst: Path) -> None:
     try:
         subprocess.run(
             [
-                "ffmpeg",
+                FFMPEG,
                 "-y",
                 "-i",
                 str(src),

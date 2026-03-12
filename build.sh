@@ -74,9 +74,30 @@ fi
 if [ "$SKIP_PYI" = false ]; then
   echo "→ Running PyInstaller..."
   pyinstaller flymoon.spec --distpath "$ROOT/electron/assets/bin" --workpath /tmp/pyi-build --noconfirm
-  # Move binary to electron root so electron-builder can find it
+  # Move binary to project root so electron-builder can find it via extraResources
   mv "$ROOT/electron/assets/bin/flymoon-server" "$ROOT/flymoon-server" 2>/dev/null || true
   echo "  ✓ flymoon-server binary built"
+
+  # ── 3a. Codesign the PyInstaller binary (macOS only) ────────────────────
+  if [ "$(uname)" = "Darwin" ]; then
+    # Find the signing identity — use CODESIGN_IDENTITY env var if set,
+    # otherwise auto-detect a Developer ID Application certificate
+    if [ -z "$CODESIGN_IDENTITY" ]; then
+      CODESIGN_IDENTITY=$(security find-identity -v -p codesigning | \
+        grep "Developer ID Application" | head -1 | \
+        sed 's/.*"\(.*\)".*/\1/')
+    fi
+    if [ -n "$CODESIGN_IDENTITY" ]; then
+      echo "→ Codesigning flymoon-server with: $CODESIGN_IDENTITY"
+      codesign --force --options runtime --sign "$CODESIGN_IDENTITY" \
+        --entitlements "$ROOT/electron/entitlements.mac.plist" \
+        "$ROOT/flymoon-server"
+      echo "  ✓ flymoon-server signed"
+    else
+      echo "  ⚠ No Developer ID Application certificate found — skipping codesign"
+      echo "    Set CODESIGN_IDENTITY env var or install a certificate"
+    fi
+  fi
 fi
 
 # ── 4. npm install ─────────────────────────────────────────────────────────
@@ -87,6 +108,15 @@ npm install --save-dev electron electron-builder 2>/dev/null
 # ── 5. electron-builder ───────────────────────────────────────────────────
 echo "→ Building Electron app..."
 if [ "$(uname)" = "Darwin" ]; then
+  # electron-builder reads APPLE_ID, APPLE_APP_SPECIFIC_PASSWORD, and
+  # APPLE_TEAM_ID from env for notarization. Set them in your shell or
+  # .env before running build.sh.
+  if [ -n "$APPLE_ID" ] && [ -n "$APPLE_TEAM_ID" ]; then
+    echo "  ✓ Notarization credentials detected — will sign and notarize"
+  else
+    echo "  ⚠ Set APPLE_ID, APPLE_APP_SPECIFIC_PASSWORD, APPLE_TEAM_ID for notarization"
+    echo "    Building unsigned DMG (right-click → Open to bypass Gatekeeper)"
+  fi
   npx electron-builder --mac
 else
   npx electron-builder --linux

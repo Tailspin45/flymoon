@@ -1,4 +1,5 @@
 import os
+import shutil
 from enum import Enum
 
 from skyfield.api import load
@@ -46,6 +47,16 @@ def get_aeroapi_key() -> str:
         or os.getenv("FLIGHTAWARE_API_KEY")
         or ""
     )
+
+
+def get_ffmpeg_path() -> str:
+    """Return path to ffmpeg binary, or 'ffmpeg' if on PATH, or empty string."""
+    env_path = os.getenv("FFMPEG_PATH", "")
+    if env_path and os.path.isfile(env_path):
+        return env_path
+    if shutil.which("ffmpeg"):
+        return shutil.which("ffmpeg")
+    return ""
 
 
 # Test data

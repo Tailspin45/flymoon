@@ -27,7 +27,9 @@ from tzlocal import get_localzone
 
 from src import logger
 from src.astro import CelestialObject
-from src.constants import ASTRO_EPHEMERIS
+from src.constants import ASTRO_EPHEMERIS, get_ffmpeg_path
+
+FFMPEG = get_ffmpeg_path() or "ffmpeg"
 from src.position import get_my_pos
 
 EARTH = ASTRO_EPHEMERIS["earth"]
@@ -321,7 +323,7 @@ class SolarTimelapse:
         """Encode a preview MP4 and return its web URL."""
         fps = max(1, frame_count / 30)
         cmd = [
-            "ffmpeg",
+            FFMPEG,
             "-framerate", str(round(fps, 2)),
             "-i", pattern,
             "-c:v", "libx264",
@@ -436,7 +438,7 @@ class SolarTimelapse:
         rtsp_url = f"rtsp://{self._host}:{self._rtsp_port}/stream"
 
         cmd = [
-            "ffmpeg",
+            FFMPEG,
             "-rtsp_transport", "tcp",
             "-i", rtsp_url,
             "-frames:v", "1",
@@ -528,7 +530,7 @@ class SolarTimelapse:
         )
 
         cmd = [
-            "ffmpeg",
+            FFMPEG,
             "-framerate", str(round(fps, 2)),
             "-i", pattern,
             "-c:v", "libx264",
@@ -580,7 +582,7 @@ class SolarTimelapse:
         try:
             subprocess.run(
                 [
-                    "ffmpeg", "-i", video_path,
+                    FFMPEG, "-i", video_path,
                     "-frames:v", "1", "-update", "1",
                     "-q:v", "5", "-y", thumb_path,
                 ],

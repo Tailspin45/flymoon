@@ -29,6 +29,9 @@ import cv2
 import numpy as np
 
 from src import logger
+from src.constants import get_ffmpeg_path
+
+FFMPEG = get_ffmpeg_path() or "ffmpeg"
 
 # ---------------------------------------------------------------------------
 # Detection parameters
@@ -507,7 +510,7 @@ class TransitDetector:
     def _reader_loop(self) -> None:
         """Main loop: launch ffmpeg, read decoded frames, process each."""
         cmd = [
-            "ffmpeg",
+            FFMPEG,
             "-rtsp_transport",
             "tcp",
             "-timeout",
@@ -593,7 +596,7 @@ class TransitDetector:
         video are always available when a detection fires.
         """
         cmd = [
-            "ffmpeg",
+            FFMPEG,
             "-rtsp_transport", "tcp",
             "-timeout", "10000000",
             "-i", self.rtsp_url,
@@ -1042,7 +1045,7 @@ class TransitDetector:
                 # from a background thread ("waiting to write video data").
                 # ffmpeg has no such threading restriction.
                 ffmpeg_cmd = [
-                    "ffmpeg", "-y",
+                    FFMPEG, "-y",
                     "-f", "mjpeg",
                     "-r", str(fps),
                     "-i", "pipe:0",
@@ -1120,7 +1123,7 @@ class TransitDetector:
         try:
             r = subprocess.run(
                 [
-                    "ffmpeg",
+                    FFMPEG,
                     "-i",
                     filepath,
                     "-t",
@@ -1176,7 +1179,7 @@ class TransitDetector:
                 )
             subprocess.run(
                 [
-                    "ffmpeg",
+                    FFMPEG,
                     *seek_args,
                     "-i",
                     filepath,

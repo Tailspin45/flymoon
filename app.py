@@ -964,6 +964,11 @@ if __name__ == "__main__":
         action="store_true",
         help="Use mock demonstration data with guaranteed classifications",
     )
+    parser.add_argument(
+        "--no-browser",
+        action="store_true",
+        help="Don't auto-open the web browser on startup",
+    )
     args = parser.parse_args()
 
     test_mode = args.test or args.demo
@@ -1055,5 +1060,18 @@ if __name__ == "__main__":
 
     signal.signal(signal.SIGINT, _shutdown)
     signal.signal(signal.SIGTERM, _shutdown)
+
+    # Auto-open browser unless suppressed by flag or env
+    if not args.no_browser and not os.getenv("FLYMOON_NO_BROWSER"):
+        import webbrowser
+
+        url = f"http://localhost:{port}"
+
+        def _open_browser():
+            time.sleep(1.5)
+            print(f"🌐 Opening {url}")
+            webbrowser.open(url)
+
+        threading.Thread(target=_open_browser, daemon=True).start()
 
     server.serve_forever()
