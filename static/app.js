@@ -1674,8 +1674,17 @@ function closeInfoModal() {
 function dismissCostModal(keep) {
     document.getElementById('costModal').style.display = 'none';
     if (!keep && _pendingCostInput) {
+        // User cancelled — revert to 15° and save
         _pendingCostInput.value = '15';
         localStorage.setItem(_pendingCostInput.id, '15');
+    } else if (keep && _pendingCostInput) {
+        // User accepted the low value — persist it and refresh
+        const val = parseFloat(_pendingCostInput.value);
+        if (!isNaN(val)) {
+            localStorage.setItem(_pendingCostInput.id, val);
+        }
+        syncMinAltitudeToServer();
+        if (resultsVisible) fetchFlights();
     }
     _pendingCostInput = null;
 }
