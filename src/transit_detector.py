@@ -874,8 +874,12 @@ class TransitDetector:
             f"consec={self.consec_frames_required}f/{self.consec_frames_required/ANALYSIS_FPS:.0f}ms)"
         )
 
-        # Save diagnostic frames
-        self._save_diagnostic_frames(event, ts)
+        # Save diagnostic frames — discard event if we can't produce evidence
+        if not self._save_diagnostic_frames(event, ts):
+            logger.warning(
+                "[Detector] Detection suppressed — no diagnostic frames could be saved"
+            )
+            return
 
         # Snapshot signal trace
         event.signal_trace = list(self._signal_trace)
@@ -904,7 +908,7 @@ class TransitDetector:
 
         self._emit_status("transit_detected")
 
-    def _save_diagnostic_frames(self, event: DetectionEvent, ts: datetime) -> None:
+    def _save_diagnostic_frames(self, event: DetectionEvent, ts: datetime) -> bool:
         """Save trigger frame and diff heatmap as diagnostic JPGs.
 
         The detection runs at 160×90 for speed.  Diagnostic frames are
@@ -912,9 +916,12 @@ class TransitDetector:
         and the diff heatmap is labelled to avoid confusion with real
         camera images.  Both include the detector frame index so the user
         can locate the transit in the corresponding MP4.
+
+        Returns True if at least the trigger frame was saved successfully.
         """
         if self._current_frame is None:
-            return
+            logger.warning("[Detector] No current frame available for diagnostics")
+            return False
         try:
             year_month = os.path.join(self.capture_dir, str(ts.year), f"{ts.month:02d}")
             os.makedirs(year_month, exist_ok=True)
@@ -976,8 +983,10 @@ class TransitDetector:
                 event.diff_path = diff_file
 
             logger.info(f"[Detector] Diagnostic frames saved: {base}")
+            return True
         except Exception as e:
-            logger.warning(f"[Detector] Diagnostic frame save failed: {e}")
+            logger.error(f"[Detector] Diagnostic frame save failed: {e}")
+            return False
 
     def _start_detection_recording(self, ts: datetime) -> Optional[str]:
         """Save pre-buffer frames + capture post-buffer from the circular buffer.
