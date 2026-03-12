@@ -360,6 +360,7 @@ def get_all_flights():
         ref_datetime = datetime.now().replace(tzinfo=ZoneInfo(local_timezone))
 
         all_bboxes_used = []
+        _fetched_flights = False  # ensure we fetch flight data at least once
         for target in ["sun", "moon"]:
             # Check altitude and calculate coordinates for both tracking and display
             celestial_obj = CelestialObject(name=target, observer_position=MY_POSITION)
@@ -376,17 +377,24 @@ def get_all_flights():
                 )
                 continue
 
-            # Only check transits if above the directional minimum altitude
+            # Only compute transits if above the directional minimum altitude
             min_altitude = _resolve_min_altitude(coords.get("azimuthal", 0), request.args)
-            if coords["altitude"] >= min_altitude:
+            target_above_min = coords["altitude"] >= min_altitude
+
+            if target_above_min:
                 tracking_targets.append(target)  # Add to tracking list
+
+            # Always fetch flights (at least once) so the table is populated,
+            # but only compute transits when the target is above min angle.
+            if target_above_min or not _fetched_flights:
                 logger.info(
-                    f"Checking transits for {target} (altitude: {coords['altitude']:.1f}°, min for az {coords.get('azimuthal',0):.0f}°: {min_altitude}°, thresholds: alt={alt_threshold}°, az={az_threshold}°)"
+                    f"{'Checking transits' if target_above_min else 'Fetching flights only (below min angle)'} for {target} "
+                    f"(altitude: {coords['altitude']:.1f}°, min for az {coords.get('azimuthal',0):.0f}°: {min_altitude}°)"
                 )
                 # Only enrich HIGH transits via FA when the telescope is
                 # connected and can actually act on the data.
                 tc = telescope_routes.get_telescope_client()
-                enrich = bool(tc and tc.is_connected())
+                enrich = bool(tc and tc.is_connected()) and target_above_min
                 data = get_transits(
                     latitude,
                     longitude,
@@ -399,12 +407,20 @@ def get_all_flights():
                     data_source,
                     enrich=enrich,
                 )
+                _fetched_flights = True
                 if data.get("bbox_used"):
                     all_bboxes_used.append(data["bbox_used"])
 
                 # Tag each flight with which target it's for
                 for flight in data["flights"]:
                     flight["target"] = target
+
+                    # If target is below min angle, clear transit predictions
+                    # so flights show but without transit alerts
+                    if not target_above_min:
+                        flight["is_possible_transit"] = 0
+                        flight["possibility_level"] = 0
+
                     # Add computed fields for display
                     if "aircraft_elevation" in flight:
                         flight["aircraft_elevation_feet"] = int(
@@ -431,7 +447,7 @@ def get_all_flights():
                 all_flights.extend(data["flights"])
             else:
                 logger.info(
-                    f"{target.capitalize()} below directional minimum altitude ({coords['altitude']:.1f}° < {min_altitude}° for az {coords.get('azimuthal',0):.0f}°), skipping transit check"
+                    f"{target.capitalize()} below directional minimum altitude ({coords['altitude']:.1f}° < {min_altitude}° for az {coords.get('azimuthal',0):.0f}°), skipping (flights already fetched)"
                 )
 
         # Deduplicate: sun+moon calls both include excluded aircraft — keep the
