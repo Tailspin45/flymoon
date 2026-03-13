@@ -25,6 +25,8 @@ call .venv\Scripts\activate.bat
 pip install -q --upgrade pip
 pip install -q -r requirements.txt
 pip install -q pyinstaller
+echo ^> Downloading astronomical data (de421.bsp)...
+python -c "from skyfield.api import load; load('de421.bsp')"
 
 REM ── 2. PyInstaller ──────────────────────────────────────────────────────
 echo ^> Running PyInstaller...
