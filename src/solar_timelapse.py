@@ -134,7 +134,7 @@ def annotate_sunspots(frame: np.ndarray) -> np.ndarray:
         if len(on_disk) == 0:
             continue
         local_mean = float(on_disk.mean())
-        if local_val >= local_mean - 3:
+        if local_val >= local_mean - 10:
             continue  # not darker than surroundings
 
         _, _, sw, sh = cv2.boundingRect(cnt)
@@ -182,7 +182,7 @@ class SolarTimelapse:
         self._min_sun_alt: float = 0.0  # stop when sun below this
         self._stabilize_enabled: bool = True
         self._stabilize_max_shift_px: float = 25.0
-        self._stabilize_smoothing: float = 0.35
+        self._stabilize_smoothing: float = 0.85
         self._stabilize_ref_gray: Optional[np.ndarray] = None
         self._stabilize_offset = (0.0, 0.0)
 
@@ -250,7 +250,7 @@ class SolarTimelapse:
                 os.getenv("SOLAR_TIMELAPSE_STABILIZE_MAX_SHIFT", "25")
             )
             self._stabilize_smoothing = float(
-                os.getenv("SOLAR_TIMELAPSE_STABILIZE_SMOOTHING", "0.35")
+                os.getenv("SOLAR_TIMELAPSE_STABILIZE_SMOOTHING", "0.85")
             )
             self._stabilize_ref_gray = None
             self._stabilize_offset = (0.0, 0.0)
@@ -298,7 +298,7 @@ class SolarTimelapse:
                 os.getenv("SOLAR_TIMELAPSE_STABILIZE_MAX_SHIFT", "25")
             )
             self._stabilize_smoothing = float(
-                os.getenv("SOLAR_TIMELAPSE_STABILIZE_SMOOTHING", "0.35")
+                os.getenv("SOLAR_TIMELAPSE_STABILIZE_SMOOTHING", "0.85")
             )
             self._stabilize_ref_gray = None
             self._stabilize_offset = (0.0, 0.0)
@@ -458,7 +458,7 @@ class SolarTimelapse:
     def _build_preview_mp4(self, pattern: str, output: str,
                            frame_count: int) -> Optional[str]:
         """Encode a preview MP4 and return its web URL."""
-        fps = max(1, frame_count / 30)
+        fps = max(1, frame_count / 15)
         cmd = [
             FFMPEG,
             "-framerate", str(round(fps, 2)),
@@ -694,7 +694,7 @@ class SolarTimelapse:
             logger.info("[Timelapse] Not enough frames to assemble video")
             return
 
-        fps = max(1, len(raw_frames) / 30)
+        fps = max(1, len(raw_frames) / 15)
 
         # Assemble raw frames
         self._encode_sequence(
