@@ -552,8 +552,10 @@ class SolarTimelapse:
                         if err:
                             self._last_error = err
 
-                # Sleep in small increments so stop_event is responsive
-                wait_until = time.monotonic() + self._interval
+                # Sleep in small increments so stop_event is responsive.
+                # If we failed, retry sooner (10s) instead of waiting full interval.
+                retry_delay = 10.0 if (not ok) else self._interval
+                wait_until = time.monotonic() + retry_delay
                 while time.monotonic() < wait_until:
                     if self._stop_event.is_set():
                         break

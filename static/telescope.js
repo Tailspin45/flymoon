@@ -789,10 +789,9 @@ function updateTimelapseUI(data) {
             let label = `Capturing${paused}`;
             
             if (data.consecutive_failures > 0) {
-                if (data.consecutive_failures > 2) {
-                    statusClass = 'status-dot warning';
-                    label = 'Retrying...';
-                }
+                // Show retry status immediately if failing
+                statusClass = 'status-dot warning';
+                label = `Retrying (${data.consecutive_failures})...`;
             }
             
             if (dot) dot.className = statusClass;
@@ -807,8 +806,8 @@ function updateTimelapseUI(data) {
                 let infoText = `${frames} frames · ${hrs}h${mins}m · next in ${nextIn}s`;
                 
                 if (data.last_error && data.consecutive_failures > 0) {
-                    // Show error if persistent
-                     infoText = `⚠️ ${data.last_error} · ${frames} frames`;
+                    // Show error immediately
+                     infoText = `⚠️ ${data.last_error} · next in ${nextIn}s`;
                 }
                 info.textContent = infoText;
             }
