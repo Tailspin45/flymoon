@@ -1,0 +1,60 @@
+name: Build Windows End-User ZIP
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ main ]
+    paths:
+      - "app.py"
+      - "src/**"
+      - "templates/**"
+      - "static/**"
+      - "electron/**"
+      - "flymoon.spec"
+      - "requirements.txt"
+      - "requirements-windows.txt"
+      - "build-win.bat"
+      - "build-win-oneclick.bat"
+      - "package-win-enduser-zip.bat"
+      - ".github/workflows/windows-enduser-zip.yml"
+
+jobs:
+  build-windows-package:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.9"
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Build Windows installer
+        shell: cmd
+        run: build-win.bat
+
+      - name: Package end-user ZIP
+        shell: cmd
+        run: package-win-enduser-zip.bat
+
+      - name: Upload end-user ZIP
+        uses: actions/upload-artifact@v4
+        with:
+          name: Flymoon-Windows-EndUser
+          path: dist-windows/Flymoon-Windows-EndUser.zip
+          if-no-files-found: error
+
+      - name: Upload setup exe
+        uses: actions/upload-artifact@v4
+        with:
+          name: Flymoon-Windows-SetupExe
+          path: dist-electron/*Setup*.exe
+          if-no-files-found: error
+

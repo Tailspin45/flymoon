@@ -10,6 +10,7 @@ https://github.com/smart-underworld/seestar_alp/blob/main/device/seestar_device.
 """
 
 import json
+import os
 import socket
 import threading
 import time
@@ -28,6 +29,8 @@ class SeestarClient:
     DEFAULT_HEARTBEAT_INTERVAL = (
         3  # Ping every 3 seconds to prevent timeout (matches seestar_alp)
     )
+    DEFAULT_RETRY_ATTEMPTS = 3
+    DEFAULT_RETRY_INITIAL_DELAY = 1  # seconds
 
     def __init__(
         self,
@@ -35,6 +38,8 @@ class SeestarClient:
         port: int = DEFAULT_PORT,
         timeout: int = DEFAULT_TIMEOUT,
         heartbeat_interval: int = DEFAULT_HEARTBEAT_INTERVAL,
+        retry_attempts: int = DEFAULT_RETRY_ATTEMPTS,
+        retry_initial_delay: float = DEFAULT_RETRY_INITIAL_DELAY,
     ):
         """
         Initialize Seestar client.
@@ -49,11 +54,17 @@ class SeestarClient:
             Socket timeout in seconds (default: 10)
         heartbeat_interval : int
             Seconds between heartbeat messages (default: 3)
+        retry_attempts : int
+            Number of connection retry attempts (default: 3)
+        retry_initial_delay : float
+            Initial delay in seconds before first retry (default: 1)
         """
         self.host = host
         self.port = port
         self.timeout = timeout
         self.heartbeat_interval = heartbeat_interval
+        self.retry_attempts = retry_attempts
+        self.retry_initial_delay = retry_initial_delay
 
         self.socket: Optional[socket.socket] = None
         self._connected = False
@@ -76,6 +87,34 @@ class SeestarClient:
         """Get next message ID for JSON-RPC requests."""
         self._message_id += 1
         return self._message_id
+
+    def _persist_host_to_env(self, new_host: str) -> None:
+        """Persist discovered SEESTAR_HOST to .env for future launches."""
+        env_path = os.getenv("FLYMOON_ENV_PATH", ".env")
+        try:
+            lines = []
+            if os.path.exists(env_path):
+                with open(env_path, "r", encoding="utf-8") as fh:
+                    lines = fh.readlines()
+
+            updated = False
+            for i, line in enumerate(lines):
+                if line.startswith("SEESTAR_HOST="):
+                    lines[i] = f"SEESTAR_HOST={new_host}\n"
+                    updated = True
+                    break
+
+            if not updated:
+                if lines and not lines[-1].endswith("\n"):
+                    lines[-1] += "\n"
+                lines.append(f"SEESTAR_HOST={new_host}\n")
+
+            with open(env_path, "w", encoding="utf-8") as fh:
+                fh.writelines(lines)
+
+            logger.info(f"[Seestar] Persisted discovered host to {env_path}: {new_host}")
+        except OSError as e:
+            logger.warning(f"[Seestar] Failed to persist SEESTAR_HOST to .env: {e}")
 
     def _send_command(
         self,
@@ -418,7 +457,7 @@ class SeestarClient:
 
     def connect(self) -> bool:
         """
-        Connect to Seestar telescope.
+        Connect to Seestar telescope with exponential backoff retry.
 
         Returns
         -------
@@ -428,62 +467,85 @@ class SeestarClient:
         Raises
         ------
         RuntimeError
-            If connection fails
+            If connection fails after all retry attempts
         """
         if self._connected:
             logger.warning("Already connected")
             return True
 
-        try:
-            # Create TCP socket
-            self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            self.socket.settimeout(self.timeout)
+        last_error = None
+        delay = self.retry_initial_delay
 
-            # Connect to Seestar
-            logger.info(f"Connecting to Seestar at {self.host}:{self.port}...")
-            self.socket.connect((self.host, self.port))
-            self._connected = True
-            logger.info("Connected to Seestar")
-
-            # Start heartbeat thread
-            self._heartbeat_running = True
-            self._heartbeat_thread = threading.Thread(
-                target=self._heartbeat_loop, daemon=True
-            )
-            self._heartbeat_thread.start()
-
-            return True
-
-        except socket.error as e:
-            logger.error(f"Failed to connect to Seestar: {e}")
-            if self.socket:
-                self.socket.close()
-                self.socket = None
-
-            # On host-down / unreachable errors, try auto-discovering the
-            # Seestar on the local subnet before giving up.
-            import errno as _errno
-
-            host_down = hasattr(e, "errno") and e.errno in (
-                _errno.EHOSTDOWN,
-                _errno.EHOSTUNREACH,
-                64,
-            )
-            timed_out = isinstance(e, socket.timeout) or (
-                hasattr(e, "errno") and e.errno == _errno.ETIMEDOUT
-            )
-
-            if host_down or timed_out:
-                discovered = self._auto_discover()
-                if discovered and discovered != self.host:
-                    logger.warning(
-                        f"[Seestar] Auto-discovered at {discovered} "
-                        f"(was {self.host}). Update SEESTAR_HOST in .env to make permanent."
+        for attempt in range(1, self.retry_attempts + 1):
+            try:
+                if attempt > 1:
+                    logger.info(
+                        f"[Seestar] Connection attempt {attempt}/{self.retry_attempts} "
+                        f"(after {delay}s delay)"
                     )
-                    self.host = discovered
-                    return self.connect()  # retry with new IP
+                    time.sleep(delay)
+                    delay *= 2  # Exponential backoff
 
-            raise RuntimeError(f"Connection failed: {e}")
+                # Create TCP socket
+                self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                self.socket.settimeout(self.timeout)
+
+                # Connect to Seestar
+                logger.info(
+                    f"Connecting to Seestar at {self.host}:{self.port} "
+                    f"(attempt {attempt}/{self.retry_attempts})..."
+                )
+                self.socket.connect((self.host, self.port))
+                self._connected = True
+                logger.info("Connected to Seestar")
+
+                # Start heartbeat thread
+                self._heartbeat_running = True
+                self._heartbeat_thread = threading.Thread(
+                    target=self._heartbeat_loop, daemon=True
+                )
+                self._heartbeat_thread.start()
+
+                return True
+
+            except socket.error as e:
+                last_error = e
+                logger.warning(f"[Seestar] Connection attempt {attempt} failed: {e}")
+
+                if self.socket:
+                    self.socket.close()
+                    self.socket = None
+
+                # On host-down / unreachable errors, try auto-discovering the
+                # Seestar on the local subnet before retrying.
+                import errno as _errno
+
+                host_down = hasattr(e, "errno") and e.errno in (
+                    _errno.EHOSTDOWN,
+                    _errno.EHOSTUNREACH,
+                    64,
+                )
+                timed_out = isinstance(e, socket.timeout) or (
+                    hasattr(e, "errno") and e.errno == _errno.ETIMEDOUT
+                )
+
+                if (host_down or timed_out) and attempt < self.retry_attempts:
+                    discovered = self._auto_discover()
+                    if discovered and discovered != self.host:
+                        logger.warning(
+                            f"[Seestar] Auto-discovered at {discovered} "
+                            f"(was {self.host}). Persisting to .env."
+                        )
+                        self.host = discovered
+                        self._persist_host_to_env(discovered)
+                    # Continue to next attempt (either with new host or same host)
+                    continue
+
+        # All retries exhausted
+        error_msg = f"Connection failed after {self.retry_attempts} attempts"
+        if last_error:
+            error_msg += f": {last_error}"
+        raise RuntimeError(error_msg)
 
     def _auto_discover(self) -> str:
         """

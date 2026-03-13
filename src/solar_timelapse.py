@@ -163,7 +163,9 @@ class SolarTimelapse:
     """Singleton manager for day-long solar timelapse capture."""
 
     def __init__(self):
-        self._lock = threading.Lock()
+        # Re-entrant lock is required because some methods call status()
+        # while already holding the lock.
+        self._lock = threading.RLock()
         self._thread: Optional[threading.Thread] = None
         self._stop_event = threading.Event()
         self._pause_event = threading.Event()  # set = paused
@@ -178,8 +180,59 @@ class SolarTimelapse:
         self._host: Optional[str] = None
         self._rtsp_port: int = 4554
         self._min_sun_alt: float = 0.0  # stop when sun below this
+        self._stabilize_enabled: bool = True
+        self._stabilize_max_shift_px: float = 25.0
+        self._stabilize_smoothing: float = 0.35
+        self._stabilize_ref_gray: Optional[np.ndarray] = None
+        self._stabilize_offset = (0.0, 0.0)
 
     # ── Public API ──────────────────────────────────────────────────────
+
+    def _today_paths(self, now: datetime):
+        day_str = now.strftime("%Y%m%d")
+        frames_dir = os.path.join(
+            "static", "captures", str(now.year), f"{now.month:02d}", f"timelapse_{day_str}"
+        )
+        output_path = os.path.join(
+            "static", "captures", str(now.year), f"{now.month:02d}", f"timelapse_{day_str}.mp4"
+        )
+        return frames_dir, output_path
+
+    def _existing_frame_count(self, frames_dir: str) -> int:
+        if not os.path.isdir(frames_dir):
+            return 0
+        count = 0
+        for name in os.listdir(frames_dir):
+            if name.startswith("frame_") and name.endswith(".jpg"):
+                count += 1
+        return count
+
+    def _latest_frame_url_for_dir(self, frames_dir: str) -> Optional[str]:
+        """Return latest frame URL from a timelapse directory (prefer annotated)."""
+        if not frames_dir or not os.path.isdir(frames_dir):
+            return None
+        ann_dir = os.path.join(frames_dir, "annotated")
+        if os.path.isdir(ann_dir):
+            ann_frames = sorted(f for f in os.listdir(ann_dir) if f.endswith(".jpg"))
+            if ann_frames:
+                latest = os.path.join(ann_dir, ann_frames[-1])
+                rel = os.path.relpath(latest, "static").replace(os.sep, "/")
+                return f"/static/{rel}"
+        frames = sorted(
+            f
+            for f in os.listdir(frames_dir)
+            if f.startswith("frame_") and f.endswith(".jpg")
+        )
+        if not frames:
+            return None
+        latest = os.path.join(frames_dir, frames[-1])
+        rel = os.path.relpath(latest, "static").replace(os.sep, "/")
+        return f"/static/{rel}"
+
+    def has_today_frames(self) -> bool:
+        """True when today's timelapse folder already contains captured frames."""
+        frames_dir, _ = self._today_paths(datetime.now())
+        return self._existing_frame_count(frames_dir) > 0
 
     def start(self, host: str, interval: float = 120.0) -> dict:
         with self._lock:
@@ -189,6 +242,18 @@ class SolarTimelapse:
             self._host = host
             self._rtsp_port = int(os.getenv("SEESTAR_RTSP_PORT", "4554"))
             self._interval = max(10.0, interval)
+            self._stabilize_enabled = (
+                os.getenv("SOLAR_TIMELAPSE_STABILIZE", "true").strip().lower()
+                in ("1", "true", "yes", "on")
+            )
+            self._stabilize_max_shift_px = float(
+                os.getenv("SOLAR_TIMELAPSE_STABILIZE_MAX_SHIFT", "25")
+            )
+            self._stabilize_smoothing = float(
+                os.getenv("SOLAR_TIMELAPSE_STABILIZE_SMOOTHING", "0.35")
+            )
+            self._stabilize_ref_gray = None
+            self._stabilize_offset = (0.0, 0.0)
             self._stop_event.clear()
             self._pause_event.clear()
             self._paused = False
@@ -197,17 +262,8 @@ class SolarTimelapse:
 
             now = datetime.now()
             self._start_time = now
-            day_str = now.strftime("%Y%m%d")
-            self._frames_dir = os.path.join(
-                "static", "captures", str(now.year),
-                f"{now.month:02d}", f"timelapse_{day_str}"
-            )
+            self._frames_dir, self._output_path = self._today_paths(now)
             os.makedirs(self._frames_dir, exist_ok=True)
-
-            self._output_path = os.path.join(
-                "static", "captures", str(now.year),
-                f"{now.month:02d}", f"timelapse_{day_str}.mp4"
-            )
 
             self._running = True
             self._thread = threading.Thread(
@@ -217,6 +273,61 @@ class SolarTimelapse:
             logger.info(
                 f"[Timelapse] Started — interval={self._interval}s, "
                 f"frames_dir={self._frames_dir}"
+            )
+            return self.status()
+
+    def resume_today(self, host: str, interval: float = 120.0) -> dict:
+        """Resume today's timelapse from existing frames after restart/crash."""
+        with self._lock:
+            if self._running:
+                return self.status()
+
+            now = datetime.now()
+            frames_dir, output_path = self._today_paths(now)
+            os.makedirs(frames_dir, exist_ok=True)
+            existing_count = self._existing_frame_count(frames_dir)
+
+            self._host = host
+            self._rtsp_port = int(os.getenv("SEESTAR_RTSP_PORT", "4554"))
+            self._interval = max(10.0, interval)
+            self._stabilize_enabled = (
+                os.getenv("SOLAR_TIMELAPSE_STABILIZE", "true").strip().lower()
+                in ("1", "true", "yes", "on")
+            )
+            self._stabilize_max_shift_px = float(
+                os.getenv("SOLAR_TIMELAPSE_STABILIZE_MAX_SHIFT", "25")
+            )
+            self._stabilize_smoothing = float(
+                os.getenv("SOLAR_TIMELAPSE_STABILIZE_SMOOTHING", "0.35")
+            )
+            self._stabilize_ref_gray = None
+            self._stabilize_offset = (0.0, 0.0)
+            self._stop_event.clear()
+            self._pause_event.clear()
+            self._paused = False
+            self._frames_dir = frames_dir
+            self._output_path = output_path
+            self._frame_count = existing_count
+            self._last_capture = 0
+
+            # Preserve approximate session start when resuming from existing frames.
+            if existing_count > 0:
+                first_frame = os.path.join(frames_dir, "frame_00001.jpg")
+                if os.path.exists(first_frame):
+                    self._start_time = datetime.fromtimestamp(os.path.getmtime(first_frame))
+                else:
+                    self._start_time = now
+            else:
+                self._start_time = now
+
+            self._running = True
+            self._thread = threading.Thread(
+                target=self._capture_loop, daemon=True, name="solar-timelapse"
+            )
+            self._thread.start()
+            logger.info(
+                f"[Timelapse] Resumed — interval={self._interval}s, "
+                f"frames_dir={self._frames_dir}, existing_frames={existing_count}"
             )
             return self.status()
 
@@ -260,9 +371,29 @@ class SolarTimelapse:
 
     def status(self) -> dict:
         with self._lock:
-            elapsed = 0
+            now = datetime.now()
+            today_frames_dir, today_output_path = self._today_paths(now)
+
+            effective_frame_count = self._frame_count
+            effective_frames_dir = self._frames_dir if self._running else ""
+            effective_output_path = self._output_path if self._output_path else ""
+
+            # After restart, runtime state is empty; surface today's on-disk
+            # progress so UI can show accumulated timelapse data.
+            if not self._running:
+                disk_count = self._existing_frame_count(today_frames_dir)
+                if disk_count > 0:
+                    effective_frame_count = disk_count
+                    effective_frames_dir = today_frames_dir
+                    effective_output_path = today_output_path
+
+            elapsed_wall_clock = 0
             if self._start_time and self._running:
-                elapsed = (datetime.now() - self._start_time).total_seconds()
+                elapsed_wall_clock = (datetime.now() - self._start_time).total_seconds()
+
+            # Capture span should reflect the timelapse sampling cadence, not
+            # wall clock (which may include downtime/restarts/pauses).
+            capture_span_seconds = effective_frame_count * self._interval
 
             next_in = 0
             if self._running and not self._paused and self._last_capture > 0:
@@ -273,15 +404,21 @@ class SolarTimelapse:
                 "running": self._running,
                 "paused": self._paused,
                 "interval": self._interval,
-                "frame_count": self._frame_count,
-                "elapsed": round(elapsed),
+                "frame_count": effective_frame_count,
+                "elapsed": round(elapsed_wall_clock),
+                "capture_span_seconds": round(capture_span_seconds),
+                "stabilize_enabled": self._stabilize_enabled,
                 "next_capture_in": round(next_in),
-                "frames_dir": self._frames_dir if self._running else None,
-                "output_path": self._output_path if self._output_path else None,
+                "frames_dir": effective_frames_dir or None,
+                "output_path": effective_output_path or None,
+                "resume_available": (not self._running) and effective_frame_count > 0,
             }
 
         # Filesystem access outside lock
-        result["latest_frame"] = self.get_latest_frame_url()
+        if result["frames_dir"]:
+            result["latest_frame"] = self._latest_frame_url_for_dir(result["frames_dir"])
+        else:
+            result["latest_frame"] = None
         return result
 
     @property
@@ -461,6 +598,9 @@ class SolarTimelapse:
                 logger.warning(f"[Timelapse] Frame too small or missing: {filepath}")
                 return False
 
+            if not self._stabilize_frame(filepath):
+                return False
+
             # Annotate with sunspot detection
             self._annotate_frame(filepath, seq)
 
@@ -474,6 +614,59 @@ class SolarTimelapse:
         except Exception as e:
             logger.warning(f"[Timelapse] Frame grab error: {e}")
             return False
+
+    def _stabilize_frame(self, frame_path: str) -> bool:
+        """Apply translation stabilization in-place to reduce seeing jitter."""
+        frame = cv2.imread(frame_path)
+        if frame is None:
+            logger.warning(f"[Timelapse] Stabilize read failed: {frame_path}")
+            return False
+
+        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        gray = cv2.GaussianBlur(gray, (5, 5), 0)
+        gray32 = np.float32(gray)
+
+        if not self._stabilize_enabled:
+            self._stabilize_ref_gray = gray32
+            return True
+
+        if self._stabilize_ref_gray is None:
+            self._stabilize_ref_gray = gray32
+            return True
+
+        try:
+            (dx, dy), response = cv2.phaseCorrelate(self._stabilize_ref_gray, gray32)
+            if response < 0.02:
+                self._stabilize_ref_gray = gray32
+                return True
+
+            dx = float(np.clip(dx, -self._stabilize_max_shift_px, self._stabilize_max_shift_px))
+            dy = float(np.clip(dy, -self._stabilize_max_shift_px, self._stabilize_max_shift_px))
+
+            prev_x, prev_y = self._stabilize_offset
+            a = float(np.clip(self._stabilize_smoothing, 0.0, 1.0))
+            smoothed_x = (a * dx) + ((1.0 - a) * prev_x)
+            smoothed_y = (a * dy) + ((1.0 - a) * prev_y)
+            self._stabilize_offset = (smoothed_x, smoothed_y)
+
+            m = np.float32([[1, 0, smoothed_x], [0, 1, smoothed_y]])
+            stabilized = cv2.warpAffine(
+                frame,
+                m,
+                (frame.shape[1], frame.shape[0]),
+                flags=cv2.INTER_LINEAR,
+                borderMode=cv2.BORDER_REPLICATE,
+            )
+            cv2.imwrite(frame_path, stabilized, [cv2.IMWRITE_JPEG_QUALITY, 92])
+
+            stab_gray = cv2.cvtColor(stabilized, cv2.COLOR_BGR2GRAY)
+            stab_gray = cv2.GaussianBlur(stab_gray, (5, 5), 0).astype(np.float32)
+            self._stabilize_ref_gray = (0.9 * self._stabilize_ref_gray) + (0.1 * stab_gray)
+            return True
+        except Exception as e:
+            logger.warning(f"[Timelapse] Stabilization skipped: {e}")
+            self._stabilize_ref_gray = gray32
+            return True
 
     def _annotate_frame(self, raw_path: str, seq: int):
         """Create an annotated copy with sunspot circles and timestamp."""

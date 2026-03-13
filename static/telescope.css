@@ -786,6 +786,11 @@
     transform: scale(1.05);
 }
 
+.filmstrip-item.selected {
+    border-color: #00d1ff;
+    box-shadow: 0 0 0 2px rgba(0, 209, 255, 0.35) inset;
+}
+
 .filmstrip-item.temp-file:hover {
     border-color: #ffaa33;
 }

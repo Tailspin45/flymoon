@@ -70,6 +70,12 @@ let isSimulating = false;
 let simulationVideo = null;
 let disconnectedPollCount = 0; // consecutive disconnected polls before stopping preview
 let simulationFiles = []; // Track temporary simulation files
+let filmstripFiles = []; // current files rendered in the horizontal filmstrip
+
+const filmstripSelection = {
+    selected: new Set(),   // set of file paths selected in filmstrip
+    lastClicked: null,     // index in filmstripFiles for shift-range selection
+};
 
 // Detection state
 let isDetecting = false;
@@ -782,9 +788,9 @@ function updateTimelapseUI(data) {
             if (text) text.textContent = `Capturing${paused}`;
             const frames = data.frame_count || 0;
             if (info) {
-                const elapsed = data.elapsed || 0;
-                const hrs = Math.floor(elapsed / 3600);
-                const mins = Math.floor((elapsed % 3600) / 60);
+                const span = data.capture_span_seconds ?? 0;
+                const hrs = Math.floor(span / 3600);
+                const mins = Math.floor((span % 3600) / 60);
                 const nextIn = data.next_capture_in || 0;
                 info.textContent = `${frames} frames · ${hrs}h${mins}m · next in ${nextIn}s`;
             }
@@ -806,9 +812,26 @@ function updateTimelapseUI(data) {
         if (stopBtn) { stopBtn.disabled = true; stopBtn.style.display = 'none'; }
         if (previewBtn) { previewBtn.disabled = true; previewBtn.style.display = 'none'; }
         if (dot) dot.className = 'status-dot';
-        if (text) text.textContent = 'Idle';
-        if (info) info.textContent = '';
-        if (thumbWrap) thumbWrap.style.display = 'none';
+        const frames = (data && data.frame_count) ? data.frame_count : 0;
+        if (frames > 0) {
+            if (text) text.textContent = data.resume_available ? 'Paused (resume available)' : 'Idle';
+            if (info) {
+                const span = data.capture_span_seconds ?? 0;
+                const hrs = Math.floor(span / 3600);
+                const mins = Math.floor((span % 3600) / 60);
+                info.textContent = `${frames} frames accumulated · ${hrs}h${mins}m`;
+            }
+            if (data.latest_frame && thumbWrap && thumbImg) {
+                thumbImg.src = data.latest_frame + '?t=' + Date.now();
+                thumbWrap.style.display = 'block';
+            } else if (thumbWrap) {
+                thumbWrap.style.display = 'none';
+            }
+        } else {
+            if (text) text.textContent = 'Idle';
+            if (info) info.textContent = '';
+            if (thumbWrap) thumbWrap.style.display = 'none';
+        }
     }
 }
 
@@ -1020,7 +1043,15 @@ async function refreshFiles() {
     const files = result.files || [];
     
     // Store globally for modal
-    window.currentFiles = files.map(f => ({ path: f.url, name: f.name, thumbnail: f.thumbnail || null, diff_heatmap: f.diff_heatmap || null, trigger_frame: f.trigger_frame || null }));
+    window.currentFiles = files.map(f => ({
+        path: f.url,
+        name: f.name,
+        thumbnail: f.thumbnail || null,
+        diff_heatmap: f.diff_heatmap || null,
+        trigger_frame: f.trigger_frame || null,
+        timelapse_frame_count: f.timelapse_frame_count ?? null,
+        timelapse_interval_seconds: f.timelapse_interval_seconds ?? null
+    }));
     
     // Update count badge
     if (fileCount) {
@@ -1778,6 +1809,12 @@ function dismissTransit(flight) {
                 gridDeleteSelectedSkipConfirm();
                 return;
             }
+            // 3. Filmstrip has selected items
+            if (filmstripSelection.selected.size > 0) {
+                e.preventDefault();
+                filmstripDeleteSelectedSkipConfirm();
+                return;
+            }
         }
     });
 })();
@@ -1815,16 +1852,25 @@ function toggleFilesModal() {
 function updateFilmstrip(files) {
     const filmstrip = document.getElementById('filmstripList');
     if (!filmstrip) return;
+
+    filmstripFiles = files.slice(0, 10);
+    const stripPathSet = new Set(filmstripFiles.map(f => f.path));
+    for (const p of filmstripSelection.selected) {
+        if (!stripPathSet.has(p)) filmstripSelection.selected.delete(p);
+    }
     
     if (files.length === 0) {
+        filmstripSelection.selected.clear();
+        filmstripSelection.lastClicked = null;
         filmstrip.innerHTML = '<p class="empty-state">No files captured yet</p>';
         return;
     }
     
-    filmstrip.innerHTML = files.slice(0, 10).map(file => {
+    filmstrip.innerHTML = filmstripFiles.map((file, index) => {
         const isTemp = file.isSimulation;
         const badge = isTemp ? '<span class="temp-badge">TEMP</span>' : '';
-        const itemClass = isTemp ? 'filmstrip-item temp-file' : 'filmstrip-item';
+        const selected = filmstripSelection.selected.has(file.path) ? ' selected' : '';
+        const itemClass = isTemp ? `filmstrip-item temp-file${selected}` : `filmstrip-item${selected}`;
         const isVideo = file.path.match(/\.(mp4|avi|mov)$/i);
         const isDiff = file.name.includes('_diff');
         const isFrame = file.name.includes('_frame');
@@ -1832,6 +1878,9 @@ function updateFilmstrip(files) {
             ? 'Diff heatmap — shows pixel changes between frames. Bright/warm = motion. Blue = no change.'
             : isFrame
             ? 'Trigger frame — low-res detection frame at the moment motion was detected.'
+            : file.name;
+        const displayName = file.timelapse_frame_count
+            ? `${file.name} · ${file.timelapse_frame_count} frames`
             : file.name;
         const thumbnail = file.thumbnail
             ? `<img src="${file.thumbnail}" alt="${file.name}" title="${imgTitle}" class="filmstrip-thumbnail">`
@@ -1843,9 +1892,9 @@ function updateFilmstrip(files) {
             : '';
         
         return `
-        <div class="${itemClass}" onclick="viewFile('${file.path}', '${file.name}')" style="position:relative;">
+        <div class="${itemClass}" data-file-path="${file.path}" data-file-idx="${index}" onclick="filmstripSelectItem(${index}, '${file.path}', event)" style="position:relative;">
             ${badge}${detBadge2}
-            <div class="filmstrip-name" title="${file.name}">${file.name}</div>
+            <div class="filmstrip-name" title="${displayName}">${displayName}</div>
             ${thumbnail}
             <div class="filmstrip-info">
                 <div class="filmstrip-actions">
@@ -1860,6 +1909,70 @@ function updateFilmstrip(files) {
 
     // Generate thumbnails from video first frame for any canvas placeholders
     filmstrip.querySelectorAll('canvas.video-thumb-canvas').forEach(generateVideoThumbnail);
+}
+
+function _syncFilmstripSelectionUI() {
+    const filmstrip = document.getElementById('filmstripList');
+    if (!filmstrip) return;
+    filmstrip.querySelectorAll('.filmstrip-item').forEach(el => {
+        const path = el.dataset.filePath;
+        el.classList.toggle('selected', filmstripSelection.selected.has(path));
+    });
+}
+
+function filmstripSelectItem(index, path, event) {
+    event.stopPropagation();
+    if (event.shiftKey && filmstripSelection.lastClicked !== null) {
+        const lo = Math.min(filmstripSelection.lastClicked, index);
+        const hi = Math.max(filmstripSelection.lastClicked, index);
+        for (let i = lo; i <= hi; i++) {
+            filmstripSelection.selected.add(filmstripFiles[i].path);
+        }
+    } else if (event.ctrlKey || event.metaKey) {
+        if (filmstripSelection.selected.has(path)) filmstripSelection.selected.delete(path);
+        else filmstripSelection.selected.add(path);
+    } else {
+        if (filmstripSelection.selected.size === 1 && filmstripSelection.selected.has(path)) {
+            const f = filmstripFiles[index];
+            viewFile(f.path, f.name);
+            return;
+        }
+        filmstripSelection.selected.clear();
+        filmstripSelection.selected.add(path);
+    }
+    filmstripSelection.lastClicked = index;
+    _syncFilmstripSelectionUI();
+}
+
+async function filmstripDeleteSelectedSkipConfirm() {
+    const paths = [...filmstripSelection.selected];
+    const n = paths.length;
+    if (n === 0) return;
+    const favs = getFavorites();
+    const deletable = paths.filter(p => !favs.has(p));
+    if (deletable.length === 0) {
+        showStatus('Selected file(s) are favorited — remove ❤️ first', 'warning', 3000);
+        return;
+    }
+    let deleted = 0;
+    for (const filePath of deletable) {
+        try {
+            const p = filePath.replace('/static/', '');
+            const response = await fetch('/telescope/files/delete', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ path: p })
+            });
+            const data = await response.json();
+            if (response.ok && data.success) deleted++;
+        } catch (err) {
+            console.error('[Filmstrip] Delete error for', filePath, err);
+        }
+    }
+    filmstripSelection.selected.clear();
+    filmstripSelection.lastClicked = null;
+    showStatus(`Deleted ${deleted} of ${n} file${n > 1 ? 's' : ''}`, deleted > 0 ? 'success' : 'error', 3000);
+    await refreshFiles();
 }
 
 // ── Multi-select state for expanded files grid ──
@@ -2128,6 +2241,9 @@ function updateFilesGrid() {
             : isFrame
             ? 'Trigger frame — the low-res detection frame captured at the moment motion was detected.'
             : file.name;
+        const displayName = file.timelapse_frame_count
+            ? `${file.name} · ${file.timelapse_frame_count} frames`
+            : file.name;
         const thumbnail = file.thumbnail
             ? `<img src="${file.thumbnail}" alt="${file.name}" title="${imgTitle}" class="file-thumbnail">`
             : isVideo
@@ -2141,7 +2257,7 @@ function updateFilesGrid() {
              onclick="gridSelectItem(${idx}, '${file.path}', event)" style="position:relative;">
             ${detBadge}
             <div class="file-info">
-                <span class="file-name" title="${file.name}">${file.name}</span>
+                <span class="file-name" title="${displayName}">${displayName}</span>
                 <div class="file-actions">
                     <button class="btn-icon btn-fav" data-fav-path="${file.path}" onclick="toggleFavorite('${file.path}', event)" title="${getFavorites().has(file.path) ? 'Unfavorite' : 'Favorite'}">${getFavorites().has(file.path) ? '❤️' : '🤍'}</button>
                     <button class="btn-icon" onclick="event.stopPropagation(); downloadFile('${file.path}', '${file.name}')" title="Download">⬇️</button>

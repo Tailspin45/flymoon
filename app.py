@@ -1063,14 +1063,51 @@ if __name__ == "__main__":
 
     # Auto-open browser unless suppressed by flag or env
     if not args.no_browser and not os.getenv("FLYMOON_NO_BROWSER"):
+        import shutil
+        import subprocess
+        import sys
         import webbrowser
 
         url = f"http://localhost:{port}"
+        browser_pref = os.getenv("FLYMOON_BROWSER", "default").strip().lower()
+
+        def _open_in_preferred_browser(target_url: str, browser: str):
+            if browser in ("", "default", "system"):
+                webbrowser.open(target_url)
+                return
+
+            if browser == "chrome":
+                # Best-effort Chrome launch across platforms; fall back to default browser.
+                if sys.platform == "darwin":
+                    subprocess.Popen(["open", "-a", "Google Chrome", target_url])
+                    return
+                if os.name == "nt":
+                    try:
+                        webbrowser.get("chrome").open(target_url)
+                        return
+                    except webbrowser.Error:
+                        pass
+                for cmd in (
+                    "google-chrome",
+                    "google-chrome-stable",
+                    "chromium",
+                    "chromium-browser",
+                ):
+                    browser_path = shutil.which(cmd)
+                    if browser_path:
+                        subprocess.Popen([browser_path, target_url])
+                        return
+
+            logger.warning(
+                f"Unknown or unavailable FLYMOON_BROWSER='{browser}', "
+                "falling back to system default browser"
+            )
+            webbrowser.open(target_url)
 
         def _open_browser():
             time.sleep(1.5)
-            print(f"🌐 Opening {url}")
-            webbrowser.open(url)
+            print(f"🌐 Opening {url} (browser={browser_pref})")
+            _open_in_preferred_browser(url, browser_pref)
 
         threading.Thread(target=_open_browser, daemon=True).start()
 

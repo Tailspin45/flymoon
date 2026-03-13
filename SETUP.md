@@ -260,10 +260,51 @@ SEESTAR_PORT=4700
 SEESTAR_TIMEOUT=10
 SEESTAR_PRE_BUFFER=10
 SEESTAR_POST_BUFFER=10
+SOLAR_TIMELAPSE_STABILIZE=true
+SOLAR_TIMELAPSE_STABILIZE_MAX_SHIFT=25
+SOLAR_TIMELAPSE_STABILIZE_SMOOTHING=0.35
 
 # OpenAIP aviation overlay (optional)
 OPENAIP_API_KEY=your_openaip_api_key_here
 ```
+
+---
+
+## Windows One-Click Installer + Launcher
+
+If you are building on Windows from this repository:
+
+1. Double-click `build-win-oneclick.bat`
+2. Wait for the build to finish
+3. The generated installer in `dist-electron\` will launch automatically
+4. Complete the installer wizard (desktop/start menu shortcuts are created)
+
+For local source-based launching (without creating an installer), use:
+
+```bat
+launch-flymoon-windows.bat
+```
+
+To create a naive-user delivery ZIP (installer + quick-start text only):
+
+```bat
+package-win-enduser-zip.bat
+```
+
+This generates:
+
+```text
+dist-windows\Flymoon-Windows-EndUser.zip
+```
+
+### Building Windows installer from macOS (no .bat needed)
+
+If you are on macOS/Linux, use GitHub Actions:
+
+1. Push your branch to GitHub
+2. Open **Actions** tab
+3. Run workflow: **Build Windows End-User ZIP**
+4. Download artifact: `Flymoon-Windows-EndUser`
 
 ---
 

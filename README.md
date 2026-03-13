@@ -181,6 +181,12 @@ Copy `.env.mock` to `.env` and fill in:
 | `TELEGRAM_BOT_TOKEN / CHAT_ID` | Telegram alerts (optional) |
 | `ENABLE_SEESTAR / SEESTAR_HOST` | Telescope control (optional) |
 | `SEESTAR_PRE_BUFFER / POST_BUFFER` | Recording window in seconds (default: 10) |
+| `FLYMOON_BROWSER` | Startup browser preference (`default` or `chrome`) |
+| `FLYMOON_NO_BROWSER` | Disable browser auto-open on startup when set |
+| `SOLAR_TIMELAPSE_AUTO_RESUME` | Auto-resume today's solar timelapse after reconnect/restart (`true`/`false`) |
+| `SOLAR_TIMELAPSE_INTERVAL` | Default seconds between auto-resumed timelapse frames (default: 120) |
+| `SOLAR_TIMELAPSE_STABILIZE` | Stabilize timelapse frames to reduce atmospheric jitter (`true`/`false`) |
+| `SOLAR_TIMELAPSE_STABILIZE_MAX_SHIFT / SOLAR_TIMELAPSE_STABILIZE_SMOOTHING` | Stabilizer clamp (px) and smoothing (0..1) |
 | `MIN_TARGET_ALTITUDE` | Fallback minimum altitude for reconnect logic when the browser hasn't connected yet (default: 10°) |
 
 Run `python3 src/config_wizard.py --setup` for interactive validation of all settings.

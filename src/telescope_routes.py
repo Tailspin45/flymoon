@@ -6,6 +6,7 @@ connection management, viewing modes, video recording, photo capture,
 live preview, and file management.
 """
 
+import json
 import os
 import subprocess
 import threading
@@ -32,6 +33,55 @@ EARTH = ASTRO_EPHEMERIS["earth"]
 _user_settings: dict = {
     "min_reconnect_altitude": None,  # degrees; None → fall back to env var
 }
+
+
+def _probe_rtsp_stream(host: str, timeout_seconds: int = 5) -> bool:
+    """Return True when an RTSP frame can be read from the scope quickly."""
+    rtsp_port = int(os.getenv("SEESTAR_RTSP_PORT", "4554"))
+    rtsp_url = f"rtsp://{host}:{rtsp_port}/stream"
+    cmd = [
+        FFMPEG,
+        "-rtsp_transport",
+        "tcp",
+        "-i",
+        rtsp_url,
+        "-frames:v",
+        "1",
+        "-f",
+        "null",
+        "-",
+    ]
+    try:
+        result = subprocess.run(
+            cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=timeout_seconds
+        )
+        return result.returncode == 0
+    except (subprocess.TimeoutExpired, OSError):
+        return False
+
+
+def _ensure_rtsp_ready(client) -> bool:
+    """Ensure the scope is streaming before RTSP-based operations."""
+    if _probe_rtsp_stream(client.host):
+        return True
+
+    mode = getattr(client, "_viewing_mode", None)
+    if mode == "sun":
+        logger.info("[Telescope] RTSP not ready; attempting to start solar mode")
+        client.start_solar_mode()
+    elif mode == "moon":
+        logger.info("[Telescope] RTSP not ready; attempting to start lunar mode")
+        client.start_lunar_mode()
+    else:
+        # Choose a sane default when mode is unknown.
+        fallback = "sun" if 6 <= datetime.now().hour < 18 else "moon"
+        logger.info(f"[Telescope] RTSP not ready; mode unknown, trying {fallback}")
+        if fallback == "sun":
+            client.start_solar_mode()
+        else:
+            client.start_lunar_mode()
+
+    return _probe_rtsp_stream(client.host)
 
 
 # Mock Telescope Client for Testing
@@ -252,8 +302,19 @@ def get_telescope_client() -> Optional[SeestarClient]:
             heartbeat = int(
                 os.getenv("SEESTAR_HEARTBEAT_INTERVAL", "3")
             )  # 3 seconds matches seestar_alp
+            retry_attempts = int(
+                os.getenv("SEESTAR_RETRY_ATTEMPTS", "3")
+            )  # Number of connection attempts
+            retry_delay = float(
+                os.getenv("SEESTAR_RETRY_INITIAL_DELAY", "1")
+            )  # Initial delay before first retry
             _telescope_client = SeestarClient(
-                host=host, port=port, timeout=timeout, heartbeat_interval=heartbeat
+                host=host,
+                port=port,
+                timeout=timeout,
+                heartbeat_interval=heartbeat,
+                retry_attempts=retry_attempts,
+                retry_initial_delay=retry_delay,
             )
             # Gate reconnect attempts: only reconnect when the selected target
             # is at or above the minimum altitude the user set in the UI quadrant.
@@ -401,6 +462,20 @@ def connect_telescope():
                 f"[Telescope] Default viewing mode set to '{client._viewing_mode}' on connect"
             )
 
+        auto_resume = os.getenv("SOLAR_TIMELAPSE_AUTO_RESUME", "true").strip().lower()
+        if auto_resume in ("1", "true", "yes", "on"):
+            interval_raw = os.getenv("SOLAR_TIMELAPSE_INTERVAL", "120")
+            try:
+                resume_interval = float(interval_raw)
+            except ValueError:
+                logger.warning(
+                    f"[Telescope] Invalid SOLAR_TIMELAPSE_INTERVAL='{interval_raw}', using 120"
+                )
+                resume_interval = 120.0
+            tl = get_timelapse()
+            if not tl.is_running:
+                tl.resume_today(host=client.host, interval=resume_interval)
+
         logger.info(f"[Telescope] Connected to {client.host}:{client.port}")
         return (
             jsonify(
@@ -413,6 +488,21 @@ def connect_telescope():
                 }
             ),
             200,
+        )
+
+    except RuntimeError as e:
+        error_msg = str(e)
+        logger.error(f"[Telescope] Connection error: {error_msg}")
+        return (
+            jsonify(
+                {
+                    "success": False,
+                    "connected": False,
+                    "error": error_msg,
+                    "message": "Failed to connect to Seestar. Check that the telescope is powered on, connected to the network, and SEESTAR_HOST is correct.",
+                }
+            ),
+            503,  # Service Unavailable
         )
 
     except Exception as e:
@@ -550,6 +640,16 @@ def start_recording():
         if not client or not client.is_connected():
             return jsonify({"error": "Not connected to telescope"}), 400
 
+        if not _ensure_rtsp_ready(client):
+            return (
+                jsonify(
+                    {
+                        "error": "RTSP stream is not ready. Set scope to Sun/Moon view and try again."
+                    }
+                ),
+                503,
+            )
+
         if _recording_state["active"]:
             return (
                 jsonify({"error": "Recording already in progress", "recording": True}),
@@ -630,7 +730,7 @@ def start_recording():
             ]
 
         # Start FFmpeg in background
-        process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        process = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
         _recording_state = {
             "active": True,
@@ -804,6 +904,16 @@ def start_timelapse():
         if not client or not client.is_connected():
             return jsonify({"error": "Not connected to telescope"}), 400
 
+        if not _ensure_rtsp_ready(client):
+            return (
+                jsonify(
+                    {
+                        "error": "RTSP stream is not ready. Ensure Sun/Moon view is active before timelapse."
+                    }
+                ),
+                503,
+            )
+
         data = request.get_json(silent=True) or {}
         interval = float(data.get("interval", 120))
 
@@ -832,7 +942,19 @@ def stop_timelapse():
 def get_timelapse_status():
     """GET /telescope/timelapse/status — current timelapse state."""
     try:
-        return jsonify(get_timelapse().status()), 200
+        tl = get_timelapse()
+        if not tl.is_running:
+            auto_resume = os.getenv("SOLAR_TIMELAPSE_AUTO_RESUME", "true").strip().lower()
+            if auto_resume in ("1", "true", "yes", "on") and tl.has_today_frames():
+                client = get_telescope_client()
+                if client and client.is_connected():
+                    interval_raw = os.getenv("SOLAR_TIMELAPSE_INTERVAL", "120")
+                    try:
+                        resume_interval = float(interval_raw)
+                    except ValueError:
+                        resume_interval = 120.0
+                    tl.resume_today(host=client.host, interval=resume_interval)
+        return jsonify(tl.status()), 200
     except Exception as e:
         return handle_error(e)
 
@@ -909,6 +1031,40 @@ def _find_companion(full_path: str, suffix: str):
     return None
 
 
+def _is_timelapse_frame(full_path: str) -> bool:
+    """True for raw/annotated per-frame JPEGs inside timelapse frame folders."""
+    name = os.path.basename(full_path).lower()
+    if not (name.startswith("frame_") and name.endswith(".jpg")):
+        return False
+    norm = full_path.replace("\\", "/").lower()
+    return "/timelapse_" in norm
+
+
+def _read_timelapse_metadata_for_video(full_path: str) -> dict:
+    """Return timelapse metadata for a video, if a sidecar JSON exists."""
+    if not full_path.lower().endswith(".mp4"):
+        return {}
+    candidates = [full_path.rsplit(".", 1)[0] + ".json"]
+    # Annotated output is timelapse_YYYYMMDD_sunspots.mp4 while metadata is
+    # written to timelapse_YYYYMMDD.json.
+    if full_path.lower().endswith("_sunspots.mp4"):
+        candidates.append(full_path[: -len("_sunspots.mp4")] + ".json")
+    for meta_path in candidates:
+        if not os.path.exists(meta_path):
+            continue
+        try:
+            with open(meta_path, "r", encoding="utf-8") as fh:
+                meta = json.load(fh)
+            if isinstance(meta, dict) and meta.get("type") == "timelapse":
+                return {
+                    "timelapse_frame_count": meta.get("frame_count"),
+                    "timelapse_interval_seconds": meta.get("interval_seconds"),
+                }
+        except (OSError, json.JSONDecodeError):
+            return {}
+    return {}
+
+
 def list_telescope_files():
     """GET /telescope/files - List locally captured files."""
     logger.info("[Telescope] GET /telescope/files")
@@ -936,21 +1092,23 @@ def list_telescope_files():
                         )  # skip sidecar JSON
                     ):
                         full_path = os.path.join(root, filename)
+                        if _is_timelapse_frame(full_path):
+                            continue
                         rel_path = os.path.relpath(full_path, "static")
 
                         # Get file modification time
                         mtime = os.path.getmtime(full_path)
 
-                        files.append(
-                            {
-                                "name": filename,
-                                "url": f"/static/{rel_path.replace(os.sep, '/')}",
-                                "mtime": mtime,
-                                "thumbnail": _find_video_thumbnail(full_path),
-                                "diff_heatmap": _find_companion(full_path, "_diff.jpg"),
-                                "trigger_frame": _find_companion(full_path, "_frame.jpg"),
-                            }
-                        )
+                        item = {
+                            "name": filename,
+                            "url": f"/static/{rel_path.replace(os.sep, '/')}",
+                            "mtime": mtime,
+                            "thumbnail": _find_video_thumbnail(full_path),
+                            "diff_heatmap": _find_companion(full_path, "_diff.jpg"),
+                            "trigger_frame": _find_companion(full_path, "_frame.jpg"),
+                        }
+                        item.update(_read_timelapse_metadata_for_video(full_path))
+                        files.append(item)
 
         # Sort by modification time (newest first)
         files.sort(key=lambda x: x["mtime"], reverse=True)
@@ -1405,6 +1563,16 @@ def capture_photo():
         client = get_telescope_client()
         if not client or not client.is_connected():
             return jsonify({"error": "Not connected to telescope"}), 400
+
+        if not _ensure_rtsp_ready(client):
+            return (
+                jsonify(
+                    {
+                        "error": "RTSP stream is not ready. Set scope to Sun/Moon view and try again."
+                    }
+                ),
+                503,
+            )
 
         # Get RTSP stream URL
         rtsp_port = int(os.getenv("SEESTAR_RTSP_PORT", "4554"))

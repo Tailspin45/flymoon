@@ -130,6 +130,8 @@
       "allowToChangeInstallationDirectory": true,
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
+      "shortcutName": "Flymoon",
+      "runAfterFinish": true,
       "installerIcon": "assets/icon.ico",
       "installerHeaderIcon": "assets/icon.ico"
     },
