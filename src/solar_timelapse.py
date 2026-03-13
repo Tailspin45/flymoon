@@ -19,7 +19,7 @@ import subprocess
 import threading
 import time
 from datetime import datetime
-from typing import Optional
+from typing import Optional, Tuple
 
 import cv2
 import numpy as np
@@ -185,6 +185,8 @@ class SolarTimelapse:
         self._stabilize_smoothing: float = 0.85
         self._stabilize_ref_gray: Optional[np.ndarray] = None
         self._stabilize_offset = (0.0, 0.0)
+        self._consecutive_failures: int = 0
+        self._last_error: Optional[str] = None
 
     # ── Public API ──────────────────────────────────────────────────────
 
@@ -254,6 +256,8 @@ class SolarTimelapse:
             )
             self._stabilize_ref_gray = None
             self._stabilize_offset = (0.0, 0.0)
+            self._consecutive_failures = 0
+            self._last_error = None
             self._stop_event.clear()
             self._pause_event.clear()
             self._paused = False
@@ -302,6 +306,8 @@ class SolarTimelapse:
             )
             self._stabilize_ref_gray = None
             self._stabilize_offset = (0.0, 0.0)
+            self._consecutive_failures = 0
+            self._last_error = None
             self._stop_event.clear()
             self._pause_event.clear()
             self._paused = False
@@ -412,6 +418,8 @@ class SolarTimelapse:
                 "frames_dir": effective_frames_dir or None,
                 "output_path": effective_output_path or None,
                 "resume_available": (not self._running) and effective_frame_count > 0,
+                "consecutive_failures": self._consecutive_failures,
+                "last_error": self._last_error,
             }
 
         # Filesystem access outside lock
@@ -532,11 +540,17 @@ class SolarTimelapse:
                     break
 
                 # Capture a frame
-                ok = self._grab_frame()
-                if ok:
-                    with self._lock:
+                ok, err = self._grab_frame()
+                with self._lock:
+                    if ok:
                         self._frame_count += 1
                         self._last_capture = time.monotonic()
+                        self._consecutive_failures = 0
+                        self._last_error = None
+                    else:
+                        self._consecutive_failures += 1
+                        if err:
+                            self._last_error = err
 
                 # Sleep in small increments so stop_event is responsive
                 wait_until = time.monotonic() + self._interval
@@ -560,14 +574,14 @@ class SolarTimelapse:
             if was_running and self._frame_count > 0 and not self._stop_event.is_set():
                 self._assemble_video()
 
-    def _grab_frame(self) -> bool:
+    def _grab_frame(self) -> Tuple[bool, Optional[str]]:
         """Grab a single JPEG frame from the RTSP stream via ffmpeg.
 
         After capture, annotates the frame with sunspot circles and a
         timestamp overlay, saving the annotated version alongside the raw.
         """
         if not self._host:
-            return False
+            return False, "No host configured"
 
         seq = self._frame_count + 1
         filename = f"frame_{seq:05d}.jpg"
@@ -590,30 +604,30 @@ class SolarTimelapse:
                 cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, timeout=15
             )
             if result.returncode != 0:
-                stderr_tail = result.stderr.decode(errors="replace")[-200:]
+                stderr_tail = result.stderr.decode(errors="replace")[-200:].strip()
                 logger.warning(f"[Timelapse] Frame grab failed: {stderr_tail}")
-                return False
+                return False, f"FFmpeg error: {stderr_tail}"
 
             if not os.path.exists(filepath) or os.path.getsize(filepath) < 100:
                 logger.warning(f"[Timelapse] Frame too small or missing: {filepath}")
-                return False
+                return False, "Frame too small or missing"
 
             if not self._stabilize_frame(filepath):
-                return False
+                return False, "Stabilization failed"
 
             # Annotate with sunspot detection
             self._annotate_frame(filepath, seq)
 
             if seq % 10 == 0 or seq == 1:
                 logger.info(f"[Timelapse] Frame {seq} captured + annotated")
-            return True
+            return True, None
 
         except subprocess.TimeoutExpired:
             logger.warning("[Timelapse] Frame grab timed out")
-            return False
+            return False, "RTSP timeout"
         except Exception as e:
             logger.warning(f"[Timelapse] Frame grab error: {e}")
-            return False
+            return False, str(e)
 
     def _stabilize_frame(self, frame_path: str) -> bool:
         """Apply translation stabilization in-place to reduce seeing jitter."""

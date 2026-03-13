@@ -781,18 +781,36 @@ function updateTimelapseUI(data) {
     if (_timelapseRunning) {
         if (startBtn) { startBtn.disabled = true; startBtn.style.display = 'none'; }
         if (stopBtn) { stopBtn.disabled = false; stopBtn.style.display = 'inline-block'; }
-        if (dot) dot.className = 'status-dot recording';
-
+        
+        let statusClass = 'status-dot recording';
+        
         if (data) {
             const paused = data.paused ? ' (paused)' : '';
-            if (text) text.textContent = `Capturing${paused}`;
+            let label = `Capturing${paused}`;
+            
+            if (data.consecutive_failures > 0) {
+                if (data.consecutive_failures > 2) {
+                    statusClass = 'status-dot warning';
+                    label = 'Retrying...';
+                }
+            }
+            
+            if (dot) dot.className = statusClass;
+            if (text) text.textContent = label;
+
             const frames = data.frame_count || 0;
             if (info) {
                 const span = data.capture_span_seconds ?? 0;
                 const hrs = Math.floor(span / 3600);
                 const mins = Math.floor((span % 3600) / 60);
                 const nextIn = data.next_capture_in || 0;
-                info.textContent = `${frames} frames · ${hrs}h${mins}m · next in ${nextIn}s`;
+                let infoText = `${frames} frames · ${hrs}h${mins}m · next in ${nextIn}s`;
+                
+                if (data.last_error && data.consecutive_failures > 0) {
+                    // Show error if persistent
+                     infoText = `⚠️ ${data.last_error} · ${frames} frames`;
+                }
+                info.textContent = infoText;
             }
             // Show preview button once we have ≥2 frames
             if (previewBtn) {
