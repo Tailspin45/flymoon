@@ -458,7 +458,7 @@ class SolarTimelapse:
     def _build_preview_mp4(self, pattern: str, output: str,
                            frame_count: int) -> Optional[str]:
         """Encode a preview MP4 and return its web URL."""
-        fps = 15
+        fps = 10
         cmd = [
             FFMPEG,
             "-framerate", str(round(fps, 2)),
@@ -694,7 +694,7 @@ class SolarTimelapse:
             logger.info("[Timelapse] Not enough frames to assemble video")
             return
 
-        fps = 15
+        fps = 10
 
         # Assemble raw frames
         self._encode_sequence(
