@@ -425,7 +425,7 @@
     width: 10px;
     height: 10px;
     border-radius: 50%;
-    background: #444;
+    background: #cc0000;
     display: inline-block;
     transition: all 0.3s;
 }
@@ -436,8 +436,8 @@
 }
 
 .status-dot.recording {
-    background: #ff0000;
-    animation: pulse-red 1s infinite;
+    background: #32CD32;
+    animation: pulse-green 1s infinite;
 }
 
 .status-dot.active {
@@ -448,6 +448,11 @@
 @keyframes pulse-red {
     0%, 100% { opacity: 1; box-shadow: 0 0 8px rgba(255, 0, 0, 0.8); }
     50% { opacity: 0.7; box-shadow: 0 0 4px rgba(255, 0, 0, 0.5); }
+}
+
+@keyframes pulse-green {
+    0%, 100% { opacity: 1; box-shadow: 0 0 8px rgba(50, 205, 50, 0.8); }
+    50% { opacity: 0.7; box-shadow: 0 0 4px rgba(50, 205, 50, 0.5); }
 }
 
 .button-group {
