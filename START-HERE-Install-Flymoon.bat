@@ -1,6 +1,6 @@
 @echo off
-REM One-click installer launcher for naive Windows users.
-REM Put this file in the same folder as Flymoon Setup*.exe and double-click it.
+REM One-click installer launcher for Flymoon on Windows.
+REM Double-click this file to install Flymoon - no other software required.
 
 setlocal enabledelayedexpansion
 cd /d "%~dp0"
@@ -13,14 +13,13 @@ for /f "delims=" %%F in ('dir /b /o:-d "*Setup*.exe" 2^>nul') do (
 
 :found
 if not defined INSTALLER (
-    echo Could not find Flymoon Setup*.exe in this folder.
-    echo Make sure this launcher is in the extracted ZIP folder.
+    echo Could not find the Flymoon installer in this folder.
+    echo Make sure you extracted the full ZIP before running this file.
     pause
     exit /b 1
 )
 
-echo Launching installer:
-echo   %INSTALLER%
+echo Launching Flymoon installer: %INSTALLER%
 start "" "%INSTALLER%"
 
 exit /b 0

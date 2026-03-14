@@ -32,6 +32,10 @@ REM ── 2. PyInstaller ──────────────────
 echo ^> Running PyInstaller...
 pyinstaller flymoon.spec --distpath "%ROOT%\electron\assets\bin" --workpath "%TEMP%\pyi-build" --noconfirm
 move /Y "%ROOT%\electron\assets\bin\flymoon-server.exe" "%ROOT%\flymoon-server.exe"
+if not exist "%ROOT%\flymoon-server.exe" (
+    echo ERROR: flymoon-server.exe not found after PyInstaller build.
+    exit /b 1
+)
 echo    flymoon-server.exe built
 
 REM ── 3. npm install ──────────────────────────────────────────────────────
@@ -39,7 +43,15 @@ echo ^> Installing npm dependencies...
 cd electron
 call npm install --save-dev electron electron-builder
 
-REM ── 4. electron-builder ─────────────────────────────────────────────────
+REM ── 4. Copy server binary into electron dir for packaging ────────────────
+echo ^> Copying flymoon-server.exe into electron folder...
+copy /Y "%ROOT%\flymoon-server.exe" "%ROOT%\electron\flymoon-server.exe"
+if errorlevel 1 (
+    echo ERROR: Could not copy flymoon-server.exe into electron folder.
+    exit /b 1
+)
+
+REM ── 5. electron-builder ─────────────────────────────────────────────────
 echo ^> Building Electron installer...
 call npx electron-builder --win
 

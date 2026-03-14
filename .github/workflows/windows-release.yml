@@ -1,0 +1,40 @@
+name: Release Windows Installer
+
+on:
+  push:
+    tags:
+      - "v*"
+
+jobs:
+  build-and-release:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Build Windows installer
+        shell: cmd
+        run: build-win.bat
+
+      - name: Package end-user ZIP
+        shell: cmd
+        run: package-win-enduser-zip.bat
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist-windows/Flymoon-Windows-EndUser.zip
+            dist-electron/*Setup*.exe
+          generate_release_notes: true

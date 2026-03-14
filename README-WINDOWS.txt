@@ -1,33 +1,32 @@
 Flymoon for Windows - Quick Start
 =================================
 
-1) ONE-CLICK INSTALL (recommended)
-----------------------------------
+No extra software required - everything is included.
+
+
+1) INSTALL FLYMOON
+------------------
 Double-click:
   START-HERE-Install-Flymoon.bat
 
-This auto-launches the included Flymoon Setup installer.
-Follow the setup wizard and keep "Create Desktop Shortcut" enabled.
+This launches the Flymoon Setup wizard.
+Follow the prompts (click Next, then Install, then Finish).
+Flymoon will start automatically when installation is complete.
 
 
-2) Launch Flymoon
------------------
-Use either:
-  - Desktop shortcut: Flymoon
-  - Start Menu: Flymoon
-
-The app will start the local server and open the interface.
+2) Running Flymoon again
+------------------------
+Use the Flymoon shortcut on your Desktop or in the Start Menu.
 
 
 3) First-time configuration
 ---------------------------
-In Flymoon, configure your API/location settings as prompted.
-If needed, use the built-in setup wizard.
+On first launch Flymoon will ask for your API key and location.
+Follow the on-screen setup wizard.
 
 
 Troubleshooting
 ---------------
 - If Windows SmartScreen appears, click "More info" -> "Run anyway".
-- If a malware program complains, ignore it. The finished product will be code-signed.
-- If your firewall prompts for access, allow private network access.
-- If Flymoon does not open automatically, launch it again from the Start Menu.
+- If a firewall prompt appears, allow private network access.
+- If Flymoon does not start after install, use the Desktop shortcut.

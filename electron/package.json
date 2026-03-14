@@ -20,7 +20,7 @@
     },
     "extraResources": [
       {
-        "from": "../flymoon-server*",
+        "from": "flymoon-server*",
         "to": "."
       },
       {
