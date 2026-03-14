@@ -382,6 +382,7 @@ def get_all_flights():
         disabled_targets = {
             t.strip().lower() for t in _disabled_raw.split(",") if t.strip()
         }
+        transit_monitor.set_disabled_targets(disabled_targets)
 
         # Check for custom bounding box from user
         custom_bbox = None
@@ -748,6 +749,7 @@ def recalculate_transits_endpoint():
 
         # Respect disabled targets from the UI toggle buttons
         disabled_targets = set(data.get("disabled_targets", []))
+        transit_monitor.set_disabled_targets(disabled_targets)
 
         # Apply track-velocity overrides before recalculating.
         # When a flight's track has been viewed, we have a measured velocity
