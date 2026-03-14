@@ -1661,3 +1661,37 @@ canvas.video-thumb-canvas {
     height: 16px;
     cursor: pointer;
 }
+
+/* Detection tuning slider tooltips */
+.tun-tip-anchor {
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+    cursor: help;
+    color: #888;
+    font-size: 0.85em;
+    line-height: 1;
+}
+.tun-tip-anchor:hover .tun-tip-box,
+.tun-tip-anchor:focus .tun-tip-box {
+    display: block;
+}
+.tun-tip-box {
+    display: none;
+    position: absolute;
+    left: 50%;
+    bottom: calc(100% + 6px);
+    transform: translateX(-50%);
+    width: 220px;
+    background: #1e2430;
+    border: 1px solid #444;
+    border-radius: 6px;
+    padding: 8px 10px;
+    font-size: 0.82em;
+    color: #ddd;
+    line-height: 1.45;
+    z-index: 9999;
+    pointer-events: none;
+    white-space: normal;
+    box-shadow: 0 4px 16px rgba(0,0,0,0.6);
+}

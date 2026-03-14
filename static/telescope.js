@@ -4642,13 +4642,13 @@ function ensureTuningUI() {
         ${_tuningSliderRow('tunRatio',   'Centre Ratio', 0.5, 6, saved.centre_ratio_min, 0.1,
             'Inner-disk signal must be N× the limb signal. Higher = stricter concentration requirement.')}
         ${_tuningSliderRow('tunConsec',  'Consec Frames', 2, 20, saved.consec_frames, 1,
-            'Consecutive frames above threshold before firing. Higher = longer minimum event duration.')}
+            'How many consecutive frames must exceed the signal threshold before a detection fires — a <em>time</em> gate (~0.5 s at default 7 frames). Prevents single-frame noise spikes. Does not care about <em>where</em> the motion is going, only that it is strong enough for long enough.')}
         ${_tuningSliderRow('tunSensitivity', 'Sensitivity', 0.2, 3.0, saved.sensitivity_scale, 0.1,
-            'Threshold multiplier. <1 = more sensitive (more detections), >1 = stricter (fewer detections).')}
+            'Multiplier applied to both adaptive thresholds. Below 1 = lower bar (more detections). Above 1 = higher bar (fewer detections). Adjust if you are getting too many or too few alerts.')}
         ${_tuningSliderRow('tunTrackMag', 'Track Min Motion (px)', 0, 10, saved.track_min_mag, 0.5,
-            'Min centroid displacement per frame to count as directional motion. 0 = disabled. ~2px filters seeing wobble at detection resolution.')}
+            'A <em>spatial</em> gate — complements Consec Frames. Sets the minimum pixel displacement of the detected blob\'s centroid between frames to count as real directional motion. Atmospheric shimmer moves the centroid randomly by ≤2 px with no consistent direction; a real aircraft moves 3–8 px per frame in a straight line. Frames below this threshold abstain from the direction vote. Set to 0 to disable.')}
         ${_tuningSliderRow('tunTrackAgree', 'Track Agreement %', 0, 100, Math.round(saved.track_min_agree_frac * 100), 5,
-            'What % of streak frames must show consistent direction before firing. 0 = track gate off. 60% = default.')}
+            'What fraction of the streak frames (that cleared Track Min Motion) must agree on direction before the detection fires. 60% = default. Set to 0 to disable the direction gate entirely.')}
         <button class="btn btn-secondary btn-compact" style="margin-top:6px; width:100%;" onclick="_resetTuning()">↩ Reset to defaults</button>
     `;
 
@@ -4714,9 +4714,13 @@ function _resetTuning() {
 
 function _tuningSliderRow(id, label, min, max, val, step, tooltip) {
     if (step === undefined) step = (max - min > 10) ? 1 : 0.1;
-    return `<div style="margin-bottom:8px;" title="${tooltip}">` +
-        `<div style="display:flex; justify-content:space-between; font-size:0.85em; color:#ccc;">` +
-        `<span>${label}</span><span id="${id}Val">${val}</span></div>` +
+    const tipHtml = tooltip
+        ? `<span class="tun-tip-anchor" tabindex="0">ⓘ<span class="tun-tip-box">${tooltip}</span></span>`
+        : '';
+    return `<div style="margin-bottom:8px;">` +
+        `<div style="display:flex; justify-content:space-between; align-items:center; font-size:0.85em; color:#ccc;">` +
+        `<span style="display:flex; align-items:center; gap:4px;">${label}${tipHtml}</span>` +
+        `<span id="${id}Val">${val}</span></div>` +
         `<input type="range" id="${id}" min="${min}" max="${max}" step="${step}" value="${val}" ` +
         `style="width:100%; accent-color:#4dff88; margin-top:3px;">` +
         `</div>`;
