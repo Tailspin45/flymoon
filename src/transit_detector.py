@@ -589,7 +589,7 @@ class TransitDetector:
             "total_frames": self._total_frames,
             "fps": round(fps, 1),
             "detections": self._detection_count,
-            "recent_events": [e.to_dict() for e in self.events[-10:]],
+            "recent_events": [e.to_dict() for e in list(self.events)[-10:]],
             "recording_active": self._rec_process is not None,
             "disk_detected": self._disk_detected,
             "disk_info": {

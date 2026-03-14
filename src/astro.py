@@ -105,7 +105,8 @@ def targets_above_horizon(lat: float, lon: float, elevation: float = 0) -> bool:
     try:
         from skyfield.api import wgs84
 
-        observer = wgs84.latlon(lat, lon, elevation_m=elevation)
+        location = wgs84.latlon(lat, lon, elevation_m=elevation)
+        observer = ASTRO_EPHEMERIS["earth"] + location
         now = EARTH_TIMESCALE.from_datetime(datetime.now(tz=timezone.utc))
         for body_name in ("sun", "moon"):
             body = ASTRO_EPHEMERIS[body_name]
