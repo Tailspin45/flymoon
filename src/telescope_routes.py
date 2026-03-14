@@ -1977,8 +1977,8 @@ def toggle_simulate_mode():
     if _telescope_client:
         try:
             _telescope_client.disconnect()
-        except:
-            pass
+        except Exception as exc:
+            logger.warning("Error disconnecting telescope client during mode toggle: %s", exc)
         _telescope_client = None
 
     logger.info(

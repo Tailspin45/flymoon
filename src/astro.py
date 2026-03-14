@@ -1,3 +1,4 @@
+import logging
 from datetime import datetime, timedelta
 
 from skyfield import almanac
@@ -5,6 +6,8 @@ from skyfield.api import wgs84
 from tzlocal import get_localzone
 
 from src.constants import ASTRO_EPHEMERIS, EARTH_TIMESCALE
+
+logger = logging.getLogger(__name__)
 
 
 class CelestialObject:
@@ -69,8 +72,8 @@ def get_rise_set_times(lat: float, lon: float, elevation: float) -> dict:
                 result["sun_rise"] = s
             elif event == 0 and "sun_set" not in result:
                 result["sun_set"] = s
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.warning("Failed to compute sunrise/sunset times: %s", exc)
     try:
         moon = ASTRO_EPHEMERIS["moon"]
         f = almanac.risings_and_settings(ASTRO_EPHEMERIS, moon, location)
@@ -86,8 +89,8 @@ def get_rise_set_times(lat: float, lon: float, elevation: float) -> dict:
                 result["moon_rise"] = s
             elif event == 0 and "moon_set" not in result:
                 result["moon_set"] = s
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.warning("Failed to compute moonrise/moonset times: %s", exc)
     return result
 
 
@@ -110,7 +113,8 @@ def targets_above_horizon(lat: float, lon: float, elevation: float = 0) -> bool:
             if alt.degrees > 0:
                 return True
         return False
-    except Exception:
+    except Exception as exc:
+        logger.warning("Failed to check targets above horizon: %s", exc)
         return True  # fail open — don't suppress reconnects on error
 
 
@@ -149,5 +153,6 @@ def target_above_min_altitude(
         body = ASTRO_EPHEMERIS[target]
         alt, _, _ = observer.at(now).observe(body).apparent().altaz()
         return alt.degrees >= min_altitude
-    except Exception:
+    except Exception as exc:
+        logger.warning("Failed to check target altitude for %s: %s", target, exc)
         return True  # fail open — don't suppress reconnects on error

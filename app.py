@@ -111,6 +111,24 @@ if not wizard.validate(interactive=False):
     print("\n💡 Run 'python3 src/config_wizard.py --setup' to configure\n")
 
 app = Flask(__name__)
+app.secret_key = os.environ.get("SECRET_KEY", os.urandom(24).hex())
+
+# Compute a stable app version from git commit hash for cache-busting static assets.
+try:
+    import subprocess as _subprocess
+    _git_hash = _subprocess.check_output(
+        ["git", "rev-parse", "HEAD"], stderr=_subprocess.DEVNULL
+    ).decode().strip()[:8]
+except Exception:
+    import time as _time
+    _git_hash = str(int(_time.time()))
+
+APP_VERSION = _git_hash
+
+@app.context_processor
+def inject_app_version():
+    return {"app_version": APP_VERSION}
+
 
 # Configure logging to suppress telescope status polling
 import logging

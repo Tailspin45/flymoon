@@ -19,9 +19,6 @@ TARGET_ALT = 45.0  # degrees — used throughout
 
 def test_angular_separation_calculation():
     """Test that angular separation is calculated correctly with spherical cosines."""
-    print("Testing angular_separation calculation (spherical law of cosines)...")
-    print("-" * 60)
-
     test_cases = [
         # (alt1, az1, alt2, az2, max_expected, description)
         (45.0, 180.0, 45.0, 180.0, 0.001, "Perfect alignment"),
@@ -31,23 +28,11 @@ def test_angular_separation_calculation():
         (45.0, 180.0, 46.0, 181.0, 1.3, "1° each — compressed az"),
     ]
 
-    passed = 0
-    failed = 0
-
     for alt1, az1, alt2, az2, max_expected, description in test_cases:
         result = round(angular_separation(alt1, az1, alt2, az2), 3)
-        if result <= max_expected:
-            print(f"✓ PASS: {description}")
-            print(f"  Got: {result}° (≤ {max_expected}°)")
-            passed += 1
-        else:
-            print(f"✗ FAIL: {description}")
-            print(f"  Expected ≤ {max_expected}°, Got: {result}°")
-            failed += 1
-        print()
-
-    print(f"Angular Separation Tests: {passed} passed, {failed} failed\n")
-    return failed == 0
+        assert result <= max_expected, (
+            f"{description}: expected ≤ {max_expected}°, got {result}°"
+        )
 
 
 def test_classification_thresholds():
@@ -61,9 +46,6 @@ def test_classification_thresholds():
 
     get_possibility_level() now takes a single angular separation argument.
     """
-    print("Testing classification thresholds...")
-    print("-" * 60)
-
     test_cases = [
         # (angular_sep, expected_level_int, expected_name, description)
         (0.0, 3, "HIGH", "Perfect transit"),
@@ -79,21 +61,11 @@ def test_classification_thresholds():
         (50.0, 0, "UNLIKELY", "Far from target"),
     ]
 
-    passed = 0
-    failed = 0
-
     for sep, expected_level, expected_name, description in test_cases:
         result = get_possibility_level(sep)
-        if result == expected_level:
-            print(f"✓ PASS: {description} → {expected_name}")
-            passed += 1
-        else:
-            print(f"✗ FAIL: {description}")
-            print(f"  Expected: {expected_name} ({expected_level}), Got: {result}")
-            failed += 1
-
-    print(f"\nClassification Tests: {passed} passed, {failed} failed\n")
-    return failed == 0
+        assert result == expected_level, (
+            f"{description}: expected {expected_name} ({expected_level}), got {result}"
+        )
 
 
 def test_cosine_correction_effect():
@@ -102,9 +74,6 @@ def test_cosine_correction_effect():
     Near the zenith, azimuth differences correspond to very small on-sky
     separations.  The spherical law of cosines handles this naturally.
     """
-    print("Testing zenith cosine correction...")
-    print("-" * 60)
-
     test_cases = [
         # (alt1, az1, alt2, az2, expected_level_int, expected_name, description)
         (89.0, 100.0, 89.0, 105.0, 3, "HIGH", "5° az at zenith ≈ tiny on-sky — HIGH"),
@@ -122,9 +91,6 @@ def test_cosine_correction_effect():
         (89.0, 100.0, 90.0, 100.0, 3, "HIGH", "1° alt at zenith — HIGH"),
     ]
 
-    passed = 0
-    failed = 0
-
     for (
         alt1,
         az1,
@@ -136,20 +102,9 @@ def test_cosine_correction_effect():
     ) in test_cases:
         sep = angular_separation(alt1, az1, alt2, az2)
         result = get_possibility_level(sep)
-        if result == expected_level:
-            print(f"✓ PASS: {description}")
-            print(f"  σ={sep:.3f}°, classified {expected_name}")
-            passed += 1
-        else:
-            print(f"✗ FAIL: {description}")
-            print(
-                f"  σ={sep:.3f}°, expected {expected_name} ({expected_level}), got {result}"
-            )
-            failed += 1
-        print()
-
-    print(f"Cosine Correction Tests: {passed} passed, {failed} failed\n")
-    return failed == 0
+        assert result == expected_level, (
+            f"{description}: σ={sep:.3f}°, expected {expected_name} ({expected_level}), got {result}"
+        )
 
 
 def main():
@@ -173,11 +128,28 @@ def main():
 
     all_passed = True
 
-    all_passed &= test_angular_separation_calculation()
-    all_passed &= test_classification_thresholds()
-    all_passed &= test_cosine_correction_effect()
+    try:
+        test_angular_separation_calculation()
+        print("✓ Angular separation tests passed")
+    except AssertionError as e:
+        print(f"✗ Angular separation test failed: {e}")
+        all_passed = False
 
-    # Summary
+    try:
+        test_classification_thresholds()
+        print("✓ Classification threshold tests passed")
+    except AssertionError as e:
+        print(f"✗ Classification threshold test failed: {e}")
+        all_passed = False
+
+    try:
+        test_cosine_correction_effect()
+        print("✓ Cosine correction tests passed")
+    except AssertionError as e:
+        print(f"✗ Cosine correction test failed: {e}")
+        all_passed = False
+
+    print()
     print("=" * 80)
     print("FINAL RESULT")
     print("=" * 80)
