@@ -32,6 +32,7 @@ import argparse
 import asyncio
 import os
 import time
+from concurrent.futures import ThreadPoolExecutor
 from datetime import date, datetime
 from zoneinfo import ZoneInfo
 
@@ -69,6 +70,35 @@ _track_velocity_cache: dict = {}
 _route_response_cache: dict = {}
 _track_response_cache: dict = {}
 ROUTE_TRACK_CACHE_TTL = 3600  # 1 hour — a flight's historical track doesn't change much
+
+
+def _evict_expired_caches() -> None:
+    """Remove stale entries from all TTL-based module-level caches.
+
+    Called on every cache write so caches never grow beyond the number of
+    unique flights seen within one TTL window.  Cheap — iterates only the
+    keys that currently exist, which is bounded by real flight activity.
+    """
+    now = time.time()
+    cutoff = now - ROUTE_TRACK_CACHE_TTL
+    for cache in (_route_response_cache, _track_response_cache):
+        stale = [k for k, v in cache.items() if v[0] < cutoff]
+        for k in stale:
+            cache.pop(k, None)
+    # _track_velocity_cache entries have no timestamp; cap at 500 entries
+    # (one per unique flight; realistic daily traffic is well under this).
+    if len(_track_velocity_cache) > 500:
+        # Drop the oldest half by insertion order (Python 3.7+ dicts are ordered)
+        drop = list(_track_velocity_cache.keys())[:250]
+        for k in drop:
+            _track_velocity_cache.pop(k, None)
+
+# Bounded thread pool for background tasks (save transits, Telegram, track pre-fetch).
+# Max 4 workers prevents unbounded thread growth under high request rates while
+# still allowing concurrent work.  Tasks that arrive while all workers are busy
+# are queued by the executor's internal queue (also bounded in Python ≥3.12 but
+# effectively fine here since tasks complete in seconds).
+_bg_executor = ThreadPoolExecutor(max_workers=4, thread_name_prefix="flymoon-bg")
 
 # Global test/demo mode flag
 test_mode = False
@@ -215,6 +245,11 @@ def _get_cached_tile(key):
 def _set_cached_tile(key, data, content_type):
     with _tile_cache_lock:
         _tile_cache[key] = {"data": data, "ct": content_type, "ts": time.time()}
+        # Evict expired tiles on every write to keep memory bounded.
+        now = time.time()
+        stale = [k for k, v in _tile_cache.items() if (now - v["ts"]) >= TILE_CACHE_TTL]
+        for k in stale:
+            _tile_cache.pop(k, None)
 
 
 @app.route("/tiles/openaip/<int:z>/<int:x>/<int:y>.png")
@@ -565,6 +600,7 @@ def get_all_flights():
                                     f"{velocity[0]:.0f} km/h  hdg {velocity[1]:.1f}°"
                                 )
                             _track_response_cache[fid] = (now_ts, track_json)
+                            _evict_expired_caches()
                         else:
                             logger.warning(
                                 f"[BG] Track prefetch for {fid} returned {resp.status_code}"
@@ -572,13 +608,7 @@ def get_all_flights():
                     except Exception as e:
                         logger.error(f"[BG] Track prefetch failed for {fid}: {e}")
 
-        import threading as _t
-
-        _t.Thread(
-            target=_background_tasks,
-            args=(list(data["flights"]), has_send_notification),
-            daemon=True,
-        ).start()
+        _bg_executor.submit(_background_tasks, list(data["flights"]), has_send_notification)
 
         # Schedule automatic recordings for high-probability transits
         transit_recorder = get_transit_recorder()
@@ -639,6 +669,7 @@ def get_flight_route(fa_flight_id):
         if response.status_code == 200:
             data = response.json()
             _route_response_cache[fa_flight_id] = (now, data)
+            _evict_expired_caches()
             return jsonify(data)
         else:
             return (
@@ -854,6 +885,7 @@ def get_flight_track(fa_flight_id):
                     f"{velocity[0]:.0f} km/h  hdg {velocity[1]:.1f}°"
                 )
             _track_response_cache[fa_flight_id] = (now, track_json)
+            _evict_expired_caches()
             return jsonify(track_json)
         else:
             return (

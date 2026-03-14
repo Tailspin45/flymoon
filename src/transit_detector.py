@@ -461,9 +461,8 @@ class TransitDetector:
         self._total_frames = 0
         self._detection_count = 0
 
-        # Event log (last N events)
-        self.events: List[DetectionEvent] = []
-        self._max_events = 100
+        # Event log — bounded deque so append is atomic and never races with readers
+        self.events: Deque[DetectionEvent] = collections.deque(maxlen=100)
 
         # Signal trace ring buffer (1fps, last 60s)
         self._signal_trace: Deque[Dict] = collections.deque(maxlen=SIGNAL_TRACE_SIZE)
@@ -1116,9 +1115,7 @@ class TransitDetector:
             event.recording_file = rec_file
 
         # Store event
-        self.events.append(event)
-        if len(self.events) > self._max_events:
-            self.events = self.events[-self._max_events :]
+        self.events.append(event)  # deque(maxlen=100) discards oldest automatically
 
         # Enrich with flight data (async, non-blocking)
         threading.Thread(
