@@ -2328,20 +2328,32 @@ def _auto_connect_background():
             )
             return
 
-        if client.is_connected():
-            logger.info("[Telescope] Auto-connect: already connected")
-            return
+        if not client.is_connected():
+            try:
+                client.connect()
+                logger.info(
+                    f"[Telescope] Auto-connect: connected to {client.host}:{client.port}"
+                )
+            except Exception as e:
+                logger.info(
+                    f"[Telescope] Auto-connect: scope not reachable ({e}) — "
+                    "connect manually from the telescope page"
+                )
+                return
 
-        try:
-            client.connect()
-            logger.info(
-                f"[Telescope] Auto-connect: connected to {client.host}:{client.port}"
-            )
-        except Exception as e:
-            logger.info(
-                f"[Telescope] Auto-connect: scope not reachable ({e}) — "
-                "connect manually from the telescope page"
-            )
+        else:
+            logger.info("[Telescope] Auto-connect: already connected")
+
+        # Scope is connected — resume timelapse if it stopped (app restart, stream drop)
+        auto_resume = os.getenv("SOLAR_TIMELAPSE_AUTO_RESUME", "true").strip().lower()
+        if auto_resume in ("1", "true", "yes", "on"):
+            tl = get_timelapse()
+            if not tl.is_running:
+                try:
+                    interval = float(os.getenv("SOLAR_TIMELAPSE_INTERVAL", "120"))
+                except ValueError:
+                    interval = 120.0
+                tl.resume_today(host=client.host, interval=interval)
 
     t = threading.Thread(target=_worker, name="seestar-auto-connect", daemon=True)
     t.start()
@@ -2381,21 +2393,23 @@ def start_detection():
 
         # Optional params
         record = True
-        sensitivity_scale = 1.0
         extra_settings = {}
         try:
             if request.is_json and request.json:
                 body = request.json
                 record = body.get("record_on_detect", True)
-                diff_threshold = body.get("diff_threshold")
-                if diff_threshold is not None:
-                    sensitivity_scale = float(diff_threshold) / 5.0
-                # Accept settings bundle sent by UI on start
-                for key in ("disk_margin_pct", "centre_ratio_min", "consec_frames"):
+                # Accept full settings bundle sent by UI on start
+                for key in (
+                    "disk_margin_pct", "centre_ratio_min",
+                    "consec_frames", "sensitivity_scale",
+                    "track_min_mag", "track_min_agree_frac",
+                ):
                     if key in body:
                         extra_settings[key] = body[key]
         except Exception:
             pass
+
+        sensitivity_scale = float(extra_settings.pop("sensitivity_scale", 1.0))
 
         det = start_detector(
             rtsp_url, record_on_detect=record, sensitivity_scale=sensitivity_scale
@@ -2454,7 +2468,10 @@ def get_detection_status():
 def update_detection_settings():
     """PATCH /telescope/detect/settings - Update live detection parameters."""
     try:
-        from src.transit_detector import get_detector, DISK_MARGIN_PCT, CENTRE_EDGE_RATIO_MIN, CONSEC_FRAMES_REQUIRED
+        from src.transit_detector import (
+            get_detector, DISK_MARGIN_PCT, CENTRE_EDGE_RATIO_MIN,
+            CONSEC_FRAMES_REQUIRED, TRACK_MIN_MAG, TRACK_MIN_AGREE_FRAC,
+        )
 
         body = request.get_json(force=True) or {}
         det = get_detector()
@@ -2466,6 +2483,8 @@ def update_detection_settings():
                 centre_ratio_min=body.get("centre_ratio_min"),
                 consec_frames=body.get("consec_frames"),
                 sensitivity_scale=body.get("sensitivity_scale"),
+                track_min_mag=body.get("track_min_mag"),
+                track_min_agree_frac=body.get("track_min_agree_frac"),
             )
         else:
             # No detector running — just echo back what was sent (used by UI
@@ -2475,6 +2494,8 @@ def update_detection_settings():
                 "centre_ratio_min": body.get("centre_ratio_min", CENTRE_EDGE_RATIO_MIN),
                 "consec_frames": body.get("consec_frames", CONSEC_FRAMES_REQUIRED),
                 "sensitivity_scale": body.get("sensitivity_scale", 1.0),
+                "track_min_mag": body.get("track_min_mag", TRACK_MIN_MAG),
+                "track_min_agree_frac": body.get("track_min_agree_frac", TRACK_MIN_AGREE_FRAC),
             }
         return jsonify({"success": True, "settings": settings}), 200
 

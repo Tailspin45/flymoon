@@ -8,9 +8,24 @@ immunity).
 
 **Disk-aware detection**: Every 2 seconds, Hough circle detection locates
 the Sun/Moon disk in the frame.  Signals are computed only within the
-inner disk (excluding a configurable limb margin, default 12%), which
+inner disk (excluding a configurable limb margin, default 25%), which
 eliminates false positives from atmospheric shimmer at the disk edge.
-Falls back to rectangular centre/edge masks if no disk is found.
+Detection is DISABLED when no disk is found (ratio check cannot be
+performed without a real inner/outer split).
+
+**Consecutive-frame gate**: Both signals must exceed their adaptive
+thresholds AND the centre ratio must pass for `consec_frames_required`
+consecutive frames before a detection is fired.  The counter resets
+immediately after firing and on every reconnect.
+
+**Noise density guard**: A 60-second background window tracks the
+long-run score baseline.  If the last 3 seconds are >2× that baseline
+(scene dominated by random sunspot-like activity), thresholds are raised
+proportionally, suppressing false positives during high-activity periods.
+
+**Sensitivity scale**: Runtime multiplier on both thresholds.  <1 = more
+sensitive, >1 = stricter.  Exposed as a sidebar slider and via
+PATCH /telescope/detect/settings.
 
 When a transit is detected it auto-triggers a full-resolution recording
 and optionally enriches the event with FlightAware flight data.
@@ -44,6 +59,10 @@ FRAME_BYTES = ANALYSIS_WIDTH * ANALYSIS_HEIGHT * 3  # RGB24
 # Rolling window for adaptive threshold (seconds of history)
 HISTORY_SECONDS = 20
 HISTORY_SIZE = ANALYSIS_FPS * HISTORY_SECONDS  # ~300 frames
+
+# Long-run background window for noise density guard (60 seconds)
+BG_HISTORY_SECONDS = 60
+BG_HISTORY_SIZE = ANALYSIS_FPS * BG_HISTORY_SECONDS  # ~900 frames
 
 # Cooldown between detections (seconds) — configurable via DETECTION_COOLDOWN env var
 DETECTION_COOLDOWN = int(os.getenv("DETECTION_COOLDOWN", "30"))
@@ -89,6 +108,111 @@ DISK_DETECT_INTERVAL = ANALYSIS_FPS * 2
 # 25% creates a wide buffer zone; the solar disk interior is still well-sampled
 # and aircraft cross it reliably.
 DISK_MARGIN_PCT = float(os.getenv("DETECTOR_DISK_MARGIN", "0.25"))
+
+# ---------------------------------------------------------------------------
+# Centroid track consistency parameters
+# ---------------------------------------------------------------------------
+# Minimum centroid displacement (px at 160×90) to count as directional motion.
+# At detection resolution, atmospheric wobble is ~1–2px; real transits move
+# ≥3px/frame at typical aircraft speeds.  Set to 0 to disable magnitude gate.
+TRACK_MIN_MAG = float(os.getenv("DETECTOR_TRACK_MIN_MAG", "2.0"))
+
+# Minimum fraction of streak frames that must have a positive dot product
+# (direction consistent with the previous frame) before firing.
+# 0.6 = 60% of consec_frames_required must agree in direction.
+# Set to 0.0 to disable the track gate entirely (legacy behaviour).
+TRACK_MIN_AGREE_FRAC = float(os.getenv("DETECTOR_TRACK_MIN_AGREE", "0.6"))
+
+# Recording stabilization: enabled by default; disable with DETECTOR_STABILIZE=false
+RECORDING_STABILIZE = os.getenv("DETECTOR_STABILIZE", "true").strip().lower() in (
+    "1", "true", "yes", "on"
+)
+# Maximum translation shift to accept (pixels at full res).
+# Atmospheric distortion produces <8 px shifts; larger shifts are mount slippage
+# or a genuine pan — clamp hard so the image cannot jump.
+RECORDING_STABILIZE_MAX_SHIFT = float(os.getenv("DETECTOR_STABILIZE_MAX_SHIFT", "30"))
+# EMA smoothing for the cumulative offset (0=no update, 1=instant).
+# 0.7 follows genuine slow drift while smoothing single-frame spikes.
+RECORDING_STABILIZE_SMOOTHING = float(os.getenv("DETECTOR_STABILIZE_SMOOTHING", "0.7"))
+
+
+def _stabilize_frames(
+    jpeg_list: list,
+    max_shift: float = RECORDING_STABILIZE_MAX_SHIFT,
+    smoothing: float = RECORDING_STABILIZE_SMOOTHING,
+    ref_count: int = 15,
+) -> list:
+    """Stabilize a list of JPEG-encoded frames in memory using phase correlation.
+
+    Builds a reference from the average of the first *ref_count* frames
+    (the pre-trigger quiet period), then applies a smoothed translation
+    warp to each frame so the solar/lunar disk stays locked in place.
+
+    Returns a new list of JPEG bytes.  On any per-frame failure the
+    original bytes are passed through unchanged so the recording is
+    never lost.
+    """
+    if not jpeg_list:
+        return jpeg_list
+
+    # Decode reference frames and build a mean reference image
+    ref_gray: Optional[np.ndarray] = None
+    ref_sample_count = 0
+    ref_accum: Optional[np.ndarray] = None
+    for jpeg in jpeg_list[:ref_count]:
+        arr = np.frombuffer(jpeg, dtype=np.uint8)
+        bgr = cv2.imdecode(arr, cv2.IMREAD_COLOR)
+        if bgr is None:
+            continue
+        g = cv2.GaussianBlur(cv2.cvtColor(bgr, cv2.COLOR_BGR2GRAY), (5, 5), 0).astype(np.float32)
+        if ref_accum is None:
+            ref_accum = g.copy()
+        else:
+            ref_accum += g
+        ref_sample_count += 1
+
+    if ref_accum is None or ref_sample_count == 0:
+        return jpeg_list  # could not build reference — pass through unchanged
+    ref_gray = ref_accum / ref_sample_count
+
+    stabilized = []
+    offset_x, offset_y = 0.0, 0.0
+    encode_params = [cv2.IMWRITE_JPEG_QUALITY, 92]
+
+    for jpeg in jpeg_list:
+        try:
+            arr = np.frombuffer(jpeg, dtype=np.uint8)
+            bgr = cv2.imdecode(arr, cv2.IMREAD_COLOR)
+            if bgr is None:
+                stabilized.append(jpeg)
+                continue
+
+            gray = cv2.GaussianBlur(
+                cv2.cvtColor(bgr, cv2.COLOR_BGR2GRAY), (5, 5), 0
+            ).astype(np.float32)
+
+            (dx, dy), response = cv2.phaseCorrelate(ref_gray, gray)
+            if response >= 0.02:
+                dx = float(np.clip(dx, -max_shift, max_shift))
+                dy = float(np.clip(dy, -max_shift, max_shift))
+                # Smooth the offset so single-frame spikes don't cause jumps
+                offset_x = smoothing * dx + (1.0 - smoothing) * offset_x
+                offset_y = smoothing * dy + (1.0 - smoothing) * offset_y
+
+            if abs(offset_x) > 0.5 or abs(offset_y) > 0.5:
+                M = np.float32([[1, 0, offset_x], [0, 1, offset_y]])
+                bgr = cv2.warpAffine(
+                    bgr, M, (bgr.shape[1], bgr.shape[0]),
+                    flags=cv2.INTER_LINEAR,
+                    borderMode=cv2.BORDER_REPLICATE,
+                )
+
+            ok, buf = cv2.imencode(".jpg", bgr, encode_params)
+            stabilized.append(buf.tobytes() if ok else jpeg)
+        except Exception:
+            stabilized.append(jpeg)
+
+    return stabilized
 
 
 def _build_centre_weight(h: int, w: int) -> np.ndarray:
@@ -307,8 +431,17 @@ class TransitDetector:
         self._current_frame: Optional[np.ndarray] = None
         self._current_diff_b: Optional[np.ndarray] = None
 
+        # Live-tunable track parameters
+        self.track_min_mag: float = TRACK_MIN_MAG
+        self.track_min_agree_frac: float = TRACK_MIN_AGREE_FRAC
+
         # Consecutive-frame confirmation counter
         self._consec_above = 0
+
+        # Centroid track state (at detection resolution)
+        self._track_centroid_prev: Optional[tuple] = None   # (cx, cy) last frame
+        self._track_displacement_prev: Optional[tuple] = None  # (dx, dy) last frame
+        self._track_agree_count: int = 0   # frames in current streak with positive dot
 
         # Freeze reference updates after detection
         self._ref_freeze_until = 0
@@ -316,6 +449,9 @@ class TransitDetector:
         # Adaptive threshold history
         self._scores_a: Deque[float] = collections.deque(maxlen=HISTORY_SIZE)
         self._scores_b: Deque[float] = collections.deque(maxlen=HISTORY_SIZE)
+
+        # Long-run background window for noise density guard
+        self._bg_scores_a: Deque[float] = collections.deque(maxlen=BG_HISTORY_SIZE)
 
         # Cooldown
         self._last_detection_time: float = 0
@@ -470,6 +606,8 @@ class TransitDetector:
                 "centre_ratio_min": self.centre_ratio_min,
                 "consec_frames": self.consec_frames_required,
                 "sensitivity_scale": self.sensitivity_scale,
+                "track_min_mag": self.track_min_mag,
+                "track_min_agree_frac": self.track_min_agree_frac,
             },
         }
 
@@ -479,6 +617,8 @@ class TransitDetector:
         centre_ratio_min: Optional[float] = None,
         consec_frames: Optional[int] = None,
         sensitivity_scale: Optional[float] = None,
+        track_min_mag: Optional[float] = None,
+        track_min_agree_frac: Optional[float] = None,
     ) -> Dict[str, Any]:
         """Update live detection parameters without restarting the detector.
 
@@ -496,10 +636,15 @@ class TransitDetector:
             self.consec_frames_required = int(max(1, min(30, consec_frames)))
         if sensitivity_scale is not None:
             self.sensitivity_scale = float(max(0.1, min(10.0, sensitivity_scale)))
+        if track_min_mag is not None:
+            self.track_min_mag = float(max(0.0, min(20.0, track_min_mag)))
+        if track_min_agree_frac is not None:
+            self.track_min_agree_frac = float(max(0.0, min(1.0, track_min_agree_frac)))
         logger.info(
             f"[Detector] Settings updated: margin={self.disk_margin_pct:.0%} "
             f"ratio_min={self.centre_ratio_min} consec={self.consec_frames_required} "
-            f"sens={self.sensitivity_scale:.2f}"
+            f"sens={self.sensitivity_scale:.2f} "
+            f"track_mag={self.track_min_mag} track_agree={self.track_min_agree_frac:.0%}"
         )
         return self.get_status()["settings"]
 
@@ -543,6 +688,13 @@ class TransitDetector:
                 )
 
                 reconnect_delay = 2  # reset on successful connect
+                # Reset per-stream state so stale counter/frame from the
+                # previous session cannot immediately trigger a detection.
+                self._prev_frame = None
+                self._consec_above = 0
+                self._track_centroid_prev = None
+                self._track_displacement_prev = None
+                self._track_agree_count = 0
 
                 while self._running:
                     raw = self._process.stdout.read(FRAME_BYTES)
@@ -775,6 +927,41 @@ class TransitDetector:
         # --- Store scores ---
         self._scores_a.append(score_a)
         self._scores_b.append(score_b)
+        self._bg_scores_a.append(score_a)
+
+        # --- Centroid of diff activity within inner disk (track consistency) ---
+        # Computed at detection resolution (160×90).  The weighted centroid of
+        # abs_diff_gray within inner_mask gives the spatial centre of whatever
+        # is changing — a real transit moves it consistently; noise scrambles it.
+        track_cx, track_cy = None, None
+        if inner_mask.any():
+            masked_diff = abs_diff_gray.copy()
+            masked_diff[~inner_mask] = 0.0
+            total_w = masked_diff.sum()
+            if total_w > 0:
+                ys_idx, xs_idx = np.nonzero(inner_mask)
+                weights = masked_diff[inner_mask]
+                track_cx = float(np.dot(xs_idx, weights) / total_w)
+                track_cy = float(np.dot(ys_idx, weights) / total_w)
+
+        # Update track displacement and direction-agreement counter
+        if track_cx is not None and self._track_centroid_prev is not None:
+            dx = track_cx - self._track_centroid_prev[0]
+            dy = track_cy - self._track_centroid_prev[1]
+            mag = (dx * dx + dy * dy) ** 0.5
+            if self._track_displacement_prev is not None and mag >= self.track_min_mag:
+                pdx, pdy = self._track_displacement_prev
+                dot = dx * pdx + dy * pdy
+                if dot > 0:
+                    self._track_agree_count += 1
+                # Note: we do NOT reset _track_agree_count on a negative dot —
+                # a single reversed frame during a real transit (e.g. centroid
+                # snapped by a seeing spike) should not break the streak.
+            self._track_displacement_prev = (dx, dy)
+        else:
+            self._track_displacement_prev = None
+
+        self._track_centroid_prev = (track_cx, track_cy) if track_cx is not None else None
 
         # --- Signal trace (1fps) ---
         if self._frame_idx % SIGNAL_TRACE_INTERVAL == 0:
@@ -792,6 +979,7 @@ class TransitDetector:
                     "tb": round(t_b, 5),
                     "cr": round(centre_ratio, 2),
                     "disk": self._disk_detected,
+                    "tca": self._track_agree_count,
                 }
             )
 
@@ -803,25 +991,63 @@ class TransitDetector:
         thresh_a = self._adaptive_threshold(self._scores_a) * self.sensitivity_scale
         thresh_b = self._adaptive_threshold(self._scores_b) * self.sensitivity_scale
 
+        # --- Noise density guard ---
+        # If the last 3 seconds are unusually active vs. the 60-second baseline
+        # (e.g. scene flooded with random sunspot-like hits), raise thresholds
+        # proportionally to suppress the false-positive burst.
+        if len(self._bg_scores_a) >= ANALYSIS_FPS * 10:
+            bg_median = float(np.median(self._bg_scores_a))
+            recent = list(self._scores_a)[-ANALYSIS_FPS * 3:]
+            recent_median = float(np.median(recent)) if recent else 0.0
+            noise_factor = max(1.0, (recent_median / max(bg_median, 1e-6)) * 0.5)
+        else:
+            noise_factor = 1.0
+        thresh_a *= noise_factor
+        thresh_b *= noise_factor
+
+        # --- Centre ratio gate ---
+        # When no disk has been detected the rectangular "edge" mask covers
+        # the black corners of the frame (off-disk), making outer_score ≈ 0
+        # and centre_ratio artificially enormous.  Disable detection entirely
+        # until the disk is found — a transit cannot occur without a target.
+        if not self._disk_detected:
+            self._consec_above = 0
+            return
+        ratio_ok = centre_ratio >= self.centre_ratio_min
+
         # --- Consecutive-frame confirmation ---
-        triggered = (
-            score_a > thresh_a
-            and score_b > thresh_b
-            and centre_ratio >= self.centre_ratio_min
-        )
+        triggered = score_a > thresh_a and score_b > thresh_b and ratio_ok
 
         if triggered:
             self._consec_above += 1
         else:
             self._consec_above = 0
+            self._track_agree_count = 0  # reset track on any threshold break
 
-        if self._consec_above == self.consec_frames_required:
-            now = time.time()
-            if now - self._last_detection_time >= DETECTION_COOLDOWN:
-                self._last_detection_time = now
-                # Freeze reference to prevent transit frames corrupting baseline
-                self._ref_freeze_until = self._frame_idx + REF_FREEZE_FRAMES
-                self._fire_detection(score_a, score_b, thresh_a, thresh_b, centre_ratio)
+        if self._consec_above >= self.consec_frames_required:
+            # --- Centroid track gate ---
+            # Require that a minimum fraction of streak frames showed consistent
+            # directional motion.  Noise produces _track_agree_count ~ 0 even
+            # when both signals are spuriously elevated; real transits produce
+            # monotonically moving centroids so agree_count climbs reliably.
+            min_agree = int(self.consec_frames_required * self.track_min_agree_frac)
+            track_ok = self._track_agree_count >= min_agree
+
+            self._consec_above = 0       # reset so next event starts clean
+            self._track_agree_count = 0
+
+            if not track_ok:
+                logger.debug(
+                    f"[Detector] Track gate suppressed: agree={self._track_agree_count} "
+                    f"need={min_agree}/{self.consec_frames_required}"
+                )
+            else:
+                now = time.time()
+                if now - self._last_detection_time >= DETECTION_COOLDOWN:
+                    self._last_detection_time = now
+                    # Freeze reference to prevent transit frames corrupting baseline
+                    self._ref_freeze_until = self._frame_idx + REF_FREEZE_FRAMES
+                    self._fire_detection(score_a, score_b, thresh_a, thresh_b, centre_ratio)
 
     @staticmethod
     def _adaptive_threshold(scores: Deque[float]) -> float:
@@ -1046,6 +1272,18 @@ class TransitDetector:
                     return
 
                 fps = 30.0
+
+                # Stabilize before encoding so the solar/lunar disk stays
+                # locked in place despite atmospheric distortion or mount drift.
+                if RECORDING_STABILIZE:
+                    try:
+                        all_frames = _stabilize_frames(all_frames)
+                        logger.info(
+                            f"[Detector] Stabilization applied to {len(all_frames)} frames"
+                        )
+                    except Exception as e:
+                        logger.warning(f"[Detector] Stabilization failed, using raw frames: {e}")
+
                 written = len(all_frames)
 
                 # Pipe JPEG bytes as MJPEG directly into ffmpeg → H.264 MP4.

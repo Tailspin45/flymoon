@@ -239,7 +239,13 @@ class SolarTimelapse:
     def start(self, host: str, interval: float = 120.0) -> dict:
         with self._lock:
             if self._running:
-                return {"error": "Timelapse already running"}
+                return self.status()
+
+            # If today already has frames, resume rather than starting fresh
+            now = datetime.now()
+            frames_dir, _ = self._today_paths(now)
+            if self._existing_frame_count(frames_dir) > 0:
+                return self.resume_today(host=host, interval=interval)
 
             self._host = host
             self._rtsp_port = int(os.getenv("SEESTAR_RTSP_PORT", "4554"))
