@@ -1,0 +1,312 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1400 1020" font-family="'Segoe UI', Arial, sans-serif">
+  <rect width="1400" height="1020" fill="#0d1117"/>
+
+  <!-- Title -->
+  <text x="700" y="36" text-anchor="middle" font-size="22" font-weight="bold" fill="#58a6ff">Flymoon Architecture</text>
+
+  <!-- ═══════════════════════════════════════════════════════ -->
+  <!-- ROW 1: External Sources -->
+  <!-- ═══════════════════════════════════════════════════════ -->
+
+  <!-- FlightAware -->
+  <rect x="30" y="60" width="160" height="52" rx="8" fill="#1f2937" stroke="#f59e0b" stroke-width="1.5"/>
+  <text x="110" y="82" text-anchor="middle" font-size="12" font-weight="bold" fill="#f59e0b">FlightAware</text>
+  <text x="110" y="98" text-anchor="middle" font-size="10" fill="#9ca3af">AeroAPI (flights)</text>
+
+  <!-- OpenSky -->
+  <rect x="210" y="60" width="140" height="52" rx="8" fill="#1f2937" stroke="#f59e0b" stroke-width="1.5"/>
+  <text x="280" y="82" text-anchor="middle" font-size="12" font-weight="bold" fill="#f59e0b">OpenSky</text>
+  <text x="280" y="98" text-anchor="middle" font-size="10" fill="#9ca3af">ADS-B fallback</text>
+
+  <!-- JPL Ephemeris -->
+  <rect x="370" y="60" width="150" height="52" rx="8" fill="#1f2937" stroke="#f59e0b" stroke-width="1.5"/>
+  <text x="445" y="82" text-anchor="middle" font-size="12" font-weight="bold" fill="#f59e0b">JPL Ephemeris</text>
+  <text x="445" y="98" text-anchor="middle" font-size="10" fill="#9ca3af">de421.bsp (Skyfield)</text>
+
+  <!-- Seestar S50 -->
+  <rect x="540" y="60" width="150" height="52" rx="8" fill="#1f2937" stroke="#a78bfa" stroke-width="1.5"/>
+  <text x="615" y="82" text-anchor="middle" font-size="12" font-weight="bold" fill="#a78bfa">Seestar S50</text>
+  <text x="615" y="98" text-anchor="middle" font-size="10" fill="#9ca3af">JSON-RPC TCP:4700  RTSP:4554</text>
+
+  <!-- Telegram -->
+  <rect x="710" y="60" width="130" height="52" rx="8" fill="#1f2937" stroke="#34d399" stroke-width="1.5"/>
+  <text x="775" y="82" text-anchor="middle" font-size="12" font-weight="bold" fill="#34d399">Telegram</text>
+  <text x="775" y="98" text-anchor="middle" font-size="10" fill="#9ca3af">Bot API alerts</text>
+
+  <!-- Pushbullet -->
+  <rect x="860" y="60" width="130" height="52" rx="8" fill="#1f2937" stroke="#34d399" stroke-width="1.5"/>
+  <text x="925" y="82" text-anchor="middle" font-size="12" font-weight="bold" fill="#34d399">Pushbullet</text>
+  <text x="925" y="98" text-anchor="middle" font-size="10" fill="#9ca3af">Legacy notifications</text>
+
+  <!-- ffmpeg -->
+  <rect x="1010" y="60" width="130" height="52" rx="8" fill="#1f2937" stroke="#f59e0b" stroke-width="1.5"/>
+  <text x="1075" y="82" text-anchor="middle" font-size="12" font-weight="bold" fill="#f59e0b">ffmpeg</text>
+  <text x="1075" y="98" text-anchor="middle" font-size="10" fill="#9ca3af">Video encode / RTSP</text>
+
+  <!-- OpenAIP -->
+  <rect x="1160" y="60" width="130" height="52" rx="8" fill="#1f2937" stroke="#f59e0b" stroke-width="1.5"/>
+  <text x="1225" y="82" text-anchor="middle" font-size="12" font-weight="bold" fill="#f59e0b">OpenAIP</text>
+  <text x="1225" y="98" text-anchor="middle" font-size="10" fill="#9ca3af">Airspace tiles</text>
+
+  <!-- ═══════════════════════════════════════════════════════ -->
+  <!-- ROW 2: Core Python Modules -->
+  <!-- ═══════════════════════════════════════════════════════ -->
+
+  <!-- flight_data.py -->
+  <rect x="30" y="180" width="150" height="60" rx="8" fill="#161b22" stroke="#58a6ff" stroke-width="1.5"/>
+  <text x="105" y="203" text-anchor="middle" font-size="11" font-weight="bold" fill="#58a6ff">flight_data.py</text>
+  <text x="105" y="219" text-anchor="middle" font-size="9.5" fill="#8b949e">AeroAPI client</text>
+  <text x="105" y="232" text-anchor="middle" font-size="9.5" fill="#8b949e">parse + CSV log</text>
+
+  <!-- opensky_client.py -->
+  <rect x="200" y="180" width="150" height="60" rx="8" fill="#161b22" stroke="#58a6ff" stroke-width="1.5"/>
+  <text x="275" y="203" text-anchor="middle" font-size="11" font-weight="bold" fill="#58a6ff">opensky_client.py</text>
+  <text x="275" y="219" text-anchor="middle" font-size="9.5" fill="#8b949e">OpenSky client</text>
+  <text x="275" y="232" text-anchor="middle" font-size="9.5" fill="#8b949e">fallback source</text>
+
+  <!-- flight_cache.py -->
+  <rect x="370" y="180" width="150" height="60" rx="8" fill="#161b22" stroke="#58a6ff" stroke-width="1.5"/>
+  <text x="445" y="203" text-anchor="middle" font-size="11" font-weight="bold" fill="#58a6ff">flight_cache.py</text>
+  <text x="445" y="219" text-anchor="middle" font-size="9.5" fill="#8b949e">In-memory LRU</text>
+  <text x="445" y="232" text-anchor="middle" font-size="9.5" fill="#8b949e">TTL ~5 min</text>
+
+  <!-- position.py -->
+  <rect x="540" y="180" width="150" height="60" rx="8" fill="#161b22" stroke="#58a6ff" stroke-width="1.5"/>
+  <text x="615" y="203" text-anchor="middle" font-size="11" font-weight="bold" fill="#58a6ff">position.py</text>
+  <text x="615" y="219" text-anchor="middle" font-size="9.5" fill="#8b949e">Haversine prediction</text>
+  <text x="615" y="232" text-anchor="middle" font-size="9.5" fill="#8b949e">0–15 min ahead</text>
+
+  <!-- astro.py -->
+  <rect x="710" y="180" width="150" height="60" rx="8" fill="#161b22" stroke="#58a6ff" stroke-width="1.5"/>
+  <text x="785" y="203" text-anchor="middle" font-size="11" font-weight="bold" fill="#58a6ff">astro.py</text>
+  <text x="785" y="219" text-anchor="middle" font-size="9.5" fill="#8b949e">Sun/Moon position</text>
+  <text x="785" y="232" text-anchor="middle" font-size="9.5" fill="#8b949e">Skyfield wrapper</text>
+
+  <!-- transit.py -->
+  <rect x="880" y="180" width="150" height="60" rx="8" fill="#161b22" stroke="#58a6ff" stroke-width="1.5"/>
+  <text x="955" y="203" text-anchor="middle" font-size="11" font-weight="bold" fill="#58a6ff">transit.py</text>
+  <text x="955" y="219" text-anchor="middle" font-size="9.5" fill="#8b949e">Angular separation</text>
+  <text x="955" y="232" text-anchor="middle" font-size="9.5" fill="#8b949e">UNLIKELY→HIGH</text>
+
+  <!-- constants.py -->
+  <rect x="1050" y="180" width="150" height="60" rx="8" fill="#161b22" stroke="#6e7681" stroke-width="1.5"/>
+  <text x="1125" y="203" text-anchor="middle" font-size="11" font-weight="bold" fill="#8b949e">constants.py</text>
+  <text x="1125" y="219" text-anchor="middle" font-size="9.5" fill="#8b949e">PossibilityLevel enums</text>
+  <text x="1125" y="232" text-anchor="middle" font-size="9.5" fill="#8b949e">thresholds, ephemeris</text>
+
+  <!-- logger_.py -->
+  <rect x="1220" y="180" width="140" height="60" rx="8" fill="#161b22" stroke="#6e7681" stroke-width="1.5"/>
+  <text x="1290" y="203" text-anchor="middle" font-size="11" font-weight="bold" fill="#8b949e">logger_.py</text>
+  <text x="1290" y="219" text-anchor="middle" font-size="9.5" fill="#8b949e">Unified logging</text>
+  <text x="1290" y="232" text-anchor="middle" font-size="9.5" fill="#8b949e">config</text>
+
+  <!-- ═══════════════════════════════════════════════════════ -->
+  <!-- ROW 3: Service Layer -->
+  <!-- ═══════════════════════════════════════════════════════ -->
+
+  <!-- transit_monitor.py -->
+  <rect x="30" y="310" width="175" height="72" rx="8" fill="#161b22" stroke="#f97316" stroke-width="1.5"/>
+  <text x="117" y="333" text-anchor="middle" font-size="11" font-weight="bold" fill="#f97316">transit_monitor.py</text>
+  <text x="117" y="349" text-anchor="middle" font-size="9.5" fill="#8b949e">Background daemon</text>
+  <text x="117" y="362" text-anchor="middle" font-size="9.5" fill="#8b949e">Poll FA every 10 min</text>
+  <text x="117" y="375" text-anchor="middle" font-size="9.5" fill="#8b949e">Calc transits every 30 s</text>
+
+  <!-- transit_detector.py -->
+  <rect x="225" y="310" width="175" height="72" rx="8" fill="#161b22" stroke="#f97316" stroke-width="1.5"/>
+  <text x="312" y="333" text-anchor="middle" font-size="11" font-weight="bold" fill="#f97316">transit_detector.py</text>
+  <text x="312" y="349" text-anchor="middle" font-size="9.5" fill="#8b949e">Live RTSP detection</text>
+  <text x="312" y="362" text-anchor="middle" font-size="9.5" fill="#8b949e">Dual-signal algorithm</text>
+  <text x="312" y="375" text-anchor="middle" font-size="9.5" fill="#8b949e">Hough disk @ 2 s</text>
+
+  <!-- transit_analyzer.py -->
+  <rect x="420" y="310" width="175" height="72" rx="8" fill="#161b22" stroke="#f97316" stroke-width="1.5"/>
+  <text x="507" y="333" text-anchor="middle" font-size="11" font-weight="bold" fill="#f97316">transit_analyzer.py</text>
+  <text x="507" y="349" text-anchor="middle" font-size="9.5" fill="#8b949e">Post-capture MP4</text>
+  <text x="507" y="362" text-anchor="middle" font-size="9.5" fill="#8b949e">Blob detection</text>
+  <text x="507" y="375" text-anchor="middle" font-size="9.5" fill="#8b949e">Composite image</text>
+
+  <!-- solar_timelapse.py -->
+  <rect x="615" y="310" width="175" height="72" rx="8" fill="#161b22" stroke="#f97316" stroke-width="1.5"/>
+  <text x="702" y="333" text-anchor="middle" font-size="11" font-weight="bold" fill="#f97316">solar_timelapse.py</text>
+  <text x="702" y="349" text-anchor="middle" font-size="9.5" fill="#8b949e">Interval frame capture</text>
+  <text x="702" y="362" text-anchor="middle" font-size="9.5" fill="#8b949e">Disk-centre stabilization</text>
+  <text x="702" y="375" text-anchor="middle" font-size="9.5" fill="#8b949e">MP4 assembly</text>
+
+  <!-- seestar_client.py -->
+  <rect x="810" y="310" width="175" height="72" rx="8" fill="#161b22" stroke="#a78bfa" stroke-width="1.5"/>
+  <text x="897" y="333" text-anchor="middle" font-size="11" font-weight="bold" fill="#a78bfa">seestar_client.py</text>
+  <text x="897" y="349" text-anchor="middle" font-size="9.5" fill="#8b949e">JSON-RPC 2.0 TCP</text>
+  <text x="897" y="362" text-anchor="middle" font-size="9.5" fill="#8b949e">Heartbeat 3 s</text>
+  <text x="897" y="375" text-anchor="middle" font-size="9.5" fill="#8b949e">TransitRecorder timer</text>
+
+  <!-- telegram_notify.py -->
+  <rect x="1005" y="310" width="155" height="72" rx="8" fill="#161b22" stroke="#34d399" stroke-width="1.5"/>
+  <text x="1082" y="333" text-anchor="middle" font-size="11" font-weight="bold" fill="#34d399">telegram_notify.py</text>
+  <text x="1082" y="349" text-anchor="middle" font-size="9.5" fill="#8b949e">Async alerts</text>
+  <text x="1082" y="362" text-anchor="middle" font-size="9.5" fill="#8b949e">HIGH transits</text>
+  <text x="1082" y="375" text-anchor="middle" font-size="9.5" fill="#8b949e">mute toggle</text>
+
+  <!-- notify.py -->
+  <rect x="1175" y="310" width="155" height="72" rx="8" fill="#161b22" stroke="#34d399" stroke-width="1.5"/>
+  <text x="1252" y="333" text-anchor="middle" font-size="11" font-weight="bold" fill="#34d399">notify.py</text>
+  <text x="1252" y="349" text-anchor="middle" font-size="9.5" fill="#8b949e">Pushbullet sender</text>
+  <text x="1252" y="362" text-anchor="middle" font-size="9.5" fill="#8b949e">legacy / headless</text>
+  <text x="1252" y="375" text-anchor="middle" font-size="9.5" fill="#8b949e">monitor_transits.py</text>
+
+  <!-- ═══════════════════════════════════════════════════════ -->
+  <!-- ROW 4: Flask Layer -->
+  <!-- ═══════════════════════════════════════════════════════ -->
+
+  <!-- app.py -->
+  <rect x="200" y="450" width="380" height="80" rx="8" fill="#0d2137" stroke="#58a6ff" stroke-width="2"/>
+  <text x="390" y="474" text-anchor="middle" font-size="13" font-weight="bold" fill="#58a6ff">app.py  —  Flask Web Server</text>
+  <text x="390" y="492" text-anchor="middle" font-size="9.5" fill="#8b949e">GET /  · GET /telescope  · GET /flights  · POST /transits/recalculate</text>
+  <text x="390" y="507" text-anchor="middle" font-size="9.5" fill="#8b949e">GET /transit-log  · GET /tiles/openaip  · GET /config  · GET /cache/stats</text>
+
+  <!-- telescope_routes.py -->
+  <rect x="620" y="450" width="560" height="80" rx="8" fill="#0d2137" stroke="#a78bfa" stroke-width="2"/>
+  <text x="900" y="474" text-anchor="middle" font-size="13" font-weight="bold" fill="#a78bfa">telescope_routes.py</text>
+  <text x="900" y="492" text-anchor="middle" font-size="9.5" fill="#8b949e">/telescope/connect · /status · /start-recording · /stop-recording · /files · /analyze</text>
+  <text x="900" y="507" text-anchor="middle" font-size="9.5" fill="#8b949e">/detect/start · /detect/stop · /detect/settings · /timelapse/* · /notify/toggle</text>
+
+  <!-- ═══════════════════════════════════════════════════════ -->
+  <!-- ROW 5: Frontend -->
+  <!-- ═══════════════════════════════════════════════════════ -->
+
+  <!-- map.js -->
+  <rect x="80" y="600" width="220" height="72" rx="8" fill="#0c2012" stroke="#4ade80" stroke-width="1.5"/>
+  <text x="190" y="622" text-anchor="middle" font-size="12" font-weight="bold" fill="#4ade80">map.js</text>
+  <text x="190" y="638" text-anchor="middle" font-size="9.5" fill="#8b949e">Leaflet map, aircraft markers</text>
+  <text x="190" y="651" text-anchor="middle" font-size="9.5" fill="#8b949e">colour by possibility level</text>
+  <text x="190" y="664" text-anchor="middle" font-size="9.5" fill="#8b949e">azimuth arrows, bounding box</text>
+
+  <!-- app.js -->
+  <rect x="320" y="600" width="220" height="72" rx="8" fill="#0c2012" stroke="#4ade80" stroke-width="1.5"/>
+  <text x="430" y="622" text-anchor="middle" font-size="12" font-weight="bold" fill="#4ade80">app.js</text>
+  <text x="430" y="638" text-anchor="middle" font-size="9.5" fill="#8b949e">Auto-refresh flights</text>
+  <text x="430" y="651" text-anchor="middle" font-size="9.5" fill="#8b949e">Alert / notification UI</text>
+  <text x="430" y="664" text-anchor="middle" font-size="9.5" fill="#8b949e">Transit list, keyboard shortcuts</text>
+
+  <!-- telescope.js -->
+  <rect x="560" y="600" width="280" height="72" rx="8" fill="#0c2012" stroke="#4ade80" stroke-width="1.5"/>
+  <text x="700" y="622" text-anchor="middle" font-size="12" font-weight="bold" fill="#4ade80">telescope.js</text>
+  <text x="700" y="638" text-anchor="middle" font-size="9.5" fill="#8b949e">Connection · recording · file manager</text>
+  <text x="700" y="651" text-anchor="middle" font-size="9.5" fill="#8b949e">Live detection · timelapse controls</text>
+  <text x="700" y="664" text-anchor="middle" font-size="9.5" fill="#8b949e">Detection tuning sliders · smoothing</text>
+
+  <!-- Templates -->
+  <rect x="860" y="600" width="180" height="72" rx="8" fill="#0c2012" stroke="#4ade80" stroke-width="1.5"/>
+  <text x="950" y="622" text-anchor="middle" font-size="12" font-weight="bold" fill="#4ade80">Templates</text>
+  <text x="950" y="638" text-anchor="middle" font-size="9.5" fill="#8b949e">index.html</text>
+  <text x="950" y="651" text-anchor="middle" font-size="9.5" fill="#8b949e">telescope rendered</text>
+  <text x="950" y="664" text-anchor="middle" font-size="9.5" fill="#8b949e">by Flask / Jinja2</text>
+
+  <!-- ═══════════════════════════════════════════════════════ -->
+  <!-- ROW 6: Standalone Scripts + Data -->
+  <!-- ═══════════════════════════════════════════════════════ -->
+
+  <rect x="80" y="740" width="185" height="60" rx="8" fill="#1a1208" stroke="#d97706" stroke-width="1.5"/>
+  <text x="172" y="762" text-anchor="middle" font-size="11" font-weight="bold" fill="#d97706">monitor_transits.py</text>
+  <text x="172" y="778" text-anchor="middle" font-size="9.5" fill="#8b949e">Headless · Pushbullet</text>
+  <text x="172" y="791" text-anchor="middle" font-size="9.5" fill="#8b949e">notification-only mode</text>
+
+  <rect x="285" y="740" width="185" height="60" rx="8" fill="#1a1208" stroke="#d97706" stroke-width="1.5"/>
+  <text x="377" y="762" text-anchor="middle" font-size="11" font-weight="bold" fill="#d97706">transit_capture.py</text>
+  <text x="377" y="778" text-anchor="middle" font-size="9.5" fill="#8b949e">Seestar auto-capture</text>
+  <text x="377" y="791" text-anchor="middle" font-size="9.5" fill="#8b949e">Telegram fallback</text>
+
+  <rect x="490" y="740" width="165" height="60" rx="8" fill="#1a1208" stroke="#d97706" stroke-width="1.5"/>
+  <text x="572" y="762" text-anchor="middle" font-size="11" font-weight="bold" fill="#d97706">eclipse_monitor.py</text>
+  <text x="572" y="778" text-anchor="middle" font-size="9.5" fill="#8b949e">Lunar/solar eclipse</text>
+  <text x="572" y="791" text-anchor="middle" font-size="9.5" fill="#8b949e">prediction</text>
+
+  <rect x="675" y="740" width="165" height="60" rx="8" fill="#1a1208" stroke="#d97706" stroke-width="1.5"/>
+  <text x="757" y="762" text-anchor="middle" font-size="11" font-weight="bold" fill="#d97706">config_wizard.py</text>
+  <text x="757" y="778" text-anchor="middle" font-size="9.5" fill="#8b949e">Interactive setup</text>
+  <text x="757" y="791" text-anchor="middle" font-size="9.5" fill="#8b949e">.env generator</text>
+
+  <!-- Data store -->
+  <rect x="870" y="740" width="200" height="60" rx="8" fill="#12171f" stroke="#6e7681" stroke-width="1.5"/>
+  <text x="970" y="762" text-anchor="middle" font-size="11" font-weight="bold" fill="#6e7681">data/</text>
+  <text x="970" y="778" text-anchor="middle" font-size="9.5" fill="#8b949e">possible-transits CSV logs</text>
+  <text x="970" y="791" text-anchor="middle" font-size="9.5" fill="#8b949e">test data · ephemeris</text>
+
+  <!-- static/captures -->
+  <rect x="1090" y="740" width="210" height="60" rx="8" fill="#12171f" stroke="#6e7681" stroke-width="1.5"/>
+  <text x="1195" y="762" text-anchor="middle" font-size="11" font-weight="bold" fill="#6e7681">static/captures/</text>
+  <text x="1195" y="778" text-anchor="middle" font-size="9.5" fill="#8b949e">MP4s · frames · composites</text>
+  <text x="1195" y="791" text-anchor="middle" font-size="9.5" fill="#8b949e">timelapse output</text>
+
+  <!-- ═══════════════════════════════════════════════════════ -->
+  <!-- DATA FLOW ARROW LABELS -->
+  <!-- ═══════════════════════════════════════════════════════ -->
+
+  <!-- External → Row2 arrows (row 1 → row 2) -->
+  <line x1="110" y1="112" x2="110" y2="178" stroke="#f59e0b" stroke-width="1.2" stroke-dasharray="4,3"/>
+  <line x1="280" y1="112" x2="280" y2="178" stroke="#f59e0b" stroke-width="1.2" stroke-dasharray="4,3"/>
+  <line x1="445" y1="112" x2="445" y2="178" stroke="#f59e0b" stroke-width="1.2" stroke-dasharray="4,3"/>
+  <line x1="615" y1="112" x2="897" y2="308" stroke="#a78bfa" stroke-width="1.2" stroke-dasharray="4,3"/>
+  <line x1="775" y1="112" x2="1082" y2="308" stroke="#34d399" stroke-width="1.2" stroke-dasharray="4,3"/>
+  <line x1="925" y1="112" x2="1252" y2="308" stroke="#34d399" stroke-width="1.2" stroke-dasharray="4,3"/>
+  <line x1="1075" y1="112" x2="700" y2="308" stroke="#f59e0b" stroke-width="1.2" stroke-dasharray="4,3"/>
+  <line x1="1225" y1="112" x2="390" y2="448" stroke="#f59e0b" stroke-width="1" stroke-dasharray="4,3" opacity="0.5"/>
+
+  <!-- Row2 → Row3 key flows -->
+  <!-- flight_data → flight_cache -->
+  <line x1="180" y1="210" x2="370" y2="210" stroke="#58a6ff" stroke-width="1" stroke-dasharray="3,3" opacity="0.6"/>
+  <!-- flight_cache / position / astro → transit -->
+  <line x1="520" y1="210" x2="880" y2="210" stroke="#58a6ff" stroke-width="1" stroke-dasharray="3,3" opacity="0.5"/>
+  <!-- transit → transit_monitor -->
+  <line x1="955" y1="240" x2="117" y2="310" stroke="#58a6ff" stroke-width="1" stroke-dasharray="3,3" opacity="0.5"/>
+
+  <!-- Row3 → Row4 arrows -->
+  <line x1="117" y1="382" x2="320" y2="450" stroke="#f97316" stroke-width="1.5" stroke-dasharray="4,3"/>
+  <line x1="312" y1="382" x2="700" y2="450" stroke="#f97316" stroke-width="1.5" stroke-dasharray="4,3"/>
+  <line x1="507" y1="382" x2="750" y2="450" stroke="#f97316" stroke-width="1.5" stroke-dasharray="4,3"/>
+  <line x1="702" y1="382" x2="800" y2="450" stroke="#f97316" stroke-width="1.5" stroke-dasharray="4,3"/>
+  <line x1="897" y1="382" x2="870" y2="450" stroke="#a78bfa" stroke-width="1.5" stroke-dasharray="4,3"/>
+  <line x1="1082" y1="382" x2="950" y2="450" stroke="#34d399" stroke-width="1.5" stroke-dasharray="4,3"/>
+
+  <!-- Row4 → Row5 arrows -->
+  <line x1="390" y1="530" x2="300" y2="600" stroke="#4ade80" stroke-width="1.5"/>
+  <line x1="390" y1="530" x2="430" y2="600" stroke="#4ade80" stroke-width="1.5"/>
+  <line x1="900" y1="530" x2="700" y2="600" stroke="#4ade80" stroke-width="1.5"/>
+  <line x1="900" y1="530" x2="950" y2="600" stroke="#4ade80" stroke-width="1.5"/>
+
+  <!-- ═══════════════════════════════════════════════════════ -->
+  <!-- LEGEND -->
+  <!-- ═══════════════════════════════════════════════════════ -->
+  <rect x="30" y="840" width="1330" height="160" rx="8" fill="#0d1117" stroke="#30363d" stroke-width="1"/>
+  <text x="50" y="862" font-size="12" font-weight="bold" fill="#8b949e">Legend</text>
+
+  <rect x="50" y="874" width="14" height="14" rx="3" fill="#1f2937" stroke="#f59e0b" stroke-width="1.5"/>
+  <text x="72" y="886" font-size="11" fill="#8b949e">External service / tool</text>
+
+  <rect x="220" y="874" width="14" height="14" rx="3" fill="#161b22" stroke="#58a6ff" stroke-width="1.5"/>
+  <text x="242" y="886" font-size="11" fill="#8b949e">Core Python module</text>
+
+  <rect x="390" y="874" width="14" height="14" rx="3" fill="#161b22" stroke="#f97316" stroke-width="1.5"/>
+  <text x="412" y="886" font-size="11" fill="#8b949e">Background service / daemon thread</text>
+
+  <rect x="610" y="874" width="14" height="14" rx="3" fill="#161b22" stroke="#a78bfa" stroke-width="1.5"/>
+  <text x="632" y="886" font-size="11" fill="#8b949e">Telescope hardware layer</text>
+
+  <rect x="800" y="874" width="14" height="14" rx="3" fill="#161b22" stroke="#34d399" stroke-width="1.5"/>
+  <text x="822" y="886" font-size="11" fill="#8b949e">Notification service</text>
+
+  <rect x="980" y="874" width="14" height="14" rx="3" fill="#0c2012" stroke="#4ade80" stroke-width="1.5"/>
+  <text x="1002" y="886" font-size="11" fill="#8b949e">Frontend (JS / HTML)</text>
+
+  <rect x="1160" y="874" width="14" height="14" rx="3" fill="#1a1208" stroke="#d97706" stroke-width="1.5"/>
+  <text x="1182" y="886" font-size="11" fill="#8b949e">Standalone script</text>
+
+  <!-- Data flow description -->
+  <text x="50" y="916" font-size="11" font-weight="bold" fill="#58a6ff">Transit Data Flow:</text>
+  <text x="50" y="933" font-size="10.5" fill="#8b949e">FlightAware → flight_data → flight_cache → position (predict) + astro (Sun/Moon alt/az) → transit (angular sep + classify) →</text>
+  <text x="50" y="950" font-size="10.5" fill="#8b949e">  HIGH: Telegram alert + Seestar auto-record (TransitRecorder) + Web UI red marker</text>
+  <text x="50" y="967" font-size="10.5" fill="#8b949e">  All:  Web UI markers coloured by level · transit_monitor daemon runs this loop every 30 s</text>
+
+  <text x="50" y="987" font-size="11" font-weight="bold" fill="#f97316">Live Detection Flow:</text>
+  <text x="170" y="987" font-size="10.5" fill="#8b949e">Seestar RTSP → transit_detector (dual-signal + Hough disk) → auto-trigger recording → transit_analyzer (blob detection) → composite image + Telegram</text>
+</svg>

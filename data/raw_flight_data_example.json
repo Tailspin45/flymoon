@@ -4,8 +4,8 @@
       "ident": "SUN_HIGH",
       "ident_icao": "SUN_HIGH",
       "ident_iata": "SU_HIGH",
-      "fa_flight_id": "SUN_HIGH-1773610221-schedule-test",
-      "actual_off": "2026-03-15T19:30:21Z",
+      "fa_flight_id": "SUN_HIGH-1773611669-schedule-test",
+      "actual_off": "2026-03-15T19:54:29Z",
       "actual_on": "None",
       "origin": {
         "code": "KLAS",
@@ -23,14 +23,14 @@
       },
       "waypoints": [],
       "last_position": {
-        "fa_flight_id": "SUN_HIGH-1773610221-schedule-test",
+        "fa_flight_id": "SUN_HIGH-1773611669-schedule-test",
         "altitude": 340,
         "altitude_change": "-",
         "groundspeed": 440,
-        "heading": 306,
-        "latitude": 33.04625365516725,
-        "longitude": -117.36631386892175,
-        "timestamp": "2026-03-15T21:30:21Z",
+        "heading": 314,
+        "latitude": 33.04595564332131,
+        "longitude": -117.38383618579938,
+        "timestamp": "2026-03-15T21:54:29Z",
         "update_type": "A"
       },
       "aircraft_type": "A320"
@@ -39,8 +39,8 @@
       "ident": "SUN_MED",
       "ident_icao": "SUN_MED",
       "ident_iata": "SU_MED",
-      "fa_flight_id": "SUN_MED-1773610221-schedule-test",
-      "actual_off": "2026-03-15T19:30:21Z",
+      "fa_flight_id": "SUN_MED-1773611669-schedule-test",
+      "actual_off": "2026-03-15T19:54:29Z",
       "actual_on": "None",
       "origin": {
         "code": "KDEN",
@@ -58,14 +58,14 @@
       },
       "waypoints": [],
       "last_position": {
-        "fa_flight_id": "SUN_MED-1773610221-schedule-test",
+        "fa_flight_id": "SUN_MED-1773611669-schedule-test",
         "altitude": 330,
         "altitude_change": "-",
         "groundspeed": 420,
-        "heading": 306,
-        "latitude": 33.051350851471426,
-        "longitude": -117.36181097788862,
-        "timestamp": "2026-03-15T21:30:21Z",
+        "heading": 314,
+        "latitude": 33.05103382994445,
+        "longitude": -117.3779815882911,
+        "timestamp": "2026-03-15T21:54:29Z",
         "update_type": "A"
       },
       "aircraft_type": "A320"
@@ -74,8 +74,8 @@
       "ident": "SUN_LOW",
       "ident_icao": "SUN_LOW",
       "ident_iata": "SU_LOW",
-      "fa_flight_id": "SUN_LOW-1773610221-schedule-test",
-      "actual_off": "2026-03-15T19:30:21Z",
+      "fa_flight_id": "SUN_LOW-1773611669-schedule-test",
+      "actual_off": "2026-03-15T19:54:29Z",
       "actual_on": "None",
       "origin": {
         "code": "KOAK",
@@ -93,14 +93,14 @@
       },
       "waypoints": [],
       "last_position": {
-        "fa_flight_id": "SUN_LOW-1773610221-schedule-test",
+        "fa_flight_id": "SUN_LOW-1773611669-schedule-test",
         "altitude": 360,
         "altitude_change": "-",
         "groundspeed": 470,
-        "heading": 306,
-        "latitude": 33.04777059610451,
-        "longitude": -117.36497379501904,
-        "timestamp": "2026-03-15T21:30:21Z",
+        "heading": 314,
+        "latitude": 33.04740146720732,
+        "longitude": -117.38216930792571,
+        "timestamp": "2026-03-15T21:54:29Z",
         "update_type": "A"
       },
       "aircraft_type": "A320"
@@ -109,8 +109,8 @@
       "ident": "NONE_01",
       "ident_icao": "NONE_01",
       "ident_iata": "NOE_01",
-      "fa_flight_id": "NONE_01-1773610221-schedule-test",
-      "actual_off": "2026-03-15T19:30:21Z",
+      "fa_flight_id": "NONE_01-1773611669-schedule-test",
+      "actual_off": "2026-03-15T19:54:29Z",
       "actual_on": "None",
       "origin": {
         "code": "KSAN",
@@ -128,14 +128,14 @@
       },
       "waypoints": [],
       "last_position": {
-        "fa_flight_id": "NONE_01-1773610221-schedule-test",
+        "fa_flight_id": "NONE_01-1773611669-schedule-test",
         "altitude": 309,
         "altitude_change": "-",
         "groundspeed": 450,
         "heading": 12,
         "latitude": 33.11,
         "longitude": -117.03532433017706,
-        "timestamp": "2026-03-15T21:30:21Z",
+        "timestamp": "2026-03-15T21:54:29Z",
         "update_type": "A"
       },
       "aircraft_type": "A320"
@@ -144,8 +144,8 @@
       "ident": "NONE_02",
       "ident_icao": "NONE_02",
       "ident_iata": "NOE_02",
-      "fa_flight_id": "NONE_02-1773610221-schedule-test",
-      "actual_off": "2026-03-15T19:30:21Z",
+      "fa_flight_id": "NONE_02-1773611669-schedule-test",
+      "actual_off": "2026-03-15T19:54:29Z",
       "actual_on": "None",
       "origin": {
         "code": "KSAN",
@@ -163,14 +163,14 @@
       },
       "waypoints": [],
       "last_position": {
-        "fa_flight_id": "NONE_02-1773610221-schedule-test",
+        "fa_flight_id": "NONE_02-1773611669-schedule-test",
         "altitude": 350,
         "altitude_change": "-",
         "groundspeed": 460,
         "heading": 140,
         "latitude": 32.90619714318784,
         "longitude": -117.31,
-        "timestamp": "2026-03-15T21:30:21Z",
+        "timestamp": "2026-03-15T21:54:29Z",
         "update_type": "A"
       },
       "aircraft_type": "A320"
@@ -179,8 +179,8 @@
       "ident": "PRIV01",
       "ident_icao": "PRIV01",
       "ident_iata": "PRV01",
-      "fa_flight_id": "PRIV01-1773610221-schedule-test",
-      "actual_off": "2026-03-15T19:30:21Z",
+      "fa_flight_id": "PRIV01-1773611669-schedule-test",
+      "actual_off": "2026-03-15T19:54:29Z",
       "actual_on": "None",
       "origin": {
         "code": "KSAN",
@@ -192,14 +192,14 @@
       "destination": null,
       "waypoints": [],
       "last_position": {
-        "fa_flight_id": "PRIV01-1773610221-schedule-test",
+        "fa_flight_id": "PRIV01-1773611669-schedule-test",
         "altitude": 290,
         "altitude_change": "-",
         "groundspeed": 380,
         "heading": 114,
         "latitude": 33.11,
         "longitude": -117.65981841697102,
-        "timestamp": "2026-03-15T21:30:21Z",
+        "timestamp": "2026-03-15T21:54:29Z",
         "update_type": "A"
       },
       "aircraft_type": "A320"
@@ -209,13 +209,13 @@
   "num_pages": 1,
   "_test_metadata": {
     "scenario": "dual_tracking",
-    "generated_at": "2026-03-15T21:30:21.496192+00:00",
+    "generated_at": "2026-03-15T21:54:29.426495+00:00",
     "observer_latitude": 33.11,
     "observer_longitude": -117.31,
-    "moon_altitude": 12.6,
-    "moon_azimuth": 237.6,
-    "sun_altitude": 48.8,
-    "sun_azimuth": 216.5,
+    "moon_altitude": 8.4,
+    "moon_azimuth": 241.4,
+    "sun_altitude": 45.5,
+    "sun_azimuth": 224.0,
     "cloud_cover": 15
   }
 }

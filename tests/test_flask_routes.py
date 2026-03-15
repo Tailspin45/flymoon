@@ -134,7 +134,12 @@ def test_flights_response_flight_schema():
         "min_separation_time": "12:00:00",
         "target_name": "sun",
     }
-    with patch("app.get_transits", return_value={"flights": [mock_transit]}):
+    mock_coords = {"altitude": 45.0, "azimuthal": 180.0}
+    with (
+        patch("app.get_transits", return_value={"flights": [mock_transit]}),
+        patch("app.CelestialObject") as mock_cel,
+    ):
+        mock_cel.return_value.get_coordinates.return_value = mock_coords
         resp = client.get(f"/flights?{OBSERVER_QS}")
     body = resp.get_json()
     flights = body.get("flights", [])

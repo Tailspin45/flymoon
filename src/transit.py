@@ -300,8 +300,6 @@ def check_transit(
     my_position: Topos,
     target: CelestialObject,
     earth_ref,
-    alt_threshold: float = 5.0,
-    az_threshold: float = 10.0,
     target_positions: Optional[Dict[int, Tuple[float, float]]] = None,
 ) -> dict:
     """Given the data of a flight, compute a possible transit with the target.
@@ -519,17 +517,11 @@ def get_transits(
     elevation: float,
     target_name: str = "moon",
     test_mode: bool = False,
-    alt_threshold: float = 5.0,
-    az_threshold: float = 10.0,
     custom_bbox: dict = None,
     data_source: str = "hybrid",
     enrich: bool = True,
 ) -> Dict[str, Any]:
     API_KEY = get_aeroapi_key()
-
-    # Ensure thresholds are floats (in case they're passed as strings from Flask)
-    alt_threshold = float(alt_threshold)
-    az_threshold = float(az_threshold)
 
     logger.debug(f"{latitude=}, {longitude=}, {elevation=}")
 
@@ -700,44 +692,9 @@ def get_transits(
 
             logger.info(f"[OpenSky] {len(flight_data)} airborne aircraft in bbox")
 
-        # ── Coarse angular pre-filter ─────────────────────────────────────
-        # Discard aircraft that cannot possibly reach the target within the
-        # 15-minute window.  One cheap Skyfield call per aircraft replaces
-        # 180 full trajectory steps for aircraft that are clearly out of range.
-        # Uses the same angular-separation metric as check_transit().
-        _combined_threshold = max(alt_threshold, az_threshold)
-        _COARSE_SEP = max(_combined_threshold * 5, 30.0)  # generous margin
-
-        prefiltered = []
-        excluded = []  # aircraft too far from target to transit — still shown in table
-        for f in flight_data:
-            try:
-                f_alt, f_az = geographic_to_altaz(
-                    f["latitude"],
-                    f["longitude"],
-                    f.get("elevation", 0) or 0,
-                    EARTH,
-                    MY_POSITION,
-                    ref_datetime,
-                )
-            except Exception:
-                prefiltered.append(f)  # keep on error
-                continue
-            sep = angular_separation(t_alt, t_az, f_alt, f_az)
-            if sep <= _COARSE_SEP:
-                prefiltered.append(f)
-            else:
-                # Store current angular position so sky Δ can be shown in the table
-                f = dict(f)
-                f["_current_alt"] = f_alt
-                f["_current_az"] = f_az
-                excluded.append(f)
-
         logger.info(
-            f"[Pre-filter] {len(prefiltered)}/{len(flight_data)} aircraft kept "
-            f"(coarse angular sep ≤{_COARSE_SEP:.0f}°)"
+            f"[Transit] Running full trajectory check on {len(flight_data)} aircraft"
         )
-        flight_data = prefiltered
 
         # ── Precompute target positions for all minute steps ──────────────
         # Avoids 50+ redundant Skyfield calls (one per flight per minute step).
@@ -759,8 +716,6 @@ def get_transits(
                 MY_POSITION,
                 celestial_obj,
                 EARTH,
-                alt_threshold,
-                az_threshold,
                 target_positions=target_positions,
             )
             if (
@@ -785,62 +740,6 @@ def get_transits(
                 if result is not None:
                     data.append(result)
 
-        # Add aircraft excluded by pre-filter as position-only rows (no transit analysis)
-        for f in excluded:
-            data.append(
-                {
-                    "id": f.get("name") or f.get("id", ""),
-                    "fa_flight_id": f.get("fa_flight_id", ""),
-                    "origin": f.get("origin", ""),
-                    "destination": f.get("destination", ""),
-                    "latitude": f["latitude"],
-                    "longitude": f["longitude"],
-                    "aircraft_elevation": f.get("elevation")
-                    or f.get("aircraft_elevation", 0),
-                    "aircraft_type": f.get("aircraft_type", "N/A"),
-                    "speed": f.get("speed", 0),
-                    "direction": f.get("direction", 0),
-                    "is_possible_transit": 0,
-                    "possibility_level": PossibilityLevel.UNLIKELY.value,
-                    "elevation_change": CHANGE_ELEVATION.get(
-                        f.get("elevation_change"), f.get("elevation_change")
-                    ),
-                    "vertical_rate": f.get("vertical_rate"),
-                    "category": f.get("category"),
-                    "squawk": f.get("squawk"),
-                    "on_ground": f.get("on_ground", False),
-                    "icao24": f.get("icao24", ""),
-                    "origin_country": f.get("origin_country"),
-                    "waypoints": f.get("waypoints", []),
-                    "position_source": f.get("position_source", "flightaware"),
-                    "position_age_s": f.get("position_age_s"),
-                    "alt_diff": (
-                        round(f["_current_alt"] - t_alt, 2)
-                        if "_current_alt" in f
-                        else None
-                    ),
-                    "az_diff": (
-                        round(
-                            min(
-                                abs(f["_current_az"] - t_az),
-                                360 - abs(f["_current_az"] - t_az),
-                            ),
-                            2,
-                        )
-                        if "_current_az" in f
-                        else None
-                    ),
-                    "time": None,
-                    "target_alt": round(t_alt, 2),
-                    "plane_alt": (
-                        round(f["_current_alt"], 2) if "_current_alt" in f else None
-                    ),
-                    "target_az": round(t_az, 2),
-                    "plane_az": (
-                        round(f["_current_az"], 2) if "_current_az" in f else None
-                    ),
-                }
-            )
     else:
         logger.debug(
             f"{target_name} target is under horizon, skipping checking for transits..."
@@ -897,8 +796,6 @@ def recalculate_transits(
     longitude: float,
     elevation: float,
     target_name: str = "moon",
-    alt_threshold: float = 5.0,
-    az_threshold: float = 10.0,
 ) -> Dict[str, Any]:
     """
     Recalculate transit predictions for existing flights with updated positions.
@@ -910,15 +807,10 @@ def recalculate_transits(
         longitude: Observer longitude
         elevation: Observer elevation (meters)
         target_name: "sun" or "moon"
-        alt_threshold: Altitude threshold in degrees
-        az_threshold: Azimuth threshold in degrees
 
     Returns:
         List of flight dicts with updated transit predictions
     """
-    # Ensure thresholds are floats
-    alt_threshold = float(alt_threshold)
-    az_threshold = float(az_threshold)
 
     MY_POSITION = get_my_pos(
         lat=latitude,
@@ -960,8 +852,6 @@ def recalculate_transits(
                 MY_POSITION,
                 celestial_obj,
                 EARTH,
-                alt_threshold,
-                az_threshold,
                 target_positions=target_positions,
             )
 

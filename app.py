@@ -380,8 +380,6 @@ def get_all_flights():
         latitude = float(_lat_raw)
         longitude = float(_lon_raw)
         elevation = float(request.args.get("elevation") or 0)
-        alt_threshold = float(request.args.get("alt_threshold", 5.0))
-        az_threshold = float(request.args.get("az_threshold", 10.0))
 
         has_send_notification = request.args.get("send-notification") == "true"
 
@@ -458,7 +456,7 @@ def get_all_flights():
                 logger.info(
                     f"Checking transits for {target} (altitude: {coords['altitude']:.1f}°, "
                     f"min for az {coords.get('azimuthal',0):.0f}°: {min_altitude}°, "
-                    f"above_min={target_above_min}, thresholds: alt={alt_threshold}°, az={az_threshold}°)"
+                    f"above_min={target_above_min})"
                 )
                 # Only enrich HIGH transits via FA when the telescope is
                 # connected and can actually act on the data.
@@ -470,8 +468,6 @@ def get_all_flights():
                     elevation,
                     target,
                     test_mode,
-                    alt_threshold,
-                    az_threshold,
                     custom_bbox,
                     data_source,
                     enrich=enrich,
@@ -539,9 +535,12 @@ def get_all_flights():
         else:
             _bbox_for_client = None  # both targets below horizon — no API query made
 
+        # Exclude flights where the celestial target is below the user's obstruction threshold
+        visible_flights = [f for f in all_flights if not f.get("target_below_min_alt")]
+
         # Combine results
         data = {
-            "flights": sort_results(all_flights),
+            "flights": sort_results(visible_flights),
             "targetCoordinates": target_coordinates,
             "riseSetTimes": get_rise_set_times(latitude, longitude, elevation),
             "trackingTargets": tracking_targets,
@@ -729,8 +728,6 @@ def recalculate_transits_endpoint():
         "elevation": 100,
         "target": "moon",  // or "sun"
         "min_altitude": 15.0,  // Optional minimum altitude for target
-        "alt_threshold": 1.0,  // Optional
-        "az_threshold": 1.0    // Optional
     }
 
     Returns:
@@ -752,13 +749,6 @@ def recalculate_transits_endpoint():
         longitude = float(_lon_raw)
         elevation = float(data.get("elevation", 0))
         target = data.get("target", "auto")
-        alt_threshold = float(
-            data.get("alt_threshold", float(os.getenv("ALT_THRESHOLD", "1.0")))
-        )
-        az_threshold = float(
-            data.get("az_threshold", float(os.getenv("AZ_THRESHOLD", "1.0")))
-        )
-
         if not flights:
             return jsonify({"flights": [], "targetCoordinates": {}}), 200
 
@@ -845,8 +835,6 @@ def recalculate_transits_endpoint():
                     longitude,
                     elevation,
                     target_name,
-                    alt_threshold,
-                    az_threshold,
                 )
 
                 # Tag each flight with target and add computed fields

@@ -147,8 +147,6 @@ def test_check_transit_no_transit_far_flight():
         MY_POS,
         sun,
         EARTH,
-        alt_threshold=5.0,
-        az_threshold=10.0,
     )
     assert result["is_possible_transit"] == 0
 

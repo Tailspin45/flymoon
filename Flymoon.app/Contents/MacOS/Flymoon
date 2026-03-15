@@ -1,0 +1,17 @@
+#!/bin/bash
+# Flymoon macOS launcher
+# Finds the flymoon-server binary next to this .app, starts it, opens browser.
+
+DIR="$(cd "$(dirname "$0")/../../.." && pwd)"
+BINARY="$DIR/flymoon-server"
+
+if [ ! -f "$BINARY" ]; then
+    osascript -e 'display alert "Flymoon" message "Cannot find flymoon-server next to Flymoon.app.\n\nMake sure Flymoon.app and flymoon-server are in the same folder." as critical'
+    exit 1
+fi
+
+# Clear quarantine if needed (first run)
+xattr -cr "$BINARY" 2>/dev/null
+
+# Launch the server; it will auto-open the browser
+exec "$BINARY"
