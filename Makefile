@@ -21,19 +21,21 @@ dev-install:
 	)
 
 
+LINT_EXCLUDE = '.cache|.venv|electron|archive'
+
 lint:
 	@( \
-		black --check . --exclude '.cache|.venv'; \
-		isort --check-only .; \
-		autoflake --check --recursive --remove-all-unused-imports --remove-unused-variables --exclude '.cache|.venv' .; \
+		black --check . --exclude $(LINT_EXCLUDE); \
+		isort --check-only --skip electron --skip archive --skip .venv .; \
+		autoflake --check --recursive --remove-all-unused-imports --remove-unused-variables --exclude $(LINT_EXCLUDE) .; \
 	)
 
 
 lint-apply:
 	@( \
-		black . --exclude '.cache|.venv'; \
-		isort .; \
-		autoflake --in-place --recursive --remove-all-unused-imports --remove-unused-variables --exclude '.cache|.venv' .; \
+		black . --exclude $(LINT_EXCLUDE); \
+		isort --skip electron --skip archive --skip .venv .; \
+		autoflake --in-place --recursive --remove-all-unused-imports --remove-unused-variables --exclude $(LINT_EXCLUDE) .; \
 	)
 
 

@@ -93,6 +93,7 @@ def _evict_expired_caches() -> None:
         for k in drop:
             _track_velocity_cache.pop(k, None)
 
+
 # Bounded thread pool for background tasks (save transits, Telegram, track pre-fetch).
 # Max 4 workers prevents unbounded thread growth under high request rates while
 # still allowing concurrent work.  Tasks that arrive while all workers are busy
@@ -116,14 +117,21 @@ app.secret_key = os.environ.get("SECRET_KEY", os.urandom(24).hex())
 # Compute a stable app version from git commit hash for cache-busting static assets.
 try:
     import subprocess as _subprocess
-    _git_hash = _subprocess.check_output(
-        ["git", "rev-parse", "HEAD"], stderr=_subprocess.DEVNULL
-    ).decode().strip()[:8]
+
+    _git_hash = (
+        _subprocess.check_output(
+            ["git", "rev-parse", "HEAD"], stderr=_subprocess.DEVNULL
+        )
+        .decode()
+        .strip()[:8]
+    )
 except Exception:
     import time as _time
+
     _git_hash = str(int(_time.time()))
 
 APP_VERSION = _git_hash
+
 
 @app.context_processor
 def inject_app_version():
@@ -315,7 +323,9 @@ def cache_stats():
     return jsonify(cache.get_stats())
 
 
-def _resolve_min_altitude(azimuth_deg: float, args_or_data, default: float = 15.0) -> float:
+def _resolve_min_altitude(
+    azimuth_deg: float, args_or_data, default: float = 15.0
+) -> float:
     """Return the directional min-altitude threshold for *azimuth_deg*.
 
     Reads ``min_alt_n/e/s/w`` from *args_or_data* (a Flask ``request.args``
@@ -323,8 +333,9 @@ def _resolve_min_altitude(azimuth_deg: float, args_or_data, default: float = 15.
     to *default*.  This ensures the correct quadrant value is used rather than
     collapsing all four down to their minimum.
     """
+
     def _get(key):
-        if hasattr(args_or_data, 'get'):
+        if hasattr(args_or_data, "get"):
             v = args_or_data.get(key)
         else:
             v = args_or_data.get(key)
@@ -431,7 +442,9 @@ def get_all_flights():
                 continue
 
             # Check directional minimum altitude for this target
-            min_altitude = _resolve_min_altitude(coords.get("azimuthal", 0), request.args)
+            min_altitude = _resolve_min_altitude(
+                coords.get("azimuthal", 0), request.args
+            )
             target_above_min = coords["altitude"] >= min_altitude
             target_above_horizon = coords["altitude"] > 0
 
@@ -524,9 +537,7 @@ def get_all_flights():
                 "lonUpperRight": max(b["lonUpperRight"] for b in all_bboxes_used),
             }
         else:
-            _bbox_for_client = (
-                None  # both targets below horizon — no API query made
-            )
+            _bbox_for_client = None  # both targets below horizon — no API query made
 
         # Combine results
         data = {
@@ -571,7 +582,9 @@ def get_all_flights():
             if send_notif:
                 try:
                     # Only send notifications for transits where the target is trackable
-                    notifiable = [f for f in flights_snapshot if not f.get("target_below_min_alt")]
+                    notifiable = [
+                        f for f in flights_snapshot if not f.get("target_below_min_alt")
+                    ]
                     asyncio.run(send_telegram_notification(notifiable, None))
                 except Exception as e:
                     logger.error(f"Error sending Telegram notification: {e}")
@@ -627,7 +640,9 @@ def get_all_flights():
                     except Exception as e:
                         logger.error(f"[BG] Track prefetch failed for {fid}: {e}")
 
-        _bg_executor.submit(_background_tasks, list(data["flights"]), has_send_notification)
+        _bg_executor.submit(
+            _background_tasks, list(data["flights"]), has_send_notification
+        )
 
         # Schedule automatic recordings for high-probability transits
         transit_recorder = get_transit_recorder()

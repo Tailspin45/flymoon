@@ -39,8 +39,10 @@ EXPECTED_ENRICHMENT = {
 
 
 def _clear_cache():
-    """Empty the module-level enrichment cache between tests."""
+    """Empty the module-level enrichment cache and reset backoff state between tests."""
     transit_module._FA_ENRICHMENT_CACHE.clear()
+    transit_module._FA_ENRICHMENT_BACKOFF_UNTIL = 0.0
+    transit_module._FA_ENRICHMENT_LAST_BACKOFF_LOG = 0.0
 
 
 def make_mock_response(status_code=200, json_data=None):

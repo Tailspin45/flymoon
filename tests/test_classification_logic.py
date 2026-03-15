@@ -30,9 +30,9 @@ def test_angular_separation_calculation():
 
     for alt1, az1, alt2, az2, max_expected, description in test_cases:
         result = round(angular_separation(alt1, az1, alt2, az2), 3)
-        assert result <= max_expected, (
-            f"{description}: expected ≤ {max_expected}°, got {result}°"
-        )
+        assert (
+            result <= max_expected
+        ), f"{description}: expected ≤ {max_expected}°, got {result}°"
 
 
 def test_classification_thresholds():
@@ -63,9 +63,9 @@ def test_classification_thresholds():
 
     for sep, expected_level, expected_name, description in test_cases:
         result = get_possibility_level(sep)
-        assert result == expected_level, (
-            f"{description}: expected {expected_name} ({expected_level}), got {result}"
-        )
+        assert (
+            result == expected_level
+        ), f"{description}: expected {expected_name} ({expected_level}), got {result}"
 
 
 def test_cosine_correction_effect():
@@ -102,9 +102,9 @@ def test_cosine_correction_effect():
     ) in test_cases:
         sep = angular_separation(alt1, az1, alt2, az2)
         result = get_possibility_level(sep)
-        assert result == expected_level, (
-            f"{description}: σ={sep:.3f}°, expected {expected_name} ({expected_level}), got {result}"
-        )
+        assert (
+            result == expected_level
+        ), f"{description}: σ={sep:.3f}°, expected {expected_name} ({expected_level}), got {result}"
 
 
 def main():

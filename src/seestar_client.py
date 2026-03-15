@@ -112,7 +112,9 @@ class SeestarClient:
             with open(env_path, "w", encoding="utf-8") as fh:
                 fh.writelines(lines)
 
-            logger.info(f"[Seestar] Persisted discovered host to {env_path}: {new_host}")
+            logger.info(
+                f"[Seestar] Persisted discovered host to {env_path}: {new_host}"
+            )
         except OSError as e:
             logger.warning(f"[Seestar] Failed to persist SEESTAR_HOST to .env: {e}")
 
@@ -455,6 +457,14 @@ class SeestarClient:
         t = threading.Thread(target=_send, daemon=True)
         t.start()
 
+    def _quick_reachable(self, host: str, timeout: float = 2.0) -> bool:
+        """Return True if host:port accepts a TCP connection within timeout."""
+        try:
+            with socket.create_connection((host, self.port), timeout=timeout):
+                return True
+        except Exception:
+            return False
+
     def connect(self) -> bool:
         """
         Connect to Seestar telescope with exponential backoff retry.
@@ -472,6 +482,27 @@ class SeestarClient:
         if self._connected:
             logger.warning("Already connected")
             return True
+
+        # Fast pre-check: if the configured host doesn't respond quickly,
+        # run auto-discover before the slow retry loop.
+        if not self._quick_reachable(self.host):
+            logger.info(
+                f"[Seestar] {self.host}:{self.port} not immediately reachable, "
+                "scanning subnet for Seestar…"
+            )
+            discovered = self._auto_discover()
+            if discovered:
+                if discovered != self.host:
+                    logger.warning(
+                        f"[Seestar] Auto-discovered at {discovered} "
+                        f"(was {self.host}). Persisting to .env."
+                    )
+                    self.host = discovered
+                    self._persist_host_to_env(discovered)
+            else:
+                logger.warning(
+                    "[Seestar] Auto-discover found nothing; trying configured host anyway."
+                )
 
         last_error = None
         delay = self.retry_initial_delay
@@ -523,6 +554,7 @@ class SeestarClient:
                 host_down = hasattr(e, "errno") and e.errno in (
                     _errno.EHOSTDOWN,
                     _errno.EHOSTUNREACH,
+                    _errno.ECONNREFUSED,
                     64,
                 )
                 timed_out = isinstance(e, socket.timeout) or (

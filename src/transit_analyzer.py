@@ -1347,7 +1347,14 @@ def _filter_transit_coherence(
                     used_ids.add(id(c))
 
         # ── 4. Evaluate each track ──────────────────────────────────────
-        _rejected = {"short": 0, "duration": 0, "travel": 0, "speed": 0, "linearity": 0, "aspect": 0}
+        _rejected = {
+            "short": 0,
+            "duration": 0,
+            "travel": 0,
+            "speed": 0,
+            "linearity": 0,
+            "aspect": 0,
+        }
         for track in tracks:
             if len(track) < 3:
                 _rejected["short"] += 1
@@ -1403,8 +1410,7 @@ def _filter_transit_coherence(
         if not kept:
             reasons = ", ".join(f"{k}={v}" for k, v in _rejected.items() if v > 0)
             logger.info(
-                f"[Analyzer] Coherence: {len(tracks)} tracks rejected "
-                f"({reasons})"
+                f"[Analyzer] Coherence: {len(tracks)} tracks rejected " f"({reasons})"
             )
 
     return kept
@@ -1600,8 +1606,13 @@ def composite_from_frames(
     # Timestamp annotation
     label = f"{extracted}/{len(valid_frames)} frames, manual composite"
     cv2.putText(
-        canvas, label, (10, h - 15),
-        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (200, 200, 200), 1,
+        canvas,
+        label,
+        (10, h - 15),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        0.5,
+        (200, 200, 200),
+        1,
     )
 
     # Save

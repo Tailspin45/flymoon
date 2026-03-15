@@ -51,10 +51,14 @@ def _detect_disk(frame: np.ndarray):
     max_r = min(h, w) // 2
 
     circles = cv2.HoughCircles(
-        blurred, cv2.HOUGH_GRADIENT,
-        dp=1.2, minDist=min(h, w) // 2,
-        param1=50, param2=30,
-        minRadius=min_r, maxRadius=max_r,
+        blurred,
+        cv2.HOUGH_GRADIENT,
+        dp=1.2,
+        minDist=min(h, w) // 2,
+        param1=50,
+        param2=30,
+        minRadius=min_r,
+        maxRadius=max_r,
     )
     if circles is not None:
         c = np.round(circles[0][0]).astype(int)
@@ -64,7 +68,7 @@ def _detect_disk(frame: np.ndarray):
     contours, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     if contours:
         largest = max(contours, key=cv2.contourArea)
-        if cv2.contourArea(largest) > (min_r ** 2 * np.pi):
+        if cv2.contourArea(largest) > (min_r**2 * np.pi):
             (cx, cy), radius = cv2.minEnclosingCircle(largest)
             return int(cx), int(cy), int(radius)
     return None
@@ -98,9 +102,12 @@ def annotate_sunspots(frame: np.ndarray) -> np.ndarray:
     cv2.circle(spot_mask, (cx, cy), spot_inner_r, 255, -1)
 
     adapt = cv2.adaptiveThreshold(
-        blur_e, 255,
-        cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY_INV,
-        blockSize=51, C=6,
+        blur_e,
+        255,
+        cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
+        cv2.THRESH_BINARY_INV,
+        blockSize=51,
+        C=6,
     )
     adapt = cv2.bitwise_and(adapt, spot_mask)
     kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
@@ -185,8 +192,12 @@ class SolarTimelapse:
         self._stabilize_enabled: bool = True
         self._stabilize_max_shift_px: float = 25.0
         self._stabilize_smoothing: float = 0.85
-        self._stabilize_ref_gray: Optional[np.ndarray] = None  # phase-correlation fallback anchor
-        self._stabilize_anchor_center: Optional[tuple] = None  # (cx, cy) disk center of first frame
+        self._stabilize_ref_gray: Optional[np.ndarray] = (
+            None  # phase-correlation fallback anchor
+        )
+        self._stabilize_anchor_center: Optional[tuple] = (
+            None  # (cx, cy) disk center of first frame
+        )
         self._stabilize_offset = (0.0, 0.0)  # smoothed cumulative offset
         self._consecutive_failures: int = 0
         self._last_error: Optional[str] = None
@@ -196,10 +207,18 @@ class SolarTimelapse:
     def _today_paths(self, now: datetime):
         day_str = now.strftime("%Y%m%d")
         frames_dir = os.path.join(
-            "static", "captures", str(now.year), f"{now.month:02d}", f"timelapse_{day_str}"
+            "static",
+            "captures",
+            str(now.year),
+            f"{now.month:02d}",
+            f"timelapse_{day_str}",
         )
         output_path = os.path.join(
-            "static", "captures", str(now.year), f"{now.month:02d}", f"timelapse_{day_str}.mp4"
+            "static",
+            "captures",
+            str(now.year),
+            f"{now.month:02d}",
+            f"timelapse_{day_str}.mp4",
         )
         return frames_dir, output_path
 
@@ -253,10 +272,9 @@ class SolarTimelapse:
             self._host = host
             self._rtsp_port = int(os.getenv("SEESTAR_RTSP_PORT", "4554"))
             self._interval = max(10.0, interval)
-            self._stabilize_enabled = (
-                os.getenv("SOLAR_TIMELAPSE_STABILIZE", "true").strip().lower()
-                in ("1", "true", "yes", "on")
-            )
+            self._stabilize_enabled = os.getenv(
+                "SOLAR_TIMELAPSE_STABILIZE", "true"
+            ).strip().lower() in ("1", "true", "yes", "on")
             self._stabilize_max_shift_px = float(
                 os.getenv("SOLAR_TIMELAPSE_STABILIZE_MAX_SHIFT", "25")
             )
@@ -306,10 +324,9 @@ class SolarTimelapse:
             self._host = host
             self._rtsp_port = int(os.getenv("SEESTAR_RTSP_PORT", "4554"))
             self._interval = max(10.0, interval)
-            self._stabilize_enabled = (
-                os.getenv("SOLAR_TIMELAPSE_STABILIZE", "true").strip().lower()
-                in ("1", "true", "yes", "on")
-            )
+            self._stabilize_enabled = os.getenv(
+                "SOLAR_TIMELAPSE_STABILIZE", "true"
+            ).strip().lower() in ("1", "true", "yes", "on")
             self._stabilize_max_shift_px = float(
                 os.getenv("SOLAR_TIMELAPSE_STABILIZE_MAX_SHIFT", "25")
             )
@@ -337,17 +354,23 @@ class SolarTimelapse:
             if existing_count > 0:
                 first_frame = os.path.join(frames_dir, "frame_00001.jpg")
                 if os.path.exists(first_frame):
-                    self._start_time = datetime.fromtimestamp(os.path.getmtime(first_frame))
+                    self._start_time = datetime.fromtimestamp(
+                        os.path.getmtime(first_frame)
+                    )
                     anchor = cv2.imread(first_frame)
                     if anchor is not None:
                         disk = _detect_disk(anchor)
                         if disk is not None:
                             self._stabilize_anchor_center = (disk[0], disk[1])
-                            logger.info(f"[Timelapse] Disk anchor restored: center=({disk[0]:.0f},{disk[1]:.0f})")
+                            logger.info(
+                                f"[Timelapse] Disk anchor restored: center=({disk[0]:.0f},{disk[1]:.0f})"
+                            )
                         gray = cv2.cvtColor(anchor, cv2.COLOR_BGR2GRAY)
                         gray = cv2.GaussianBlur(gray, (5, 5), 0)
                         self._stabilize_ref_gray = np.float32(gray)
-                        logger.info("[Timelapse] Stabilization anchor restored from frame_00001.jpg")
+                        logger.info(
+                            "[Timelapse] Stabilization anchor restored from frame_00001.jpg"
+                        )
                 else:
                     self._start_time = now
             else:
@@ -405,7 +428,9 @@ class SolarTimelapse:
     def update_smoothing(self, smoothing: float) -> dict:
         with self._lock:
             self._stabilize_smoothing = max(0.0, min(1.0, smoothing))
-            logger.info(f"[Timelapse] Stabilize smoothing updated to {self._stabilize_smoothing:.2f}")
+            logger.info(
+                f"[Timelapse] Stabilize smoothing updated to {self._stabilize_smoothing:.2f}"
+            )
             return self.status()
 
     def status(self) -> dict:
@@ -462,7 +487,9 @@ class SolarTimelapse:
 
         # Filesystem access outside lock
         if result["frames_dir"]:
-            result["latest_frame"] = self._latest_frame_url_for_dir(result["frames_dir"])
+            result["latest_frame"] = self._latest_frame_url_for_dir(
+                result["frames_dir"]
+            )
         else:
             result["latest_frame"] = None
         return result
@@ -501,18 +528,25 @@ class SolarTimelapse:
         pattern = os.path.join(frames_dir, "frame_%05d.jpg")
         return self._build_preview_mp4(pattern, preview_path, len(frames))
 
-    def _build_preview_mp4(self, pattern: str, output: str,
-                           frame_count: int) -> Optional[str]:
+    def _build_preview_mp4(
+        self, pattern: str, output: str, frame_count: int
+    ) -> Optional[str]:
         """Encode a preview MP4 and return its web URL."""
         fps = 10
         cmd = [
             FFMPEG,
-            "-framerate", str(round(fps, 2)),
-            "-i", pattern,
-            "-c:v", "libx264",
-            "-pix_fmt", "yuv420p",
-            "-crf", "23",
-            "-preset", "fast",
+            "-framerate",
+            str(round(fps, 2)),
+            "-i",
+            pattern,
+            "-c:v",
+            "libx264",
+            "-pix_fmt",
+            "yuv420p",
+            "-crf",
+            "23",
+            "-preset",
+            "fast",
             "-y",
             output,
         ]
@@ -610,9 +644,7 @@ class SolarTimelapse:
                 was_running = self._running
                 self._running = False
                 self._paused = False
-            logger.info(
-                f"[Timelapse] Capture loop ended — {self._frame_count} frames"
-            )
+            logger.info(f"[Timelapse] Capture loop ended — {self._frame_count} frames")
             # Auto-assemble if we had frames and weren't manually stopped
             if was_running and self._frame_count > 0 and not self._stop_event.is_set():
                 self._assemble_video()
@@ -633,11 +665,16 @@ class SolarTimelapse:
 
         cmd = [
             FFMPEG,
-            "-rtsp_transport", "tcp",
-            "-i", rtsp_url,
-            "-frames:v", "1",
-            "-update", "1",
-            "-q:v", "2",
+            "-rtsp_transport",
+            "tcp",
+            "-i",
+            rtsp_url,
+            "-frames:v",
+            "1",
+            "-update",
+            "1",
+            "-q:v",
+            "2",
             "-y",
             filepath,
         ]
@@ -692,7 +729,9 @@ class SolarTimelapse:
             disk = _detect_disk(frame)
             if disk is not None:
                 self._stabilize_anchor_center = (disk[0], disk[1])
-                logger.info(f"[Timelapse] Disk anchor set: center=({disk[0]:.0f},{disk[1]:.0f}) r={disk[2]:.0f}px")
+                logger.info(
+                    f"[Timelapse] Disk anchor set: center=({disk[0]:.0f},{disk[1]:.0f}) r={disk[2]:.0f}px"
+                )
             gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
             self._stabilize_ref_gray = np.float32(cv2.GaussianBlur(gray, (5, 5), 0))
             self._stabilize_offset = (0.0, 0.0)
@@ -712,15 +751,33 @@ class SolarTimelapse:
             if dx is None:
                 gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
                 gray32 = np.float32(cv2.GaussianBlur(gray, (5, 5), 0))
-                (pdx, pdy), response = cv2.phaseCorrelate(self._stabilize_ref_gray, gray32)
+                (pdx, pdy), response = cv2.phaseCorrelate(
+                    self._stabilize_ref_gray, gray32
+                )
                 if response >= 0.02:
-                    dx = float(np.clip(-pdx, -self._stabilize_max_shift_px, self._stabilize_max_shift_px))
-                    dy = float(np.clip(-pdy, -self._stabilize_max_shift_px, self._stabilize_max_shift_px))
+                    dx = float(
+                        np.clip(
+                            -pdx,
+                            -self._stabilize_max_shift_px,
+                            self._stabilize_max_shift_px,
+                        )
+                    )
+                    dy = float(
+                        np.clip(
+                            -pdy,
+                            -self._stabilize_max_shift_px,
+                            self._stabilize_max_shift_px,
+                        )
+                    )
                 else:
                     dx, dy = self._stabilize_offset  # no signal — hold last correction
 
-            dx = float(np.clip(dx, -self._stabilize_max_shift_px, self._stabilize_max_shift_px))
-            dy = float(np.clip(dy, -self._stabilize_max_shift_px, self._stabilize_max_shift_px))
+            dx = float(
+                np.clip(dx, -self._stabilize_max_shift_px, self._stabilize_max_shift_px)
+            )
+            dy = float(
+                np.clip(dy, -self._stabilize_max_shift_px, self._stabilize_max_shift_px)
+            )
 
             # Smooth to avoid sudden jumps between disk-detected and fallback frames
             prev_x, prev_y = self._stabilize_offset
@@ -734,8 +791,11 @@ class SolarTimelapse:
 
             m = np.float32([[1, 0, smoothed_x], [0, 1, smoothed_y]])
             stabilized = cv2.warpAffine(
-                frame, m, (frame.shape[1], frame.shape[0]),
-                flags=cv2.INTER_LINEAR, borderMode=cv2.BORDER_REPLICATE,
+                frame,
+                m,
+                (frame.shape[1], frame.shape[0]),
+                flags=cv2.INTER_LINEAR,
+                borderMode=cv2.BORDER_REPLICATE,
             )
             cv2.imwrite(frame_path, stabilized, [cv2.IMWRITE_JPEG_QUALITY, 92])
             return True
@@ -774,37 +834,46 @@ class SolarTimelapse:
         # Assemble raw frames
         self._encode_sequence(
             os.path.join(self._frames_dir, "frame_%05d.jpg"),
-            self._output_path, len(raw_frames), fps, "raw"
+            self._output_path,
+            len(raw_frames),
+            fps,
+            "raw",
         )
 
         # Assemble annotated frames (sunspot-annotated version)
         ann_dir = os.path.join(self._frames_dir, "annotated")
         if os.path.isdir(ann_dir):
-            ann_frames = sorted(
-                f for f in os.listdir(ann_dir) if f.endswith(".jpg")
-            )
+            ann_frames = sorted(f for f in os.listdir(ann_dir) if f.endswith(".jpg"))
             if len(ann_frames) >= 2:
                 ann_output = self._output_path.rsplit(".", 1)[0] + "_sunspots.mp4"
                 self._encode_sequence(
                     os.path.join(ann_dir, "frame_%05d.jpg"),
-                    ann_output, len(ann_frames), fps, "annotated"
+                    ann_output,
+                    len(ann_frames),
+                    fps,
+                    "annotated",
                 )
 
-    def _encode_sequence(self, pattern: str, output: str,
-                         frame_count: int, fps: float, label: str):
+    def _encode_sequence(
+        self, pattern: str, output: str, frame_count: int, fps: float, label: str
+    ):
         """Encode a numbered JPEG sequence into an MP4."""
-        logger.info(
-            f"[Timelapse] Assembling {frame_count} {label} frames → {output}"
-        )
+        logger.info(f"[Timelapse] Assembling {frame_count} {label} frames → {output}")
 
         cmd = [
             FFMPEG,
-            "-framerate", str(round(fps, 2)),
-            "-i", pattern,
-            "-c:v", "libx264",
-            "-pix_fmt", "yuv420p",
-            "-crf", "23",
-            "-preset", "medium",
+            "-framerate",
+            str(round(fps, 2)),
+            "-i",
+            pattern,
+            "-c:v",
+            "libx264",
+            "-pix_fmt",
+            "yuv420p",
+            "-crf",
+            "23",
+            "-preset",
+            "medium",
             "-y",
             output,
         ]
@@ -823,9 +892,13 @@ class SolarTimelapse:
                 self._generate_thumbnail(output)
             else:
                 stderr_tail = result.stderr.decode(errors="replace")[-300:]
-                logger.error(f"[Timelapse] {label.title()} assembly failed: {stderr_tail}")
+                logger.error(
+                    f"[Timelapse] {label.title()} assembly failed: {stderr_tail}"
+                )
         except Exception as e:
-            logger.error(f"[Timelapse] {label.title()} assembly error: {e}", exc_info=True)
+            logger.error(
+                f"[Timelapse] {label.title()} assembly error: {e}", exc_info=True
+            )
 
     def _write_metadata(self, frame_count: int, fps: float):
         """Write a sidecar JSON metadata file."""
@@ -850,11 +923,20 @@ class SolarTimelapse:
         try:
             subprocess.run(
                 [
-                    FFMPEG, "-i", video_path,
-                    "-frames:v", "1", "-update", "1",
-                    "-q:v", "5", "-y", thumb_path,
+                    FFMPEG,
+                    "-i",
+                    video_path,
+                    "-frames:v",
+                    "1",
+                    "-update",
+                    "1",
+                    "-q:v",
+                    "5",
+                    "-y",
+                    thumb_path,
                 ],
-                capture_output=True, timeout=10,
+                capture_output=True,
+                timeout=10,
             )
             if os.path.exists(thumb_path):
                 logger.info(f"[Timelapse] Thumbnail: {thumb_path}")

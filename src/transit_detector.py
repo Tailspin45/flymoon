@@ -125,7 +125,10 @@ TRACK_MIN_AGREE_FRAC = float(os.getenv("DETECTOR_TRACK_MIN_AGREE", "0.6"))
 
 # Recording stabilization: enabled by default; disable with DETECTOR_STABILIZE=false
 RECORDING_STABILIZE = os.getenv("DETECTOR_STABILIZE", "true").strip().lower() in (
-    "1", "true", "yes", "on"
+    "1",
+    "true",
+    "yes",
+    "on",
 )
 # Maximum translation shift to accept (pixels at full res).
 # Atmospheric distortion produces <8 px shifts; larger shifts are mount slippage
@@ -164,7 +167,9 @@ def _stabilize_frames(
         bgr = cv2.imdecode(arr, cv2.IMREAD_COLOR)
         if bgr is None:
             continue
-        g = cv2.GaussianBlur(cv2.cvtColor(bgr, cv2.COLOR_BGR2GRAY), (5, 5), 0).astype(np.float32)
+        g = cv2.GaussianBlur(cv2.cvtColor(bgr, cv2.COLOR_BGR2GRAY), (5, 5), 0).astype(
+            np.float32
+        )
         if ref_accum is None:
             ref_accum = g.copy()
         else:
@@ -202,7 +207,9 @@ def _stabilize_frames(
             if abs(offset_x) > 0.5 or abs(offset_y) > 0.5:
                 M = np.float32([[1, 0, offset_x], [0, 1, offset_y]])
                 bgr = cv2.warpAffine(
-                    bgr, M, (bgr.shape[1], bgr.shape[0]),
+                    bgr,
+                    M,
+                    (bgr.shape[1], bgr.shape[0]),
                     flags=cv2.INTER_LINEAR,
                     borderMode=cv2.BORDER_REPLICATE,
                 )
@@ -250,6 +257,7 @@ CENTRE_MASK, EDGE_MASK = _build_spatial_masks(ANALYSIS_HEIGHT, ANALYSIS_WIDTH)
 # Disk detection and disk-aware masks
 # ---------------------------------------------------------------------------
 
+
 def _detect_disk(gray: np.ndarray) -> Optional[tuple]:
     """Find the Sun/Moon disk in a 160×90 grayscale frame.
 
@@ -259,8 +267,8 @@ def _detect_disk(gray: np.ndarray) -> Optional[tuple]:
     """
     h, w = gray.shape[:2]
     blurred = cv2.GaussianBlur(gray, (5, 5), 1)
-    min_r = min(h, w) // 8   # ~11 px
-    max_r = min(h, w) // 2   # ~45 px
+    min_r = min(h, w) // 8  # ~11 px
+    max_r = min(h, w) // 2  # ~45 px
 
     circles = cv2.HoughCircles(
         blurred,
@@ -439,9 +447,9 @@ class TransitDetector:
         self._consec_above = 0
 
         # Centroid track state (at detection resolution)
-        self._track_centroid_prev: Optional[tuple] = None   # (cx, cy) last frame
+        self._track_centroid_prev: Optional[tuple] = None  # (cx, cy) last frame
         self._track_displacement_prev: Optional[tuple] = None  # (dx, dy) last frame
-        self._track_agree_count: int = 0   # frames in current streak with positive dot
+        self._track_agree_count: int = 0  # frames in current streak with positive dot
 
         # Freeze reference updates after detection
         self._ref_freeze_until = 0
@@ -471,8 +479,8 @@ class TransitDetector:
         self._disk_cx: Optional[int] = None
         self._disk_cy: Optional[int] = None
         self._disk_radius: Optional[int] = None
-        self._disk_mask: Optional[np.ndarray] = None   # bool H×W — inner disk
-        self._limb_mask: Optional[np.ndarray] = None   # bool H×W — excluded limb ring
+        self._disk_mask: Optional[np.ndarray] = None  # bool H×W — inner disk
+        self._limb_mask: Optional[np.ndarray] = None  # bool H×W — excluded limb ring
         self._disk_weight: Optional[np.ndarray] = None  # float32 H×W — smooth weight
         self._disk_detected = False
 
@@ -592,14 +600,16 @@ class TransitDetector:
             "recent_events": [e.to_dict() for e in list(self.events)[-10:]],
             "recording_active": self._rec_process is not None,
             "disk_detected": self._disk_detected,
-            "disk_info": {
-                "cx": self._disk_cx,
-                "cy": self._disk_cy,
-                "radius": self._disk_radius,
-                "margin_pct": self.disk_margin_pct,
-            }
-            if self._disk_detected
-            else None,
+            "disk_info": (
+                {
+                    "cx": self._disk_cx,
+                    "cy": self._disk_cy,
+                    "radius": self._disk_radius,
+                    "margin_pct": self.disk_margin_pct,
+                }
+                if self._disk_detected
+                else None
+            ),
             "settings": {
                 "disk_margin_pct": self.disk_margin_pct,
                 "centre_ratio_min": self.centre_ratio_min,
@@ -748,12 +758,18 @@ class TransitDetector:
         """
         cmd = [
             FFMPEG,
-            "-rtsp_transport", "tcp",
-            "-timeout", "10000000",
-            "-i", self.rtsp_url,
-            "-f", "mjpeg",
-            "-q:v", "3",       # high quality JPEG
-            "-r", "30",        # 30 fps
+            "-rtsp_transport",
+            "tcp",
+            "-timeout",
+            "10000000",
+            "-i",
+            self.rtsp_url,
+            "-f",
+            "mjpeg",
+            "-q:v",
+            "3",  # high quality JPEG
+            "-r",
+            "30",  # 30 fps
             "-an",
             "pipe:1",
         ]
@@ -793,8 +809,8 @@ class TransitDetector:
                             # Trim before SOI marker to avoid unbounded growth
                             buf = buf[soi_pos:]
                             break
-                        jpeg_data = buf[soi_pos:eoi_pos + 2]
-                        buf = buf[eoi_pos + 2:]
+                        jpeg_data = buf[soi_pos : eoi_pos + 2]
+                        buf = buf[eoi_pos + 2 :]
 
                         self._hires_buffer.append(jpeg_data)
 
@@ -804,7 +820,9 @@ class TransitDetector:
                                 arr = np.frombuffer(jpeg_data, dtype=np.uint8)
                                 img = cv2.imdecode(arr, cv2.IMREAD_COLOR)
                                 if img is not None:
-                                    self._hires_height, self._hires_width = img.shape[:2]
+                                    self._hires_height, self._hires_width = img.shape[
+                                        :2
+                                    ]
                                     got_dimensions = True
                                     logger.info(
                                         f"[HiRes] Buffer active: {self._hires_width}×{self._hires_height} "
@@ -866,10 +884,8 @@ class TransitDetector:
                         f"radius={r}px, margin={self.disk_margin_pct*100:.0f}%"
                     )
                 self._disk_cx, self._disk_cy, self._disk_radius = cx, cy, r
-                self._disk_mask, self._limb_mask, self._disk_weight = (
-                    _build_disk_masks(
-                        ANALYSIS_HEIGHT, ANALYSIS_WIDTH, cx, cy, r, self.disk_margin_pct
-                    )
+                self._disk_mask, self._limb_mask, self._disk_weight = _build_disk_masks(
+                    ANALYSIS_HEIGHT, ANALYSIS_WIDTH, cx, cy, r, self.disk_margin_pct
                 )
                 self._disk_detected = True
             elif self._disk_detected:
@@ -960,7 +976,9 @@ class TransitDetector:
         else:
             self._track_displacement_prev = None
 
-        self._track_centroid_prev = (track_cx, track_cy) if track_cx is not None else None
+        self._track_centroid_prev = (
+            (track_cx, track_cy) if track_cx is not None else None
+        )
 
         # --- Signal trace (1fps) ---
         if self._frame_idx % SIGNAL_TRACE_INTERVAL == 0:
@@ -996,7 +1014,7 @@ class TransitDetector:
         # proportionally to suppress the false-positive burst.
         if len(self._bg_scores_a) >= ANALYSIS_FPS * 10:
             bg_median = float(np.median(self._bg_scores_a))
-            recent = list(self._scores_a)[-ANALYSIS_FPS * 3:]
+            recent = list(self._scores_a)[-ANALYSIS_FPS * 3 :]
             recent_median = float(np.median(recent)) if recent else 0.0
             noise_factor = max(1.0, (recent_median / max(bg_median, 1e-6)) * 0.5)
         else:
@@ -1032,7 +1050,7 @@ class TransitDetector:
             min_agree = int(self.consec_frames_required * self.track_min_agree_frac)
             track_ok = self._track_agree_count >= min_agree
 
-            self._consec_above = 0       # reset so next event starts clean
+            self._consec_above = 0  # reset so next event starts clean
             self._track_agree_count = 0
 
             if not track_ok:
@@ -1046,7 +1064,9 @@ class TransitDetector:
                     self._last_detection_time = now
                     # Freeze reference to prevent transit frames corrupting baseline
                     self._ref_freeze_until = self._frame_idx + REF_FREEZE_FRAMES
-                    self._fire_detection(score_a, score_b, thresh_a, thresh_b, centre_ratio)
+                    self._fire_detection(
+                        score_a, score_b, thresh_a, thresh_b, centre_ratio
+                    )
 
     @staticmethod
     def _adaptive_threshold(scores: Deque[float]) -> float:
@@ -1160,13 +1180,30 @@ class TransitDetector:
             frame_file = os.path.join(year_month, f"{base}_frame.jpg")
             rgb = np.clip(self._current_frame, 0, 255).astype(np.uint8)
             bgr = cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR)
-            bgr = cv2.resize(bgr, (ANALYSIS_WIDTH * UPSCALE, ANALYSIS_HEIGHT * UPSCALE),
-                             interpolation=cv2.INTER_NEAREST)
+            bgr = cv2.resize(
+                bgr,
+                (ANALYSIS_WIDTH * UPSCALE, ANALYSIS_HEIGHT * UPSCALE),
+                interpolation=cv2.INTER_NEAREST,
+            )
             # Annotate with frame number and timestamp
-            cv2.putText(bgr, frame_label, (8, 24),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 255, 255), 1)
-            cv2.putText(bgr, ts.strftime("%H:%M:%S"), (8, 48),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (200, 200, 200), 1)
+            cv2.putText(
+                bgr,
+                frame_label,
+                (8, 24),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.55,
+                (0, 255, 255),
+                1,
+            )
+            cv2.putText(
+                bgr,
+                ts.strftime("%H:%M:%S"),
+                (8, 48),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.5,
+                (200, 200, 200),
+                1,
+            )
             cv2.imwrite(frame_file, bgr)
             event.frame_path = frame_file
 
@@ -1180,13 +1217,30 @@ class TransitDetector:
                 else:
                     diff_norm = np.zeros_like(diff_gray, dtype=np.uint8)
                 heatmap = cv2.applyColorMap(diff_norm, cv2.COLORMAP_JET)
-                heatmap = cv2.resize(heatmap, (ANALYSIS_WIDTH * UPSCALE, ANALYSIS_HEIGHT * UPSCALE),
-                                     interpolation=cv2.INTER_NEAREST)
+                heatmap = cv2.resize(
+                    heatmap,
+                    (ANALYSIS_WIDTH * UPSCALE, ANALYSIS_HEIGHT * UPSCALE),
+                    interpolation=cv2.INTER_NEAREST,
+                )
                 # Label so it's obvious this is a diff heatmap, not a camera image
-                cv2.putText(heatmap, "DIFF HEATMAP", (8, 24),
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
-                cv2.putText(heatmap, f"{ts.strftime('%H:%M:%S')}  {frame_label}", (8, 50),
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.5, (200, 200, 200), 1)
+                cv2.putText(
+                    heatmap,
+                    "DIFF HEATMAP",
+                    (8, 24),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    0.7,
+                    (255, 255, 255),
+                    2,
+                )
+                cv2.putText(
+                    heatmap,
+                    f"{ts.strftime('%H:%M:%S')}  {frame_label}",
+                    (8, 50),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    0.5,
+                    (200, 200, 200),
+                    1,
+                )
                 # Draw detected disk outline and margin if available
                 if self._disk_detected and self._disk_radius:
                     dcx = self._disk_cx * UPSCALE
@@ -1197,11 +1251,25 @@ class TransitDetector:
                     cv2.circle(heatmap, (dcx, dcy), dr, (0, 255, 255), 1)
                     # Inner margin boundary (green) — only inside this counts
                     cv2.circle(heatmap, (dcx, dcy), inner_r, (0, 255, 0), 1)
-                    cv2.putText(heatmap, f"disk r={self._disk_radius}px margin={self.disk_margin_pct*100:.0f}%",
-                                (8, 74), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (0, 255, 0), 1)
+                    cv2.putText(
+                        heatmap,
+                        f"disk r={self._disk_radius}px margin={self.disk_margin_pct*100:.0f}%",
+                        (8, 74),
+                        cv2.FONT_HERSHEY_SIMPLEX,
+                        0.45,
+                        (0, 255, 0),
+                        1,
+                    )
                 else:
-                    cv2.putText(heatmap, "no disk (rect fallback)",
-                                (8, 74), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (100, 100, 255), 1)
+                    cv2.putText(
+                        heatmap,
+                        "no disk (rect fallback)",
+                        (8, 74),
+                        cv2.FONT_HERSHEY_SIMPLEX,
+                        0.45,
+                        (100, 100, 255),
+                        1,
+                    )
                 cv2.imwrite(diff_file, heatmap)
                 event.diff_path = diff_file
 
@@ -1258,7 +1326,9 @@ class TransitDetector:
                     current_len = len(self._hires_buffer)
                     if current_len > buf_snapshot_len:
                         # New frames arrived — grab them
-                        new_frames = list(self._hires_buffer)[-( current_len - buf_snapshot_len):]
+                        new_frames = list(self._hires_buffer)[
+                            -(current_len - buf_snapshot_len) :
+                        ]
                         post_frames.extend(new_frames)
                         buf_snapshot_len = current_len
                     time.sleep(0.03)
@@ -1279,7 +1349,9 @@ class TransitDetector:
                             f"[Detector] Stabilization applied to {len(all_frames)} frames"
                         )
                     except Exception as e:
-                        logger.warning(f"[Detector] Stabilization failed, using raw frames: {e}")
+                        logger.warning(
+                            f"[Detector] Stabilization failed, using raw frames: {e}"
+                        )
 
                 written = len(all_frames)
 
@@ -1289,15 +1361,24 @@ class TransitDetector:
                 # from a background thread ("waiting to write video data").
                 # ffmpeg has no such threading restriction.
                 ffmpeg_cmd = [
-                    FFMPEG, "-y",
-                    "-f", "mjpeg",
-                    "-r", str(fps),
-                    "-i", "pipe:0",
-                    "-c:v", "libx264",
-                    "-preset", "fast",
-                    "-crf", "23",
-                    "-pix_fmt", "yuv420p",
-                    "-movflags", "+faststart",
+                    FFMPEG,
+                    "-y",
+                    "-f",
+                    "mjpeg",
+                    "-r",
+                    str(fps),
+                    "-i",
+                    "pipe:0",
+                    "-c:v",
+                    "libx264",
+                    "-preset",
+                    "fast",
+                    "-crf",
+                    "23",
+                    "-pix_fmt",
+                    "yuv420p",
+                    "-movflags",
+                    "+faststart",
                     filepath,
                 ]
                 proc = subprocess.Popen(

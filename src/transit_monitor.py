@@ -76,7 +76,9 @@ class TransitMonitor:
     def set_disabled_targets(self, disabled: Set[str]) -> None:
         """Update the set of targets the monitor should skip (e.g. {'moon'})."""
         self.disabled_targets = {t.strip().lower() for t in disabled}
-        logger.info("[TransitMonitor] Disabled targets: %s", self.disabled_targets or "none")
+        logger.info(
+            "[TransitMonitor] Disabled targets: %s", self.disabled_targets or "none"
+        )
 
     def _monitor_loop(self):
         """Background loop that checks for transits."""
@@ -132,7 +134,9 @@ class TransitMonitor:
 
         for target_name in ["moon", "sun"]:
             if target_name in self.disabled_targets:
-                logger.debug("[TransitMonitor] %s disabled by user, skipping", target_name)
+                logger.debug(
+                    "[TransitMonitor] %s disabled by user, skipping", target_name
+                )
                 continue
             try:
                 # Get transit predictions for this target

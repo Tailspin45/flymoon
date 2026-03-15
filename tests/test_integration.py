@@ -18,30 +18,25 @@ from src.transit import get_transits
 _TEST_FILE = Path(__file__).parent.parent / "data" / "raw_flight_data_example.json"
 
 
-def _load_test_data():
-    """Load the test flight data. Returns None if unavailable."""
-    if not _TEST_FILE.exists():
-        return None
+def _ensure_fresh_test_data():
+    """Regenerate test data so sky positions match the current run time."""
+    import subprocess
+
+    generator = Path(__file__).parent.parent / "data" / "test_data_generator.py"
+    subprocess.run(
+        [sys.executable, str(generator), "--scenario", "dual_tracking"],
+        check=True,
+        capture_output=True,
+    )
     with open(_TEST_FILE) as f:
         return json.load(f)
 
 
 def test_data_classification():
     """Test that test data produces expected classifications."""
+    test_data = _ensure_fresh_test_data()
 
-    test_data = _load_test_data()
-    if not test_data:
-        # Skip gracefully when test data has not been generated yet.
-        import pytest
-        pytest.skip(
-            f"Test data file not found: {_TEST_FILE}. "
-            "Run: python3 data/test_data_generator.py"
-        )
-
-    assert "_test_metadata" in test_data, (
-        "No _test_metadata in test data. "
-        "Run: python3 data/test_data_generator.py --scenario dual_tracking"
-    )
+    assert "_test_metadata" in test_data, "No _test_metadata in regenerated test data."
 
     meta = test_data["_test_metadata"]
 
@@ -74,10 +69,10 @@ def test_data_classification():
             }
         )
 
-    # Check HIGH classifications (should be ≤ 1.5°)
+    # Check HIGH classifications (angular_separation ≤ 2.0°)
     for flight in classifications["HIGH"]:
         if flight["alt_diff"] is not None and flight["az_diff"] is not None:
-            assert not (flight["alt_diff"] > 1.5 and flight["az_diff"] > 1.5), (
+            assert not (flight["alt_diff"] > 2.0 and flight["az_diff"] > 2.0), (
                 f"{flight['id']}: HIGH but alt_diff={flight['alt_diff']}°, "
                 f"az_diff={flight['az_diff']}°"
             )
@@ -85,28 +80,30 @@ def test_data_classification():
     # Check expected flight IDs — only for targets currently above horizon.
     # Thresholds: HIGH ≤ 2.0°, MEDIUM ≤ 4.0°, LOW ≤ 12.0°.
     # MOON_HIGH / SUN_HIGH are placed at ~0.5° → HIGH.
-    # MOON_MED  / SUN_MED  are placed at ~2.0° → HIGH (boundary).
+    # MOON_MED  / SUN_MED  are placed at ~2.0° → HIGH or MEDIUM (boundary).
     # MOON_LOW  / SUN_LOW  are placed at ~2.8° → MEDIUM.
     moon_visible = meta.get("moon_altitude", -99) >= 15
     sun_visible = meta.get("sun_altitude", -99) >= 15
 
-    # Flights that must appear in HIGH or better
+    # Flights that must appear in HIGH
     expected_high_or_better = []
     # Flights that must appear in MEDIUM or better (HIGH ∪ MEDIUM)
+    # MED flights are at ~2.0° offset which is the HIGH boundary — actual
+    # angular_separation (combining alt + az) may land in HIGH or MEDIUM.
     expected_medium_or_better = []
     if moon_visible:
         expected_high_or_better.append("MOON_HIGH")
-        expected_high_or_better.append("MOON_MED")
+        expected_medium_or_better.append("MOON_MED")
         expected_medium_or_better.append("MOON_LOW")
     if sun_visible:
         expected_high_or_better.append("SUN_HIGH")
-        expected_high_or_better.append("SUN_MED")
+        expected_medium_or_better.append("SUN_MED")
         expected_medium_or_better.append("SUN_LOW")
 
     for expected_id in expected_high_or_better:
-        assert any(f["id"] == expected_id for f in classifications["HIGH"]), (
-            f"Expected {expected_id} to be HIGH classification"
-        )
+        assert any(
+            f["id"] == expected_id for f in classifications["HIGH"]
+        ), f"Expected {expected_id} to be HIGH classification"
 
     for expected_id in expected_medium_or_better:
         found = any(

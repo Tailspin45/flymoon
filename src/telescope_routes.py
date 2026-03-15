@@ -53,7 +53,10 @@ def _probe_rtsp_stream(host: str, timeout_seconds: int = 5) -> bool:
     ]
     try:
         result = subprocess.run(
-            cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=timeout_seconds
+            cmd,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            timeout=timeout_seconds,
         )
         return result.returncode == 0
     except (subprocess.TimeoutExpired, OSError):
@@ -730,7 +733,9 @@ def start_recording():
             ]
 
         # Start FFmpeg in background
-        process = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        process = subprocess.Popen(
+            cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+        )
 
         _recording_state = {
             "active": True,
@@ -944,7 +949,9 @@ def get_timelapse_status():
     try:
         tl = get_timelapse()
         if not tl.is_running:
-            auto_resume = os.getenv("SOLAR_TIMELAPSE_AUTO_RESUME", "true").strip().lower()
+            auto_resume = (
+                os.getenv("SOLAR_TIMELAPSE_AUTO_RESUME", "true").strip().lower()
+            )
             if auto_resume in ("1", "true", "yes", "on") and tl.has_today_frames():
                 client = get_telescope_client()
                 if client and client.is_connected():
@@ -1981,7 +1988,9 @@ def toggle_simulate_mode():
         try:
             _telescope_client.disconnect()
         except Exception as exc:
-            logger.warning("Error disconnecting telescope client during mode toggle: %s", exc)
+            logger.warning(
+                "Error disconnecting telescope client during mode toggle: %s", exc
+            )
         _telescope_client = None
 
     logger.info(
@@ -2403,9 +2412,12 @@ def start_detection():
                 record = body.get("record_on_detect", True)
                 # Accept full settings bundle sent by UI on start
                 for key in (
-                    "disk_margin_pct", "centre_ratio_min",
-                    "consec_frames", "sensitivity_scale",
-                    "track_min_mag", "track_min_agree_frac",
+                    "disk_margin_pct",
+                    "centre_ratio_min",
+                    "consec_frames",
+                    "sensitivity_scale",
+                    "track_min_mag",
+                    "track_min_agree_frac",
                 ):
                     if key in body:
                         extra_settings[key] = body[key]
@@ -2453,13 +2465,25 @@ def get_detection_status():
         det = get_detector()
         if not det:
             return (
-                jsonify({"running": False, "detections": 0, "recent_events": [],
-                         "settings": {
-                             "disk_margin_pct": float(os.getenv("DETECTOR_DISK_MARGIN", "0.25")),
-                             "centre_ratio_min": float(os.getenv("CENTRE_EDGE_RATIO_MIN", "2.5")),
-                             "consec_frames": int(os.getenv("CONSEC_FRAMES_REQUIRED", "7")),
-                             "sensitivity_scale": 1.0,
-                         }}),
+                jsonify(
+                    {
+                        "running": False,
+                        "detections": 0,
+                        "recent_events": [],
+                        "settings": {
+                            "disk_margin_pct": float(
+                                os.getenv("DETECTOR_DISK_MARGIN", "0.25")
+                            ),
+                            "centre_ratio_min": float(
+                                os.getenv("CENTRE_EDGE_RATIO_MIN", "2.5")
+                            ),
+                            "consec_frames": int(
+                                os.getenv("CONSEC_FRAMES_REQUIRED", "7")
+                            ),
+                            "sensitivity_scale": 1.0,
+                        },
+                    }
+                ),
                 200,
             )
         return jsonify(det.get_status()), 200
@@ -2472,8 +2496,12 @@ def update_detection_settings():
     """PATCH /telescope/detect/settings - Update live detection parameters."""
     try:
         from src.transit_detector import (
-            get_detector, DISK_MARGIN_PCT, CENTRE_EDGE_RATIO_MIN,
-            CONSEC_FRAMES_REQUIRED, TRACK_MIN_MAG, TRACK_MIN_AGREE_FRAC,
+            CENTRE_EDGE_RATIO_MIN,
+            CONSEC_FRAMES_REQUIRED,
+            DISK_MARGIN_PCT,
+            TRACK_MIN_AGREE_FRAC,
+            TRACK_MIN_MAG,
+            get_detector,
         )
 
         body = request.get_json(force=True) or {}
@@ -2498,7 +2526,9 @@ def update_detection_settings():
                 "consec_frames": body.get("consec_frames", CONSEC_FRAMES_REQUIRED),
                 "sensitivity_scale": body.get("sensitivity_scale", 1.0),
                 "track_min_mag": body.get("track_min_mag", TRACK_MIN_MAG),
-                "track_min_agree_frac": body.get("track_min_agree_frac", TRACK_MIN_AGREE_FRAC),
+                "track_min_agree_frac": body.get(
+                    "track_min_agree_frac", TRACK_MIN_AGREE_FRAC
+                ),
             }
         return jsonify({"success": True, "settings": settings}), 200
 
