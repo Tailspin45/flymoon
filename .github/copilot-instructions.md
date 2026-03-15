@@ -7,7 +7,6 @@ Flymoon tracks aircraft transiting the Sun and Moon using real-time flight data 
 **Deployment Modes:**
 - **Web Application**: Flask server with interactive map (default, `app.py`)
 - **Headless Scripts**: Background monitoring with push notifications
-  - `monitor_transits.py` - Pushbullet notifications only
   - `transit_capture.py` - Automated telescope control or Telegram notifications
 - **macOS App**: Double-clickable application bundle for `transit_capture.py`
 
@@ -103,7 +102,7 @@ Optional:
 - Telegram: `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`
 - Telescope: `ENABLE_SEESTAR`, `SEESTAR_HOST`, `SEESTAR_PORT`, `SEESTAR_TIMEOUT`
 - Recording buffers: `SEESTAR_PRE_BUFFER`, `SEESTAR_POST_BUFFER`
-- Headless monitoring: `MONITOR_INTERVAL`, `PUSH_BULLET_API_KEY`
+- Headless monitoring: `MONITOR_INTERVAL`
 - Transit detection: `ALT_THRESHOLD`, `AZ_THRESHOLD` (default: 1.0°)
 - Transit detection: `ALT_THRESHOLD` (default: 1.0°), `AZ_THRESHOLD` (default: 1.0°)
 
@@ -179,7 +178,6 @@ Thresholds are configurable via `.env` variables `ALT_THRESHOLD` and `AZ_THRESHO
 ```
 /
 ├── app.py                 # Flask application entry point
-├── monitor_transits.py    # Standalone monitoring script (Pushbullet)
 ├── transit_capture.py     # Transit capture with notifications (Telegram/Seestar)
 ├── build_mac_app.sh       # macOS .app builder script
 ├── Transit Monitor.app    # macOS application bundle (generated)

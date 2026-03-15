@@ -132,13 +132,6 @@ Flymoon connects directly to the Seestar S50 over TCP — no bridge app required
 
 ## 🤖 Headless / Background Mode
 
-### `monitor_transits.py` — Pushbullet notifications
-```bash
-python3 monitor_transits.py \
-  --latitude 51.5 --longitude -0.12 --elevation 10 \
-  --target sun --interval 15
-```
-
 ### `transit_capture.py` — Telescope control or Telegram fallback
 ```bash
 # Fully automated (Seestar + Telegram)
