@@ -99,10 +99,22 @@ window.initTelescope = function() {
     // Status polling (always poll while panel is open)
     statusPollInterval = setInterval(updateStatus, 2000);
 
-    // Auto-connect: check current state, then connect silently if not already connected
-    updateStatus().then(() => {
+    // Auto-connect: check current state, then connect silently if not already connected.
+    // After connection is confirmed, auto-start detection (default on).
+    updateStatus().then(async () => {
         if (!isConnected) {
-            connect();
+            await connect();
+        }
+        // Check if detection is already running (page reload) — if so just hook up polling
+        const statusResult = await apiCall('/telescope/detect/status', 'GET');
+        if (statusResult && statusResult.running) {
+            isDetecting = true;
+            if (!detectionPollInterval) {
+                detectionPollInterval = setInterval(pollDetectionStatus, 2000);
+            }
+            updateDetectionUI();
+        } else if (!isDetecting) {
+            await startDetection();
         }
     });
 
@@ -136,6 +148,11 @@ window.initTelescope = function() {
             checkAutoCapture();
         }
         updateEclipseState();
+        // Tick timelapse countdown locally so it moves every second, not just on poll
+        if (_timelapseRunning) {
+            if (_timelapseNextIn > 0) _timelapseNextIn--;
+            _renderTimelapseCountdown(document.getElementById('timelapseInfo'));
+        }
     }, 1000);
 
     // Load auto-capture preference
@@ -687,6 +704,10 @@ function updateRecordingUI() {
 
 let _timelapseRunning = false;
 let _timelapsePollInterval = null;
+let _timelapseNextIn = 0;       // local countdown ticked down each second
+let _timelapseLastError = null; // cached for local tick display
+let _timelapseFailures = 0;     // cached for local tick display
+let _timelapseInfoPrefix = '';  // frames · span prefix, refreshed on poll
 
 async function startTimelapse() {
     const intervalInput = document.getElementById('timelapseInterval');
@@ -762,10 +783,25 @@ async function _pollTimelapseStatus() {
         const data = await resp.json();
         _timelapseRunning = data.running;
         updateTimelapseUI(data);
-        if (!data.running) {
+        if (data.running && !_timelapsePollInterval) {
+            // Ensure recurring poll is running (e.g. after page reload with timelapse active)
+            _startTimelapsePoll();
+        } else if (!data.running) {
             _stopTimelapsePoll();
         }
     } catch (e) { /* ignore */ }
+}
+
+function _renderTimelapseCountdown(infoEl) {
+    if (!infoEl) return;
+    const el = infoEl || document.getElementById('timelapseInfo');
+    if (!el) return;
+    const nextIn = Math.max(0, _timelapseNextIn);
+    if (_timelapseLastError && _timelapseFailures > 0) {
+        el.textContent = `⚠️ ${_timelapseLastError} · next in ${nextIn}s`;
+    } else {
+        el.textContent = `${_timelapseInfoPrefix} · next in ${nextIn}s`;
+    }
 }
 
 function updateTimelapseUI(data) {
@@ -802,14 +838,11 @@ function updateTimelapseUI(data) {
                 const span = data.capture_span_seconds ?? 0;
                 const hrs = Math.floor(span / 3600);
                 const mins = Math.floor((span % 3600) / 60);
-                const nextIn = data.next_capture_in || 0;
-                let infoText = `${frames} frames · ${hrs}h${mins}m · next in ${nextIn}s`;
-                
-                if (data.last_error && data.consecutive_failures > 0) {
-                    // Show error immediately
-                     infoText = `⚠️ ${data.last_error} · next in ${nextIn}s`;
-                }
-                info.textContent = infoText;
+                _timelapseInfoPrefix = `${frames} frames · ${hrs}h${mins}m`;
+                _timelapseNextIn = data.next_capture_in || 0;
+                _timelapseLastError = data.last_error || null;
+                _timelapseFailures = data.consecutive_failures || 0;
+                _renderTimelapseCountdown(info);
             }
             // Show preview button once we have ≥2 frames
             if (previewBtn) {
@@ -852,7 +885,7 @@ function updateTimelapseUI(data) {
     }
 }
 
-// Apply interval changes live
+// Apply interval and smoothing changes live
 (function() {
     let _intervalDebounce = null;
     document.addEventListener('DOMContentLoaded', () => {
@@ -868,6 +901,25 @@ function updateTimelapseUI(data) {
                         showStatus(`Timelapse interval → ${val}s`, 'success', 3000);
                     }
                 }, 500);
+            });
+        }
+
+        const smoothingSlider = document.getElementById('timelapseSmoothing');
+        const smoothingVal = document.getElementById('timelapseSmoothingVal');
+        if (smoothingSlider) {
+            // Restore saved value
+            const saved = localStorage.getItem('tl_smoothing');
+            if (saved !== null) {
+                smoothingSlider.value = saved;
+                if (smoothingVal) smoothingVal.textContent = parseFloat(saved).toFixed(2);
+            }
+            smoothingSlider.addEventListener('input', () => {
+                const val = parseFloat(smoothingSlider.value);
+                if (smoothingVal) smoothingVal.textContent = val.toFixed(2);
+                localStorage.setItem('tl_smoothing', val);
+                if (_timelapseRunning) {
+                    apiCall('/telescope/timelapse/settings', 'PATCH', { smoothing: val });
+                }
             });
         }
     });

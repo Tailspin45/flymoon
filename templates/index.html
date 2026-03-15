@@ -368,7 +368,7 @@
                         <span>Idle</span>
                     </div>
                     <div id="detectStats" class="detect-stats" style="display:none"></div>
-                    <button id="detectToggleBtn" class="btn btn-primary btn-compact" onclick="toggleDetection()">▶ Start Detection</button>
+                    <button id="detectToggleBtn" class="btn btn-danger btn-compact" onclick="toggleDetection()">⏹ Stop Detection</button>
 
                     <!-- Detection Test Harness -->
                     <div id="harnessPanel" class="harness-card">
@@ -562,6 +562,16 @@
                         <div class="input-row">
                             <input type="number" id="timelapseInterval" value="120" min="10" max="600" step="10" class="input-compact" title="Seconds between frames">
                             <span class="input-label" style="align-self:center;">sec interval</span>
+                        </div>
+                        <div style="margin-top:6px;">
+                            <div style="display:flex; justify-content:space-between; align-items:center; font-size:0.82em; color:#aaa;">
+                                <span style="display:flex; align-items:center; gap:4px;">Stabilize Smoothing
+                                    <span class="tun-tip-anchor" tabindex="0">ⓘ<span class="tun-tip-box">Controls how quickly the stabilizer reacts to disk movement. Low (0.1) = snappy, follows every shift. High (0.9) = smooth, damps out jitter. Default 0.5.</span></span>
+                                </span>
+                                <span id="timelapseSmoothingVal">0.50</span>
+                            </div>
+                            <input type="range" id="timelapseSmoothing" min="0.0" max="0.95" step="0.05" value="0.50"
+                                   style="width:100%; accent-color:#4dff88; margin-top:3px;">
                         </div>
                         <div class="recording-status-compact" id="timelapseStatus">
                             <span class="status-dot" id="timelapseDot"></span>

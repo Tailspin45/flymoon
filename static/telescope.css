@@ -351,15 +351,18 @@
 .transit-list {
     display: flex;
     flex-direction: column;
-    gap: 6px;
+    gap: 4px;
+    max-height: 220px;
+    overflow-y: auto;
 }
 
 /* Transit alert card */
 .transit-alert {
-    border-radius: 8px;
-    padding: 10px 12px;
+    border-radius: 6px;
+    padding: 6px 10px;
     border-left: 4px solid #888;
     background: rgba(255,255,255,0.05);
+    font-size: 0.9em;
 }
 .transit-alert.high   { border-left-color: #ff4444; background: rgba(255,50,50,0.1); }
 .transit-alert.medium { border-left-color: #ff8c00; background: rgba(255,140,0,0.08); }
@@ -1386,8 +1389,8 @@ canvas.video-thumb-canvas {
 }
 
 /* ── Left sidebar (Transit Capture) compact overrides ────────── */
-.sidebar-left .sidebar-panel { padding: 10px 14px; }
-.sidebar-left .sidebar-panel h3 { margin-bottom: 6px; font-size: 0.9em; }
+.sidebar-left .sidebar-panel { padding: 8px 12px; }
+.sidebar-left .sidebar-panel h3 { margin-bottom: 4px; font-size: 0.88em; }
 .sidebar-left .setting-item { margin-bottom: 6px; }
 .sidebar-left .setting-info { margin-top: 4px; font-size: 0.75em; }
 

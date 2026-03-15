@@ -174,7 +174,9 @@ class SolarTimelapse:
         self._paused = False
         self._frame_count = 0
         self._start_time: Optional[datetime] = None
-        self._last_capture: float = 0  # monotonic timestamp
+        self._last_capture: float = 0  # monotonic timestamp of last successful frame
+        self._last_attempt: float = 0  # monotonic timestamp of last capture attempt
+        self._retry_delay: float = 10.0  # seconds until next retry after failure
         self._frames_dir: str = ""
         self._output_path: str = ""
         self._host: Optional[str] = None
@@ -183,8 +185,9 @@ class SolarTimelapse:
         self._stabilize_enabled: bool = True
         self._stabilize_max_shift_px: float = 25.0
         self._stabilize_smoothing: float = 0.85
-        self._stabilize_ref_gray: Optional[np.ndarray] = None
-        self._stabilize_offset = (0.0, 0.0)
+        self._stabilize_ref_gray: Optional[np.ndarray] = None  # phase-correlation fallback anchor
+        self._stabilize_anchor_center: Optional[tuple] = None  # (cx, cy) disk center of first frame
+        self._stabilize_offset = (0.0, 0.0)  # smoothed cumulative offset
         self._consecutive_failures: int = 0
         self._last_error: Optional[str] = None
 
@@ -261,6 +264,7 @@ class SolarTimelapse:
                 os.getenv("SOLAR_TIMELAPSE_STABILIZE_SMOOTHING", "0.85")
             )
             self._stabilize_ref_gray = None
+            self._stabilize_anchor_center = None
             self._stabilize_offset = (0.0, 0.0)
             self._consecutive_failures = 0
             self._last_error = None
@@ -269,6 +273,8 @@ class SolarTimelapse:
             self._paused = False
             self._frame_count = 0
             self._last_capture = 0
+            self._last_attempt = 0
+            self._retry_delay = 10.0
 
             now = datetime.now()
             self._start_time = now
@@ -311,6 +317,7 @@ class SolarTimelapse:
                 os.getenv("SOLAR_TIMELAPSE_STABILIZE_SMOOTHING", "0.85")
             )
             self._stabilize_ref_gray = None
+            self._stabilize_anchor_center = None
             self._stabilize_offset = (0.0, 0.0)
             self._consecutive_failures = 0
             self._last_error = None
@@ -321,12 +328,26 @@ class SolarTimelapse:
             self._output_path = output_path
             self._frame_count = existing_count
             self._last_capture = 0
+            self._last_attempt = 0
+            self._retry_delay = 10.0
 
             # Preserve approximate session start when resuming from existing frames.
+            # Also reload stabilization anchor from first frame so the solar disk
+            # stays locked to the same reference position across stop/restart.
             if existing_count > 0:
                 first_frame = os.path.join(frames_dir, "frame_00001.jpg")
                 if os.path.exists(first_frame):
                     self._start_time = datetime.fromtimestamp(os.path.getmtime(first_frame))
+                    anchor = cv2.imread(first_frame)
+                    if anchor is not None:
+                        disk = _detect_disk(anchor)
+                        if disk is not None:
+                            self._stabilize_anchor_center = (disk[0], disk[1])
+                            logger.info(f"[Timelapse] Disk anchor restored: center=({disk[0]:.0f},{disk[1]:.0f})")
+                        gray = cv2.cvtColor(anchor, cv2.COLOR_BGR2GRAY)
+                        gray = cv2.GaussianBlur(gray, (5, 5), 0)
+                        self._stabilize_ref_gray = np.float32(gray)
+                        logger.info("[Timelapse] Stabilization anchor restored from frame_00001.jpg")
                 else:
                     self._start_time = now
             else:
@@ -381,6 +402,12 @@ class SolarTimelapse:
             logger.info(f"[Timelapse] Interval updated to {self._interval}s")
             return self.status()
 
+    def update_smoothing(self, smoothing: float) -> dict:
+        with self._lock:
+            self._stabilize_smoothing = max(0.0, min(1.0, smoothing))
+            logger.info(f"[Timelapse] Stabilize smoothing updated to {self._stabilize_smoothing:.2f}")
+            return self.status()
+
     def status(self) -> dict:
         with self._lock:
             now = datetime.now()
@@ -408,9 +435,14 @@ class SolarTimelapse:
             capture_span_seconds = effective_frame_count * self._interval
 
             next_in = 0
-            if self._running and not self._paused and self._last_capture > 0:
-                since_last = time.monotonic() - self._last_capture
-                next_in = max(0, self._interval - since_last)
+            if self._running and not self._paused:
+                if self._last_capture > 0:
+                    since_last = time.monotonic() - self._last_capture
+                    next_in = max(0, self._interval - since_last)
+                elif self._last_attempt > 0:
+                    # No successful frame yet — count down to next retry
+                    since_attempt = time.monotonic() - self._last_attempt
+                    next_in = max(0, self._retry_delay - since_attempt)
 
             result = {
                 "running": self._running,
@@ -548,13 +580,16 @@ class SolarTimelapse:
                 # Capture a frame
                 ok, err = self._grab_frame()
                 with self._lock:
+                    self._last_attempt = time.monotonic()
                     if ok:
                         self._frame_count += 1
                         self._last_capture = time.monotonic()
                         self._consecutive_failures = 0
                         self._last_error = None
+                        self._retry_delay = self._interval
                     else:
                         self._consecutive_failures += 1
+                        self._retry_delay = 10.0
                         if err:
                             self._last_error = err
 
@@ -638,56 +673,74 @@ class SolarTimelapse:
             return False, str(e)
 
     def _stabilize_frame(self, frame_path: str) -> bool:
-        """Apply translation stabilization in-place to reduce seeing jitter."""
+        """Stabilize frame in-place by locking the solar disk center to the anchor position.
+
+        Primary method: detect the solar disk in the current frame and compute
+        the translation needed to place its center at the anchor center.
+        Fallback: phase correlation against the first-frame grayscale anchor.
+        """
         frame = cv2.imread(frame_path)
         if frame is None:
             logger.warning(f"[Timelapse] Stabilize read failed: {frame_path}")
             return False
 
-        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-        gray = cv2.GaussianBlur(gray, (5, 5), 0)
-        gray32 = np.float32(gray)
-
         if not self._stabilize_enabled:
-            self._stabilize_ref_gray = gray32
             return True
 
-        if self._stabilize_ref_gray is None:
-            self._stabilize_ref_gray = gray32
+        # First frame: establish anchor center and phase-correlation reference
+        if self._stabilize_anchor_center is None:
+            disk = _detect_disk(frame)
+            if disk is not None:
+                self._stabilize_anchor_center = (disk[0], disk[1])
+                logger.info(f"[Timelapse] Disk anchor set: center=({disk[0]:.0f},{disk[1]:.0f}) r={disk[2]:.0f}px")
+            gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+            self._stabilize_ref_gray = np.float32(cv2.GaussianBlur(gray, (5, 5), 0))
+            self._stabilize_offset = (0.0, 0.0)
             return True
 
         try:
-            (dx, dy), response = cv2.phaseCorrelate(self._stabilize_ref_gray, gray32)
-            if response < 0.02:
-                self._stabilize_ref_gray = gray32
-                return True
+            dx, dy = None, None
+
+            # Primary: find disk center in this frame and measure offset from anchor
+            disk = _detect_disk(frame)
+            if disk is not None:
+                ax, ay = self._stabilize_anchor_center
+                dx = ax - disk[0]
+                dy = ay - disk[1]
+
+            # Fallback: phase correlation against fixed first-frame anchor
+            if dx is None:
+                gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+                gray32 = np.float32(cv2.GaussianBlur(gray, (5, 5), 0))
+                (pdx, pdy), response = cv2.phaseCorrelate(self._stabilize_ref_gray, gray32)
+                if response >= 0.02:
+                    dx = float(np.clip(-pdx, -self._stabilize_max_shift_px, self._stabilize_max_shift_px))
+                    dy = float(np.clip(-pdy, -self._stabilize_max_shift_px, self._stabilize_max_shift_px))
+                else:
+                    dx, dy = self._stabilize_offset  # no signal — hold last correction
 
             dx = float(np.clip(dx, -self._stabilize_max_shift_px, self._stabilize_max_shift_px))
             dy = float(np.clip(dy, -self._stabilize_max_shift_px, self._stabilize_max_shift_px))
 
+            # Smooth to avoid sudden jumps between disk-detected and fallback frames
             prev_x, prev_y = self._stabilize_offset
             a = float(np.clip(self._stabilize_smoothing, 0.0, 1.0))
             smoothed_x = (a * dx) + ((1.0 - a) * prev_x)
             smoothed_y = (a * dy) + ((1.0 - a) * prev_y)
             self._stabilize_offset = (smoothed_x, smoothed_y)
 
+            if abs(smoothed_x) < 0.5 and abs(smoothed_y) < 0.5:
+                return True
+
             m = np.float32([[1, 0, smoothed_x], [0, 1, smoothed_y]])
             stabilized = cv2.warpAffine(
-                frame,
-                m,
-                (frame.shape[1], frame.shape[0]),
-                flags=cv2.INTER_LINEAR,
-                borderMode=cv2.BORDER_REPLICATE,
+                frame, m, (frame.shape[1], frame.shape[0]),
+                flags=cv2.INTER_LINEAR, borderMode=cv2.BORDER_REPLICATE,
             )
             cv2.imwrite(frame_path, stabilized, [cv2.IMWRITE_JPEG_QUALITY, 92])
-
-            stab_gray = cv2.cvtColor(stabilized, cv2.COLOR_BGR2GRAY)
-            stab_gray = cv2.GaussianBlur(stab_gray, (5, 5), 0).astype(np.float32)
-            self._stabilize_ref_gray = (0.9 * self._stabilize_ref_gray) + (0.1 * stab_gray)
             return True
         except Exception as e:
             logger.warning(f"[Timelapse] Stabilization skipped: {e}")
-            self._stabilize_ref_gray = gray32
             return True
 
     def _annotate_frame(self, raw_path: str, seq: int):

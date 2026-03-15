@@ -964,11 +964,14 @@ def update_timelapse_settings():
     logger.info("[Telescope] PATCH /telescope/timelapse/settings")
     try:
         data = request.get_json(silent=True) or {}
-        interval = data.get("interval")
-        if interval is None:
-            return jsonify({"error": "interval required"}), 400
-        result = get_timelapse().update_interval(float(interval))
-        return jsonify(result), 200
+        tl = get_timelapse()
+        if "interval" in data:
+            tl.update_interval(float(data["interval"]))
+        if "smoothing" in data:
+            tl.update_smoothing(float(data["smoothing"]))
+        if "interval" not in data and "smoothing" not in data:
+            return jsonify({"error": "interval or smoothing required"}), 400
+        return jsonify(tl.status()), 200
     except Exception as e:
         return handle_error(e)
 
