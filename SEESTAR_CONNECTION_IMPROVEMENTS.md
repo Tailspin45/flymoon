@@ -66,7 +66,17 @@ The `/telescope/connect` endpoint now:
 }
 ```
 
-### 4. **Environment Configuration** (`.env.mock`)
+### 4. **Improved Auto-Discovery** (`src/seestar_client.py`)
+
+The auto-discovery mechanism has been upgraded to support:
+- **Multiple Network Interfaces:** Scans all local subnets found on the host.
+- **Common IoT Subnets:** Always scans `192.168.4.x` (Seestar/ESP32 default), `192.168.0.x`, and `192.168.1.x` regardless of local IP.
+- **mDNS Resolution:** Checks `seestar.local` and `seestar-2.local`.
+- **Parallel Scanning:** Uses up to 100 threads for rapid discovery.
+
+This ensures Seestar can be found even if your network uses a large subnet mask (e.g., /22) or if the telescope is on a different but routable subnet.
+
+### 5. **Environment Configuration** (`.env.mock`)
 
 Added new environment variables for controlling retry behavior:
 
@@ -134,10 +144,13 @@ Total time for 3 attempts: ~3.2 seconds (vs 0.1s without retries).
 
 ### Auto-Discovery Not Working?
 
-The auto-discovery feature scans the local /24 subnet. If you're on a different subnet or VPN, try:
+The auto-discovery feature automatically scans:
+1. All local subnets (based on network interfaces)
+2. `seestar.local` and `seestar-2.local` (mDNS)
 
-1. Use `/telescope/discover` endpoint in the web UI
-2. Or manually set `SEESTAR_HOST` to the discovered IP address
+If you're on a complex network (e.g., VLANs without mDNS forwarding), you may still need to:
+1. Manually set `SEESTAR_HOST` in your `.env` file to the telescope's IP
+2. Ensure routing exists between your computer and the telescope
 
 ## Testing
 

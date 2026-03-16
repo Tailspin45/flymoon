@@ -9,6 +9,7 @@ Based on protocol reverse-engineering from:
 https://github.com/smart-underworld/seestar_alp/blob/main/device/seestar_device.py
 """
 
+import concurrent.futures
 import json
 import os
 import socket
@@ -581,37 +582,93 @@ class SeestarClient:
 
     def _auto_discover(self) -> str:
         """
-        Scan the local /24 subnet for a host accepting connections on self.port.
+        Scan local subnets and check mDNS for a host accepting connections on self.port.
         Returns the first found IP, or None.
         """
-        import concurrent.futures
+        # Collection of IPs to scan
+        ips_to_scan = set()
 
-        # Determine local subnet
+        # 1. Try generic mDNS names (fast check)
+        mdns_names = ["seestar.local", "seestar-2.local", "seestar-3.local"]
+        for name in mdns_names:
+            try:
+                # Just resolve, don't connect yet (we'll probe below)
+                ip = socket.gethostbyname(name)
+                ips_to_scan.add(ip)
+                logger.info(f"[Seestar] Resolved {name} to {ip}")
+            except Exception:
+                pass
+
+        # 2. Identify all local subnets (handle multiple interfaces/VPNs)
+        local_ips = set()
+
+        # Method A: Route to internet (primary interface)
         try:
             probe = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
             probe.connect(("8.8.8.8", 80))
-            local_ip = probe.getsockname()[0]
+            local_ips.add(probe.getsockname()[0])
             probe.close()
         except Exception:
-            return None
+            pass
 
-        base = local_ip.rsplit(".", 1)[0]
-        logger.info(f"[Seestar] Scanning {base}.0/24 for port {self.port}…")
+        # Method B: All interfaces via hostname
+        try:
+            hostname = socket.gethostname()
+            _, _, ips = socket.gethostbyname_ex(hostname)
+            for ip in ips:
+                # Filter out loopback and link-local if possible, but definitely 127.x
+                if not ip.startswith("127."):
+                    local_ips.add(ip)
+        except Exception:
+            pass
+
+        # 3. Generate subnet IPs
+        # Always scan these common subnets for Seestar/IoT devices
+        # 192.168.4.x is the default AP subnet for many ESP32/ESP8266 devices (Seestar)
+        # 192.168.0.x and .1.x are common home router defaults
+        common_subnets = {"192.168.4", "192.168.0", "192.168.1"}
+
+        for local_ip in local_ips:
+            try:
+                # Add the local subnet (e.g. 192.168.7)
+                base = local_ip.rsplit(".", 1)[0]
+                common_subnets.add(base)
+
+                # If we're on a 192.168.x.x network, maybe we should scan the whole /16?
+                # A full /16 scan is 65k IPs. Too slow?
+                # But we can at least scan adjacent subnets if we have a weird netmask.
+                # For now, relying on the common list + local subnet is a good 95% solution.
+            except Exception:
+                continue
+
+        for base in common_subnets:
+            logger.info(f"[Seestar] Scanning subnet {base}.0/24 for port {self.port}…")
+            for i in range(1, 255):
+                ips_to_scan.add(f"{base}.{i}")
+
+        if not ips_to_scan:
+            logger.warning("[Seestar] Auto-discover: no local network detected")
+            return None
 
         def _probe(ip):
             try:
+                # Short timeout for LAN scanning
                 with socket.create_connection((ip, self.port), timeout=0.4):
                     return ip
             except Exception:
                 return None
 
-        hosts = [f"{base}.{i}" for i in range(1, 255)]
-        with concurrent.futures.ThreadPoolExecutor(max_workers=64) as pool:
-            for ip in pool.map(_probe, hosts):
+        # 4. Scan in parallel
+        # Use more workers since we might be scanning multiple subnets
+        with concurrent.futures.ThreadPoolExecutor(max_workers=100) as pool:
+            # Convert set to list for map
+            scan_list = list(ips_to_scan)
+            for ip in pool.map(_probe, scan_list):
                 if ip:
                     logger.info(f"[Seestar] Found at {ip}")
                     return ip
-        logger.warning("[Seestar] Auto-discover: no host found on subnet")
+
+        logger.warning("[Seestar] Auto-discover: no host found on scanned subnets")
         return None
 
     def disconnect(self) -> bool:
