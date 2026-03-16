@@ -661,53 +661,99 @@ class SolarTimelapse:
         seq = self._frame_count + 1
         filename = f"frame_{seq:05d}.jpg"
         filepath = os.path.join(self._frames_dir, filename)
-        rtsp_url = f"rtsp://{self._host}:{self._rtsp_port}/stream"
 
-        cmd = [
-            FFMPEG,
-            "-rtsp_transport",
-            "tcp",
-            "-i",
-            rtsp_url,
-            "-frames:v",
-            "1",
-            "-update",
-            "1",
-            "-q:v",
-            "2",
-            "-y",
-            filepath,
-        ]
+        # Try primary port first, then fallbacks if connection refused
+        # Port scan suggests 4500, 4700, 4800 are open. 4554 is standard but closed here.
+        candidate_ports = [self._rtsp_port]
+        if self._rtsp_port != 4500:
+            candidate_ports.append(4500)
+        if self._rtsp_port != 8554:
+            candidate_ports.append(8554)
+        if self._rtsp_port != 554:
+            candidate_ports.append(554)
 
-        try:
-            result = subprocess.run(
-                cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, timeout=15
-            )
-            if result.returncode != 0:
-                stderr_tail = result.stderr.decode(errors="replace")[-200:].strip()
-                logger.warning(f"[Timelapse] Frame grab failed: {stderr_tail}")
-                return False, f"FFmpeg error: {stderr_tail}"
+        last_err = ""
+        success = False
 
-            if not os.path.exists(filepath) or os.path.getsize(filepath) < 100:
-                logger.warning(f"[Timelapse] Frame too small or missing: {filepath}")
-                return False, "Frame too small or missing"
+        for port in candidate_ports:
+            rtsp_url = f"rtsp://{self._host}:{port}/stream"
 
-            if not self._stabilize_frame(filepath):
-                return False, "Stabilization failed"
+            # Build command
+            cmd = [
+                FFMPEG,
+                "-rtsp_transport",
+                "tcp",
+                "-timeout",
+                "3000000",
+                "-i",
+                rtsp_url,
+                "-frames:v",
+                "1",
+                "-update",
+                "1",
+                "-q:v",
+                "2",
+                "-y",
+                filepath,
+            ]
 
-            # Annotate with sunspot detection
-            self._annotate_frame(filepath, seq)
+            try:
+                result = subprocess.run(
+                    cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, timeout=8
+                )
 
-            if seq % 10 == 0 or seq == 1:
-                logger.info(f"[Timelapse] Frame {seq} captured + annotated")
-            return True, None
+                if result.returncode != 0:
+                    stderr_tail = result.stderr.decode(errors="replace")[-200:].strip()
+                    if (
+                        "Connection refused" in stderr_tail
+                        or "Input/output error" in stderr_tail
+                    ):
+                        last_err = f"Port {port} failed: {stderr_tail}"
+                        continue  # Try next port
+                    else:
+                        logger.warning(
+                            f"[Timelapse] Frame grab failed on port {port}: {stderr_tail}"
+                        )
+                        last_err = f"FFmpeg error: {stderr_tail}"
+                        continue
 
-        except subprocess.TimeoutExpired:
-            logger.warning("[Timelapse] Frame grab timed out")
-            return False, "RTSP timeout"
-        except Exception as e:
-            logger.warning(f"[Timelapse] Frame grab error: {e}")
-            return False, str(e)
+                if not os.path.exists(filepath) or os.path.getsize(filepath) < 100:
+                    logger.warning(
+                        f"[Timelapse] Frame too small or missing on port {port}: {filepath}"
+                    )
+                    last_err = "Frame too small or missing"
+                    continue
+
+                # Success!
+                if port != self._rtsp_port:
+                    logger.info(
+                        f"[Timelapse] Found working RTSP stream on port {port} (was {self._rtsp_port})"
+                    )
+                    self._rtsp_port = port  # Remember working port
+
+                success = True
+                break
+
+            except subprocess.TimeoutExpired:
+                logger.warning(f"[Timelapse] Frame grab timed out on port {port}")
+                last_err = "RTSP timeout"
+            except Exception as e:
+                logger.warning(f"[Timelapse] Frame grab error on port {port}: {e}")
+                last_err = str(e)
+
+        if not success:
+            return False, last_err
+
+        # Post-process frame
+        if not self._stabilize_frame(filepath):
+            return False, "Stabilization failed"
+
+        # Annotate with sunspot detection
+        self._annotate_frame(filepath, seq)
+
+        if seq % 10 == 0 or seq == 1:
+            logger.info(f"[Timelapse] Frame {seq} captured + annotated")
+        return True, None
 
     def _stabilize_frame(self, frame_path: str) -> bool:
         """Stabilize frame in-place by locking the solar disk center to the anchor position.
