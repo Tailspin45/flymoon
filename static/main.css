@@ -164,7 +164,8 @@ body {
 /* Results table */
 #results {
     overflow-x: auto;
-    margin: 8px 0;
+    margin: 8px auto;
+    max-width: 1200px;
     display: none;  /* Hidden by default */
 }
 
@@ -183,9 +184,9 @@ body {
     border-top-right-radius: 6px;
 }
 
-#resultsTable th, td {
+#resultsTable th, #resultsTable td {
     text-align: left;
-    padding: 4px 6px;
+    padding: 4px 5px;
 }
 
 /* Right-align numeric columns (ETA and all angle/altitude/distance values) */
@@ -853,10 +854,19 @@ body {
 #resultsTableRich {
     width: 100%;
     table-layout: fixed;
+    font-size: 0.84em;
 }
 #resultsTableRich th, #resultsTableRich td {
     overflow: hidden;
     text-overflow: ellipsis;
+    white-space: nowrap;
+    padding: 5px 6px;
+    vertical-align: middle;
+}
+/* Center-align status/transit/target */
+#resultsTableRich th:nth-child(-n+3),
+#resultsTableRich td:nth-child(-n+3) {
+    text-align: center;
 }
 /* Right-align numeric columns: Alt(5), v/s(6), sky Δ(7), track(8), src/age(10) */
 #resultsTableRich th:nth-child(n+5):nth-child(-n+8),
@@ -865,12 +875,37 @@ body {
 #resultsTableRich td:nth-child(10) {
     text-align: right;
 }
-/* Center-align aircraft(4) and spd(9) columns */
-#resultsTableRich th:nth-child(4),
-#resultsTableRich td:nth-child(4),
+/* Center-align speed(9) column */
 #resultsTableRich th:nth-child(9),
 #resultsTableRich td:nth-child(9) {
     text-align: center;
+}
+#resultsTableRich th:nth-child(4),
+#resultsTableRich td:nth-child(4) {
+    text-align: left;
+}
+
+.target-cell-wrap {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+}
+
+.target-emoji {
+    line-height: 1;
+}
+
+.target-alt-value {
+    font-variant-numeric: tabular-nums;
+}
+
+.target-alt-value.below-horizon {
+    color: #888;
+    font-style: italic;
+}
+
+.target-alt-value.low-horizon {
+    color: #ff9800;
 }
 
 /* ── Rich table row highlight ── */
