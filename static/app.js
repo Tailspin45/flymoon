@@ -153,14 +153,7 @@ function checkAndAlertFilterChange(flights, targetCoordinates) {
         // Only alert if this is a new transit (not already alerted)
         if (lastAlertedTransits.sun !== transitId) {
             lastAlertedTransits.sun = transitId;
-            
-            alert('☀️ SOLAR TRANSIT DETECTED!\n\n' +
-                  '⚠️ IMPORTANT:\n' +
-                  '1. INSTALL SOLAR FILTER on telescope\n' +
-                  '2. Reset telescope to track the SUN\n' +
-                  '3. Point telescope at sun position\n\n' +
-                  '⚠️ NEVER look at the sun without proper solar filter!\n\n' +
-                  `Transit ETA: ${sunTransit.time ? sunTransit.time.toFixed(1) : 'N/A'} minutes`);
+            // Solar transit alert removed per user request
         }
     } else {
         // No sun transits - clear the alert memory
@@ -456,27 +449,17 @@ function renderRichFlightRow(item, bodyTable) {
     }
     row.appendChild(transitCell);
 
-    // Col 3 — Target
+    // Col 3 — Target + target altitude
     const tgtCell = document.createElement('td');
-    tgtCell.textContent = item.target === 'sun' ? '☀️' : item.target === 'moon' ? '🌙' : '';
-    row.appendChild(tgtCell);
-
-    // Col 3b — Target altitude above horizon
-    const tgtAltCell = document.createElement('td');
-    tgtAltCell.style.whiteSpace = 'nowrap';
+    const targetEmoji = item.target === 'sun' ? '☀️' : item.target === 'moon' ? '🌙' : '—';
+    let targetAltMarkup = '<span class="target-alt-value">—</span>';
     if (item.target_alt != null) {
         const alt = item.target_alt;
-        tgtAltCell.textContent = alt.toFixed(1) + '°';
-        if (alt < 0) {
-            tgtAltCell.style.color = '#888';
-            tgtAltCell.style.fontStyle = 'italic';
-        } else if (alt < 10) {
-            tgtAltCell.style.color = '#ff9800';  // orange — low on horizon
-        }
-    } else {
-        tgtAltCell.innerHTML = '<span style="color:#444">—</span>';
+        const targetAltClass = alt < 0 ? 'target-alt-value below-horizon' : (alt < 10 ? 'target-alt-value low-horizon' : 'target-alt-value');
+        targetAltMarkup = `<span class="${targetAltClass}">${alt.toFixed(1)}°</span>`;
     }
-    row.appendChild(tgtAltCell);
+    tgtCell.innerHTML = `<span class="target-cell-wrap"><span class="target-emoji">${targetEmoji}</span>${targetAltMarkup}</span>`;
+    row.appendChild(tgtCell);
 
     // Col 4 — Aircraft (callsign + type)
     const acCell = document.createElement('td');
@@ -1609,7 +1592,7 @@ const HELP_CONTENT = {
         body: `<table style="width:100%;border-collapse:collapse;font-size:0.88em;">
 <tr><td style="padding:4px 8px;color:#7eb8f7;white-space:nowrap"><strong>⚠ Status</strong></td><td style="padding:4px 8px">Emergency squawk badges: 🚨 MAYDAY (7700), 📻 NORDO (7600), ⚠️ HIJACK (7500), ⚔️ MIL (4000-4777), VFR (1200). Also: 💡 IDENT (pilot pressed IDENT), ⬛ GND (on ground). Silent when normal.</td></tr>
 <tr><td style="padding:4px 8px;color:#7eb8f7;white-space:nowrap"><strong>transit</strong></td><td style="padding:4px 8px">🟢 HIGH / 🟠 MEDIUM / ⚪ LOW probability, with countdown to closest approach (T-mm:ss).</td></tr>
-<tr><td style="padding:4px 8px;color:#7eb8f7;white-space:nowrap"><strong>☀️🌙</strong></td><td style="padding:4px 8px">Which celestial body this aircraft may transit.</td></tr>
+<tr><td style="padding:4px 8px;color:#7eb8f7;white-space:nowrap"><strong>target / @CPA°</strong></td><td style="padding:4px 8px">☀️/🌙 target plus target altitude at closest approach time (CPA), so values can differ by aircraft.</td></tr>
 <tr><td style="padding:4px 8px;color:#7eb8f7;white-space:nowrap"><strong>aircraft</strong></td><td style="padding:4px 8px">Callsign and ICAO type code (e.g. B738 = Boeing 737-800). Click to flash on map and show route.</td></tr>
 <tr><td style="padding:4px 8px;color:#7eb8f7;white-space:nowrap"><strong>alt / v/s</strong></td><td style="padding:4px 8px">Altitude (FL350 above 18,000ft, otherwise feet). Vertical speed: ▲ climbing (green), ▼ descending (red), ▶ level (grey). V/S in ft/min from ADS-B vertical rate; ▲/▼ only from FlightAware elevation_change flag.</td></tr>
 <tr><td style="padding:4px 8px;color:#7eb8f7;white-space:nowrap"><strong>sky Δ</strong></td><td style="padding:4px 8px">Angular separation at closest approach: ↕ altitude diff, ↔ azimuth diff. Green ≤1°, orange ≤2°, grey ≥3°.</td></tr>
@@ -1625,7 +1608,7 @@ const HELP_CONTENT = {
 <tr><td style="padding:4px 8px;color:#7eb8f7;white-space:nowrap"><strong>target</strong></td><td style="padding:4px 8px">☀️ Sun or 🌙 Moon — which body this aircraft may transit</td></tr>
 <tr><td style="padding:4px 8px;color:#7eb8f7;white-space:nowrap"><strong>id</strong></td><td style="padding:4px 8px">ICAO flight callsign (e.g. UAL1234). Click to show route on map.</td></tr>
 <tr><td style="padding:4px 8px;color:#7eb8f7;white-space:nowrap"><strong>type</strong></td><td style="padding:4px 8px">Aircraft ICAO type code (B738 = Boeing 737-800, A320 = Airbus A320)</td></tr>
-<tr><td style="padding:4px 8px;color:#7eb8f7;white-space:nowrap"><strong>target angle</strong></td><td style="padding:4px 8px">Current altitude of the Sun/Moon above your horizon in degrees (0°=horizon, 90°=zenith)</td></tr>
+<tr><td style="padding:4px 8px;color:#7eb8f7;white-space:nowrap"><strong>target @CPA°</strong></td><td style="padding:4px 8px">Sun/Moon altitude above your horizon at this flight's closest approach time (CPA), not at the current moment. This is why values can differ between aircraft.</td></tr>
 <tr><td style="padding:4px 8px;color:#7eb8f7;white-space:nowrap"><strong>plane angle</strong></td><td style="padding:4px 8px">Predicted altitude angle of the aircraft at closest approach to the target</td></tr>
 <tr><td style="padding:4px 8px;color:#7eb8f7;white-space:nowrap"><strong>target az</strong></td><td style="padding:4px 8px">Current azimuth of the Sun/Moon — degrees clockwise from true North</td></tr>
 <tr><td style="padding:4px 8px;color:#7eb8f7;white-space:nowrap"><strong>plane az</strong></td><td style="padding:4px 8px">Predicted azimuth of the aircraft at closest approach</td></tr>

@@ -209,7 +209,7 @@
                     <th title="Aircraft ICAO type code (e.g. B738 = Boeing 737-800, A320 = Airbus A320)">type</th>
                     <th style="max-width: 60px; overflow: hidden; text-overflow: ellipsis;" title="Departure city">origin</th>
                     <th style="max-width: 60px; overflow: hidden; text-overflow: ellipsis;" title="Destination city">dest</th>
-                    <th title="Current altitude of the Sun/Moon above your horizon (degrees above 0° horizon)">target<br>angle</th>
+                    <th title="Sun/Moon altitude above your horizon at this flight's closest approach time (CPA), not the current moment.">target<br>@CPA°</th>
                     <th title="Predicted altitude angle of the aircraft at its closest approach to the target (degrees)">plane<br>angle</th>
                     <th title="Current azimuth of the Sun/Moon — degrees clockwise from true North">target<br>az</th>
                     <th title="Predicted azimuth of the aircraft at closest approach — degrees clockwise from true North">plane<br>az</th>
@@ -230,17 +230,16 @@
         <!-- ── Rich table (OpenSky-enhanced, 10 cols) ── -->
         <table id="resultsTableRich" style="display:none;">
             <colgroup>
-                <col style="width:4%">   <!-- status -->
-                <col style="width:9%">   <!-- transit -->
-                <col style="width:5%">   <!-- target -->
-                <col style="width:7%">   <!-- tgt° -->
-                <col style="width:13%">  <!-- aircraft -->
+                <col style="width:8%">   <!-- status -->
+                <col style="width:12%">  <!-- transit -->
+                <col style="width:11%">  <!-- target / tgt° -->
+                <col style="width:21%">  <!-- aircraft -->
                 <col style="width:7%">   <!-- alt -->
-                <col style="width:9%">   <!-- v/s -->
-                <col style="width:10%">  <!-- sky Δ -->
-                <col style="width:7%">   <!-- track -->
-                <col style="width:13%">  <!-- gnd spd -->
-                <col style="width:8%">   <!-- src/age -->
+                <col style="width:11%">  <!-- v/s -->
+                <col style="width:12%">  <!-- sky Δ -->
+                <col style="width:6%">   <!-- track -->
+                <col style="width:8%">   <!-- gnd spd -->
+                <col style="width:4%">   <!-- src/age -->
             </colgroup>
             <thead>
                 <tr>
@@ -254,8 +253,7 @@
                 <tr>
                     <th title="Status — emergency squawk codes (7700/7600/7500), military, VFR, IDENT pressed, on ground. Silent when normal.">⚠</th>
                     <th title="Transit probability and ETA to closest approach">transit</th>
-                    <th title="☀️ Sun or 🌙 Moon — which celestial body this aircraft may transit">Target</th>
-                    <th title="Current altitude of the Sun/Moon above your horizon in degrees. Negative = below horizon.">tgt°</th>
+                    <th title="☀️ Sun or 🌙 Moon and its altitude at this flight's closest approach time (CPA). Negative = below horizon.">target / @CPA°</th>
                     <th title="Callsign / flight ID and ICAO aircraft type code">aircraft</th>
                     <th title="Altitude (FL above 18,000ft, otherwise feet)">Alt</th>
                     <th title="Vertical speed in ft/min (▲ climbing, ▼ descending, ▶ level)">v/s (fpm)</th>

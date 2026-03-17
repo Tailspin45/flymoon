@@ -149,18 +149,50 @@ function detectFfmpeg() {
     return null;
 }
 
+function resolveBundledServerPath() {
+    const binName = process.platform === 'win32' ? 'flymoon-server.exe' : 'flymoon-server';
+    const candidates = [
+        path.join(RESOURCES, binName),
+        path.join(RESOURCES, 'bin', binName),
+        path.join(RESOURCES, 'flymoon-server', binName),
+        path.join(RESOURCES, 'app.asar.unpacked', binName),
+    ];
+
+    for (const candidate of candidates) {
+        if (fs.existsSync(candidate)) return candidate;
+    }
+
+    // Fallback: shallow scan of resources for misplaced bundled server
+    try {
+        const entries = fs.readdirSync(RESOURCES, { withFileTypes: true });
+        for (const entry of entries) {
+            if (!entry.isDirectory()) continue;
+            const candidate = path.join(RESOURCES, entry.name, binName);
+            if (fs.existsSync(candidate)) return candidate;
+        }
+    } catch (_) {
+        // No-op: detailed error is thrown below.
+    }
+
+    const topLevel = fs.existsSync(RESOURCES) ? fs.readdirSync(RESOURCES).slice(0, 20) : [];
+    throw new Error(
+        `Bundled server binary not found (${binName}) in resources path: ${RESOURCES}. ` +
+        `Top-level entries: ${topLevel.join(', ') || '(none)'}`
+    );
+}
+
 async function startFlask(cfg) {
     flaskPort = await findFreePort();
     cfg.flask_port = flaskPort;
 
     const env  = configToEnv(cfg);
-    const cwd  = RESOURCES;
+    let cwd  = RESOURCES;
 
     let cmd, args;
     if (IS_PACKAGED) {
-        // Use the bundled PyInstaller binary
-        const binName = process.platform === 'win32' ? 'flymoon-server.exe' : 'flymoon-server';
-        cmd  = path.join(RESOURCES, binName);
+        // Use the bundled PyInstaller binary, with robust lookup for installer layouts.
+        cmd = resolveBundledServerPath();
+        cwd = path.dirname(cmd);
         args = [];
     } else {
         // Development: use system python
@@ -185,15 +217,33 @@ async function startFlask(cfg) {
         stdio: ['ignore', 'pipe', 'pipe'],
     });
 
-    flaskProcess.stdout.on('data', d => console.log('[Flask]', d.toString().trim()));
-    flaskProcess.stderr.on('data', d => console.error('[Flask]', d.toString().trim()));
+    const proc = flaskProcess;
+    proc.stdout.on('data', d => console.log('[Flask]', d.toString().trim()));
+    proc.stderr.on('data', d => console.error('[Flask]', d.toString().trim()));
 
-    flaskProcess.on('exit', (code) => {
+    proc.on('exit', (code) => {
         console.log(`[Flask] exited with code ${code}`);
         flaskProcess = null;
     });
 
-    await waitForFlask(flaskPort);
+    const spawnErrorPromise = new Promise((_, reject) => {
+        proc.once('error', (err) => {
+            const context = IS_PACKAGED ? `Bundled server path: ${cmd}` : `Command: ${cmd}`;
+            reject(new Error(`Failed to start Flymoon server (${err.message}). ${context}`));
+        });
+    });
+
+    const earlyExitPromise = new Promise((_, reject) => {
+        proc.once('exit', (code) => {
+            reject(new Error(`Flymoon server exited before becoming ready (exit code ${code}).`));
+        });
+    });
+
+    await Promise.race([
+        waitForFlask(flaskPort),
+        spawnErrorPromise,
+        earlyExitPromise,
+    ]);
     console.log(`[Flask] Ready on port ${flaskPort}`);
 }
 
