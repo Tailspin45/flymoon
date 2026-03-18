@@ -12,7 +12,7 @@
 /* Main Layout: Sidebars + Center Preview */
 .telescope-layout {
     display: grid;
-    grid-template-columns: 280px 1fr 300px;
+    grid-template-columns: 20% 40% 20% 20%;
     gap: 0;
     flex: 1;
     overflow: hidden;
@@ -28,6 +28,11 @@
 }
 
 .sidebar-right {
+    border-right: none;
+    border-left: 1px solid #2a2a2a;
+}
+
+.sidebar-alp {
     border-right: none;
     border-left: 1px solid #2a2a2a;
 }
@@ -1218,13 +1223,13 @@ canvas.video-thumb-canvas {
 /* Responsive Design */
 @media (max-width: 1400px) {
     .telescope-layout {
-        grid-template-columns: 260px 1fr 280px;
+        grid-template-columns: 20% 40% 20% 20%;
     }
 }
 
 @media (max-width: 1200px) {
     .telescope-layout {
-        grid-template-columns: 240px 1fr 260px;
+        grid-template-columns: 20% 40% 20% 20%;
     }
     
     .filmstrip {
@@ -1238,7 +1243,7 @@ canvas.video-thumb-canvas {
         grid-template-rows: auto;
     }
     
-    .sidebar-left, .sidebar-right {
+    .sidebar-left, .sidebar-right, .sidebar-alp {
         display: none;
     }
     
@@ -1698,3 +1703,66 @@ canvas.video-thumb-canvas {
     white-space: normal;
     box-shadow: 0 4px 16px rgba(0,0,0,0.6);
 }
+
+/* ------------------------------------------------------------------ */
+/* Control Panel — telemetry strip, GoTo, named locations, camera      */
+/* ------------------------------------------------------------------ */
+
+.telemetry-strip {
+    display: flex;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 4px;
+    padding: 6px 10px;
+    background: #0d1117;
+    border-bottom: 1px solid #2a2a2a;
+    font-size: 0.76em;
+}
+
+.telm-item {
+    display: flex;
+    gap: 4px;
+    align-items: center;
+}
+
+.telm-label {
+    color: #555;
+    font-size: 0.88em;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+}
+
+.radio-label {
+    font-size: 0.85em;
+    color: #ccc;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+}
+
+.radio-label input[type="radio"] {
+    accent-color: #4da6ff;
+}
+
+/* Named-location select */
+#savedLocations {
+    background: #1a1a1a;
+    color: #ddd;
+    border: 1px solid #3a3a3a;
+    border-radius: 4px;
+    padding: 3px 6px;
+    font-size: 0.82em;
+}
+
+#savedLocations option {
+    background: #1a1a1a;
+}
+
+/* Camera settings slider */
+.setting-slider {
+    flex: 1;
+    accent-color: #4da6ff;
+    height: 4px;
+}
+

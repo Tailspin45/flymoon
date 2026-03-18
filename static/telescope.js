@@ -71,6 +71,7 @@ let simulationVideo = null;
 let disconnectedPollCount = 0; // consecutive disconnected polls before stopping preview
 let simulationFiles = []; // Track temporary simulation files
 let filmstripFiles = []; // current files rendered in the horizontal filmstrip
+let _lastDiscoveredSeestarIp = null; // latest /telescope/discover hit for ALP autowire targeting
 
 const filmstripSelection = {
     selected: new Set(),   // set of file paths selected in filmstrip
@@ -174,6 +175,9 @@ window.initTelescope = function() {
 
     // Load saved detection preference and sync UI
     syncDetectionUI();
+
+    // Initialize Control Panel (GoTo, named locations)
+    initControlPanel();
 };
 
 // ============================================================================
@@ -188,11 +192,14 @@ async function connect() {
     if (result && result.success) {
         isConnected = true;
         showStatus('Connected successfully!', 'success', 5000);
-        
+
         // Start status polling
         if (statusPollInterval) clearInterval(statusPollInterval);
         statusPollInterval = setInterval(updateStatus, 2000); // Every 2s
-        
+
+        // Start telemetry polling (RA/Dec/Alt/Az strip)
+        startTelemetryPolling();
+
         updateConnectionUI();
         updateStatus();
         startPreview();
@@ -212,12 +219,14 @@ async function findSeestar() {
             return;
         }
         const ip = data.found[0];
+        _lastDiscoveredSeestarIp = ip;
         const others = data.found.slice(1);
         let msg = `Found Seestar at ${ip}`;
         if (others.length) msg += ` (also: ${others.join(', ')})`;
         msg += ` — update SEESTAR_HOST in .env and restart`;
         showStatus(msg, 'success', 12000);
         console.log('[Discover]', msg, '— found:', data.found);
+
     } catch (err) {
         if (btn) { btn.disabled = false; btn.textContent = '🔍 Find'; }
         showStatus('Scan error: ' + err.message, 'error', 6000);
@@ -233,13 +242,16 @@ async function disconnect() {
         isConnected = false;
         isRecording = false;
         showStatus('Disconnected', 'info');
-        
+
         // Stop polling
         if (statusPollInterval) {
             clearInterval(statusPollInterval);
             statusPollInterval = null;
         }
-        
+
+        // Stop telemetry strip
+        stopTelemetryPolling();
+
         updateConnectionUI();
         stopPreview();
     }
@@ -1230,6 +1242,21 @@ function showWarning(message, type = 'warning', autohide = 0) {
 // API HELPERS
 // ============================================================================
 
+function _formatApiError(data, status) {
+    const fallback = `HTTP ${status}`;
+    if (!data || data.error === undefined || data.error === null) return fallback;
+
+    if (typeof data.error === 'string') return data.error;
+
+    if (typeof data.error === 'object') {
+        const msg = data.error.message || data.error.code || fallback;
+        const code = data.error.code ? ` (${data.error.code})` : '';
+        return `${msg}${code}`;
+    }
+
+    return fallback;
+}
+
 async function apiCall(endpoint, method = 'GET', body = null) {
     try {
         const options = {
@@ -1238,29 +1265,220 @@ async function apiCall(endpoint, method = 'GET', body = null) {
                 'Content-Type': 'application/json'
             }
         };
-        
+
         if (body) {
             options.body = JSON.stringify(body);
         }
-        
+
         const response = await fetch(endpoint, options);
         const contentType = response.headers.get('content-type') || '';
         if (!contentType.includes('application/json')) {
             throw new Error(`HTTP ${response.status}: unexpected response`);
         }
         const data = await response.json();
-        
+
         if (!response.ok) {
-            throw new Error(data.error || `HTTP ${response.status}`);
+            throw new Error(_formatApiError(data, response.status));
         }
-        
+
         return data;
-        
+
     } catch (error) {
         console.error(`[Telescope] API call failed: ${endpoint}`, error);
         showStatus(`Error: ${error.message}`, 'error');
         return null;
     }
+}
+
+// ============================================================================
+// CONTROL PANEL — GoTo, Park, Autofocus, Camera Settings, Named Locations
+// ============================================================================
+
+let _telemetryInterval = null;
+
+function initControlPanel() {
+    loadSavedLocations();
+}
+
+// -- Telemetry polling --
+
+function startTelemetryPolling() {
+    if (_telemetryInterval) return;
+    _telemetryInterval = setInterval(_pollTelemetry, 5000);
+    _pollTelemetry(); // immediate first fetch
+    document.getElementById('telemetryStrip').style.display = 'flex';
+}
+
+function stopTelemetryPolling() {
+    if (_telemetryInterval) {
+        clearInterval(_telemetryInterval);
+        _telemetryInterval = null;
+    }
+    document.getElementById('telemetryStrip').style.display = 'none';
+}
+
+async function _pollTelemetry() {
+    try {
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), 6000);
+        const res = await fetch('/telescope/telemetry', { signal: controller.signal });
+        clearTimeout(timer);
+        if (!res.ok) return;
+        const d = await res.json();
+        const fmt = (v, dp=2) => v != null ? (+v).toFixed(dp) : '—';
+        document.getElementById('telmRA').textContent  = fmt(d.ra,  4) + (d.ra  != null ? 'h' : '');
+        document.getElementById('telmDec').textContent = fmt(d.dec, 3) + (d.dec != null ? '°' : '');
+        document.getElementById('telmAlt').textContent = fmt(d.alt, 1) + (d.alt != null ? '°' : '');
+        document.getElementById('telmAz').textContent  = fmt(d.az,  1) + (d.az  != null ? '°' : '');
+    } catch (_) { /* non-fatal */ }
+}
+
+// -- GoTo mode radio toggle --
+
+function gotoModeChanged() {
+    const isAltaz = document.getElementById('gotoModeAltaz').checked;
+    document.getElementById('gotoAltazInputs').style.display = isAltaz ? '' : 'none';
+    document.getElementById('gotoRadecInputs').style.display = isAltaz ? 'none' : '';
+}
+
+// -- GoTo execute --
+
+async function gotoExecute(overrideAlt, overrideAz) {
+    const mode = document.getElementById('gotoModeAltaz').checked ? 'altaz' : 'radec';
+    let body;
+    if (mode === 'altaz') {
+        const alt = overrideAlt !== undefined ? overrideAlt : parseFloat(document.getElementById('gotoAlt').value);
+        const az  = overrideAz  !== undefined ? overrideAz  : parseFloat(document.getElementById('gotoAz').value);
+        if (isNaN(alt) || isNaN(az)) { showStatus('Enter Alt and Az values', 'error', 3000); return; }
+        body = { mode: 'altaz', alt, az };
+    } else {
+        const ra  = parseFloat(document.getElementById('gotoRa').value);
+        const dec = parseFloat(document.getElementById('gotoDec').value);
+        if (isNaN(ra) || isNaN(dec)) { showStatus('Enter RA and Dec values', 'error', 3000); return; }
+        body = { mode: 'radec', ra, dec };
+    }
+    showStatus('Slewing…', 'info', 10000);
+    const result = await apiCall('/telescope/goto', 'POST', body);
+    if (result) showStatus('GoTo command sent', 'success', 3000);
+}
+
+// -- Named Locations --
+
+async function loadSavedLocations() {
+    try {
+        const res = await fetch('/telescope/goto/locations');
+        if (!res.ok) return;
+        const locs = await res.json();
+        const sel = document.getElementById('savedLocations');
+        if (!sel) return;
+        sel.innerHTML = locs.length
+            ? locs.map(l => `<option value="${encodeURIComponent(l.name)}" data-alt="${l.alt}" data-az="${l.az}">${l.name}</option>`).join('')
+            : '<option value="" disabled>No saved locations</option>';
+        document.getElementById('locationsStatus').textContent =
+            locs.length ? `${locs.length} location${locs.length !== 1 ? 's' : ''} saved` : '';
+    } catch (_) { /* non-fatal */ }
+}
+
+async function gotoSavedLocation() {
+    const sel = document.getElementById('savedLocations');
+    const opt = sel && sel.selectedOptions[0];
+    if (!opt || !opt.dataset.alt) { showStatus('Select a location first', 'error', 3000); return; }
+    // Switch to alt/az mode
+    document.getElementById('gotoModeAltaz').checked = true;
+    gotoModeChanged();
+    await gotoExecute(parseFloat(opt.dataset.alt), parseFloat(opt.dataset.az));
+}
+
+async function saveCurrentLocation() {
+    const nameInput = document.getElementById('saveLocationName');
+    const name = nameInput ? nameInput.value.trim() : '';
+    if (!name) { showStatus('Enter a name for this location', 'error', 3000); return; }
+
+    // Use current telemetry alt/az if available, else prompt for manual entry
+    const altEl = document.getElementById('telmAlt');
+    const azEl  = document.getElementById('telmAz');
+    const altText = altEl && altEl.textContent.replace('°','').trim();
+    const azText  = azEl  && azEl.textContent.replace('°','').trim();
+    const alt = parseFloat(altText);
+    const az  = parseFloat(azText);
+
+    if (isNaN(alt) || isNaN(az)) {
+        // Fall back to the GoTo inputs
+        const altInput = parseFloat(document.getElementById('gotoAlt').value);
+        const azInput  = parseFloat(document.getElementById('gotoAz').value);
+        if (isNaN(altInput) || isNaN(azInput)) {
+            showStatus('No telemetry available — enter Alt/Az in the GoTo fields first', 'error', 5000);
+            return;
+        }
+        await _doSaveLocation(name, altInput, azInput);
+    } else {
+        await _doSaveLocation(name, alt, az);
+    }
+    if (nameInput) nameInput.value = '';
+}
+
+async function _doSaveLocation(name, alt, az) {
+    const result = await apiCall('/telescope/goto/locations', 'POST', { name, alt, az });
+    if (result && result.success) {
+        showStatus(`Saved "${name}"`, 'success', 3000);
+        document.getElementById('locationsStatus').textContent = `Saved "${name}"`;
+        await loadSavedLocations();
+    }
+}
+
+async function deleteSelectedLocation() {
+    const sel = document.getElementById('savedLocations');
+    const opt = sel && sel.selectedOptions[0];
+    if (!opt || !opt.value) { showStatus('Select a location to delete', 'error', 3000); return; }
+    const name = decodeURIComponent(opt.value);
+    if (!confirm(`Delete location "${name}"?`)) return;
+    const res = await fetch(`/telescope/goto/locations/${encodeURIComponent(name)}`, { method: 'DELETE' });
+    if (res.ok) {
+        showStatus(`Deleted "${name}"`, 'success', 3000);
+        await loadSavedLocations();
+    } else {
+        showStatus('Delete failed', 'error', 3000);
+    }
+}
+
+// -- Stop / Park / Autofocus --
+
+async function telescopeStopView() {
+    showStatus('Stopping view mode…', 'info', 5000);
+    const result = await apiCall('/telescope/stop', 'POST', {});
+    if (result) showStatus('View stopped', 'success', 3000);
+}
+
+async function telescopePark() {
+    showStatus('Parking…', 'info', 10000);
+    const result = await apiCall('/telescope/park', 'POST', {});
+    if (result) showStatus('Park command sent', 'success', 3000);
+}
+
+async function telescopeAutofocus() {
+    showStatus('Autofocusing…', 'info', 20000);
+    const result = await apiCall('/telescope/autofocus', 'POST', {});
+    if (result) showStatus('Autofocus triggered', 'success', 3000);
+}
+
+// -- Camera Settings --
+
+function toggleDewPower() {
+    const on = document.getElementById('dewHeaterToggle').checked;
+    document.getElementById('dewPowerRow').style.display = on ? '' : 'none';
+}
+
+async function applyCameraSettings() {
+    const body = {
+        gain:       parseInt(document.getElementById('gainSlider').value),
+        stack_ms:   parseInt(document.getElementById('stackExpMs').value),
+        preview_ms: parseInt(document.getElementById('previewExpMs').value),
+        lp_filter:  document.getElementById('lpFilterToggle').checked,
+        dew_heater: document.getElementById('dewHeaterToggle').checked,
+        dew_power:  parseInt(document.getElementById('dewPowerSlider').value),
+    };
+    const result = await apiCall('/telescope/settings/camera', 'PATCH', body);
+    if (result && result.success) showStatus('Camera settings applied', 'success', 3000);
 }
 
 // ============================================================================

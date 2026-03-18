@@ -244,11 +244,13 @@ class SeestarClient:
                 raise RuntimeError("timed out")
 
             except socket.error as e:
-                # Socket error — let the heartbeat threshold decide if connection is lost
                 if quiet:
                     logger.debug(f"Socket error: {e}")
                 else:
                     logger.warning(f"Socket error in _send_command: {e}")
+                # Connection reset by peer — mark disconnected so heartbeat reconnects
+                if e.errno in (54, 104):  # ECONNRESET (macOS=54, Linux=104)
+                    self._connected = False
                 raise RuntimeError(f"Communication failed: {e}")
 
             finally:
@@ -465,6 +467,64 @@ class SeestarClient:
         except Exception:
             return False
 
+    def _send_init_sequence(self) -> None:
+        """
+        Send ALP-style post-connect initialization to the scope.
+
+        ALP always sends these three commands right after TCP connect:
+          1. set_user_location  — syncs the scope's GPS/location
+          2. pi_set_time        — syncs the scope's RTC to UTC
+          3. pi_is_verified     — session handshake (some firmware requires this)
+
+        Skipping this sequence can cause subsequent commands to be silently
+        ignored on certain firmware builds.  Each call is best-effort; a
+        failure here does not abort the connection.
+        """
+        import os as _os
+        from datetime import datetime, timezone
+
+        # 1. Location sync
+        try:
+            lat = float(_os.getenv("OBSERVER_LATITUDE", "0"))
+            lon = float(_os.getenv("OBSERVER_LONGITUDE", "0"))
+            self._send_command(
+                "set_user_location",
+                params={"lat": lat, "lon": lon, "force": True},
+                quiet=True,
+                timeout_override=5,
+            )
+            logger.debug(f"[Init] set_user_location lat={lat} lon={lon}")
+        except Exception as e:
+            logger.debug(f"[Init] set_user_location failed (non-fatal): {e}")
+
+        # 2. Clock sync
+        try:
+            now = datetime.now(timezone.utc)
+            self._send_command(
+                "pi_set_time",
+                params=[{
+                    "year": now.year, "mon": now.month, "day": now.day,
+                    "hour": now.hour, "min": now.minute, "sec": now.second,
+                    "time_zone": "UTC",
+                }],
+                quiet=True,
+                timeout_override=5,
+            )
+            logger.debug(f"[Init] pi_set_time {now.strftime('%Y-%m-%dT%H:%M:%SZ')}")
+        except Exception as e:
+            logger.debug(f"[Init] pi_set_time failed (non-fatal): {e}")
+
+        # 3. Session verification
+        try:
+            self._send_command(
+                "pi_is_verified",
+                quiet=True,
+                timeout_override=5,
+            )
+            logger.debug("[Init] pi_is_verified sent")
+        except Exception as e:
+            logger.debug(f"[Init] pi_is_verified failed (non-fatal): {e}")
+
     def connect(self) -> bool:
         """
         Connect to Seestar telescope with exponential backoff retry.
@@ -530,6 +590,12 @@ class SeestarClient:
                 self._connected = True
                 logger.info("Connected to Seestar")
 
+                # Send initialization sequence (mirrors ALP's startup behaviour).
+                # This syncs the scope's location and clock, and verifies the
+                # session — skipping it can cause commands to be silently ignored
+                # on some firmware versions.
+                self._send_init_sequence()
+
                 # Start heartbeat thread
                 self._heartbeat_running = True
                 self._heartbeat_thread = threading.Thread(
@@ -579,24 +645,102 @@ class SeestarClient:
             error_msg += f": {last_error}"
         raise RuntimeError(error_msg)
 
+    def _udp_discover(self, timeout: float = 2.0) -> Optional[str]:
+        """
+        Send a UDP broadcast scan_iscope on port 4720 (ALP protocol).
+
+        The Seestar replies to this broadcast regardless of which subnet it is
+        on, so this works even when the scope is in AP mode on 192.168.7.x
+        while the host machine is on a different /24.  Returns the responding
+        IP, or None if no reply within timeout.
+        """
+        import json as _json
+        import socket as _socket
+
+        UDP_PORT = 4720
+        message = _json.dumps({"id": 1, "method": "scan_iscope", "params": ""}) + "\r\n"
+        payload = message.encode()
+
+        sock = None
+        try:
+            sock = _socket.socket(_socket.AF_INET, _socket.SOCK_DGRAM)
+            sock.setsockopt(_socket.SOL_SOCKET, _socket.SO_BROADCAST, 1)
+            sock.settimeout(timeout)
+            sock.bind(("", 0))
+            sock.sendto(payload, ("255.255.255.255", UDP_PORT))
+            logger.info(f"[Seestar] UDP scan_iscope broadcast sent on port {UDP_PORT}")
+
+            deadline = time.time() + timeout
+            while time.time() < deadline:
+                try:
+                    data, addr = sock.recvfrom(1024)
+                    responder_ip = addr[0]
+                    # Ignore our own loopback
+                    if not responder_ip.startswith("127."):
+                        logger.info(f"[Seestar] UDP discovery: scope replied from {responder_ip}")
+                        return responder_ip
+                except _socket.timeout:
+                    break
+        except Exception as e:
+            logger.debug(f"[Seestar] UDP discovery error (non-fatal): {e}")
+        finally:
+            if sock:
+                try:
+                    sock.close()
+                except Exception:
+                    pass
+        return None
+
     def _auto_discover(self) -> str:
         """
-        Scan the local /24 subnet for a host accepting connections on self.port.
+        Discover the Seestar on the local network.
+
+        Tries UDP broadcast first (fast, works across subnets/AP mode), then
+        falls back to a TCP /24 port scan of all local interfaces.
         Returns the first found IP, or None.
         """
         import concurrent.futures
+        import socket as _socket
 
-        # Determine local subnet
+        # --- Pass 1: UDP broadcast (ALP scan_iscope protocol) ---
+        # This reaches the scope even if it is on its own AP subnet (192.168.7.x)
+        # because the broadcast goes out on all interfaces at L2.
+        udp_ip = self._udp_discover(timeout=2.0)
+        if udp_ip:
+            return udp_ip
+
+        logger.info("[Seestar] UDP discovery found nothing; falling back to TCP subnet scan…")
+
+        # --- Pass 2: TCP /24 port scan on all local interface subnets ---
+        # Collect all unique /24 prefixes from local interfaces.
+        bases = set()
         try:
-            probe = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-            probe.connect(("8.8.8.8", 80))
-            local_ip = probe.getsockname()[0]
-            probe.close()
+            hostname = _socket.gethostname()
+            for info in _socket.getaddrinfo(hostname, None, _socket.AF_INET):
+                ip = info[4][0]
+                if not ip.startswith("127."):
+                    bases.add(ip.rsplit(".", 1)[0])
         except Exception:
-            return None
+            pass
 
-        base = local_ip.rsplit(".", 1)[0]
-        logger.info(f"[Seestar] Scanning {base}.0/24 for port {self.port}…")
+        # Fallback: probe outbound interface
+        if not bases:
+            try:
+                probe = _socket.socket(_socket.AF_INET, _socket.SOCK_DGRAM)
+                probe.connect(("8.8.8.8", 80))
+                ip = probe.getsockname()[0]
+                probe.close()
+                bases.add(ip.rsplit(".", 1)[0])
+            except Exception:
+                return None
+
+        # Try the previously working host's subnet first
+        if self.host:
+            known_base = self.host.rsplit(".", 1)[0]
+            bases.discard(known_base)
+            bases = [known_base] + list(bases)
+        else:
+            bases = list(bases)
 
         def _probe(ip):
             try:
@@ -605,13 +749,16 @@ class SeestarClient:
             except Exception:
                 return None
 
-        hosts = [f"{base}.{i}" for i in range(1, 255)]
-        with concurrent.futures.ThreadPoolExecutor(max_workers=64) as pool:
-            for ip in pool.map(_probe, hosts):
-                if ip:
-                    logger.info(f"[Seestar] Found at {ip}")
-                    return ip
-        logger.warning("[Seestar] Auto-discover: no host found on subnet")
+        for base in bases:
+            logger.info(f"[Seestar] Scanning {base}.0/24 for port {self.port}…")
+            hosts = [f"{base}.{i}" for i in range(1, 255)]
+            with concurrent.futures.ThreadPoolExecutor(max_workers=64) as pool:
+                for ip in pool.map(_probe, hosts):
+                    if ip:
+                        logger.info(f"[Seestar] Found at {ip}")
+                        return ip
+
+        logger.warning("[Seestar] Auto-discover: no host found on any local subnet")
         return None
 
     def disconnect(self) -> bool:
@@ -850,21 +997,280 @@ class SeestarClient:
             raise
 
     def stop_view_mode(self) -> bool:
-        """
-        Stop current viewing mode.
-
-        Returns
-        -------
-        bool
-            True if mode stopped successfully
-        """
+        """Stop current viewing mode (live view, stack, or slew)."""
+        import time as _time
         try:
-            _ = self._send_command("iscope_stop_view")
+            self._send_command("iscope_stop_view")
+            _time.sleep(0.3)
+        except Exception:
+            pass
+        try:
+            self._send_command("iscope_stop_view", params={"stage": "Stack"})
+            _time.sleep(1.0)
             logger.info("Stopped viewing mode")
             return True
         except Exception as e:
             logger.error(f"Failed to stop view mode: {e}")
             return False
+
+    # ------------------------------------------------------------------ #
+    #  Extended telescope control (Option A — native JSON-RPC)           #
+    # ------------------------------------------------------------------ #
+
+    def goto_radec(self, ra: float, dec: float) -> dict:
+        """Slew to equatorial coordinates (J2000 RA hours, Dec degrees)."""
+        import time as _time
+        if not self._connected or not self.socket:
+            raise RuntimeError("Not connected to Seestar")
+        with self._socket_lock:
+            # Stop view, wait, then goto — all under the lock so heartbeat can't interleave
+            # Send both bare stop and stack stop to cover all active modes
+            msg1 = {"method": "iscope_stop_view", "id": self._get_next_id()}
+            self.socket.sendall((json.dumps(msg1) + "\r\n").encode())
+            import time as _t2; _t2.sleep(0.3)
+            message = {"method": "iscope_stop_view", "params": {"stage": "Stack"}, "id": self._get_next_id()}
+            self.socket.sendall((json.dumps(message) + "\r\n").encode())
+            _time.sleep(1.5)
+            message = {"method": "scope_goto", "params": [ra, dec], "id": self._get_next_id()}
+            self.socket.sendall((json.dumps(message) + "\r\n").encode())
+            # Read response with timeout
+            self.socket.settimeout(30)
+            buf = ""
+            deadline = _time.time() + 30
+            while _time.time() < deadline:
+                try:
+                    chunk = self.socket.recv(4096).decode(errors="replace")
+                    buf += chunk
+                except socket.timeout:
+                    break
+                while "\r\n" in buf:
+                    line, buf = buf.split("\r\n", 1)
+                    if not line.strip():
+                        continue
+                    try:
+                        r = json.loads(line)
+                        if "Event" in r:
+                            self._handle_event(r)
+                            continue
+                        if r.get("id") == message["id"]:
+                            self.socket.settimeout(self.timeout)
+                            logger.info(f"GoTo RA={ra:.4f}h Dec={dec:.4f}°")
+                            return r.get("result") or {}
+                    except json.JSONDecodeError:
+                        pass
+            self.socket.settimeout(self.timeout)
+        logger.info(f"GoTo RA={ra:.4f}h Dec={dec:.4f}° (no response)")
+        return {}
+
+    def goto_altaz(
+        self,
+        alt: float,
+        az: float,
+        observer_lat: float,
+        observer_lon: float,
+        observer_elev: float = 0,
+    ) -> dict:
+        """
+        Slew to an alt/az position by first converting to RA/Dec.
+
+        Parameters
+        ----------
+        alt, az : float
+            Altitude and azimuth in degrees.
+        observer_lat, observer_lon : float
+            Observer location in decimal degrees.
+        observer_elev : float
+            Observer elevation in metres.
+        """
+        from skyfield.api import load
+        import math
+
+        ts = load.timescale()
+        t = ts.now()
+        lat_r = math.radians(observer_lat)
+        alt_r = math.radians(alt)
+        az_r = math.radians(az)
+
+        sin_dec = (math.sin(alt_r) * math.sin(lat_r) +
+                   math.cos(alt_r) * math.cos(lat_r) * math.cos(az_r))
+        dec_r = math.asin(max(-1.0, min(1.0, sin_dec)))
+
+        cos_ha = (math.sin(alt_r) - math.sin(lat_r) * sin_dec) / (
+            math.cos(lat_r) * math.cos(dec_r) + 1e-12
+        )
+        ha_r = math.acos(max(-1.0, min(1.0, cos_ha)))
+        if math.sin(az_r) > 0:
+            ha_r = 2 * math.pi - ha_r
+
+        # Local Sidereal Time: GMST + longitude (degrees→hours)
+        lst = (t.gmst + observer_lon / 15.0) % 24
+        ra_h = (lst - ha_r * 12 / math.pi) % 24
+        dec_d = math.degrees(dec_r)
+
+        logger.info(
+            f"AltAz ({alt:.2f}°, {az:.2f}°) → RA {ra_h:.4f}h Dec {dec_d:.4f}° (LST {lst:.4f}h)"
+        )
+        return self.goto_radec(ra_h, dec_d)
+
+    def park(self) -> bool:
+        """Park the telescope."""
+        self._send_command("scope_park", expect_response=False)
+        logger.info("Park command sent")
+        return True
+
+    def autofocus(self) -> dict:
+        """Trigger autofocus. Note: firmware method is 'start_auto_focuse' (sic)."""
+        result = self._send_command("start_auto_focuse", timeout_override=60)
+        logger.info("Autofocus triggered")
+        return result or {}
+
+    def set_gain(self, gain: int) -> dict:
+        """Set camera gain (0–120, default 80)."""
+        result = self._send_command("set_control_value", params=["gain", int(gain)])
+        logger.info(f"Gain set to {gain}")
+        return result or {}
+
+    def set_exposure(
+        self, stack_ms: Optional[int] = None, preview_ms: Optional[int] = None
+    ) -> dict:
+        """
+        Set exposure times.
+
+        Parameters
+        ----------
+        stack_ms : int, optional
+            Stacking exposure in milliseconds (e.g. 10000).
+        preview_ms : int, optional
+            Live preview exposure in milliseconds (e.g. 500).
+        """
+        exp = {}
+        if stack_ms is not None:
+            exp["stack_l"] = int(stack_ms)
+        if preview_ms is not None:
+            exp["continuous"] = int(preview_ms)
+        if not exp:
+            return {}
+        result = self._send_command("set_setting", params={"exp_ms": exp})
+        logger.info(f"Exposure set: {exp}")
+        return result or {}
+
+    def set_lp_filter(self, enabled: bool) -> dict:
+        """Enable or disable the light-pollution filter."""
+        result = self._send_command(
+            "set_setting", params={"stack_lenhance": bool(enabled)}
+        )
+        logger.info(f"LP filter {'on' if enabled else 'off'}")
+        return result or {}
+
+    def set_dew_heater(self, enabled: bool, power: int = 50) -> dict:
+        """
+        Control the dew heater.
+
+        Parameters
+        ----------
+        enabled : bool
+            Turn heater on or off.
+        power : int
+            Heater power 0–100 (only used when enabled=True).
+        """
+        result = self._send_command(
+            "pi_output_set2",
+            params={"heater": {"state": bool(enabled), "value": int(power)}},
+        )
+        logger.info(f"Dew heater {'on' if enabled else 'off'} power={power}")
+        return result or {}
+
+    def get_telemetry(self) -> dict:
+        """
+        Fetch live telescope telemetry.
+
+        Merges results from scope_get_equ_coord, get_view_state, and
+        get_device_state into a single flat dict.  Sub-calls that time out
+        or fail are skipped rather than raising.
+        """
+        import os as _os, math as _math
+
+        telemetry: dict = {}
+
+        # RA / Dec
+        try:
+            r = self._send_command(
+                "scope_get_equ_coord", quiet=True, timeout_override=5
+            )
+            if r:
+                telemetry["ra"] = r.get("ra")
+                telemetry["dec"] = r.get("dec")
+        except Exception:
+            pass
+
+        # Compute Alt/Az from RA/Dec if we got coords
+        if telemetry.get("ra") is not None and telemetry.get("dec") is not None:
+            try:
+                import math
+                from skyfield.api import load, wgs84
+
+                lat = float(_os.getenv("OBSERVER_LATITUDE", "0"))
+                lon = float(_os.getenv("OBSERVER_LONGITUDE", "0"))
+                elev = float(_os.getenv("OBSERVER_ELEVATION", "0"))
+                ts = load.timescale()
+                t = ts.now()
+                from skyfield.api import Star
+
+                star = Star(
+                    ra_hours=telemetry["ra"],
+                    dec_degrees=telemetry["dec"],
+                )
+                earth = wgs84.latlon(lat, lon, elevation_m=elev)
+                obs = earth.at(t)
+                apparent = obs.observe(star).apparent()
+                alt, az, _ = apparent.altaz()
+                telemetry["alt"] = round(alt.degrees, 3)
+                telemetry["az"] = round(az.degrees, 3)
+            except Exception:
+                pass
+
+        # View state
+        try:
+            r = self._send_command("get_view_state", quiet=True, timeout_override=5)
+            if r:
+                view = r.get("View") or r
+                telemetry["view_state"] = view
+        except Exception:
+            pass
+
+        # Device state (firmware, misc)
+        try:
+            r = self._send_command(
+                "get_device_state", quiet=True, timeout_override=5
+            )
+            if r:
+                telemetry["device"] = r.get("device") or r
+        except Exception:
+            pass
+
+        return telemetry
+
+    def start_view_star(
+        self,
+        ra: float,
+        dec: float,
+        target_name: str = "",
+        lp_filter: bool = False,
+    ) -> dict:
+        """Start viewing a star/DSO target at given RA/Dec."""
+        self._send_command(
+            "iscope_start_view",
+            params={
+                "mode": "star",
+                "target_ra_dec": [ra, dec],
+                "target_name": target_name,
+                "lp_filter": lp_filter,
+            },
+            expect_response=False,
+        )
+        self._viewing_mode = "star"
+        logger.info(f"Started star view: {target_name or f'RA={ra} Dec={dec}'}")
+        return {"success": True}
 
     def capture_photo(self, exposure_time: float = 1.0) -> dict:
         """

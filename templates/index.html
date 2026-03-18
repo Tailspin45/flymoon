@@ -589,6 +589,113 @@
                     </div>
                 </div>
 
+
+            </div>
+
+            <!-- Fourth Column: Control Panel -->
+            <div class="sidebar sidebar-alp">
+
+                <!-- Live Telemetry Strip -->
+                <div id="telemetryStrip" class="telemetry-strip" style="display:none;">
+                    <span class="telm-item"><span class="telm-label">RA</span> <span id="telmRA">—</span></span>
+                    <span class="telm-item"><span class="telm-label">Dec</span> <span id="telmDec">—</span></span>
+                    <span class="telm-item"><span class="telm-label">Alt</span> <span id="telmAlt">—</span></span>
+                    <span class="telm-item"><span class="telm-label">Az</span> <span id="telmAz">—</span></span>
+                </div>
+
+                <!-- Park & Autofocus -->
+                <div class="sidebar-panel">
+                    <h3>Telescope</h3>
+                    <div class="button-group">
+                        <button class="btn btn-warning btn-compact" onclick="telescopeStopView()">⏹ Stop</button>
+                        <button class="btn btn-secondary btn-compact" onclick="telescopePark()">Park</button>
+                        <button class="btn btn-secondary btn-compact" onclick="telescopeAutofocus()">Autofocus</button>
+                        <button class="btn btn-primary btn-compact" onclick="switchToSun()">☀️ Solar</button>
+                        <button class="btn btn-primary btn-compact" onclick="switchToMoon()">🌙 Lunar</button>
+                    </div>
+                </div>
+
+                <!-- GoTo -->
+                <div class="sidebar-panel">
+                    <h3>GoTo</h3>
+                    <div class="input-row" style="margin-bottom:6px;">
+                        <label class="radio-label">
+                            <input type="radio" name="gotoMode" id="gotoModeAltaz" value="altaz" checked onchange="gotoModeChanged()"> Alt/Az
+                        </label>
+                        <label class="radio-label" style="margin-left:10px;">
+                            <input type="radio" name="gotoMode" id="gotoModeRadec" value="radec" onchange="gotoModeChanged()"> RA/Dec
+                        </label>
+                    </div>
+                    <div id="gotoAltazInputs">
+                        <div class="input-row">
+                            <input type="number" id="gotoAlt" class="input-compact" placeholder="Alt °" step="0.1" min="-90" max="90" style="flex:1;">
+                            <input type="number" id="gotoAz" class="input-compact" placeholder="Az °" step="0.1" min="0" max="360" style="flex:1;">
+                        </div>
+                    </div>
+                    <div id="gotoRadecInputs" style="display:none;">
+                        <div class="input-row">
+                            <input type="number" id="gotoRa" class="input-compact" placeholder="RA hrs" step="0.001" min="0" max="24" style="flex:1;">
+                            <input type="number" id="gotoDec" class="input-compact" placeholder="Dec °" step="0.1" min="-90" max="90" style="flex:1;">
+                        </div>
+                    </div>
+                    <button class="btn btn-primary btn-compact" style="width:100%; margin-top:6px;" onclick="gotoExecute()">Go ▶</button>
+                </div>
+
+                <!-- Named Locations -->
+                <div class="sidebar-panel">
+                    <h3>Saved Locations</h3>
+                    <div class="input-row" style="gap:4px;">
+                        <select id="savedLocations" class="input-compact" style="flex:1;"></select>
+                        <button class="btn btn-secondary btn-compact" onclick="gotoSavedLocation()" title="Go to selected location">▶</button>
+                        <button class="btn btn-danger btn-compact" onclick="deleteSelectedLocation()" title="Delete selected location">🗑</button>
+                    </div>
+                    <div style="margin-top:6px; font-size:0.78em; color:#aaa;">Save current Alt/Az as:</div>
+                    <div class="input-row" style="gap:4px; margin-top:3px;">
+                        <input type="text" id="saveLocationName" class="input-compact" placeholder='e.g. "The Water Tower"' style="flex:1;">
+                        <button class="btn btn-info btn-compact" onclick="saveCurrentLocation()">Save</button>
+                    </div>
+                    <div id="locationsStatus" style="font-size:0.75em; color:#aaa; margin-top:3px; min-height:14px;"></div>
+                </div>
+
+                <!-- Camera Settings -->
+                <div class="sidebar-panel">
+                    <h3>Camera</h3>
+                    <div class="setting-item">
+                        <span class="setting-label">Gain</span>
+                        <div style="display:flex; align-items:center; gap:6px;">
+                            <input type="range" id="gainSlider" min="0" max="120" value="80" class="setting-slider" oninput="document.getElementById('gainVal').textContent=this.value">
+                            <span id="gainVal" style="font-size:0.82em; color:#9cd9ff; min-width:24px;">80</span>
+                        </div>
+                    </div>
+                    <div class="setting-item">
+                        <span class="setting-label">Stack exp (ms)</span>
+                        <input type="number" id="stackExpMs" class="input-compact" value="10000" min="100" max="60000" step="100" style="width:80px;">
+                    </div>
+                    <div class="setting-item">
+                        <span class="setting-label">Preview exp (ms)</span>
+                        <input type="number" id="previewExpMs" class="input-compact" value="500" min="50" max="5000" step="50" style="width:80px;">
+                    </div>
+                    <div class="setting-item">
+                        <label style="display:flex; align-items:center; gap:6px; cursor:pointer;">
+                            <input type="checkbox" id="lpFilterToggle"> LP Filter
+                        </label>
+                    </div>
+                    <div class="setting-item">
+                        <label style="display:flex; align-items:center; gap:6px; cursor:pointer;">
+                            <input type="checkbox" id="dewHeaterToggle" onchange="toggleDewPower()"> Dew Heater
+                        </label>
+                    </div>
+                    <div id="dewPowerRow" class="setting-item" style="display:none;">
+                        <span class="setting-label">Power</span>
+                        <div style="display:flex; align-items:center; gap:6px;">
+                            <input type="range" id="dewPowerSlider" min="0" max="100" value="50" class="setting-slider" oninput="document.getElementById('dewPowerVal').textContent=this.value+'%'">
+                            <span id="dewPowerVal" style="font-size:0.82em; color:#9cd9ff; min-width:30px;">50%</span>
+                        </div>
+                    </div>
+                    <button class="btn btn-primary btn-compact" style="width:100%; margin-top:6px;" onclick="applyCameraSettings()">Apply</button>
+                </div>
+
+
             </div>
         </div>
 

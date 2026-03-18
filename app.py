@@ -112,25 +112,26 @@ if not wizard.validate(interactive=False):
     print("\n💡 Run 'python3 src/config_wizard.py --setup' to configure\n")
 
 app = Flask(__name__)
+app.config["TEMPLATES_AUTO_RELOAD"] = True
 app.secret_key = os.environ.get("SECRET_KEY", os.urandom(24).hex())
 
 # Compute a stable app version from git commit hash for cache-busting static assets.
+import os as _os, time as _time
+
+# Use the most recent mtime of any static asset so the cache busts on every
+# file save during development, even without a new commit.
+_static_dir = _os.path.join(_os.path.dirname(__file__), "static")
+_template_dir = _os.path.join(_os.path.dirname(__file__), "templates")
 try:
-    import subprocess as _subprocess
-
-    _git_hash = (
-        _subprocess.check_output(
-            ["git", "rev-parse", "HEAD"], stderr=_subprocess.DEVNULL
-        )
-        .decode()
-        .strip()[:8]
-    )
+    _mtimes = [
+        _os.path.getmtime(_os.path.join(d, f))
+        for d in (_static_dir, _template_dir)
+        for f in _os.listdir(d)
+        if f.endswith((".js", ".css", ".html"))
+    ]
+    APP_VERSION = str(int(max(_mtimes)))
 except Exception:
-    import time as _time
-
-    _git_hash = str(int(_time.time()))
-
-APP_VERSION = _git_hash
+    APP_VERSION = str(int(_time.time()))
 
 
 @app.context_processor
@@ -1110,8 +1111,8 @@ if __name__ == "__main__":
 
     def _shutdown(sig, frame):
         print("\n🛑 Shutting down…")
-        server.server_close()
-        threading.Thread(target=server.shutdown, daemon=True).start()
+        import os as _os
+        _os._exit(0)
 
     signal.signal(signal.SIGINT, _shutdown)
     signal.signal(signal.SIGTERM, _shutdown)

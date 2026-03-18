@@ -254,8 +254,89 @@ class MockSeestarClient:
 
         return status
 
+    # -- Stubs for extended control methods --
 
-# Module-level state (singleton pattern)
+    def goto_radec(self, ra, dec):
+        logger.info(f"[Mock] goto_radec RA={ra} Dec={dec}")
+        return {"result": "ok"}
+
+    def goto_altaz(self, alt, az, lat, lon, elev=0):
+        logger.info(f"[Mock] goto_altaz alt={alt} az={az}")
+        return {"result": "ok"}
+
+    def stop_view_mode(self):
+        logger.info("[Mock] stop_view_mode")
+        return True
+
+    def park(self):
+        logger.info("[Mock] park")
+        return True
+
+    def autofocus(self):
+        logger.info("[Mock] autofocus")
+        return {"result": "ok"}
+
+    def set_gain(self, gain):
+        logger.info(f"[Mock] set_gain {gain}")
+        return {"result": "ok"}
+
+    def set_exposure(self, stack_ms=None, preview_ms=None):
+        logger.info(f"[Mock] set_exposure stack={stack_ms} preview={preview_ms}")
+        return {"result": "ok"}
+
+    def set_lp_filter(self, enabled):
+        logger.info(f"[Mock] set_lp_filter {enabled}")
+        return {"result": "ok"}
+
+    def set_dew_heater(self, enabled, power=50):
+        logger.info(f"[Mock] set_dew_heater {enabled} power={power}")
+        return {"result": "ok"}
+
+    def get_telemetry(self):
+        return {
+            "ra": 5.5,
+            "dec": 22.0,
+            "alt": 45.0,
+            "az": 180.0,
+            "view_state": "idle",
+            "device": {"battery": 85},
+        }
+
+    def start_view_star(self, ra, dec, target_name="", lp_filter=False):
+        logger.info(f"[Mock] start_view_star {target_name}")
+        return {"result": "ok"}
+
+
+# ------------------------------------------------------------------ #
+#  Named GoTo locations — persisted to data/goto_locations.json       #
+# ------------------------------------------------------------------ #
+import threading as _threading
+
+_LOCATIONS_FILE = os.path.join(os.path.dirname(__file__), "..", "data", "goto_locations.json")
+_locations_lock = _threading.Lock()
+
+
+def _load_locations() -> dict:
+    """Return the saved goto locations dict, or {} on any error."""
+    try:
+        with open(_LOCATIONS_FILE, "r") as f:
+            return json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError):
+        return {}
+
+
+def _save_locations(locs: dict) -> None:
+    """Atomically write the locations dict to disk."""
+    os.makedirs(os.path.dirname(_LOCATIONS_FILE), exist_ok=True)
+    tmp = _LOCATIONS_FILE + ".tmp"
+    with open(tmp, "w") as f:
+        json.dump(locs, f, indent=2)
+    os.replace(tmp, _LOCATIONS_FILE)
+
+
+# ------------------------------------------------------------------ #
+#  Module-level state (singleton pattern)                             #
+# ------------------------------------------------------------------ #
 _telescope_client: Optional[SeestarClient] = None
 _recording_state: Dict[str, Any] = {
     "active": False,
@@ -292,10 +373,10 @@ def get_telescope_client() -> Optional[SeestarClient]:
             _telescope_client = MockSeestarClient(host="mock.telescope", port=4700)
             return _telescope_client
 
-        # Regular mode - use real Seestar client
-        host = os.getenv("SEESTAR_HOST")
-        if not host:
-            return None
+        # Regular mode - use real Seestar client.
+        # A blank host is OK — _auto_discover() will find the scope via UDP
+        # broadcast or TCP subnet scan when connect() is called.
+        host = os.getenv("SEESTAR_HOST", "")
 
         try:
             port = int(os.getenv("SEESTAR_PORT", "4700"))
@@ -384,20 +465,235 @@ def handle_error(e: Exception, default_code: int = 500) -> tuple:
     return jsonify({"error": error_msg}), status_code
 
 
+# ------------------------------------------------------------------ #
+#  Extended control routes — GoTo, park, autofocus, camera settings  #
+#  named locations                                                    #
+# ------------------------------------------------------------------ #
+
+
+def telescope_goto():
+    """POST /telescope/goto — slew to a position.
+
+    Body: {mode: "radec"|"altaz", ra?, dec?, alt?, az?}
+    """
+    client = get_telescope_client()
+    if not client or not client.is_connected():
+        return jsonify({"error": "Telescope not connected"}), 503
+
+    data = request.get_json(force=True, silent=True) or {}
+    mode = data.get("mode", "altaz")
+
+    try:
+        if mode == "radec":
+            ra = float(data["ra"])
+            dec = float(data["dec"])
+            result = client.goto_radec(ra, dec)
+        elif mode == "altaz":
+            alt = float(data["alt"])
+            az = float(data["az"])
+            lat = float(os.getenv("OBSERVER_LATITUDE", "0"))
+            lon = float(os.getenv("OBSERVER_LONGITUDE", "0"))
+            elev = float(os.getenv("OBSERVER_ELEVATION", "0"))
+            result = client.goto_altaz(alt, az, lat, lon, elev)
+        else:
+            return jsonify({"error": f"Unknown mode '{mode}'"}), 400
+
+        return jsonify({"success": True, "result": result}), 200
+
+    except (KeyError, ValueError) as e:
+        return jsonify({"error": f"Invalid parameters: {e}"}), 400
+    except Exception as e:
+        return handle_error(e)
+
+
+def telescope_stop_view():
+    """POST /telescope/stop — stop current view/stack mode."""
+    client = get_telescope_client()
+    if not client or not client.is_connected():
+        return jsonify({"error": "Telescope not connected"}), 503
+    try:
+        client.stop_view_mode()
+        return jsonify({"success": True, "message": "Stop command sent"}), 200
+    except Exception as e:
+        return handle_error(e)
+
+
+def telescope_park():
+    """POST /telescope/park — park the telescope."""
+    client = get_telescope_client()
+    if not client or not client.is_connected():
+        return jsonify({"error": "Telescope not connected"}), 503
+    try:
+        client.park()
+        return jsonify({"success": True, "message": "Park command sent"}), 200
+    except Exception as e:
+        return handle_error(e)
+
+
+def telescope_autofocus():
+    """POST /telescope/autofocus — trigger autofocus."""
+    client = get_telescope_client()
+    if not client or not client.is_connected():
+        return jsonify({"error": "Telescope not connected"}), 503
+    try:
+        result = client.autofocus()
+        return jsonify({"success": True, "result": result}), 200
+    except Exception as e:
+        return handle_error(e)
+
+
+def telescope_telemetry():
+    """GET /telescope/telemetry — live RA/Dec/Alt/Az and device state."""
+    client = get_telescope_client()
+    if not client or not client.is_connected():
+        return jsonify({"error": "Telescope not connected"}), 503
+    try:
+        data = client.get_telemetry()
+        return jsonify(data), 200
+    except Exception as e:
+        return handle_error(e)
+
+
+def get_camera_settings():
+    """GET /telescope/settings/camera — current gain/exposure/filter settings."""
+    client = get_telescope_client()
+    if not client or not client.is_connected():
+        return jsonify({"error": "Telescope not connected"}), 503
+    try:
+        telemetry = client.get_telemetry()
+        device = telemetry.get("device") or {}
+        return jsonify({
+            "gain": device.get("gain"),
+            "stack_ms": device.get("stack_ms"),
+            "preview_ms": device.get("preview_ms"),
+            "lp_filter": device.get("lp_filter"),
+            "dew_heater": device.get("dew_heater"),
+        }), 200
+    except Exception as e:
+        return handle_error(e)
+
+
+def patch_camera_settings():
+    """PATCH /telescope/settings/camera — set gain/exposure/filter/dew heater."""
+    client = get_telescope_client()
+    if not client or not client.is_connected():
+        return jsonify({"error": "Telescope not connected"}), 503
+
+    data = request.get_json(force=True, silent=True) or {}
+    results = {}
+
+    try:
+        if "gain" in data:
+            results["gain"] = client.set_gain(int(data["gain"]))
+        if "stack_ms" in data or "preview_ms" in data:
+            results["exposure"] = client.set_exposure(
+                stack_ms=data.get("stack_ms"),
+                preview_ms=data.get("preview_ms"),
+            )
+        if "lp_filter" in data:
+            results["lp_filter"] = client.set_lp_filter(bool(data["lp_filter"]))
+        if "dew_heater" in data:
+            results["dew_heater"] = client.set_dew_heater(
+                bool(data["dew_heater"]),
+                power=int(data.get("dew_power", 50)),
+            )
+        return jsonify({"success": True, "results": results}), 200
+    except Exception as e:
+        return handle_error(e)
+
+
+def list_goto_locations():
+    """GET /telescope/goto/locations — list all saved named locations."""
+    with _locations_lock:
+        locs = _load_locations()
+    # Return as a sorted list for the frontend dropdown
+    items = [{"name": k, **v} for k, v in sorted(locs.items())]
+    return jsonify(items), 200
+
+
+def save_goto_location():
+    """POST /telescope/goto/locations — save a named location.
+
+    Body: {name: str, alt: float, az: float}
+    """
+    data = request.get_json(force=True, silent=True) or {}
+    name = (data.get("name") or "").strip()
+    if not name:
+        return jsonify({"error": "name is required"}), 400
+    try:
+        alt = float(data["alt"])
+        az = float(data["az"])
+    except (KeyError, ValueError) as e:
+        return jsonify({"error": f"alt and az (degrees) are required: {e}"}), 400
+
+    with _locations_lock:
+        locs = _load_locations()
+        locs[name] = {"alt": round(alt, 4), "az": round(az, 4)}
+        _save_locations(locs)
+
+    logger.info(f"[GoTo] Saved location '{name}': alt={alt:.2f}° az={az:.2f}°")
+    return jsonify({"success": True, "name": name, "alt": alt, "az": az}), 200
+
+
+def delete_goto_location(name: str):
+    """DELETE /telescope/goto/locations/<name> — remove a named location."""
+    with _locations_lock:
+        locs = _load_locations()
+        if name not in locs:
+            return jsonify({"error": f"Location '{name}' not found"}), 404
+        del locs[name]
+        _save_locations(locs)
+
+    logger.info(f"[GoTo] Deleted location '{name}'")
+    return jsonify({"success": True}), 200
+
+
 # Connection Management Endpoints
 
 
 def discover_seestar():
-    """GET /telescope/discover - Scan local subnet for Seestar (port 4700)."""
+    """GET /telescope/discover - Find Seestar on the network.
+
+    Tries UDP broadcast first (works across subnets / AP mode), then falls
+    back to a TCP /24 port scan of the machine's default interface subnet.
+    """
     import concurrent.futures
+    import json as _json
     import socket as _socket
+    import time as _time
 
     port = int(os.getenv("SEESTAR_PORT", "4700"))
-    timeout = 0.4  # seconds per host
 
-    # Determine local subnet from the machine's own IP
+    # --- Pass 1: UDP broadcast scan_iscope (ALP protocol, port 4720) ---
+    udp_found = []
     try:
-        # Connect to a dummy address to find the default outbound interface IP
+        UDP_PORT = 4720
+        message = _json.dumps({"id": 1, "method": "scan_iscope", "params": ""}) + "\r\n"
+        sock = _socket.socket(_socket.AF_INET, _socket.SOCK_DGRAM)
+        sock.setsockopt(_socket.SOL_SOCKET, _socket.SO_BROADCAST, 1)
+        sock.settimeout(2.0)
+        sock.bind(("", 0))
+        sock.sendto(message.encode(), ("255.255.255.255", UDP_PORT))
+        deadline = _time.time() + 2.0
+        while _time.time() < deadline:
+            try:
+                _, addr = sock.recvfrom(1024)
+                ip = addr[0]
+                if not ip.startswith("127.") and ip not in udp_found:
+                    udp_found.append(ip)
+            except _socket.timeout:
+                break
+        sock.close()
+    except Exception as e:
+        logger.debug(f"[Discover] UDP broadcast error (non-fatal): {e}")
+
+    if udp_found:
+        logger.info(f"[Discover] UDP found: {udp_found}")
+        return jsonify({"found": udp_found, "port": port, "method": "udp"}), 200
+
+    # --- Pass 2: TCP /24 port scan ---
+    timeout = 0.4
+    try:
         s = _socket.socket(_socket.AF_INET, _socket.SOCK_DGRAM)
         s.connect(("8.8.8.8", 80))
         local_ip = s.getsockname()[0]
@@ -405,12 +701,8 @@ def discover_seestar():
     except Exception:
         return jsonify({"error": "Cannot determine local IP"}), 500
 
-    # Build the /24 subnet to scan (covers most home networks)
-    parts = local_ip.rsplit(".", 1)
-    base = parts[0]  # e.g. "192.168.7"
+    base = local_ip.rsplit(".", 1)[0]
     hosts = [f"{base}.{i}" for i in range(1, 255)]
-
-    found = []
 
     def _probe(ip):
         try:
@@ -420,11 +712,11 @@ def discover_seestar():
             return None
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=64) as pool:
-        results = pool.map(_probe, hosts)
+        results = list(pool.map(_probe, hosts))
 
     found = [ip for ip in results if ip]
-    logger.info(f"[Discover] Found Seestar candidates: {found}")
-    return jsonify({"found": found, "port": port, "subnet": f"{base}.0/24"}), 200
+    logger.info(f"[Discover] TCP scan found: {found}")
+    return jsonify({"found": found, "port": port, "subnet": f"{base}.0/24", "method": "tcp"}), 200
 
 
 def connect_telescope():
@@ -447,7 +739,7 @@ def connect_telescope():
             return (
                 jsonify(
                     {
-                        "error": "Failed to initialize telescope client. Check SEESTAR_HOST in .env"
+                        "error": "Failed to initialize telescope client. Check ENABLE_SEESTAR=true in .env"
                     }
                 ),
                 400,
@@ -2316,6 +2608,68 @@ def register_routes(app):
         "telescope_harness_validate",
         harness_validate,
         methods=["POST"],
+    )
+
+    # Extended control routes (Option A — native JSON-RPC)
+    app.add_url_rule(
+        "/telescope/goto",
+        "telescope_goto",
+        telescope_goto,
+        methods=["POST"],
+    )
+    app.add_url_rule(
+        "/telescope/stop",
+        "telescope_stop_view",
+        telescope_stop_view,
+        methods=["POST"],
+    )
+    app.add_url_rule(
+        "/telescope/park",
+        "telescope_park",
+        telescope_park,
+        methods=["POST"],
+    )
+    app.add_url_rule(
+        "/telescope/autofocus",
+        "telescope_autofocus",
+        telescope_autofocus,
+        methods=["POST"],
+    )
+    app.add_url_rule(
+        "/telescope/telemetry",
+        "telescope_telemetry",
+        telescope_telemetry,
+        methods=["GET"],
+    )
+    app.add_url_rule(
+        "/telescope/settings/camera",
+        "get_camera_settings",
+        get_camera_settings,
+        methods=["GET"],
+    )
+    app.add_url_rule(
+        "/telescope/settings/camera",
+        "patch_camera_settings",
+        patch_camera_settings,
+        methods=["PATCH"],
+    )
+    app.add_url_rule(
+        "/telescope/goto/locations",
+        "list_goto_locations",
+        list_goto_locations,
+        methods=["GET"],
+    )
+    app.add_url_rule(
+        "/telescope/goto/locations",
+        "save_goto_location",
+        save_goto_location,
+        methods=["POST"],
+    )
+    app.add_url_rule(
+        "/telescope/goto/locations/<path:name>",
+        "delete_goto_location",
+        delete_goto_location,
+        methods=["DELETE"],
     )
 
     logger.info("[Telescope] Routes registered")
