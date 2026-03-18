@@ -64,26 +64,7 @@ def _probe_rtsp_stream(host: str, timeout_seconds: int = 5) -> bool:
 
 
 def _ensure_rtsp_ready(client) -> bool:
-    """Ensure the scope is streaming before RTSP-based operations."""
-    if _probe_rtsp_stream(client.host):
-        return True
-
-    mode = getattr(client, "_viewing_mode", None)
-    if mode == "sun":
-        logger.info("[Telescope] RTSP not ready; attempting to start solar mode")
-        client.start_solar_mode()
-    elif mode == "moon":
-        logger.info("[Telescope] RTSP not ready; attempting to start lunar mode")
-        client.start_lunar_mode()
-    else:
-        # Choose a sane default when mode is unknown.
-        fallback = "sun" if 6 <= datetime.now().hour < 18 else "moon"
-        logger.info(f"[Telescope] RTSP not ready; mode unknown, trying {fallback}")
-        if fallback == "sun":
-            client.start_solar_mode()
-        else:
-            client.start_lunar_mode()
-
+    """Check whether the scope is streaming RTSP — probe only, never force a mode."""
     return _probe_rtsp_stream(client.host)
 
 
@@ -268,12 +249,24 @@ class MockSeestarClient:
         logger.info("[Mock] stop_view_mode")
         return True
 
+    def open_arm(self):
+        logger.info("[Mock] open_arm")
+        return True
+
     def park(self):
         logger.info("[Mock] park")
         return True
 
+    def shutdown(self):
+        logger.info("[Mock] shutdown")
+        return True
+
     def autofocus(self):
         logger.info("[Mock] autofocus")
+        return {"result": "ok"}
+
+    def move_step_focus(self, steps: int):
+        logger.info(f"[Mock] move_step_focus steps={steps}")
         return {"result": "ok"}
 
     def set_gain(self, gain):
@@ -290,6 +283,10 @@ class MockSeestarClient:
 
     def set_dew_heater(self, enabled, power=50):
         logger.info(f"[Mock] set_dew_heater {enabled} power={power}")
+        return {"result": "ok"}
+
+    def set_manual_exp(self, enabled):
+        logger.info(f"[Mock] set_manual_exp {enabled}")
         return {"result": "ok"}
 
     def get_telemetry(self):
@@ -518,6 +515,18 @@ def telescope_stop_view():
         return handle_error(e)
 
 
+def telescope_open_arm():
+    """POST /telescope/open-arm — open (unfold) the telescope arm."""
+    client = get_telescope_client()
+    if not client or not client.is_connected():
+        return jsonify({"error": "Telescope not connected"}), 503
+    try:
+        client.open_arm()
+        return jsonify({"success": True, "message": "Open arm command sent"}), 200
+    except Exception as e:
+        return handle_error(e)
+
+
 def telescope_park():
     """POST /telescope/park — park the telescope."""
     client = get_telescope_client()
@@ -530,6 +539,18 @@ def telescope_park():
         return handle_error(e)
 
 
+def telescope_shutdown():
+    """POST /telescope/shutdown — shutdown the Seestar."""
+    client = get_telescope_client()
+    if not client or not client.is_connected():
+        return jsonify({"error": "Telescope not connected"}), 503
+    try:
+        client.shutdown()
+        return jsonify({"success": True, "message": "Shutdown command sent"}), 200
+    except Exception as e:
+        return handle_error(e)
+
+
 def telescope_autofocus():
     """POST /telescope/autofocus — trigger autofocus."""
     client = get_telescope_client()
@@ -537,6 +558,20 @@ def telescope_autofocus():
         return jsonify({"error": "Telescope not connected"}), 503
     try:
         result = client.autofocus()
+        return jsonify({"success": True, "result": result}), 200
+    except Exception as e:
+        return handle_error(e)
+
+
+def telescope_focus_step():
+    """POST /telescope/focus/step — move focuser by N steps."""
+    client = get_telescope_client()
+    if not client or not client.is_connected():
+        return jsonify({"error": "Telescope not connected"}), 503
+    try:
+        body = request.get_json(silent=True) or {}
+        steps = int(body.get("steps", 0))
+        result = client.move_step_focus(steps)
         return jsonify({"success": True, "result": result}), 200
     except Exception as e:
         return handle_error(e)
@@ -598,6 +633,25 @@ def patch_camera_settings():
                 power=int(data.get("dew_power", 50)),
             )
         return jsonify({"success": True, "results": results}), 200
+    except Exception as e:
+        return handle_error(e)
+
+
+def telescope_auto_exp():
+    """POST /telescope/camera/auto-exp — toggle auto/manual exposure.
+
+    Body: {"enabled": true}  → auto-exposure on (manual_exp=false)
+          {"enabled": false} → manual exposure
+    """
+    client = get_telescope_client()
+    if not client or not client.is_connected():
+        return jsonify({"error": "Telescope not connected"}), 503
+
+    data = request.get_json(force=True, silent=True) or {}
+    auto_on = bool(data.get("enabled", True))
+    try:
+        result = client.set_manual_exp(not auto_on)
+        return jsonify({"success": True, "auto_exp": auto_on, "result": result}), 200
     except Exception as e:
         return handle_error(e)
 
@@ -2624,15 +2678,33 @@ def register_routes(app):
         methods=["POST"],
     )
     app.add_url_rule(
+        "/telescope/open-arm",
+        "telescope_open_arm",
+        telescope_open_arm,
+        methods=["POST"],
+    )
+    app.add_url_rule(
         "/telescope/park",
         "telescope_park",
         telescope_park,
         methods=["POST"],
     )
     app.add_url_rule(
+        "/telescope/shutdown",
+        "telescope_shutdown",
+        telescope_shutdown,
+        methods=["POST"],
+    )
+    app.add_url_rule(
         "/telescope/autofocus",
         "telescope_autofocus",
         telescope_autofocus,
+        methods=["POST"],
+    )
+    app.add_url_rule(
+        "/telescope/focus/step",
+        "telescope_focus_step",
+        telescope_focus_step,
         methods=["POST"],
     )
     app.add_url_rule(
@@ -2652,6 +2724,12 @@ def register_routes(app):
         "patch_camera_settings",
         patch_camera_settings,
         methods=["PATCH"],
+    )
+    app.add_url_rule(
+        "/telescope/camera/auto-exp",
+        "telescope_auto_exp",
+        telescope_auto_exp,
+        methods=["POST"],
     )
     app.add_url_rule(
         "/telescope/goto/locations",

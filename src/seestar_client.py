@@ -172,6 +172,9 @@ class SeestarClient:
 
             if params is not None:
                 message["params"] = params
+            # Firmware > v2582 silently drops commands without "verify".
+            # seestar_alp injects this on every outgoing message.
+            message["verify"] = True
 
             try:
                 # Send message with \r\n delimiter
@@ -221,8 +224,9 @@ class SeestarClient:
                                 if result.get("id") == message["id"]:
                                     if "error" in result:
                                         error = result["error"]
+                                        msg = error.get("message", "Unknown error") if isinstance(error, dict) else str(error)
                                         raise RuntimeError(
-                                            f"Seestar error: {error.get('message', 'Unknown error')}"
+                                            f"Seestar error: {msg}"
                                         )
                                     return result.get("result")
 
@@ -1020,47 +1024,17 @@ class SeestarClient:
     def goto_radec(self, ra: float, dec: float) -> dict:
         """Slew to equatorial coordinates (J2000 RA hours, Dec degrees)."""
         import time as _time
-        if not self._connected or not self.socket:
-            raise RuntimeError("Not connected to Seestar")
-        with self._socket_lock:
-            # Stop view, wait, then goto — all under the lock so heartbeat can't interleave
-            # Send both bare stop and stack stop to cover all active modes
-            msg1 = {"method": "iscope_stop_view", "id": self._get_next_id()}
-            self.socket.sendall((json.dumps(msg1) + "\r\n").encode())
-            import time as _t2; _t2.sleep(0.3)
-            message = {"method": "iscope_stop_view", "params": {"stage": "Stack"}, "id": self._get_next_id()}
-            self.socket.sendall((json.dumps(message) + "\r\n").encode())
+        # Stop current view mode before slewing
+        try:
+            self._send_command("iscope_stop_view", expect_response=False)
+            _time.sleep(0.3)
+            self._send_command("iscope_stop_view", params={"stage": "Stack"}, expect_response=False)
             _time.sleep(1.5)
-            message = {"method": "scope_goto", "params": [ra, dec], "id": self._get_next_id()}
-            self.socket.sendall((json.dumps(message) + "\r\n").encode())
-            # Read response with timeout
-            self.socket.settimeout(30)
-            buf = ""
-            deadline = _time.time() + 30
-            while _time.time() < deadline:
-                try:
-                    chunk = self.socket.recv(4096).decode(errors="replace")
-                    buf += chunk
-                except socket.timeout:
-                    break
-                while "\r\n" in buf:
-                    line, buf = buf.split("\r\n", 1)
-                    if not line.strip():
-                        continue
-                    try:
-                        r = json.loads(line)
-                        if "Event" in r:
-                            self._handle_event(r)
-                            continue
-                        if r.get("id") == message["id"]:
-                            self.socket.settimeout(self.timeout)
-                            logger.info(f"GoTo RA={ra:.4f}h Dec={dec:.4f}°")
-                            return r.get("result") or {}
-                    except json.JSONDecodeError:
-                        pass
-            self.socket.settimeout(self.timeout)
-        logger.info(f"GoTo RA={ra:.4f}h Dec={dec:.4f}° (no response)")
-        return {}
+        except Exception:
+            pass  # best-effort stop
+        result = self._send_command("scope_goto", params=[ra, dec], timeout_override=30)
+        logger.info(f"GoTo RA={ra:.4f}h Dec={dec:.4f}°")
+        return result or {}
 
     def goto_altaz(
         self,
@@ -1112,6 +1086,12 @@ class SeestarClient:
         )
         return self.goto_radec(ra_h, dec_d)
 
+    def open_arm(self) -> bool:
+        """Open (unfold) the telescope arm."""
+        self._send_command("scope_open", expect_response=False)
+        logger.info("Open arm command sent")
+        return True
+
     def park(self) -> bool:
         """Park the telescope."""
         self._send_command("scope_park", expect_response=False)
@@ -1124,10 +1104,33 @@ class SeestarClient:
         logger.info("Autofocus triggered")
         return result or {}
 
+    def shutdown(self) -> bool:
+        """Shutdown the Seestar (parks first, then powers off)."""
+        self._send_command("pi_shutdown", expect_response=False)
+        logger.info("Shutdown command sent")
+        self._connected = False
+        return True
+
+    def move_step_focus(self, steps: int) -> dict:
+        """Move focuser by the given number of steps (positive = out, negative = in)."""
+        result = self._send_command(
+            "move_focuser", params={"step": steps, "ret_step": True}
+        )
+        logger.info(f"Focus step: {steps}")
+        return result or {}
+
     def set_gain(self, gain: int) -> dict:
         """Set camera gain (0–120, default 80)."""
         result = self._send_command("set_control_value", params=["gain", int(gain)])
         logger.info(f"Gain set to {gain}")
+        return result or {}
+
+    def set_manual_exp(self, enabled: bool) -> dict:
+        """Enable or disable manual exposure mode."""
+        result = self._send_command(
+            "set_setting", params={"manual_exp": bool(enabled)}
+        )
+        logger.info(f"Manual exposure {'on' if enabled else 'off'}")
         return result or {}
 
     def set_exposure(
@@ -1177,6 +1180,7 @@ class SeestarClient:
             "pi_output_set2",
             params={"heater": {"state": bool(enabled), "value": int(power)}},
         )
+        self._heater_on = bool(enabled)
         logger.info(f"Dew heater {'on' if enabled else 'off'} power={power}")
         return result or {}
 
@@ -1206,28 +1210,26 @@ class SeestarClient:
         # Compute Alt/Az from RA/Dec if we got coords
         if telemetry.get("ra") is not None and telemetry.get("dec") is not None:
             try:
-                import math
-                from skyfield.api import load, wgs84
+                from skyfield.api import Star, wgs84
+
+                from src.constants import ASTRO_EPHEMERIS, EARTH_TIMESCALE
 
                 lat = float(_os.getenv("OBSERVER_LATITUDE", "0"))
                 lon = float(_os.getenv("OBSERVER_LONGITUDE", "0"))
                 elev = float(_os.getenv("OBSERVER_ELEVATION", "0"))
-                ts = load.timescale()
-                t = ts.now()
-                from skyfield.api import Star
+                t = EARTH_TIMESCALE.now()
 
                 star = Star(
                     ra_hours=telemetry["ra"],
                     dec_degrees=telemetry["dec"],
                 )
-                earth = wgs84.latlon(lat, lon, elevation_m=elev)
-                obs = earth.at(t)
-                apparent = obs.observe(star).apparent()
-                alt, az, _ = apparent.altaz()
+                earth = ASTRO_EPHEMERIS["earth"]
+                topos = earth + wgs84.latlon(lat, lon, elevation_m=elev)
+                alt, az, _ = topos.at(t).observe(star).apparent().altaz()
                 telemetry["alt"] = round(alt.degrees, 3)
                 telemetry["az"] = round(az.degrees, 3)
-            except Exception:
-                pass
+            except Exception as _altaz_err:
+                logger.warning(f"[Telemetry] Alt/Az computation failed: {_altaz_err}")
 
         # View state
         try:
@@ -1238,15 +1240,81 @@ class SeestarClient:
         except Exception:
             pass
 
-        # Device state (firmware, misc)
+        # Device state — rich nested response, flatten into telemetry
         try:
             r = self._send_command(
                 "get_device_state", quiet=True, timeout_override=5
             )
             if r:
-                telemetry["device"] = r.get("device") or r
+                # pi_status: CPU temp, battery, charging, overtemp
+                pi = r.get("pi_status") or {}
+                telemetry["cpu_temp"] = pi.get("temp")
+                telemetry["battery_capacity"] = pi.get("battery_capacity")
+                telemetry["charger_status"] = pi.get("charger_status")
+                telemetry["charge_online"] = pi.get("charge_online")
+                telemetry["battery_temp"] = pi.get("battery_temp")
+                telemetry["is_overtemp"] = pi.get("is_overtemp")
+                telemetry["battery_overtemp"] = pi.get("battery_overtemp")
+
+                # Focuser (absolute position from device state)
+                foc = r.get("focuser") or {}
+                telemetry["focuser_step"] = foc.get("step")
+                telemetry["focuser_state"] = foc.get("state")
+                telemetry["focuser_max_step"] = foc.get("max_step")
+                # Also set focus_pos for the Manual Focus panel
+                if foc.get("step") is not None:
+                    telemetry["focus_pos"] = foc["step"]
+
+                # Mount
+                mt = r.get("mount") or {}
+                telemetry["mount_tracking"] = mt.get("tracking")
+                telemetry["mount_closed"] = mt.get("close")
+                telemetry["mount_move_type"] = mt.get("move_type")
+
+                # Storage
+                sto = r.get("storage") or {}
+                vols = sto.get("storage_volume") or []
+                if vols:
+                    telemetry["storage_free_mb"] = vols[0].get("free_mb")
+                    telemetry["storage_used_pct"] = vols[0].get("used_percent")
+
+                # WiFi / station
+                sta = r.get("station") or {}
+                telemetry["wifi_ssid"] = sta.get("ssid")
+                telemetry["wifi_signal"] = sta.get("sig_lev")
+
+                # Device info
+                dev = r.get("device") or {}
+                telemetry["firmware_ver"] = dev.get("firmware_ver_string")
+                telemetry["serial_number"] = dev.get("sn")
+
+                # Sensors
+                bal = (r.get("balance_sensor") or {}).get("data") or {}
+                telemetry["tilt_angle"] = bal.get("angle")
+                comp = (r.get("compass_sensor") or {}).get("data") or {}
+                telemetry["compass_direction"] = comp.get("direction")
+
+                # Settings of interest
+                sett = r.get("setting") or {}
+                if hasattr(self, "_heater_on"):
+                    telemetry["heater_enable"] = self._heater_on
+                else:
+                    telemetry["heater_enable"] = sett.get("heater_enable")
         except Exception:
             pass
+
+        # Flatten view_state for easier JS access
+        vs = telemetry.get("view_state")
+        if isinstance(vs, dict):
+            telemetry["view_mode"] = vs.get("mode")
+            telemetry["view_target"] = vs.get("target_name")
+            telemetry["view_stage"] = vs.get("stage")
+            telemetry["lp_filter"] = vs.get("lp_filter")
+            telemetry["manual_exp"] = vs.get("manual_exp")
+            rtsp = vs.get("RTSP") or {}
+            telemetry["rtsp_state"] = rtsp.get("state")
+            af = vs.get("AutoFocus") or {}
+            telemetry["autofocus_state"] = af.get("state")
 
         return telemetry
 
@@ -1633,10 +1701,9 @@ def create_client_from_env() -> Optional[SeestarClient]:
         logger.info("Seestar integration disabled (ENABLE_SEESTAR=false)")
         return None
 
-    host = os.getenv("SEESTAR_HOST")
+    host = os.getenv("SEESTAR_HOST", "")
     if not host:
-        logger.error("SEESTAR_HOST not configured")
-        return None
+        logger.info("SEESTAR_HOST not configured — auto-discovery will locate the scope at connect time")
 
     try:
         port = int(os.getenv("SEESTAR_PORT", str(SeestarClient.DEFAULT_PORT)))

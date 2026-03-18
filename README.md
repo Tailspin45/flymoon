@@ -111,8 +111,6 @@ Recommended sequence:
 
 Flymoon connects directly to the Seestar S50 over TCP (JSON-RPC 2.0, port 4700) — no bridge app required.
 
-Flymoon has a built-in adapter for [seestar_alp](https://github.com/smart-underworld/seestar_alp) (by Kai Yung). By default it uses its own native TCP client, but if you set `SEESTAR_ALPACA_URL` (e.g. `http://127.0.0.1:5555`) it will route all telescope commands through seestar_alp's Alpaca-style HTTP API instead. Both modes are first-class — seestar_alp must be running as a separate process when that URL is set. The Telescope ALP Controls panel also supports Auto-wire, which probes common sidecar URLs (localhost plus discovered scope IP) and configures the adapter at runtime. The native TCP protocol was reverse-engineered from seestar_alp's source.
-
 - **Auto-discovery** — scans the local subnet to find the scope's IP automatically
 - **Solar & lunar modes** — switches the scope to the correct imaging mode for the selected target
 - **Automatic recording** — starts video a configurable number of seconds before the predicted transit and stops after (defaults: 10 s pre/post buffer)
@@ -177,7 +175,6 @@ Copy `.env.mock` to `.env` and fill in:
 | `LAT/LONG_LOWER_LEFT / UPPER_RIGHT` | Flight search bounding box |
 | `TELEGRAM_BOT_TOKEN / CHAT_ID` | Telegram alerts (optional) |
 | `ENABLE_SEESTAR / SEESTAR_HOST` | Telescope control (optional) |
-| `SEESTAR_ALPACA_URL` | Optional `seestar_alp` sidecar endpoint for stable `/v1/seestar/*` API |
 | `SEESTAR_PRE_BUFFER / POST_BUFFER` | Recording window in seconds (default: 10) |
 | `FLYMOON_BROWSER` | Startup browser preference (`default` or `chrome`) |
 | `FLYMOON_NO_BROWSER` | Disable browser auto-open on startup when set |

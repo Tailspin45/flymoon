@@ -595,23 +595,88 @@
             <!-- Fourth Column: Control Panel -->
             <div class="sidebar sidebar-alp">
 
-                <!-- Live Telemetry Strip -->
-                <div id="telemetryStrip" class="telemetry-strip" style="display:none;">
-                    <span class="telm-item"><span class="telm-label">RA</span> <span id="telmRA">—</span></span>
-                    <span class="telm-item"><span class="telm-label">Dec</span> <span id="telmDec">—</span></span>
-                    <span class="telm-item"><span class="telm-label">Alt</span> <span id="telmAlt">—</span></span>
-                    <span class="telm-item"><span class="telm-label">Az</span> <span id="telmAz">—</span></span>
+                <!-- Live Telemetry Panel -->
+                <div id="telemetryStrip" class="telemetry-panel" style="display:none;">
+                    <div class="telemetry-section">
+                        <h4>Pointing</h4>
+                        <div class="telemetry-grid">
+                            <span class="telm-item"><span class="telm-label">RA</span> <span id="telmRA" class="telm-val">—</span></span>
+                            <span class="telm-item"><span class="telm-label">Dec</span> <span id="telmDec" class="telm-val">—</span></span>
+                            <span class="telm-item"><span class="telm-label">Alt</span> <span id="telmAlt" class="telm-val">—</span></span>
+                            <span class="telm-item"><span class="telm-label">Az</span> <span id="telmAz" class="telm-val">—</span></span>
+                        </div>
+                    </div>
+                    <div class="telemetry-section">
+                        <h4>View</h4>
+                        <div class="telemetry-grid">
+                            <span class="telm-item"><span class="telm-label">Mode</span> <span id="telmViewMode" class="telm-val">—</span></span>
+                            <span class="telm-item"><span class="telm-label">Target</span> <span id="telmViewTarget" class="telm-val">—</span></span>
+                            <span class="telm-item"><span class="telm-label">Stage</span> <span id="telmViewStage" class="telm-val">—</span></span>
+                            <span class="telm-item"><span class="telm-label">RTSP</span> <span id="telmRtsp" class="telm-val">—</span></span>
+                            <span class="telm-item"><span class="telm-label">LP Filter</span> <span id="telmLpFilter" class="telm-val">—</span></span>
+                            <span class="telm-item"><span class="telm-label">AutoFocus</span> <span id="telmAutofocus" class="telm-val">—</span></span>
+                            <span class="telm-item"><span class="telm-label">Exposure</span> <span id="telmManualExp" class="telm-val">—</span></span>
+                        </div>
+                    </div>
+                    <div class="telemetry-section">
+                        <h4>System</h4>
+                        <div class="telemetry-grid">
+                            <span class="telm-item"><span class="telm-label">Battery</span> <span id="telmBatt" class="telm-val">—</span></span>
+                            <span class="telm-item"><span class="telm-label">Charger</span> <span id="telmCharger" class="telm-val">—</span></span>
+                            <span class="telm-item"><span class="telm-label">CPU</span> <span id="telmCpuTemp" class="telm-val">—</span></span>
+                            <span class="telm-item"><span class="telm-label">Batt Temp</span> <span id="telmBattTemp" class="telm-val">—</span></span>
+                            <span class="telm-item" id="telmOvertempRow" style="display:none;"><span class="telm-label">OVERTEMP</span> <span id="telmOvertemp" class="telm-val telm-warn">YES</span></span>
+                        </div>
+                    </div>
+                    <div class="telemetry-section">
+                        <h4>Focuser</h4>
+                        <div class="telemetry-grid">
+                            <span class="telm-item"><span class="telm-label">Position</span> <span id="telmFocuserStep" class="telm-val">—</span></span>
+                            <span class="telm-item"><span class="telm-label">State</span> <span id="telmFocuserState" class="telm-val">—</span></span>
+                            <span class="telm-item"><span class="telm-label">Max</span> <span id="telmFocuserMax" class="telm-val">—</span></span>
+                        </div>
+                    </div>
+                    <div class="telemetry-section">
+                        <h4>Mount</h4>
+                        <div class="telemetry-grid">
+                            <span class="telm-item"><span class="telm-label">Tracking</span> <span id="telmTracking" class="telm-val">—</span></span>
+                            <span class="telm-item"><span class="telm-label">Arm</span> <span id="telmArm" class="telm-val">—</span></span>
+                            <span class="telm-item"><span class="telm-label">Move</span> <span id="telmMoveType" class="telm-val">—</span></span>
+                            <span class="telm-item"><span class="telm-label">Compass</span> <span id="telmCompass" class="telm-val">—</span></span>
+                            <span class="telm-item"><span class="telm-label">Tilt</span> <span id="telmTilt" class="telm-val">—</span></span>
+                        </div>
+                    </div>
+                    <div class="telemetry-section">
+                        <h4>Storage / WiFi</h4>
+                        <div class="telemetry-grid">
+                            <span class="telm-item"><span class="telm-label">Free</span> <span id="telmStorageFree" class="telm-val">—</span></span>
+                            <span class="telm-item"><span class="telm-label">Used</span> <span id="telmStorageUsed" class="telm-val">—</span></span>
+                            <span class="telm-item"><span class="telm-label">WiFi</span> <span id="telmWifiSsid" class="telm-val">—</span></span>
+                            <span class="telm-item"><span class="telm-label">Signal</span> <span id="telmWifiSignal" class="telm-val">—</span></span>
+                        </div>
+                    </div>
+                    <div class="telemetry-section">
+                        <h4>Device</h4>
+                        <div class="telemetry-grid">
+                            <span class="telm-item"><span class="telm-label">Firmware</span> <span id="telmFirmware" class="telm-val">—</span></span>
+                            <span class="telm-item"><span class="telm-label">Heater</span> <span id="telmHeater" class="telm-val">—</span></span>
+                        </div>
+                    </div>
                 </div>
 
-                <!-- Park & Autofocus -->
+                <!-- Telescope Controls -->
                 <div class="sidebar-panel">
                     <h3>Telescope</h3>
-                    <div class="button-group">
+                    <div class="button-group" style="margin-bottom:6px;">
                         <button class="btn btn-warning btn-compact" onclick="telescopeStopView()">⏹ Stop</button>
                         <button class="btn btn-secondary btn-compact" onclick="telescopePark()">Park</button>
+                        <button class="btn btn-secondary btn-compact" onclick="telescopeOpenArm()">Open Arm</button>
                         <button class="btn btn-secondary btn-compact" onclick="telescopeAutofocus()">Autofocus</button>
+                    </div>
+                    <div class="button-group">
                         <button class="btn btn-primary btn-compact" onclick="switchToSun()">☀️ Solar</button>
                         <button class="btn btn-primary btn-compact" onclick="switchToMoon()">🌙 Lunar</button>
+                        <button class="btn btn-danger btn-compact" onclick="telescopeShutdown()">Shutdown</button>
                     </div>
                 </div>
 
@@ -657,6 +722,23 @@
                     <div id="locationsStatus" style="font-size:0.75em; color:#aaa; margin-top:3px; min-height:14px;"></div>
                 </div>
 
+                <!-- Manual Focus -->
+                <div class="sidebar-panel">
+                    <h3>Manual Focus</h3>
+                    <div style="font-size:0.78em; color:#aaa; margin-bottom:4px;">Step size</div>
+                    <div class="button-group" style="margin-bottom:6px;">
+                        <button class="btn btn-secondary btn-compact focus-step-btn" data-steps="10" onclick="setFocusStepSize(10)" style="border-color:#2dd4bf; background:rgba(45,212,191,0.15);">10</button>
+                        <button class="btn btn-secondary btn-compact focus-step-btn" data-steps="50" onclick="setFocusStepSize(50)">50</button>
+                        <button class="btn btn-secondary btn-compact focus-step-btn" data-steps="100" onclick="setFocusStepSize(100)">100</button>
+                    </div>
+                    <div class="button-group" style="margin-bottom:6px;">
+                        <button class="btn btn-secondary btn-compact" style="flex:1;" onclick="focusStep(-_focusStepSize)">&#9664; In</button>
+                        <button class="btn btn-secondary btn-compact" style="flex:1;" onclick="focusStep(_focusStepSize)">Out &#9654;</button>
+                    </div>
+                    <div style="font-size:0.78em; color:#aaa; margin-bottom:2px;">Position: <span id="focusPos" style="color:#9cd9ff;">—</span></div>
+                    <button class="btn btn-secondary btn-compact" style="width:100%; margin-top:4px;" onclick="telescopeAutofocus()">&#128269; Run Autofocus</button>
+                </div>
+
                 <!-- Camera Settings -->
                 <div class="sidebar-panel">
                     <h3>Camera</h3>
@@ -666,14 +748,6 @@
                             <input type="range" id="gainSlider" min="0" max="120" value="80" class="setting-slider" oninput="document.getElementById('gainVal').textContent=this.value">
                             <span id="gainVal" style="font-size:0.82em; color:#9cd9ff; min-width:24px;">80</span>
                         </div>
-                    </div>
-                    <div class="setting-item">
-                        <span class="setting-label">Stack exp (ms)</span>
-                        <input type="number" id="stackExpMs" class="input-compact" value="10000" min="100" max="60000" step="100" style="width:80px;">
-                    </div>
-                    <div class="setting-item">
-                        <span class="setting-label">Preview exp (ms)</span>
-                        <input type="number" id="previewExpMs" class="input-compact" value="500" min="50" max="5000" step="50" style="width:80px;">
                     </div>
                     <div class="setting-item">
                         <label style="display:flex; align-items:center; gap:6px; cursor:pointer;">
@@ -692,7 +766,10 @@
                             <span id="dewPowerVal" style="font-size:0.82em; color:#9cd9ff; min-width:30px;">50%</span>
                         </div>
                     </div>
-                    <button class="btn btn-primary btn-compact" style="width:100%; margin-top:6px;" onclick="applyCameraSettings()">Apply</button>
+                    <div class="button-group" style="margin-top:6px;">
+                        <button class="btn btn-primary btn-compact" style="flex:1;" onclick="applyCameraSettings()">Apply</button>
+                        <button id="autoExpBtn" class="btn btn-secondary btn-compact" style="flex:1;" onclick="toggleAutoExp()">Auto Exp</button>
+                    </div>
                 </div>
 
 
