@@ -42,7 +42,7 @@ Full setup instructions (Mac, Windows, Linux) → **[SETUP.md](SETUP.md)**
 
 ### Prediction Algorithm
 
-1. **Flight acquisition** — queries FlightAware AeroAPI for all aircraft within the configured bounding box
+1. **Flight acquisition** — uses OpenSky Network as the primary real-time position source (free, ~60 s cache); FlightAware AeroAPI is called only for HIGH-probability transits to enrich metadata (origin, destination, aircraft type)
 2. **Position projection** — extrapolates each aircraft's position up to 15 minutes ahead using constant velocity and heading
 3. **Celestial tracking** — computes Sun/Moon altitude and azimuth with Skyfield + the JPL DE421 ephemeris, accounting for atmospheric refraction
 4. **Angular separation** — numerical optimisation finds the moment of closest approach between the aircraft path and the celestial disc
@@ -50,9 +50,9 @@ Full setup instructions (Mac, Windows, Linux) → **[SETUP.md](SETUP.md)**
 
 | Indicator | Separation | Meaning |
 |-----------|-----------|---------|
-| 🟢 High | ≤ 1.5° | Direct transit very likely |
-| 🟠 Medium | ≤ 2.5° | Near miss — worth recording |
-| ⚪ Low | ≤ 3.0° | Possible transit |
+| 🟢 High | ≤ 2.0° | Direct transit very likely |
+| 🟠 Medium | ≤ 4.0° | Near miss — worth recording |
+| ⚪ Low | ≤ 12.0° | Possible distant transit |
 
 ### Real-Time Video Detection
 
@@ -109,7 +109,7 @@ Recommended sequence:
 
 ## 🔭 Telescope Integration
 
-Flymoon connects directly to the Seestar S50 over TCP — no bridge app required.
+Flymoon connects directly to the Seestar S50 over TCP (JSON-RPC 2.0, port 4700) — no bridge app required.
 
 - **Auto-discovery** — scans the local subnet to find the scope's IP automatically
 - **Solar & lunar modes** — switches the scope to the correct imaging mode for the selected target
@@ -135,13 +135,15 @@ Flymoon connects directly to the Seestar S50 over TCP — no bridge app required
 ### `transit_capture.py` — Telescope control or Telegram fallback
 ```bash
 # Fully automated (Seestar + Telegram)
-python3 transit_capture.py --latitude 51.5 --longitude -0.12 --target sun
+python3 transit_capture.py --latitude $OBSERVER_LATITUDE --longitude $OBSERVER_LONGITUDE --target sun
 
 # Notifications only
-python3 transit_capture.py --latitude 51.5 --longitude -0.12 --target sun --manual
+python3 transit_capture.py --latitude $OBSERVER_LATITUDE --longitude $OBSERVER_LONGITUDE --target sun --manual
 ```
 
-Both scripts run continuously in the background and handle their own scheduling.
+Pass the same `OBSERVER_LATITUDE` / `OBSERVER_LONGITUDE` values from your `.env`. The script does not read them from the environment automatically.
+
+The script runs continuously and handles its own scheduling.
 
 ### macOS App Bundle
 
@@ -158,7 +160,7 @@ pip install -r requirements-windows.txt
 python windows_monitor.py
 ```
 
-Tray icon colours: **gray** = idle · **green** = monitoring · **orange** = transit detected · **red** = error.
+Tray icon colours: **gray** = idle (not monitoring) · **green** = monitoring, no transits · **orange** = HIGH probability transit detected · **red** = error fetching data.
 
 ---
 
@@ -212,6 +214,10 @@ Issues and pull requests welcome — especially transit photographs!
 ---
 
 ## 📝 Credits
+
+**David Betancourt** — original Flymoon concept and initial implementation.
+
+**Kai Yung** — [seestar_alp](https://github.com/smart-underworld/seestar_alp), whose reverse-engineered Seestar protocol underpins Flymoon's direct TCP control and optional Alpaca sidecar integration.
 
 | Component | Project | Licence |
 |-----------|---------|---------|

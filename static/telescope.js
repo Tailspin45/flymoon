@@ -71,6 +71,7 @@ let simulationVideo = null;
 let disconnectedPollCount = 0; // consecutive disconnected polls before stopping preview
 let simulationFiles = []; // Track temporary simulation files
 let filmstripFiles = []; // current files rendered in the horizontal filmstrip
+let _lastDiscoveredSeestarIp = null; // last discovered scope IP
 
 const filmstripSelection = {
     selected: new Set(),   // set of file paths selected in filmstrip
@@ -174,6 +175,9 @@ window.initTelescope = function() {
 
     // Load saved detection preference and sync UI
     syncDetectionUI();
+
+    // Initialize Control Panel (GoTo, named locations)
+    initControlPanel();
 };
 
 // ============================================================================
@@ -188,11 +192,14 @@ async function connect() {
     if (result && result.success) {
         isConnected = true;
         showStatus('Connected successfully!', 'success', 5000);
-        
+
         // Start status polling
         if (statusPollInterval) clearInterval(statusPollInterval);
         statusPollInterval = setInterval(updateStatus, 2000); // Every 2s
-        
+
+        // Start telemetry polling (RA/Dec/Alt/Az strip)
+        startTelemetryPolling();
+
         updateConnectionUI();
         updateStatus();
         startPreview();
@@ -212,12 +219,14 @@ async function findSeestar() {
             return;
         }
         const ip = data.found[0];
+        _lastDiscoveredSeestarIp = ip;
         const others = data.found.slice(1);
         let msg = `Found Seestar at ${ip}`;
         if (others.length) msg += ` (also: ${others.join(', ')})`;
         msg += ` — update SEESTAR_HOST in .env and restart`;
         showStatus(msg, 'success', 12000);
         console.log('[Discover]', msg, '— found:', data.found);
+
     } catch (err) {
         if (btn) { btn.disabled = false; btn.textContent = '🔍 Find'; }
         showStatus('Scan error: ' + err.message, 'error', 6000);
@@ -233,13 +242,16 @@ async function disconnect() {
         isConnected = false;
         isRecording = false;
         showStatus('Disconnected', 'info');
-        
+
         // Stop polling
         if (statusPollInterval) {
             clearInterval(statusPollInterval);
             statusPollInterval = null;
         }
-        
+
+        // Stop telemetry strip
+        stopTelemetryPolling();
+
         updateConnectionUI();
         stopPreview();
     }
@@ -331,6 +343,7 @@ async function updateStatus() {
             console.log('[Scope] Reconnected — mode:', result.viewing_mode);
             _previewLastError = 0;
             _lastConnectedStatus = null;
+            startTelemetryPolling();
         }
         if (justDisconnected) {
             console.warn('[Scope] Disconnected — prior connected state:', JSON.stringify(_lastConnectedStatus || {}));
@@ -338,6 +351,7 @@ async function updateStatus() {
             // Immediately clear transit cards — nothing to capture with
             upcomingTransits = [];
             updateTransitList();
+            stopTelemetryPolling();
         }
         // Cache last connected response for diagnostics
         if (isConnected) {
@@ -435,11 +449,15 @@ async function updateTargetVisibility() {
 async function switchToSun() {
     console.log('[Telescope] Switching to Sun');
     showStatus('Switching to Solar mode...', 'info');
-    
+
     const result = await apiCall('/telescope/target/sun', 'POST');
     if (result && result.success) {
         showStatus('Switched to Solar mode', 'success', 5000);
-        
+        // Force-restart the preview stream (mode change kills old RTSP)
+        stopPreview();
+        _previewLastError = 0;
+        setTimeout(startPreview, 3000);
+
         // Show solar filter warning
         showWarning(
             '⚠️ SOLAR FILTER REQUIRED - Ensure solar filter is installed before viewing!',
@@ -456,7 +474,11 @@ async function switchToMoon() {
     const result = await apiCall('/telescope/target/moon', 'POST');
     if (result && result.success) {
         showStatus('Switched to Lunar mode', 'success', 5000);
-        
+        // Force-restart the preview stream (mode change kills old RTSP)
+        stopPreview();
+        _previewLastError = 0;
+        setTimeout(startPreview, 3000);
+
         // Show lunar filter reminder
         showWarning(
             '✓ Remove solar filter if installed - Lunar viewing safe without filter',
@@ -966,17 +988,50 @@ function startPreview() {
     if (previewStatusText) previewStatusText.textContent = 'Connecting...';
     if (previewTitleIcon) previewTitleIcon.textContent = '🟡';
     
-    // After 2 seconds, assume stream is active (MJPEG streams don't trigger onload)
-    setTimeout(() => {
-        if (previewStatusDot) previewStatusDot.className = 'status-dot connected';
-        if (previewStatusText) previewStatusText.textContent = 'Live Stream Active';
-        if (previewTitleIcon) previewTitleIcon.textContent = '🟢';
+    // Confirm stream is live by polling for a successful HEAD request to the MJPEG endpoint
+    // (MJPEG <img> streams don't fire onload, so we verify separately)
+    let _streamCheckTimer = null;
+    const checkStream = async () => {
+        try {
+            const r = await fetch(streamUrl, { method: 'HEAD', signal: AbortSignal.timeout(4000) });
+            if (r.ok) {
+                if (previewStatusDot) previewStatusDot.className = 'status-dot connected';
+                if (previewStatusText) previewStatusText.textContent = 'Live Stream Active';
+                if (previewTitleIcon) previewTitleIcon.textContent = '🟢';
+                currentZoom = 1.0;
+                applyZoom();
+            } else {
+                // Server responded but not OK — stream not ready
+                if (previewStatusDot) previewStatusDot.className = 'status-dot disconnected';
+                if (previewStatusText) previewStatusText.textContent = 'Stream unavailable';
+                if (previewTitleIcon) previewTitleIcon.textContent = '🔴';
+            }
+        } catch (_) {
+            // Fetch failed — retry once more after 3s before giving up
+            _streamCheckTimer = setTimeout(async () => {
+                try {
+                    const r2 = await fetch(streamUrl, { method: 'HEAD', signal: AbortSignal.timeout(4000) });
+                    if (r2.ok) {
+                        if (previewStatusDot) previewStatusDot.className = 'status-dot connected';
+                        if (previewStatusText) previewStatusText.textContent = 'Live Stream Active';
+                        if (previewTitleIcon) previewTitleIcon.textContent = '🟢';
+                        currentZoom = 1.0;
+                        applyZoom();
+                    } else {
+                        if (previewStatusDot) previewStatusDot.className = 'status-dot disconnected';
+                        if (previewStatusText) previewStatusText.textContent = 'Stream unavailable';
+                        if (previewTitleIcon) previewTitleIcon.textContent = '🔴';
+                    }
+                } catch (_2) {
+                    if (previewStatusDot) previewStatusDot.className = 'status-dot disconnected';
+                    if (previewStatusText) previewStatusText.textContent = 'Stream unavailable';
+                    if (previewTitleIcon) previewTitleIcon.textContent = '🔴';
+                }
+            }, 3000);
+        }
+    };
+    setTimeout(checkStream, 2000);
 
-        // Apply initial fit zoom once we know the image has loaded
-        currentZoom = 1.0;
-        applyZoom();
-    }, 2000);
-    
     // Error handler — reset state so the guard above doesn't block retries
     previewImage.onerror = () => {
         const backoffSecs = (_PREVIEW_BACKOFF_MS / 1000).toFixed(0);
@@ -1230,6 +1285,21 @@ function showWarning(message, type = 'warning', autohide = 0) {
 // API HELPERS
 // ============================================================================
 
+function _formatApiError(data, status) {
+    const fallback = `HTTP ${status}`;
+    if (!data || data.error === undefined || data.error === null) return fallback;
+
+    if (typeof data.error === 'string') return data.error;
+
+    if (typeof data.error === 'object') {
+        const msg = data.error.message || data.error.code || fallback;
+        const code = data.error.code ? ` (${data.error.code})` : '';
+        return `${msg}${code}`;
+    }
+
+    return fallback;
+}
+
 async function apiCall(endpoint, method = 'GET', body = null) {
     try {
         const options = {
@@ -1238,29 +1308,336 @@ async function apiCall(endpoint, method = 'GET', body = null) {
                 'Content-Type': 'application/json'
             }
         };
-        
+
         if (body) {
             options.body = JSON.stringify(body);
         }
-        
+
         const response = await fetch(endpoint, options);
         const contentType = response.headers.get('content-type') || '';
         if (!contentType.includes('application/json')) {
             throw new Error(`HTTP ${response.status}: unexpected response`);
         }
         const data = await response.json();
-        
+
         if (!response.ok) {
-            throw new Error(data.error || `HTTP ${response.status}`);
+            throw new Error(_formatApiError(data, response.status));
         }
-        
+
         return data;
-        
+
     } catch (error) {
         console.error(`[Telescope] API call failed: ${endpoint}`, error);
         showStatus(`Error: ${error.message}`, 'error');
         return null;
     }
+}
+
+// ============================================================================
+// CONTROL PANEL — GoTo, Park, Autofocus, Camera Settings, Named Locations
+// ============================================================================
+
+let _telemetryInterval = null;
+
+function initControlPanel() {
+    loadSavedLocations();
+}
+
+// -- Telemetry polling --
+
+function startTelemetryPolling() {
+    if (_telemetryInterval) return;
+    _telemetryInterval = setInterval(_pollTelemetry, 5000);
+    _pollTelemetry(); // immediate first fetch
+    document.getElementById('telemetryStrip').style.display = '';
+}
+
+function stopTelemetryPolling() {
+    if (_telemetryInterval) {
+        clearInterval(_telemetryInterval);
+        _telemetryInterval = null;
+    }
+    document.getElementById('telemetryStrip').style.display = 'none';
+}
+
+function _setText(id, val) {
+    const el = document.getElementById(id);
+    if (el) el.textContent = val != null ? String(val) : '—';
+}
+
+async function _pollTelemetry() {
+    try {
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), 6000);
+        const res = await fetch('/telescope/telemetry', { signal: controller.signal });
+        clearTimeout(timer);
+        if (!res.ok) return;
+        const d = await res.json();
+        const fmt = (v, dp=2) => v != null ? (+v).toFixed(dp) : '—';
+
+        // Pointing
+        _setText('telmRA',  fmt(d.ra,  4) + (d.ra  != null ? 'h' : ''));
+        _setText('telmDec', fmt(d.dec, 3) + (d.dec != null ? '°' : ''));
+        _setText('telmAlt', fmt(d.alt, 1) + (d.alt != null ? '°' : ''));
+        _setText('telmAz',  fmt(d.az,  1) + (d.az  != null ? '°' : ''));
+
+        // Bidirectional Alt/Az — update GoTo placeholders if user isn't typing
+        const altIn = document.getElementById('gotoAlt');
+        const azIn  = document.getElementById('gotoAz');
+        if (altIn && document.activeElement !== altIn && d.alt != null)
+            altIn.placeholder = (+d.alt).toFixed(1);
+        if (azIn && document.activeElement !== azIn && d.az != null)
+            azIn.placeholder = (+d.az).toFixed(1);
+
+        // View
+        _setText('telmViewMode',   d.view_mode);
+        _setText('telmViewTarget', d.view_target);
+        _setText('telmViewStage',  d.view_stage);
+        _setText('telmRtsp',       d.rtsp_state);
+        _setText('telmLpFilter',   d.lp_filter != null ? (d.lp_filter ? 'On' : 'Off') : null);
+        _setText('telmAutofocus',  d.autofocus_state);
+        _setText('telmManualExp',  d.manual_exp != null ? (d.manual_exp ? 'Manual' : 'Auto') : null);
+
+        // System
+        const batt = d.battery_capacity;
+        const battEl = document.getElementById('telmBatt');
+        if (battEl) {
+            battEl.textContent = batt != null ? batt + '%' : '—';
+            battEl.className = 'telm-val' + (batt != null ? (batt > 50 ? ' telm-batt-green' : batt > 20 ? ' telm-batt-yellow' : ' telm-batt-red') : '');
+        }
+        _setText('telmCharger',  d.charger_status);
+        _setText('telmCpuTemp',  d.cpu_temp != null ? (+d.cpu_temp).toFixed(1) + '°C' : null);
+        _setText('telmBattTemp', d.battery_temp != null ? d.battery_temp + '°C' : null);
+        // Overtemp warning
+        const otRow = document.getElementById('telmOvertempRow');
+        if (otRow) otRow.style.display = (d.is_overtemp || d.battery_overtemp) ? '' : 'none';
+
+        // Focuser
+        _setText('telmFocuserStep',  d.focuser_step);
+        _setText('telmFocuserState', d.focuser_state);
+        _setText('telmFocuserMax',   d.focuser_max_step);
+        // Also update Manual Focus panel position
+        const focusPosEl = document.getElementById('focusPos');
+        if (focusPosEl && d.focus_pos != null) focusPosEl.textContent = d.focus_pos;
+
+        // Mount
+        _setText('telmTracking', d.mount_tracking != null ? (d.mount_tracking ? 'Yes' : 'No') : null);
+        _setText('telmArm',      d.mount_closed != null ? (d.mount_closed ? 'Closed' : 'Open') : null);
+        _setText('telmMoveType', d.mount_move_type);
+        _setText('telmCompass',  d.compass_direction != null ? (+d.compass_direction).toFixed(0) + '°' : null);
+        _setText('telmTilt',     d.tilt_angle != null ? (+d.tilt_angle).toFixed(1) + '°' : null);
+
+        // Storage / WiFi
+        _setText('telmStorageFree', d.storage_free_mb != null ? (d.storage_free_mb > 1024 ? (d.storage_free_mb / 1024).toFixed(1) + ' GB' : d.storage_free_mb + ' MB') : null);
+        _setText('telmStorageUsed', d.storage_used_pct != null ? d.storage_used_pct + '%' : null);
+        _setText('telmWifiSsid',    d.wifi_ssid);
+        _setText('telmWifiSignal',  d.wifi_signal != null ? d.wifi_signal + ' dBm' : null);
+
+        // Device
+        _setText('telmFirmware', d.firmware_ver != null ? 'v' + d.firmware_ver : null);
+        _setText('telmHeater',   d.heater_enable != null ? (d.heater_enable ? 'On' : 'Off') : null);
+
+        // Update Auto Exp button style based on telemetry
+        try {
+            const aeBtn = document.getElementById('autoExpBtn');
+            if (aeBtn && d.manual_exp != null) {
+                aeBtn.className = d.manual_exp ? 'btn btn-warning btn-compact' : 'btn btn-secondary btn-compact';
+            }
+        } catch (_ae) { /* non-fatal */ }
+
+    } catch (_) { /* non-fatal */ }
+}
+
+// -- GoTo mode radio toggle --
+
+function gotoModeChanged() {
+    const isAltaz = document.getElementById('gotoModeAltaz').checked;
+    document.getElementById('gotoAltazInputs').style.display = isAltaz ? '' : 'none';
+    document.getElementById('gotoRadecInputs').style.display = isAltaz ? 'none' : '';
+}
+
+// -- GoTo execute --
+
+async function gotoExecute(overrideAlt, overrideAz) {
+    const mode = document.getElementById('gotoModeAltaz').checked ? 'altaz' : 'radec';
+    let body;
+    if (mode === 'altaz') {
+        const alt = overrideAlt !== undefined ? overrideAlt : parseFloat(document.getElementById('gotoAlt').value);
+        const az  = overrideAz  !== undefined ? overrideAz  : parseFloat(document.getElementById('gotoAz').value);
+        if (isNaN(alt) || isNaN(az)) { showStatus('Enter Alt and Az values', 'error', 3000); return; }
+        body = { mode: 'altaz', alt, az };
+    } else {
+        const ra  = parseFloat(document.getElementById('gotoRa').value);
+        const dec = parseFloat(document.getElementById('gotoDec').value);
+        if (isNaN(ra) || isNaN(dec)) { showStatus('Enter RA and Dec values', 'error', 3000); return; }
+        body = { mode: 'radec', ra, dec };
+    }
+    showStatus('Slewing…', 'info', 10000);
+    const result = await apiCall('/telescope/goto', 'POST', body);
+    if (result) showStatus('GoTo command sent', 'success', 3000);
+}
+
+// -- Named Locations --
+
+async function loadSavedLocations() {
+    try {
+        const res = await fetch('/telescope/goto/locations');
+        if (!res.ok) return;
+        const locs = await res.json();
+        const sel = document.getElementById('savedLocations');
+        if (!sel) return;
+        sel.innerHTML = locs.length
+            ? locs.map(l => `<option value="${encodeURIComponent(l.name)}" data-alt="${l.alt}" data-az="${l.az}">${l.name}</option>`).join('')
+            : '<option value="" disabled>No saved locations</option>';
+        document.getElementById('locationsStatus').textContent =
+            locs.length ? `${locs.length} location${locs.length !== 1 ? 's' : ''} saved` : '';
+    } catch (_) { /* non-fatal */ }
+}
+
+async function gotoSavedLocation() {
+    const sel = document.getElementById('savedLocations');
+    const opt = sel && sel.selectedOptions[0];
+    if (!opt || !opt.dataset.alt) { showStatus('Select a location first', 'error', 3000); return; }
+    // Switch to alt/az mode
+    document.getElementById('gotoModeAltaz').checked = true;
+    gotoModeChanged();
+    await gotoExecute(parseFloat(opt.dataset.alt), parseFloat(opt.dataset.az));
+}
+
+async function saveCurrentLocation() {
+    const nameInput = document.getElementById('saveLocationName');
+    const name = nameInput ? nameInput.value.trim() : '';
+    if (!name) { showStatus('Enter a name for this location', 'error', 3000); return; }
+
+    // Use current telemetry alt/az if available, else prompt for manual entry
+    const altEl = document.getElementById('telmAlt');
+    const azEl  = document.getElementById('telmAz');
+    const altText = altEl && altEl.textContent.replace('°','').trim();
+    const azText  = azEl  && azEl.textContent.replace('°','').trim();
+    const alt = parseFloat(altText);
+    const az  = parseFloat(azText);
+
+    if (isNaN(alt) || isNaN(az)) {
+        // Fall back to the GoTo inputs
+        const altInput = parseFloat(document.getElementById('gotoAlt').value);
+        const azInput  = parseFloat(document.getElementById('gotoAz').value);
+        if (isNaN(altInput) || isNaN(azInput)) {
+            showStatus('No telemetry available — enter Alt/Az in the GoTo fields first', 'error', 5000);
+            return;
+        }
+        await _doSaveLocation(name, altInput, azInput);
+    } else {
+        await _doSaveLocation(name, alt, az);
+    }
+    if (nameInput) nameInput.value = '';
+}
+
+async function _doSaveLocation(name, alt, az) {
+    const result = await apiCall('/telescope/goto/locations', 'POST', { name, alt, az });
+    if (result && result.success) {
+        showStatus(`Saved "${name}"`, 'success', 3000);
+        document.getElementById('locationsStatus').textContent = `Saved "${name}"`;
+        await loadSavedLocations();
+    }
+}
+
+async function deleteSelectedLocation() {
+    const sel = document.getElementById('savedLocations');
+    const opt = sel && sel.selectedOptions[0];
+    if (!opt || !opt.value) { showStatus('Select a location to delete', 'error', 3000); return; }
+    const name = decodeURIComponent(opt.value);
+    if (!confirm(`Delete location "${name}"?`)) return;
+    const res = await fetch(`/telescope/goto/locations/${encodeURIComponent(name)}`, { method: 'DELETE' });
+    if (res.ok) {
+        showStatus(`Deleted "${name}"`, 'success', 3000);
+        await loadSavedLocations();
+    } else {
+        showStatus('Delete failed', 'error', 3000);
+    }
+}
+
+// -- Stop / Park / Autofocus --
+
+async function telescopeStopView() {
+    showStatus('Stopping view mode…', 'info', 5000);
+    const result = await apiCall('/telescope/stop', 'POST', {});
+    if (result) {
+        showStatus('View stopped', 'success', 3000);
+        stopPreview();
+    }
+}
+
+async function telescopeOpenArm() {
+    showStatus('Opening arm…', 'info', 5000);
+    const result = await apiCall('/telescope/open-arm', 'POST', {});
+    if (result) showStatus('Open arm command sent', 'success', 3000);
+}
+
+async function telescopePark() {
+    showStatus('Parking…', 'info', 10000);
+    const result = await apiCall('/telescope/park', 'POST', {});
+    if (result) showStatus('Park command sent', 'success', 3000);
+}
+
+async function telescopeAutofocus() {
+    showStatus('Autofocusing…', 'info', 20000);
+    const result = await apiCall('/telescope/autofocus', 'POST', {});
+    if (result) showStatus('Autofocus triggered', 'success', 3000);
+}
+
+async function telescopeShutdown() {
+    if (!confirm('Shut down the Seestar? You will need to physically restart it.')) return;
+    showStatus('Sending shutdown…', 'info', 5000);
+    const result = await apiCall('/telescope/shutdown', 'POST', {});
+    if (result) showStatus('Shutdown command sent — scope powering off', 'success', 5000);
+}
+
+// -- Manual Focus --
+
+let _focusStepSize = 10;
+
+function setFocusStepSize(size) {
+    _focusStepSize = size;
+    document.querySelectorAll('.focus-step-btn').forEach(btn => {
+        const active = parseInt(btn.dataset.steps) === size;
+        btn.style.borderColor = active ? '#2dd4bf' : '';
+        btn.style.background  = active ? 'rgba(45,212,191,0.15)' : '';
+    });
+}
+
+async function focusStep(steps) {
+    const result = await apiCall('/telescope/focus/step', 'POST', { steps });
+    if (result) {
+        const pos = result.result && result.result.focus_pos != null
+            ? result.result.focus_pos : null;
+        if (pos != null) {
+            const el = document.getElementById('focusPos');
+            if (el) el.textContent = pos;
+        }
+    }
+}
+
+// -- Camera Settings --
+
+function toggleDewPower() {
+    const on = document.getElementById('dewHeaterToggle').checked;
+    document.getElementById('dewPowerRow').style.display = on ? '' : 'none';
+}
+
+async function applyCameraSettings() {
+    const body = {
+        gain:       parseInt(document.getElementById('gainSlider').value),
+        lp_filter:  document.getElementById('lpFilterToggle').checked,
+        dew_heater: document.getElementById('dewHeaterToggle').checked,
+        dew_power:  parseInt(document.getElementById('dewPowerSlider').value),
+    };
+    const result = await apiCall('/telescope/settings/camera', 'PATCH', body);
+    if (result && result.success) showStatus('Camera settings applied', 'success', 3000);
+}
+
+async function toggleAutoExp() {
+    const result = await apiCall('/telescope/camera/auto-exp', 'POST', { enabled: true });
+    if (result && result.success) showStatus('Auto exposure enabled', 'success', 3000);
 }
 
 // ============================================================================
