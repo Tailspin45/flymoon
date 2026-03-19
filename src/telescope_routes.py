@@ -249,6 +249,18 @@ class MockSeestarClient:
         logger.info("[Mock] stop_view_mode")
         return True
 
+    def speed_move(self, speed, angle, dur_sec=3):
+        logger.info(f"[Mock] speed_move speed={speed} angle={angle} dur={dur_sec}")
+        return {"result": "ok"}
+
+    def speed_stop(self):
+        logger.info("[Mock] speed_stop")
+        return True
+
+    def manual_goto(self, target_alt, target_az):
+        logger.info(f"[Mock] manual_goto alt={target_alt} az={target_az}")
+        return {"status": "arrived", "alt": target_alt, "az": target_az, "elapsed": 2.0}
+
     def open_arm(self):
         logger.info("[Mock] open_arm")
         return True
@@ -485,17 +497,34 @@ def telescope_goto():
             ra = float(data["ra"])
             dec = float(data["dec"])
             result = client.goto_radec(ra, dec)
+            return jsonify({"success": True, "result": result}), 200
         elif mode == "altaz":
             alt = float(data["alt"])
             az = float(data["az"])
             lat = float(os.getenv("OBSERVER_LATITUDE", "0"))
             lon = float(os.getenv("OBSERVER_LONGITUDE", "0"))
             elev = float(os.getenv("OBSERVER_ELEVATION", "0"))
-            result = client.goto_altaz(alt, az, lat, lon, elev)
+            try:
+                result = client.goto_altaz(alt, az, lat, lon, elev)
+                return jsonify({"success": True, "result": result}), 200
+            except RuntimeError as re:
+                if "below horizon" not in str(re).lower():
+                    raise
+                # Below horizon — run manual motor slew in background
+                logger.info(f"[GoTo] Below horizon; starting manual slew to alt={alt} az={az}")
+                t = threading.Thread(
+                    target=client.manual_goto,
+                    args=(alt, az),
+                    daemon=True,
+                )
+                t.start()
+                return jsonify({
+                    "success": True,
+                    "manual_slew": True,
+                    "message": f"Below horizon — manual slewing to alt={alt:.1f}° az={az:.1f}°",
+                }), 200
         else:
             return jsonify({"error": f"Unknown mode '{mode}'"}), 400
-
-        return jsonify({"success": True, "result": result}), 200
 
     except (KeyError, ValueError) as e:
         return jsonify({"error": f"Invalid parameters: {e}"}), 400
@@ -511,6 +540,39 @@ def telescope_stop_view():
     try:
         client.stop_view_mode()
         return jsonify({"success": True, "message": "Stop command sent"}), 200
+    except Exception as e:
+        return handle_error(e)
+
+
+def telescope_nudge():
+    """POST /telescope/nudge — joystick-style manual move.
+
+    Body: {"speed": 50, "angle": 0, "dur_sec": 2}
+    angle: 0=up, 90=right, 180=down, 270=left
+    """
+    client = get_telescope_client()
+    if not client or not client.is_connected():
+        return jsonify({"error": "Telescope not connected"}), 503
+
+    data = request.get_json(force=True, silent=True) or {}
+    try:
+        speed = int(data.get("speed", 50))
+        angle = int(data.get("angle", 0))
+        dur = int(data.get("dur_sec", 2))
+        result = client.speed_move(speed, angle, dur)
+        return jsonify({"success": True, "result": result}), 200
+    except Exception as e:
+        return handle_error(e)
+
+
+def telescope_nudge_stop():
+    """POST /telescope/nudge/stop — stop manual move."""
+    client = get_telescope_client()
+    if not client or not client.is_connected():
+        return jsonify({"error": "Telescope not connected"}), 503
+    try:
+        client.speed_stop()
+        return jsonify({"success": True, "message": "Nudge stopped"}), 200
     except Exception as e:
         return handle_error(e)
 
@@ -2675,6 +2737,18 @@ def register_routes(app):
         "/telescope/stop",
         "telescope_stop_view",
         telescope_stop_view,
+        methods=["POST"],
+    )
+    app.add_url_rule(
+        "/telescope/nudge",
+        "telescope_nudge",
+        telescope_nudge,
+        methods=["POST"],
+    )
+    app.add_url_rule(
+        "/telescope/nudge/stop",
+        "telescope_nudge_stop",
+        telescope_nudge_stop,
         methods=["POST"],
     )
     app.add_url_rule(

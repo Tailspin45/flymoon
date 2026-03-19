@@ -65,7 +65,7 @@ function _updateDeleteBtnState(path, isFav) {
 }
 let zoomStep = 0.1;
 let _previewLastError = 0; // timestamp of last preview onerror (ms)
-const _PREVIEW_BACKOFF_MS = 30000; // 30s between retry attempts after stream failure
+const _PREVIEW_BACKOFF_MS = 5000; // 5s between retry attempts after stream failure
 let isSimulating = false;
 let simulationVideo = null;
 let disconnectedPollCount = 0; // consecutive disconnected polls before stopping preview
@@ -202,7 +202,10 @@ async function connect() {
 
         updateConnectionUI();
         updateStatus();
-        startPreview();
+        // Clear any preview backoff and start stream
+        _previewLastError = 0;
+        stopPreview();
+        setTimeout(startPreview, 2000); // give RTSP a moment to spin up
     }
 }
 
@@ -361,6 +364,7 @@ async function updateStatus() {
 
         if (isConnected && typeof startPreview === 'function') {
             disconnectedPollCount = 0;
+            _previewLastError = 0; // clear backoff so preview retries
             startPreview();
         } else if (!isConnected && typeof stopPreview === 'function') {
             disconnectedPollCount++;
@@ -1381,13 +1385,13 @@ async function _pollTelemetry() {
         _setText('telmAlt', fmt(d.alt, 1) + (d.alt != null ? '°' : ''));
         _setText('telmAz',  fmt(d.az,  1) + (d.az  != null ? '°' : ''));
 
-        // Bidirectional Alt/Az — update GoTo placeholders if user isn't typing
+        // Bidirectional Alt/Az — update GoTo inputs unless user has edited them
         const altIn = document.getElementById('gotoAlt');
         const azIn  = document.getElementById('gotoAz');
-        if (altIn && document.activeElement !== altIn && d.alt != null)
-            altIn.placeholder = (+d.alt).toFixed(1);
-        if (azIn && document.activeElement !== azIn && d.az != null)
-            azIn.placeholder = (+d.az).toFixed(1);
+        if (altIn && !altIn.dataset.userEdited && document.activeElement !== altIn && d.alt != null)
+            altIn.value = (+d.alt).toFixed(1);
+        if (azIn && !azIn.dataset.userEdited && document.activeElement !== azIn && d.az != null)
+            azIn.value = (+d.az).toFixed(1);
 
         // View
         _setText('telmViewMode',   d.view_mode);
@@ -1458,23 +1462,67 @@ function gotoModeChanged() {
 
 // -- GoTo execute --
 
+// -- Manual Slew (Joystick) --
+
+let _nudgeInterval = null;
+
+function nudgeStart(angle) {
+    nudgeStop(); // clear any existing
+    const speed = document.querySelector('input[name="nudgeSpeed"]:checked')?.value === 'fast' ? 80 : 20;
+    // Send immediately, then repeat every 2s for held button
+    const send = () => apiCall('/telescope/nudge', 'POST', { speed, angle, dur_sec: 3 });
+    send();
+    _nudgeInterval = setInterval(send, 2000);
+}
+
+function nudgeStop() {
+    if (_nudgeInterval) {
+        clearInterval(_nudgeInterval);
+        _nudgeInterval = null;
+    }
+    apiCall('/telescope/nudge/stop', 'POST', {});
+}
+
+// Mark GoTo inputs as user-edited so telemetry doesn't overwrite them
+document.addEventListener('DOMContentLoaded', () => {
+    ['gotoAlt','gotoAz','gotoRa','gotoDec'].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.addEventListener('input', () => { el.dataset.userEdited = '1'; });
+    });
+});
+
 async function gotoExecute(overrideAlt, overrideAz) {
     const mode = document.getElementById('gotoModeAltaz').checked ? 'altaz' : 'radec';
     let body;
     if (mode === 'altaz') {
-        const alt = overrideAlt !== undefined ? overrideAlt : parseFloat(document.getElementById('gotoAlt').value);
-        const az  = overrideAz  !== undefined ? overrideAz  : parseFloat(document.getElementById('gotoAz').value);
+        const altEl = document.getElementById('gotoAlt');
+        const azEl  = document.getElementById('gotoAz');
+        const alt = overrideAlt !== undefined ? overrideAlt : parseFloat(altEl.value || altEl.placeholder);
+        const az  = overrideAz  !== undefined ? overrideAz  : parseFloat(azEl.value || azEl.placeholder);
         if (isNaN(alt) || isNaN(az)) { showStatus('Enter Alt and Az values', 'error', 3000); return; }
         body = { mode: 'altaz', alt, az };
     } else {
-        const ra  = parseFloat(document.getElementById('gotoRa').value);
-        const dec = parseFloat(document.getElementById('gotoDec').value);
+        const raEl  = document.getElementById('gotoRa');
+        const decEl = document.getElementById('gotoDec');
+        const ra  = parseFloat(raEl.value || raEl.placeholder);
+        const dec = parseFloat(decEl.value || decEl.placeholder);
         if (isNaN(ra) || isNaN(dec)) { showStatus('Enter RA and Dec values', 'error', 3000); return; }
         body = { mode: 'radec', ra, dec };
     }
     showStatus('Slewing…', 'info', 10000);
     const result = await apiCall('/telescope/goto', 'POST', body);
-    if (result) showStatus('GoTo command sent', 'success', 3000);
+    if (result) {
+        if (result.manual_slew) {
+            showStatus(result.message || 'Manual slewing — watch telemetry for progress', 'info', 15000);
+        } else {
+            showStatus('GoTo command sent', 'success', 3000);
+        }
+        // Resume telemetry updates in GoTo fields
+        ['gotoAlt','gotoAz','gotoRa','gotoDec'].forEach(id => {
+            const el = document.getElementById(id);
+            if (el) delete el.dataset.userEdited;
+        });
+    }
 }
 
 // -- Named Locations --
