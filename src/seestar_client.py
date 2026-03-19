@@ -812,9 +812,9 @@ class SeestarClient:
         Returns
         -------
         bool
-            True if connected
+            True if connected and socket is alive
         """
-        return self._connected
+        return self._connected and self.socket is not None
 
     def start_recording(self, duration_seconds: Optional[int] = None) -> bool:
         """
@@ -1085,6 +1085,158 @@ class SeestarClient:
             f"AltAz ({alt:.2f}°, {az:.2f}°) → RA {ra_h:.4f}h Dec {dec_d:.4f}° (LST {lst:.4f}h)"
         )
         return self.goto_radec(ra_h, dec_d)
+
+    # ── Manual joystick slew (bypasses firmware horizon limit) ──────────
+
+    # Mechanical safety limits (degrees)
+    _SLEW_ALT_MIN = -45
+    _SLEW_ALT_MAX = 85
+    # Speed thresholds
+    _SLEW_FAST_SPEED = 80
+    _SLEW_SLOW_SPEED = 20
+    _SLEW_SLOW_THRESHOLD = 5.0   # switch to slow within this many degrees
+    _SLEW_TOLERANCE = 0.5        # stop when within this many degrees
+    _SLEW_MAX_DURATION = 120     # hard timeout (seconds)
+    _SLEW_POLL_INTERVAL = 1.0    # telemetry poll interval during slew
+
+    def speed_move(self, speed: int, angle: int, dur_sec: int = 3) -> dict:
+        """Raw motor move — no horizon check. angle: 0=up 90=right 180=down 270=left."""
+        result = self._send_command(
+            "scope_speed_move",
+            params={"speed": int(speed), "angle": int(angle), "dur_sec": int(dur_sec)},
+        )
+        logger.info(f"Speed move: speed={speed} angle={angle}° dur={dur_sec}s")
+        return result or {}
+
+    def speed_stop(self) -> bool:
+        """Stop an in-progress speed/manual move."""
+        try:
+            self._send_command(
+                "iscope_stop_view",
+                params={"stage": "AutoGoto"},
+                expect_response=False,
+            )
+        except Exception:
+            pass
+        # Also send zero-speed move as belt-and-suspenders
+        try:
+            self._send_command(
+                "scope_speed_move",
+                params={"speed": 0, "angle": 0, "dur_sec": 0},
+                expect_response=False,
+            )
+        except Exception:
+            pass
+        logger.info("Speed move stopped")
+        return True
+
+    def manual_goto(self, target_alt: float, target_az: float) -> dict:
+        """
+        Slew to target alt/az using motor speed control.
+
+        Bypasses the firmware horizon limit. Uses fast speed for large
+        distances, slow speed for fine approach, and enforces mechanical
+        safety limits.
+
+        Returns dict with status info.
+        """
+        import math
+        import time as _time
+
+        # Clamp target to safe range
+        if target_alt < self._SLEW_ALT_MIN or target_alt > self._SLEW_ALT_MAX:
+            msg = f"Target alt {target_alt:.1f}° outside safe range [{self._SLEW_ALT_MIN}°, {self._SLEW_ALT_MAX}°]"
+            logger.warning(f"[ManualGoTo] {msg}")
+            return {"error": msg}
+
+        start = _time.time()
+        stall_count = 0
+        prev_distance = None
+
+        logger.info(f"[ManualGoTo] Starting: target alt={target_alt:.1f}° az={target_az:.1f}°")
+
+        while _time.time() - start < self._SLEW_MAX_DURATION:
+            # Get current position
+            telemetry = self.get_telemetry()
+            cur_alt = telemetry.get("alt")
+            cur_az = telemetry.get("az")
+
+            if cur_alt is None or cur_az is None:
+                logger.warning("[ManualGoTo] No alt/az in telemetry, retrying…")
+                _time.sleep(self._SLEW_POLL_INTERVAL)
+                continue
+
+            # Compute deltas
+            d_alt = target_alt - cur_alt
+            # Shortest azimuth path (handle 360° wrap)
+            d_az = (target_az - cur_az + 180) % 360 - 180
+
+            distance = math.sqrt(d_alt ** 2 + d_az ** 2)
+            logger.debug(
+                f"[ManualGoTo] cur=({cur_alt:.1f}°, {cur_az:.1f}°) "
+                f"delta=({d_alt:.1f}°, {d_az:.1f}°) dist={distance:.1f}°"
+            )
+
+            # Arrived?
+            if distance < self._SLEW_TOLERANCE:
+                self.speed_stop()
+                elapsed = _time.time() - start
+                logger.info(f"[ManualGoTo] Arrived in {elapsed:.1f}s")
+                return {
+                    "status": "arrived",
+                    "alt": cur_alt,
+                    "az": cur_az,
+                    "elapsed": round(elapsed, 1),
+                }
+
+            # Safety: would the next move push us past mechanical limits?
+            projected_alt = cur_alt + d_alt * 0.3  # rough estimate of next step
+            if projected_alt < self._SLEW_ALT_MIN + 2:
+                self.speed_stop()
+                msg = f"Stopped: approaching lower alt limit ({self._SLEW_ALT_MIN}°)"
+                logger.warning(f"[ManualGoTo] {msg}")
+                return {"error": msg, "alt": cur_alt, "az": cur_az}
+            if projected_alt > self._SLEW_ALT_MAX - 2:
+                self.speed_stop()
+                msg = f"Stopped: approaching upper alt limit ({self._SLEW_ALT_MAX}°)"
+                logger.warning(f"[ManualGoTo] {msg}")
+                return {"error": msg, "alt": cur_alt, "az": cur_az}
+
+            # Stall detection — not making progress
+            if prev_distance is not None:
+                if abs(prev_distance - distance) < 0.05:
+                    stall_count += 1
+                    if stall_count >= 5:
+                        self.speed_stop()
+                        msg = "Stopped: no progress (possible hard stop)"
+                        logger.warning(f"[ManualGoTo] {msg}")
+                        return {"error": msg, "alt": cur_alt, "az": cur_az}
+                else:
+                    stall_count = 0
+            prev_distance = distance
+
+            # Choose speed
+            speed = self._SLEW_SLOW_SPEED if distance < self._SLEW_SLOW_THRESHOLD else self._SLEW_FAST_SPEED
+
+            # Compute angle for scope_speed_move
+            # 0=up, 90=right, 180=down, 270=left
+            angle = math.degrees(math.atan2(d_az, d_alt)) % 360
+
+            # Move for a short burst then re-check
+            dur = 2 if distance >= self._SLEW_SLOW_THRESHOLD else 1
+            try:
+                self.speed_move(speed, int(round(angle)), dur)
+            except Exception as e:
+                self.speed_stop()
+                logger.error(f"[ManualGoTo] Move failed: {e}")
+                return {"error": str(e), "alt": cur_alt, "az": cur_az}
+
+            _time.sleep(dur + 0.2)  # wait for move to complete then poll
+
+        # Timeout
+        self.speed_stop()
+        logger.warning("[ManualGoTo] Timed out")
+        return {"error": "Timed out", "elapsed": round(_time.time() - start, 1)}
 
     def open_arm(self) -> bool:
         """Open (unfold) the telescope arm."""
