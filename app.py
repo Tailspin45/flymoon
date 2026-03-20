@@ -459,10 +459,7 @@ def get_all_flights():
                     f"min for az {coords.get('azimuthal',0):.0f}°: {min_altitude}°, "
                     f"above_min={target_above_min})"
                 )
-                # Only enrich HIGH transits via FA when the telescope is
-                # connected and can actually act on the data.
-                tc = telescope_routes.get_telescope_client()
-                enrich = bool(tc and tc.is_connected()) and target_above_min
+                # Never enrich on prediction. FA is only used post-capture.
                 data = get_transits(
                     latitude,
                     longitude,
@@ -471,7 +468,7 @@ def get_all_flights():
                     test_mode,
                     custom_bbox,
                     data_source,
-                    enrich=enrich,
+                    enrich=False,
                 )
                 if data.get("bbox_used"):
                     all_bboxes_used.append(data["bbox_used"])
@@ -1084,10 +1081,9 @@ if __name__ == "__main__":
 
         def server_bind(self):
             self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-            try:
-                self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEPORT, 1)
-            except (AttributeError, OSError):
-                pass
+            # Note: SO_REUSEPORT intentionally NOT set — it allows multiple
+            # processes to bind the same port, so a stale server survives
+            # restart and steals requests from the new one.
             super().server_bind()
 
         def process_request(self, request, client_address):

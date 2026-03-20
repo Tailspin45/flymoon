@@ -685,6 +685,7 @@ class TransitDetector:
 
         reconnect_delay = 2
         max_reconnect_delay = 30
+        _last_stream_lost_warn = 0.0  # Throttle "Stream lost" to once per 60s
 
         while self._running:
             try:
@@ -735,10 +736,17 @@ class TransitDetector:
             if not self._running:
                 break
 
-            # Reconnect with backoff
-            logger.warning(
-                f"[Detector] Stream lost — reconnecting in {reconnect_delay}s"
-            )
+            # Reconnect with backoff. Throttle log to avoid spam when RTSP unavailable.
+            now_ = time.time()
+            if now_ - _last_stream_lost_warn >= 60:
+                logger.warning(
+                    f"[Detector] Stream lost — reconnecting in {reconnect_delay}s"
+                )
+                _last_stream_lost_warn = now_
+            else:
+                logger.debug(
+                    f"[Detector] Stream lost — reconnecting in {reconnect_delay}s"
+                )
             self._emit_status("reconnecting")
             time.sleep(reconnect_delay)
             reconnect_delay = min(reconnect_delay * 2, max_reconnect_delay)

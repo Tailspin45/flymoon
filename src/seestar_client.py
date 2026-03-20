@@ -20,6 +20,49 @@ from typing import Any, Dict, Optional
 from src import logger
 
 
+def _altaz_from_equatorial_for_goto(
+    ra_hours: float,
+    dec_degrees: float,
+    observer_lat: float,
+    observer_lon: float,
+    gast_hours: float,
+) -> tuple[float, float]:
+    """
+    Alt/az (degrees) from RA/Dec using the exact inverse of ``goto_altaz``.
+
+    Azimuth: clockwise from true north through east (astronomical); south ≈ 180°.
+
+    ``scope_get_equ_coord`` returns the mount/firmware equatorial system used for
+    GoTo. Feeding those numbers into Skyfield ``Star`` (ICRS) + ``apparent().altaz()``
+    mis-modeled the frame and could show ~correct altitude but azimuth ~180° wrong.
+    """
+    import math
+
+    lat_r = math.radians(observer_lat)
+    dec_r = math.radians(dec_degrees)
+    lst = (gast_hours + observer_lon / 15.0) % 24.0
+    ha_h = (lst - ra_hours) % 24.0
+    if ha_h > 12.0:
+        ha_h -= 24.0
+    ha_r = ha_h * (2.0 * math.pi / 24.0)
+
+    sin_alt = (
+        math.sin(lat_r) * math.sin(dec_r)
+        + math.cos(lat_r) * math.cos(dec_r) * math.cos(ha_r)
+    )
+    sin_alt = max(-1.0, min(1.0, sin_alt))
+    alt_r = math.asin(sin_alt)
+
+    y = -math.sin(ha_r) * math.cos(dec_r)
+    x = math.cos(lat_r) * math.sin(dec_r) - math.sin(lat_r) * math.cos(
+        dec_r
+    ) * math.cos(ha_r)
+    az_r = math.atan2(y, x)
+    az_deg = math.degrees(az_r) % 360.0
+    alt_deg = math.degrees(alt_r)
+    return alt_deg, az_deg
+
+
 class SeestarClient:
     """Direct TCP client for Seestar telescope using JSON-RPC 2.0 protocol."""
 
@@ -77,6 +120,7 @@ class SeestarClient:
         self._heartbeat_thread: Optional[threading.Thread] = None
         self._heartbeat_running = False
         self._socket_lock = threading.Lock()  # Prevent concurrent socket access
+        self._cmd_seq_lock = threading.RLock()  # Prevent heartbeat interleaving multi-step commands
         self._above_horizon_check = (
             None  # Optional[Callable[[], bool]] — set by app startup
         )
@@ -265,8 +309,8 @@ class SeestarClient:
     # ── Known event names from the Seestar firmware ──────────────────────────
     # Discovered via live traffic capture. New events are logged at DEBUG level
     # so they appear in logs when --debug is active, making future discovery easy.
-    _VIEW_START_EVENTS = {"ImagingViewStart", "SolarViewStart", "LunarViewStart"}
-    _VIEW_STOP_EVENTS = {"ImagingViewStop", "SolarViewStop", "LunarViewStop"}
+    _VIEW_START_EVENTS = {"ImagingViewStart", "SolarViewStart", "LunarViewStart", "SceneryViewStart"}
+    _VIEW_STOP_EVENTS = {"ImagingViewStop", "SolarViewStop", "LunarViewStop", "SceneryViewStop"}
 
     def _handle_event(self, event: dict) -> None:
         """Parse unsolicited Event messages from the Seestar firmware.
@@ -286,6 +330,10 @@ class SeestarClient:
             if self._viewing_mode != "moon":
                 self._viewing_mode = "moon"
                 logger.info("Seestar event: lunar viewing mode active")
+        elif name in ("SceneryViewStart",):
+            if self._viewing_mode != "scenery":
+                self._viewing_mode = "scenery"
+                logger.info("Seestar event: scenery viewing mode active")
         elif name in self._VIEW_STOP_EVENTS:
             if self._viewing_mode is not None:
                 logger.info(
@@ -308,30 +356,44 @@ class SeestarClient:
 
     def _reconnect(self) -> bool:
         """Attempt to re-establish the TCP connection without starting a new heartbeat thread.
-        Called from within the heartbeat thread after a drop is detected."""
-        try:
-            if self.socket:
-                try:
-                    self.socket.close()
-                except Exception:
-                    pass
-                self.socket = None
-            self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            self.socket.settimeout(self.timeout)
-            self.socket.connect((self.host, self.port))
-            self._connected = True
-            logger.info("Reconnected to Seestar")
-            self._notify_scope_online()
-            return True
-        except socket.error as e:
-            logger.warning(f"Reconnect attempt failed: {e}")
-            if self.socket:
-                try:
-                    self.socket.close()
-                except Exception:
-                    pass
-                self.socket = None
-            return False
+        Called from within the heartbeat thread after a drop is detected.
+        Runs auto-discovery when the configured host fails (e.g. scope got new DHCP lease)."""
+        if self.socket:
+            try:
+                self.socket.close()
+            except Exception:
+                pass
+            self.socket = None
+
+        for attempt in range(2):  # First try configured host, then discover
+            try:
+                self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                self.socket.settimeout(self.timeout)
+                self.socket.connect((self.host, self.port))
+                self._connected = True
+                logger.info("Reconnected to Seestar")
+                self._notify_scope_online()
+                return True
+            except socket.error as e:
+                if self.socket:
+                    try:
+                        self.socket.close()
+                    except Exception:
+                        pass
+                    self.socket = None
+                if attempt == 0:
+                    discovered = self._auto_discover()
+                    if discovered and discovered != self.host:
+                        logger.warning(
+                            f"[Seestar] Reconnect: discovered at {discovered} "
+                            f"(was {self.host}). Updating."
+                        )
+                        self.host = discovered
+                        self._persist_host_to_env(discovered)
+                        continue
+                logger.warning(f"Reconnect attempt failed: {e}")
+                return False
+        return False
 
     def _heartbeat_loop(self):
         """Background thread: sends periodic keepalive pings and auto-reconnects on drop."""
@@ -365,6 +427,10 @@ class SeestarClient:
 
             reconnect_wait = 0  # reset backoff once connected
 
+            # Skip heartbeat if a multi-step command sequence holds the lock
+            if not self._cmd_seq_lock.acquire(blocking=False):
+                time.sleep(1)
+                continue
             try:
                 self._send_command(
                     "scope_get_equ_coord",
@@ -412,6 +478,8 @@ class SeestarClient:
                             f"Heartbeat: scope not responding to ping (will keep trying quietly): {e}"
                         )
                         _timeout_logged = True
+            finally:
+                self._cmd_seq_lock.release()
 
             # Sleep in small intervals to allow quick shutdown
             for _ in range(self.heartbeat_interval):
@@ -609,39 +677,46 @@ class SeestarClient:
 
                 return True
 
-            except socket.error as e:
+            except Exception as e:
                 last_error = e
                 logger.warning(f"[Seestar] Connection attempt {attempt} failed: {e}")
 
+                # Always clean up the socket on ANY failure — not just
+                # socket.error.  Leaked sockets consume one of the Seestar's
+                # 8 connection slots and are never recovered.
+                self._connected = False
                 if self.socket:
-                    self.socket.close()
+                    try:
+                        self.socket.close()
+                    except Exception:
+                        pass
                     self.socket = None
 
                 # On host-down / unreachable errors, try auto-discovering the
                 # Seestar on the local subnet before retrying.
-                import errno as _errno
+                if isinstance(e, (socket.error, socket.timeout)):
+                    import errno as _errno
 
-                host_down = hasattr(e, "errno") and e.errno in (
-                    _errno.EHOSTDOWN,
-                    _errno.EHOSTUNREACH,
-                    _errno.ECONNREFUSED,
-                    64,
-                )
-                timed_out = isinstance(e, socket.timeout) or (
-                    hasattr(e, "errno") and e.errno == _errno.ETIMEDOUT
-                )
+                    host_down = hasattr(e, "errno") and e.errno in (
+                        _errno.EHOSTDOWN,
+                        _errno.EHOSTUNREACH,
+                        _errno.ECONNREFUSED,
+                        64,
+                    )
+                    timed_out = isinstance(e, socket.timeout) or (
+                        hasattr(e, "errno") and e.errno == _errno.ETIMEDOUT
+                    )
 
-                if (host_down or timed_out) and attempt < self.retry_attempts:
-                    discovered = self._auto_discover()
-                    if discovered and discovered != self.host:
-                        logger.warning(
-                            f"[Seestar] Auto-discovered at {discovered} "
-                            f"(was {self.host}). Persisting to .env."
-                        )
-                        self.host = discovered
-                        self._persist_host_to_env(discovered)
-                    # Continue to next attempt (either with new host or same host)
-                    continue
+                    if (host_down or timed_out) and attempt < self.retry_attempts:
+                        discovered = self._auto_discover()
+                        if discovered and discovered != self.host:
+                            logger.warning(
+                                f"[Seestar] Auto-discovered at {discovered} "
+                                f"(was {self.host}). Persisting to .env."
+                            )
+                            self.host = discovered
+                            self._persist_host_to_env(discovered)
+                        continue
 
         # All retries exhausted
         error_msg = f"Connection failed after {self.retry_attempts} attempts"
@@ -779,31 +854,36 @@ class SeestarClient:
             return True
 
         try:
-            # Stop recording if active
+            # Stop recording if active — best-effort, must not prevent socket cleanup
             if self._recording:
-                self.stop_recording()
+                try:
+                    self.stop_recording()
+                except Exception as e:
+                    logger.warning(f"Error stopping recording during disconnect: {e}")
 
             # Stop heartbeat thread
-            if self._heartbeat_running:
-                self._heartbeat_running = False
-                if self._heartbeat_thread:
-                    self._heartbeat_thread.join(timeout=5)
+            self._heartbeat_running = False
+            if self._heartbeat_thread:
+                self._heartbeat_thread.join(timeout=5)
 
-            # TODO: Send disconnect/cleanup command if required
-            # Example: self._send_command("iscope_stop_view")
-
-            # Close socket
-            if self.socket:
-                self.socket.close()
-                self.socket = None
-
-            self._connected = False
             logger.info("Disconnected from Seestar")
             return True
 
         except Exception as e:
             logger.error(f"Error during disconnect: {e}")
             return False
+
+        finally:
+            # Socket cleanup runs no matter what — a leaked socket consumes
+            # one of the Seestar's 8 connection slots permanently.
+            self._connected = False
+            self._viewing_mode = None
+            if self.socket:
+                try:
+                    self.socket.close()
+                except Exception:
+                    pass
+                self.socket = None
 
     def is_connected(self) -> bool:
         """
@@ -858,7 +938,7 @@ class SeestarClient:
 
         # Refuse to record if scope is known to be in a non-solar/lunar mode.
         # If mode is None (unknown, e.g. after reconnect), allow with a warning.
-        if self._viewing_mode is not None and self._viewing_mode not in ("sun", "moon"):
+        if self._viewing_mode is not None and self._viewing_mode not in ("sun", "moon", "scenery"):
             raise RuntimeError(
                 f"Cannot record: scope is in mode '{self._viewing_mode}' "
                 "(must be 'sun' or 'moon'). Point the scope at the target first."
@@ -1000,6 +1080,20 @@ class SeestarClient:
             logger.error(f"Failed to start lunar mode: {e}")
             raise
 
+    def start_scenery_mode(self) -> bool:
+        """Start scenery viewing mode (no sidereal tracking — for manual positioning)."""
+        try:
+            self._send_command(
+                "iscope_start_view", params={"mode": "scenery"}, expect_response=False
+            )
+            self._viewing_mode = "scenery"
+            logger.info("Started scenery viewing mode (async)")
+            time.sleep(1)
+            return True
+        except Exception as e:
+            logger.error(f"Failed to start scenery mode: {e}")
+            raise
+
     def stop_view_mode(self) -> bool:
         """Stop current viewing mode (live view, stack, or slew)."""
         import time as _time
@@ -1011,10 +1105,12 @@ class SeestarClient:
         try:
             self._send_command("iscope_stop_view", params={"stage": "Stack"})
             _time.sleep(1.0)
+            self._viewing_mode = None
             logger.info("Stopped viewing mode")
             return True
         except Exception as e:
             logger.error(f"Failed to stop view mode: {e}")
+            self._viewing_mode = None
             return False
 
     # ------------------------------------------------------------------ #
@@ -1022,19 +1118,16 @@ class SeestarClient:
     # ------------------------------------------------------------------ #
 
     def goto_radec(self, ra: float, dec: float) -> dict:
-        """Slew to equatorial coordinates (J2000 RA hours, Dec degrees)."""
-        import time as _time
-        # Stop current view mode before slewing
-        try:
-            self._send_command("iscope_stop_view", expect_response=False)
-            _time.sleep(0.3)
-            self._send_command("iscope_stop_view", params={"stage": "Stack"}, expect_response=False)
-            _time.sleep(1.5)
-        except Exception:
-            pass  # best-effort stop
-        result = self._send_command("scope_goto", params=[ra, dec], timeout_override=30)
-        logger.info(f"GoTo RA={ra:.4f}h Dec={dec:.4f}°")
-        return result or {}
+        """Slew to equatorial coordinates (J2000 RA hours, Dec degrees).
+
+        Uses iscope_start_view with mode=star which performs a GoTo + sidereal
+        tracking.  The command sequence lock prevents heartbeat interleaving.
+        """
+        with self._cmd_seq_lock:
+            if self._viewing_mode is not None:
+                self.stop_view_mode()
+                time.sleep(0.5)
+            return self.start_view_star(ra, dec, target_name="GoTo Target")
 
     def goto_altaz(
         self,
@@ -1056,11 +1149,10 @@ class SeestarClient:
         observer_elev : float
             Observer elevation in metres.
         """
-        from skyfield.api import load
+        from src.constants import EARTH_TIMESCALE
         import math
 
-        ts = load.timescale()
-        t = ts.now()
+        t = EARTH_TIMESCALE.now()
         lat_r = math.radians(observer_lat)
         alt_r = math.radians(alt)
         az_r = math.radians(az)
@@ -1076,8 +1168,8 @@ class SeestarClient:
         if math.sin(az_r) > 0:
             ha_r = 2 * math.pi - ha_r
 
-        # Local Sidereal Time: GMST + longitude (degrees→hours)
-        lst = (t.gmst + observer_lon / 15.0) % 24
+        # Local Sidereal Time: GAST + longitude (degrees→hours)
+        lst = (t.gast + observer_lon / 15.0) % 24
         ra_h = (lst - ha_r * 12 / math.pi) % 24
         dec_d = math.degrees(dec_r)
 
@@ -1100,25 +1192,25 @@ class SeestarClient:
     _SLEW_POLL_INTERVAL = 1.0    # telemetry poll interval during slew
 
     def speed_move(self, speed: int, angle: int, dur_sec: int = 3) -> dict:
-        """Raw motor move — no horizon check. angle: 0=up 90=right 180=down 270=left."""
-        result = self._send_command(
+        """Raw motor move — no horizon check. angle: 0=up 90=right 180=down 270=left.
+
+        Auto-starts scenery mode if no viewing mode is active (firmware
+        silently ignores speed_move without an active view).
+        """
+        if self._viewing_mode is None:
+            logger.info("No viewing mode active — auto-starting scenery mode for manual slew")
+            self.start_scenery_mode()
+            time.sleep(1)
+        self._send_command(
             "scope_speed_move",
             params={"speed": int(speed), "angle": int(angle), "dur_sec": int(dur_sec)},
+            expect_response=False,
         )
         logger.info(f"Speed move: speed={speed} angle={angle}° dur={dur_sec}s")
-        return result or {}
+        return {"success": True}
 
     def speed_stop(self) -> bool:
-        """Stop an in-progress speed/manual move."""
-        try:
-            self._send_command(
-                "iscope_stop_view",
-                params={"stage": "AutoGoto"},
-                expect_response=False,
-            )
-        except Exception:
-            pass
-        # Also send zero-speed move as belt-and-suspenders
+        """Stop an in-progress speed/manual move (preserves current viewing mode)."""
         try:
             self._send_command(
                 "scope_speed_move",
@@ -1140,6 +1232,13 @@ class SeestarClient:
 
         Returns dict with status info.
         """
+        import math
+        import time as _time
+
+        with self._cmd_seq_lock:
+            return self._manual_goto_inner(target_alt, target_az)
+
+    def _manual_goto_inner(self, target_alt: float, target_az: float) -> dict:
         import math
         import time as _time
 
@@ -1219,8 +1318,8 @@ class SeestarClient:
             speed = self._SLEW_SLOW_SPEED if distance < self._SLEW_SLOW_THRESHOLD else self._SLEW_FAST_SPEED
 
             # Compute angle for scope_speed_move
-            # 0=up, 90=right, 180=down, 270=left
-            angle = math.degrees(math.atan2(d_az, d_alt)) % 360
+            # Seestar convention: 270=up, 0=right, 90=down, 180=left
+            angle = (math.degrees(math.atan2(d_az, d_alt)) - 90) % 360
 
             # Move for a short burst then re-check
             dur = 2 if distance >= self._SLEW_SLOW_THRESHOLD else 1
@@ -1359,27 +1458,23 @@ class SeestarClient:
         except Exception:
             pass
 
-        # Compute Alt/Az from RA/Dec if we got coords
+        # Compute Alt/Az from RA/Dec — must match goto_altaz spherical model (not ICRS Star).
         if telemetry.get("ra") is not None and telemetry.get("dec") is not None:
             try:
-                from skyfield.api import Star, wgs84
-
-                from src.constants import ASTRO_EPHEMERIS, EARTH_TIMESCALE
+                from src.constants import EARTH_TIMESCALE
 
                 lat = float(_os.getenv("OBSERVER_LATITUDE", "0"))
                 lon = float(_os.getenv("OBSERVER_LONGITUDE", "0"))
-                elev = float(_os.getenv("OBSERVER_ELEVATION", "0"))
                 t = EARTH_TIMESCALE.now()
-
-                star = Star(
-                    ra_hours=telemetry["ra"],
-                    dec_degrees=telemetry["dec"],
+                alt_d, az_d = _altaz_from_equatorial_for_goto(
+                    float(telemetry["ra"]),
+                    float(telemetry["dec"]),
+                    lat,
+                    lon,
+                    float(t.gast),
                 )
-                earth = ASTRO_EPHEMERIS["earth"]
-                topos = earth + wgs84.latlon(lat, lon, elevation_m=elev)
-                alt, az, _ = topos.at(t).observe(star).apparent().altaz()
-                telemetry["alt"] = round(alt.degrees, 3)
-                telemetry["az"] = round(az.degrees, 3)
+                telemetry["alt"] = round(alt_d, 3)
+                telemetry["az"] = round(az_d, 3)
             except Exception as _altaz_err:
                 logger.warning(f"[Telemetry] Alt/Az computation failed: {_altaz_err}")
 

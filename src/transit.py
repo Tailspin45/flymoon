@@ -519,8 +519,14 @@ def get_transits(
     test_mode: bool = False,
     custom_bbox: dict = None,
     data_source: str = "hybrid",
-    enrich: bool = True,
+    enrich: bool = False,
 ) -> Dict[str, Any]:
+    # FlightAware is never used for prediction. Only for post-capture enrichment.
+    if data_source == "fa-only":
+        logger.info(
+            "[Data] fa-only requested but FA is disabled for prediction; using opensky-only"
+        )
+        data_source = "opensky-only"
     API_KEY = get_aeroapi_key()
 
     logger.debug(f"{latitude=}, {longitude=}, {elevation=}")

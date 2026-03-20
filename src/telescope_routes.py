@@ -122,6 +122,14 @@ class MockSeestarClient:
         logger.info("[Mock] Started lunar viewing mode")
         return True
 
+    def start_scenery_mode(self) -> bool:
+        """Simulate starting scenery mode."""
+        import time
+
+        time.sleep(0.3)
+        logger.info("[Mock] Started scenery viewing mode")
+        return True
+
     def stop_view_mode(self) -> bool:
         """Simulate stopping view mode."""
         import time
@@ -782,6 +790,7 @@ def discover_seestar():
 
     # --- Pass 1: UDP broadcast scan_iscope (ALP protocol, port 4720) ---
     udp_found = []
+    sock = None
     try:
         UDP_PORT = 4720
         message = _json.dumps({"id": 1, "method": "scan_iscope", "params": ""}) + "\r\n"
@@ -799,9 +808,14 @@ def discover_seestar():
                     udp_found.append(ip)
             except _socket.timeout:
                 break
-        sock.close()
     except Exception as e:
         logger.debug(f"[Discover] UDP broadcast error (non-fatal): {e}")
+    finally:
+        if sock:
+            try:
+                sock.close()
+            except Exception:
+                pass
 
     if udp_found:
         logger.info(f"[Discover] UDP found: {udp_found}")
@@ -863,15 +877,19 @@ def connect_telescope():
 
         client.connect()
 
-        # Initialise viewing mode to a sane default so recording isn't blocked
-        # after a reconnect when the user hasn't clicked Track Sun/Moon yet.
-        from datetime import datetime
-
+        # Put scope into solar mode so RTSP stream is available. Always sun (not
+        # time-of-day moon) — transit app is sun-first; moon is user-selected later.
         if hasattr(client, "_viewing_mode") and client._viewing_mode is None:
-            client._viewing_mode = "sun" if 6 <= datetime.now().hour < 18 else "moon"
-            logger.info(
-                f"[Telescope] Default viewing mode set to '{client._viewing_mode}' on connect"
-            )
+            client._viewing_mode = "sun"
+            logger.info("[Telescope] Starting solar view to enable RTSP stream")
+            try:
+                client.start_solar_mode()
+                import time
+                time.sleep(2)  # Let scope spin up RTSP
+            except Exception as e:
+                logger.warning(
+                    f"[Telescope] Could not start solar view: {e} — RTSP may be unavailable"
+                )
 
         auto_resume = os.getenv("SOLAR_TIMELAPSE_AUTO_RESUME", "true").strip().lower()
         if auto_resume in ("1", "true", "yes", "on"):
@@ -2270,6 +2288,33 @@ def switch_to_moon():
         return handle_error(e)
 
 
+def switch_to_scenery():
+    """POST /telescope/mode/scenery - Switch telescope to scenery mode (no tracking)."""
+    logger.info("[Telescope] POST /telescope/mode/scenery")
+
+    try:
+        client = get_telescope_client()
+        if not client or not client.is_connected():
+            return jsonify({"error": "Not connected to telescope"}), 400
+
+        client.start_scenery_mode()
+
+        logger.info("[Telescope] Switched to scenery viewing mode")
+        return (
+            jsonify(
+                {
+                    "success": True,
+                    "target": "scenery",
+                    "message": "Scenery mode active — no sidereal tracking, manual positioning enabled",
+                }
+            ),
+            200,
+        )
+
+    except Exception as e:
+        return handle_error(e)
+
+
 # Live Preview Stream Endpoint
 
 
@@ -2518,6 +2563,12 @@ def register_routes(app):
         "/telescope/target/moon",
         "telescope_switch_moon",
         switch_to_moon,
+        methods=["POST"],
+    )
+    app.add_url_rule(
+        "/telescope/mode/scenery",
+        "telescope_switch_scenery",
+        switch_to_scenery,
         methods=["POST"],
     )
 
@@ -2858,6 +2909,19 @@ def _auto_connect_background():
                     "connect manually from the telescope page"
                 )
                 return
+
+            # Always solar mode for RTSP (see telescope_connect)
+            if hasattr(client, "_viewing_mode") and client._viewing_mode is None:
+                import time as _time
+                client._viewing_mode = "sun"
+                logger.info("[Telescope] Auto-connect: starting solar view for RTSP")
+                try:
+                    client.start_solar_mode()
+                    _time.sleep(2)
+                except Exception as e:
+                    logger.warning(
+                        f"[Telescope] Auto-connect: could not start solar view: {e}"
+                    )
 
         else:
             logger.info("[Telescope] Auto-connect: already connected")

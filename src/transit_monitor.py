@@ -1,7 +1,7 @@
 """
 Background transit monitoring service.
-Polls FlightAware API every 10 minutes and uses cached flight data with 
-position prediction for transit calculations in between.
+Uses OpenSky Network (free) for flight positions. Never calls FlightAware.
+FlightAware is only used post-capture by transit_detector to enrich detected events.
 """
 
 import asyncio
@@ -20,21 +20,17 @@ from src.transit import get_transits
 
 
 class TransitMonitor:
-    """Background service that monitors for upcoming transits."""
+    """Background service that monitors for upcoming transits using OpenSky only."""
 
-    def __init__(self, api_poll_interval: int = 600, calc_interval: int = 30):
+    def __init__(self, calc_interval: int = 30):
         """
         Initialize transit monitor.
 
         Args:
-            api_poll_interval: Seconds between FlightAware API calls (default: 600 = 10 minutes)
-            calc_interval: Seconds between transit calculations using cached data (default: 30)
+            calc_interval: Seconds between transit calculations (default: 30)
         """
-        self.api_poll_interval = api_poll_interval
         self.calc_interval = calc_interval
         self.cached_transits: List[Dict] = []
-        self.cached_flight_data: Optional[Dict] = None
-        self.last_api_call: Optional[datetime] = None
         self.last_calc: Optional[datetime] = None
         self.running = False
         self.thread = None
@@ -60,10 +56,10 @@ class TransitMonitor:
         self.thread = threading.Thread(target=self._monitor_loop, daemon=True)
         self.thread.start()
         logger.info(
-            f"[TransitMonitor] Started monitoring (API: {self.api_poll_interval}s, calc: {self.calc_interval}s)"
+            f"[TransitMonitor] Started monitoring (OpenSky, calc: {self.calc_interval}s)"
         )
         print(
-            f"✅ [TransitMonitor] Started monitoring (API: {self.api_poll_interval}s, calc: {self.calc_interval}s)"
+            f"✅ [TransitMonitor] Started monitoring (OpenSky, calc: {self.calc_interval}s)"
         )
 
     def stop(self):
@@ -81,7 +77,7 @@ class TransitMonitor:
         )
 
     def _monitor_loop(self):
-        """Background loop that checks for transits."""
+        """Background loop that checks for transits using OpenSky only."""
         while self.running:
             try:
                 now = datetime.now(ZoneInfo("UTC"))
@@ -96,39 +92,16 @@ class TransitMonitor:
                     time.sleep(60)
                     continue
 
-                # Check if we need to fetch new flight data from API
-                needs_api_call = (
-                    self.last_api_call is None
-                    or (now - self.last_api_call).total_seconds()
-                    >= self.api_poll_interval
-                )
-
-                if needs_api_call:
-                    logger.info(
-                        "[TransitMonitor] Fetching fresh flight data from FlightAware API"
-                    )
-                    self._check_transits(fetch_flights=True)
-                    self.last_api_call = now
-                else:
-                    # Use cached flight data with position prediction
-                    self._check_transits(fetch_flights=False)
-
+                self._check_transits()
                 self.last_calc = now
 
             except Exception as e:
                 logger.error(f"[TransitMonitor] Error checking transits: {e}")
 
-            # Sleep for calculation interval
             time.sleep(self.calc_interval)
 
-    def _check_transits(self, fetch_flights: bool = True):
-        """
-        Check for upcoming transits.
-
-        Args:
-            fetch_flights: If True, fetch fresh data from FlightAware API.
-                          If False, use cached flight data with position prediction.
-        """
+    def _check_transits(self):
+        """Check for upcoming transits using OpenSky (no FlightAware)."""
         all_transits = []
         datetime.now(ZoneInfo("UTC"))
 
@@ -139,14 +112,15 @@ class TransitMonitor:
                 )
                 continue
             try:
-                # Get transit predictions for this target
-                # The get_transits function will handle caching internally
+                # OpenSky only, no FlightAware. Enrichment happens post-capture.
                 transit_data = get_transits(
                     latitude=self.latitude,
                     longitude=self.longitude,
                     elevation=self.elevation,
                     target_name=target_name,
                     test_mode=False,
+                    data_source="opensky-only",
+                    enrich=False,
                 )
 
                 for transit in transit_data.get("flights", []):
@@ -265,9 +239,8 @@ class TransitMonitor:
         self.cached_transits = all_transits
 
         if len(all_transits) > 0:
-            source = "API" if fetch_flights else "cache"
             logger.info(
-                f"[TransitMonitor] Found {len(all_transits)} imminent transits (source: {source})"
+                f"[TransitMonitor] Found {len(all_transits)} imminent transits"
             )
 
     def get_transits(self) -> Dict:
@@ -276,9 +249,6 @@ class TransitMonitor:
             "success": True,
             "transits": self.cached_transits,
             "count": len(self.cached_transits),
-            "last_api_call": (
-                self.last_api_call.isoformat() if self.last_api_call else None
-            ),
             "last_calc": self.last_calc.isoformat() if self.last_calc else None,
         }
 
@@ -291,6 +261,5 @@ def get_monitor() -> TransitMonitor:
     """Get the global transit monitor instance."""
     global _monitor
     if _monitor is None:
-        # API every 10 minutes, calculations every 30 seconds
-        _monitor = TransitMonitor(api_poll_interval=600, calc_interval=30)
+        _monitor = TransitMonitor(calc_interval=30)
     return _monitor

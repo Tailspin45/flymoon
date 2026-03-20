@@ -492,14 +492,28 @@ async function switchToMoon() {
     }
 }
 
+async function switchToScenery() {
+    console.log('[Telescope] Switching to Scenery');
+    showStatus('Switching to Scenery mode...', 'info');
+
+    const result = await apiCall('/telescope/mode/scenery', 'POST');
+    if (result && result.success) {
+        showStatus('Scenery mode active — no tracking, manual positioning enabled', 'success', 5000);
+        stopPreview();
+        _previewLastError = 0;
+        setTimeout(startPreview, 3000);
+    }
+}
+
 function checkTargetMismatch() {
     const banner = document.getElementById('mismatchBanner');
     const text   = document.getElementById('mismatchText');
     const btn    = document.getElementById('mismatchSwitchBtn');
     if (!banner || !text || !btn) return;
 
-    // Only relevant when connected and in a known viewing mode
-    if (!isConnected || !currentViewingMode) { banner.style.display = 'none'; return; }
+    // Only relevant when connected and in sun or moon viewing mode
+    // Scenery mode is target-neutral — no mismatch possible
+    if (!isConnected || !currentViewingMode || (currentViewingMode !== 'sun' && currentViewingMode !== 'moon')) { banner.style.display = 'none'; return; }
 
     const flights = (window.lastFlightData && window.lastFlightData.flights) || [];
     const oppositeTarget = currentViewingMode === 'sun' ? 'moon' : 'sun';
@@ -1470,7 +1484,7 @@ function nudgeStart(angle) {
     nudgeStop(); // clear any existing
     const speed = document.querySelector('input[name="nudgeSpeed"]:checked')?.value === 'fast' ? 80 : 20;
     // Send immediately, then repeat every 2s for held button
-    const send = () => apiCall('/telescope/nudge', 'POST', { speed, angle, dur_sec: 3 });
+    const send = () => apiCall('/telescope/nudge', 'POST', { speed, angle, dur_sec: 2 });
     send();
     _nudgeInterval = setInterval(send, 2000);
 }

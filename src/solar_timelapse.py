@@ -201,6 +201,7 @@ class SolarTimelapse:
         self._stabilize_offset = (0.0, 0.0)  # smoothed cumulative offset
         self._consecutive_failures: int = 0
         self._last_error: Optional[str] = None
+        self._last_frame_grab_warn: float = 0.0  # Throttle frame-grab failure logs
 
     # ── Public API ──────────────────────────────────────────────────────
 
@@ -621,6 +622,7 @@ class SolarTimelapse:
                         self._consecutive_failures = 0
                         self._last_error = None
                         self._retry_delay = self._interval
+                        self._last_frame_grab_warn = 0  # Reset so next failure logs WARNING
                     else:
                         self._consecutive_failures += 1
                         self._retry_delay = 10.0
@@ -648,6 +650,15 @@ class SolarTimelapse:
             # Auto-assemble if we had frames and weren't manually stopped
             if was_running and self._frame_count > 0 and not self._stop_event.is_set():
                 self._assemble_video()
+
+    def _log_frame_grab_fail(self, msg: str) -> None:
+        """Log frame grab failure, throttled to once per 60s to avoid spam."""
+        now = time.monotonic()
+        if now - self._last_frame_grab_warn >= 60:
+            logger.warning(f"[Timelapse] {msg}")
+            self._last_frame_grab_warn = now
+        else:
+            logger.debug(f"[Timelapse] {msg}")
 
     def _grab_frame(self) -> Tuple[bool, Optional[str]]:
         """Grab a single JPEG frame from the RTSP stream via ffmpeg.
@@ -685,11 +696,11 @@ class SolarTimelapse:
             )
             if result.returncode != 0:
                 stderr_tail = result.stderr.decode(errors="replace")[-200:].strip()
-                logger.warning(f"[Timelapse] Frame grab failed: {stderr_tail}")
+                self._log_frame_grab_fail(f"Frame grab failed: {stderr_tail}")
                 return False, f"FFmpeg error: {stderr_tail}"
 
             if not os.path.exists(filepath) or os.path.getsize(filepath) < 100:
-                logger.warning(f"[Timelapse] Frame too small or missing: {filepath}")
+                self._log_frame_grab_fail(f"Frame too small or missing: {filepath}")
                 return False, "Frame too small or missing"
 
             if not self._stabilize_frame(filepath):
@@ -703,10 +714,10 @@ class SolarTimelapse:
             return True, None
 
         except subprocess.TimeoutExpired:
-            logger.warning("[Timelapse] Frame grab timed out")
+            self._log_frame_grab_fail("Frame grab timed out")
             return False, "RTSP timeout"
         except Exception as e:
-            logger.warning(f"[Timelapse] Frame grab error: {e}")
+            self._log_frame_grab_fail(f"Frame grab error: {e}")
             return False, str(e)
 
     def _stabilize_frame(self, frame_path: str) -> bool:

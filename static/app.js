@@ -2124,7 +2124,7 @@ function fetchFlights() {
         const tableFlights = filteredFlights;
         const unlikelyCount = filteredFlights.filter(f => f.is_possible_transit !== 1).length;
         if (tableFlights.length === 0) {
-            alertNoResults.innerHTML = "No flights in area";
+            alertNoResults.innerHTML = "No flights visible";
         } else if (unlikelyCount > 0 && tableFlights.filter(f => f.is_possible_transit === 1).length === 0) {
             alertNoResults.innerHTML = `${unlikelyCount} flight${unlikelyCount !== 1 ? 's' : ''} in area — none within transit range`;
         } else if (unlikelyCount > 0) {
