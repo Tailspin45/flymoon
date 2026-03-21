@@ -196,6 +196,9 @@ fetch('/config')
     .then(config => {
         appConfig = config;
         console.log('Loaded config:', appConfig);
+        if (config.codeRevision) {
+            console.log('Flymoon codeRevision:', config.codeRevision, '(should match git after pull + restart)');
+        }
 
         // Seed localStorage from server config when position is missing
         // (ensures observer position works regardless of port/origin)
@@ -242,6 +245,7 @@ fetch('/config')
                 console.log('Seeded bounding box from server config:', bbox);
             }
         }
+        // Do not POST observer here — stale localStorage would override .env and break telescope azimuth.
     })
     .catch(error => {
         console.error('Error loading config:', error);
@@ -922,6 +926,31 @@ function syncMinAltitudeToServer() {
     }).catch(() => {/* non-critical — server will fall back to .env default */});
 }
 
+/**
+ * Push observer lat/lon/elev to the server (explicit Save only).
+ * Auto-sync on every page load was overriding a correct .env with stale localStorage,
+ * which made telescope AZ wrong until restart — and wrong again on next page load.
+ */
+function syncObserverToServer() {
+    const latEl = document.getElementById('latitude');
+    const lonEl = document.getElementById('longitude');
+    const elevEl = document.getElementById('elevation');
+    if (!latEl || !lonEl) return;
+    const latitude = parseFloat(latEl.value);
+    const longitude = parseFloat(lonEl.value);
+    if (isNaN(latitude) || isNaN(longitude)) return;
+    const elevation = elevEl ? parseFloat(elevEl.value) : 0;
+    fetch('/api/settings', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+            observer_latitude: latitude,
+            observer_longitude: longitude,
+            observer_elevation: isNaN(elevation) ? 0 : elevation,
+        }),
+    }).catch(() => {/* non-critical */});
+}
+
 // Initialize sticky inputs and toggle buttons when DOM is ready
 function initUIControls() {
     setupStickyQuadrantInputs();
@@ -1256,6 +1285,7 @@ function savePosition() {
     localStorage.setItem("latitude", latitude);
     localStorage.setItem("longitude", longitude);
     localStorage.setItem("elevation", elevation);
+    syncObserverToServer();
 
     // Save quadrant min altitudes
     const minAltN = parseFloat(document.getElementById("minAltN").value) || 15;

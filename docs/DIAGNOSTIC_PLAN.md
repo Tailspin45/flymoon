@@ -598,21 +598,115 @@ _(Append results here as each phase completes)_
 ```
 
 ### Phase 2 Results
-```
-[To be filled after Phase 2 execution]
-```
+
+**Diagnostic scripts created:**
+- `tests/diag_phase2_detection_validation.py` — baseline + parameter sweep for `transit_analyzer.py`
+- `tests/diag_phase2_live_detector_test.py` — file-fed `TransitDetector._process_frame()` injection test
+- `tests/diag_phase2_false_positive_test.py` — FP analysis against known transit windows
+
+**Baseline results (`transit_analyzer.py` on all 17 videos):**
+
+| Group | Detection | Notes |
+|---|---|---|
+| Solar clips (9×) | **12/12** real transits detected | — |
+| solar-src-3, solar-transit-3-full | 0/2 | **Correct**: video is a 3.2s loop repeated 4×; blobs at identical positions every 3.2s; static filter correctly rejects |
+| Lunar clips (3×) | **3/3** | transit-1: 0.63–1.17s (534ms); transit-2: 1.90–3.40s (1500ms); transit-3: 0.33–0.63s (300ms) |
+
+**Key finding — solar-src-3 / solar-transit-3-full:**
+Mean frame diff across 3.2s period = 1.17 / 255 = 0.46% (effectively zero). Source video is looped content. The static filter (`static_threshold_pct=0.25`) correctly identifies the repeating blobs as non-transits. No algorithm change needed.
+
+**Live detector test (`transit_detector.py` via file injection):**
+
+| Video | Duration | Disk | Fired | Root Cause |
+|---|---|---|---|---|
+| transit-1.mp4 | 2.13s (32 frames) | ok, r=33px | NO | 32 < 45 frame warmup — detection never enabled |
+| transit-2.mp4 | 5.33s (80 frames) | ok, r=31px | NO | Transit at 1.9–3.4s overlaps 3s warmup window; only ~6 tail frames active vs `CONSEC_FRAMES_REQUIRED=7` |
+| transit-3.mp4 | 1.27s (19 frames) | MISS | NO | Too short even for Hough disk detection |
+
+**Live detector conclusion:** Not a production bug. In production, the RTSP stream is running continuously — warmup is long done before any transit, and disk is already found. The clips are simply too short (1–5s) to exercise the live detector. The live detector has NOT been validated for lunar contrast specifically; this requires a longer moon session clip. Sensitivity=0.3 (3× lower threshold) also failed to fire, meaning the warmup timing is the dominant blocker, not the threshold level.
+
+**False-positive analysis (solar full-session clips):**
+Ground truth is incomplete. The 5 source clips contain many more transits than the 3 scan-log samples we were aware of. Many flagged "FPs" are likely real aircraft transits. True FP validation requires a clean no-transit solar recording (none available in this dataset).
+
+**Parameter changes: NONE RECOMMENDED**
+All parameters are performing correctly. Current defaults are:
+
+| Parameter | Solar | Lunar | Status |
+|---|---|---|---|
+| `diff_threshold` | 15 | 11 (auto) | OK — keep |
+| `min_travel_px` | 25 | 20 (auto) | OK — keep |
+| `min_speed_px_s` | 50 | 40 (auto) | OK — keep |
+| `min_blob_pixels` | 20 | 30 (auto) | OK — keep |
+| `static_threshold_pct` | 0.25 | 0.80 (auto) | OK — keep |
+
+**Action items for Phase 3 or follow-up:**
+1. Obtain a longer lunar session clip (>30s, continuous) to validate live detector against real moon transit
+2. Obtain a clean no-transit solar clip to establish a true FP baseline
+3. Consider reducing `ANALYSIS_FPS * 3` warmup to `ANALYSIS_FPS * 2` (1.33s) to handle very short clips — low risk, non-critical
 
 ### Phase 3 Results
-```
-[To be filled after Phase 3 execution]
-```
+
+**All success criteria met. No production code changes required beyond the two improvements below.**
+
+**Coordinate transforms — correct:**
+- `angular_separation()`: exact on all reference cases (0.000000° on same point, exact for pure alt/az diffs, correct spherical compression near zenith). Sun-Moon separation matches Skyfield to 0.0000°.
+- `geographic_to_altaz()`: Δalt=0.0000°, Δaz=0.0000° vs Skyfield direct (it is a thin Skyfield wrapper — no approximation).
+- `predict_position()`: Haversine error < 0.001 km at 225 km. 1 km lateral position error at 200 km distance → 0.0187° angular error.
+
+**Synthetic transit end-to-end:**
+- Aircraft approaching transit ground point at 900 km/h → `check_transit()` returns MEDIUM (2.698°) at t=5.03 min. Correct behavior (perpendicular approach, not head-on).
+
+**Bounding box — correctly sized:**
+- Covers transit ground point at all 8 cardinal/diagonal azimuths.
+- 15-min, 950 km/h inbound aircraft captured at every test altitude (5°–75°).
+- Stable ~230,000 km² across all target altitudes; dominated by 15-min travel radius.
+- Live test: 218 airborne aircraft in bbox — no over-cropping.
+
+**OpenSky staleness:**
+- Mean 7.4 s → 0.53° angular error at 200 km (well under 2.0° HIGH threshold).
+- P95 19.1 s → 1.37° (still inside HIGH threshold).
+- Max observed 55.1 s → ~4° (tail risk — addressed by lowering MAX_POSITION_AGE).
+
+**Rate limits:** MONITOR_INTERVAL=10 min → 144 req/day. Anonymous limit exceeded; registered (400/day) OK. Credentials confirmed configured.
+
+**Thresholds — validated:** HIGH ≤ 2.0° has a 4× safety margin over the ~0.25° true transit zone. No changes recommended.
+
+**Improvements applied (committed d9fdd48):**
+- `MAX_POSITION_AGE` reduced 60 → 30 s (eliminates worst-stale outliers causing up to 4° error)
+- `position_stale` flag (> 20 s) propagated through transit results; WARNING log on HIGH/MEDIUM stale transits
 
 ### Phase 4 Results
-```
-[To be filled after Phase 4 execution]
-```
+
+All four root causes diagnosed and fixed live against firmware 7.06:
+
+| # | Root Cause | Fix | Validation |
+|---|---|---|---|
+| 1 | GoTo servo loop diverging | `atan2(d_az, -d_alt)` in angle formula | Live: 15.5°→3.8° in 90 s ✅ |
+| 2 | ▲/▼ nudge buttons inverted | Swapped button angles (▲: 270, ▼: 90) | Confirmed physical up/down ✅ |
+| 3 | Position feedback blind in scenery mode | `scope_get_horiz_coord` as primary source in `get_telemetry()` | Returns live alt/az directly ✅ |
+| 4 | Firmware mode name mismatch | Added `solar_sys`/`lunar` → `sun`/`moon` mapping | `_viewing_mode` stays in sync ✅ |
+
+All Phase 4 success criteria met. Production code in `src/seestar_client.py` and `static/app.js` updated.
 
 ### Phase 5 Results
-```
-[To be filled after Phase 5 execution]
-```
+
+**Date:** 2026-03-21  
+**Status:** 🟡 Diagnostic scripts written — hardware tests blocked by cloud cover.
+
+**Scripts created:**
+
+| Script | Purpose |
+|---|---|
+| `tests/diag_phase5_synthetic_transit.py` | Synthetic HIGH-probability flight → prediction pipeline |
+| `tests/diag_phase5_soak_test.py` | RTSP 3-consumer sustained operation (2 h) |
+| `tests/diag_phase5_failure_injection.py` | JSON-RPC reconnect + RTSP kill/recover + mode cycling |
+
+**Hardware tests pending (next clear-sky session):**
+- [ ] Synthetic HIGH transit detected within 1 refresh cycle
+- [ ] Recording triggered by prediction (transit_capture.py)
+- [ ] RTSP stable 2+ hours (3 consumers)
+- [ ] Recovery from socket drop < 30 s
+- [ ] No unhandled exceptions in 4-hour soak
+- [ ] All metrics logged
+
+See `docs/diag_phase5_results.md` for full run instructions and success criteria checklist.

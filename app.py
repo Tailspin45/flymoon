@@ -50,6 +50,27 @@ from src.constants import (
 # SETUP
 load_dotenv()
 
+
+def _flymoon_code_revision() -> str:
+    """Short git SHA for “am I running the code I think I am?” (see /config)."""
+    rev = os.getenv("FLYMOON_REVISION", "").strip()
+    if rev:
+        return rev
+    try:
+        import subprocess
+
+        root = os.path.dirname(os.path.abspath(__file__))
+        return subprocess.check_output(
+            ["git", "rev-parse", "--short", "HEAD"],
+            cwd=root,
+            stderr=subprocess.DEVNULL,
+            timeout=2,
+            text=True,
+        ).strip()
+    except Exception:
+        return "unknown"
+
+
 from src import logger, telescope_routes
 from src.astro import CelestialObject, get_rise_set_times
 from src.config_wizard import ConfigWizard
@@ -240,6 +261,7 @@ def get_config():
             ),
             "cacheEnabled": True,
             "cacheTTLSeconds": 600,
+            "codeRevision": _flymoon_code_revision(),
             "openaipApiKey": os.getenv("OPENAIP_API_KEY", ""),
             "observerLatitude": os.getenv("OBSERVER_LATITUDE", ""),
             "observerLongitude": os.getenv("OBSERVER_LONGITUDE", ""),
@@ -1059,6 +1081,11 @@ if __name__ == "__main__":
         exit(1)
 
     print(f"🚀 Starting server on port {port}")
+    print(
+        f"📌 Code revision: {_flymoon_code_revision()} — "
+        "confirm in browser console (config.codeRevision) after refresh; "
+        "if stale: pull, restart, or PYTHONDONTWRITEBYTECODE=1 python3 -B app.py"
+    )
 
     # Reduce werkzeug logging noise
     import logging
