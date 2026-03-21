@@ -51,8 +51,8 @@ FFMPEG = get_ffmpeg_path() or "ffmpeg"
 # ---------------------------------------------------------------------------
 # Detection parameters
 # ---------------------------------------------------------------------------
-ANALYSIS_WIDTH = 160
-ANALYSIS_HEIGHT = 90
+ANALYSIS_WIDTH = 90
+ANALYSIS_HEIGHT = 160
 ANALYSIS_FPS = 15
 FRAME_BYTES = ANALYSIS_WIDTH * ANALYSIS_HEIGHT * 3  # RGB24
 
@@ -259,11 +259,10 @@ CENTRE_MASK, EDGE_MASK = _build_spatial_masks(ANALYSIS_HEIGHT, ANALYSIS_WIDTH)
 
 
 def _detect_disk(gray: np.ndarray) -> Optional[tuple]:
-    """Find the Sun/Moon disk in a 160×90 grayscale frame.
+    """Find the Sun/Moon disk in a downscaled grayscale frame.
 
     Returns (cx, cy, radius) or None if no disk found.
-    Uses Hough circle detection with a bright-threshold fallback,
-    matching the approach in transit_analyzer.py but tuned for 160×90.
+    Uses Hough circle detection with a bright-threshold fallback.
     """
     h, w = gray.shape[:2]
     blurred = cv2.GaussianBlur(gray, (5, 5), 1)

@@ -18,6 +18,55 @@ from datetime import datetime
 from typing import Any, Dict, Optional
 
 from src import logger
+from src.site_context import get_observer_coordinates
+
+_telemetry_warned_zero_observer = False
+_telemetry_warned_scope_offset = False
+_DEBUG_LOG_PATH = "/Users/Tom/flymoon/.cursor/debug-616e1a.log"
+_DEBUG_SESSION_ID = "616e1a"
+
+
+def _debug_log(
+    run_id: str, hypothesis_id: str, location: str, message: str, data: dict
+) -> None:
+    try:
+        payload = {
+            "sessionId": _DEBUG_SESSION_ID,
+            "id": f"log_{int(time.time() * 1000)}_{threading.get_ident()}",
+            "timestamp": int(time.time() * 1000),
+            "location": location,
+            "message": message,
+            "data": data,
+            "runId": run_id,
+            "hypothesisId": hypothesis_id,
+        }
+        with open(_DEBUG_LOG_PATH, "a", encoding="utf-8") as fh:
+            fh.write(json.dumps(payload, separators=(",", ":")) + "\n")
+    except Exception:
+        pass
+
+
+def _skyfield_target_altaz(
+    target: str, lat: float, lon: float, elev: float
+) -> tuple[float, float]:
+    """Compute alt/az for Sun or Moon using Skyfield ephemeris.
+
+    Returns (alt_degrees, az_degrees) — same convention as
+    ``_altaz_from_equatorial_for_goto`` (north=0, clockwise).
+    """
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+
+    from skyfield.api import wgs84
+    from tzlocal import get_localzone_name
+
+    from src.constants import ASTRO_EPHEMERIS, EARTH_TIMESCALE
+
+    observer = ASTRO_EPHEMERIS["earth"] + wgs84.latlon(lat, lon, elevation_m=elev)
+    body = ASTRO_EPHEMERIS[target]
+    t = EARTH_TIMESCALE.now()
+    alt, az, _ = observer.at(t).observe(body).apparent().altaz()
+    return alt.degrees, az.degrees
 
 
 def _altaz_from_equatorial_for_goto(
@@ -124,6 +173,10 @@ class SeestarClient:
         self._above_horizon_check = (
             None  # Optional[Callable[[], bool]] — set by app startup
         )
+
+        # Cached telemetry — populated by heartbeat loop, served to HTTP clients
+        self._cached_telemetry: Dict[str, Any] = {}
+        self._cached_telemetry_ts: float = 0.0
 
         logger.info(f"Initialized Seestar client for {host}:{port}")
 
@@ -432,12 +485,11 @@ class SeestarClient:
                 time.sleep(1)
                 continue
             try:
-                self._send_command(
-                    "scope_get_equ_coord",
-                    expect_response=True,
-                    quiet=True,
-                    timeout_override=5,  # short timeout for keepalive pings
-                )
+                # Gather full telemetry on every heartbeat cycle so HTTP
+                # clients can read cached data without hitting the socket.
+                telemetry = self.get_telemetry()
+                self._cached_telemetry = telemetry
+                self._cached_telemetry_ts = time.time()
                 hard_fail_count = 0  # successful ping
                 if _timeout_logged:
                     logger.info("Heartbeat: scope responding again")
@@ -548,31 +600,30 @@ class SeestarClient:
           2. pi_set_time        — syncs the scope's RTC to UTC
           3. pi_is_verified     — session handshake (some firmware requires this)
 
-        Skipping this sequence can cause subsequent commands to be silently
-        ignored on certain firmware builds.  Each call is best-effort; a
-        failure here does not abort the connection.
+        Failures are logged at WARNING (not DEBUG) so init problems are
+        visible without ``--debug``.  A failed init is the most common
+        cause of 180° azimuth errors (scope falls back to stale/wrong
+        internal coordinates).
         """
-        import os as _os
         from datetime import datetime, timezone
 
-        # 1. Location sync
+        # 1. Location sync (same site as map → /api/settings, else .env)
+        lat, lon, _elev = get_observer_coordinates()
         try:
-            lat = float(_os.getenv("OBSERVER_LATITUDE", "0"))
-            lon = float(_os.getenv("OBSERVER_LONGITUDE", "0"))
-            self._send_command(
+            result = self._send_command(
                 "set_user_location",
                 params={"lat": lat, "lon": lon, "force": True},
                 quiet=True,
                 timeout_override=5,
             )
-            logger.debug(f"[Init] set_user_location lat={lat} lon={lon}")
+            logger.info(f"[Init] set_user_location lat={lat} lon={lon} → {result}")
         except Exception as e:
-            logger.debug(f"[Init] set_user_location failed (non-fatal): {e}")
+            logger.warning(f"[Init] set_user_location FAILED (lat={lat} lon={lon}): {e}")
 
         # 2. Clock sync
         try:
             now = datetime.now(timezone.utc)
-            self._send_command(
+            result = self._send_command(
                 "pi_set_time",
                 params=[{
                     "year": now.year, "mon": now.month, "day": now.day,
@@ -582,9 +633,9 @@ class SeestarClient:
                 quiet=True,
                 timeout_override=5,
             )
-            logger.debug(f"[Init] pi_set_time {now.strftime('%Y-%m-%dT%H:%M:%SZ')}")
+            logger.info(f"[Init] pi_set_time {now.strftime('%Y-%m-%dT%H:%M:%SZ')} → {result}")
         except Exception as e:
-            logger.debug(f"[Init] pi_set_time failed (non-fatal): {e}")
+            logger.warning(f"[Init] pi_set_time FAILED: {e}")
 
         # 3. Session verification
         try:
@@ -596,6 +647,23 @@ class SeestarClient:
             logger.debug("[Init] pi_is_verified sent")
         except Exception as e:
             logger.debug(f"[Init] pi_is_verified failed (non-fatal): {e}")
+
+        # 4. Read back scope's stored location to confirm it matches
+        try:
+            r = self._send_command(
+                "get_device_state",
+                params={"keys": ["location_lon_lat"]},
+                quiet=True,
+                timeout_override=5,
+            )
+            if r:
+                scope_loc = r.get("location_lon_lat") or r.get("result", {}).get("location_lon_lat")
+                if scope_loc:
+                    logger.info(f"[Init] Scope location readback: {scope_loc}")
+                else:
+                    logger.info(f"[Init] Scope device_state (no location_lon_lat): {r}")
+        except Exception as e:
+            logger.debug(f"[Init] get_device_state readback failed (non-fatal): {e}")
 
     def connect(self) -> bool:
         """
@@ -1192,21 +1260,40 @@ class SeestarClient:
     _SLEW_POLL_INTERVAL = 1.0    # telemetry poll interval during slew
 
     def speed_move(self, speed: int, angle: int, dur_sec: int = 3) -> dict:
-        """Raw motor move — no horizon check. angle: 0=up 90=right 180=down 270=left.
+        """Raw motor move — no horizon check.
 
-        Auto-starts scenery mode if no viewing mode is active (firmware
-        silently ignores speed_move without an active view).
+        API angle convention (after +180 firmware correction):
+          90=up  180=right  270=down  0=left
+
+        Always switches to scenery mode first.  Tracking modes (sun/moon/star)
+        fight speed_move — the tracking loop snaps the scope back after each
+        nudge — so scenery mode is required for persistent manual movement.
         """
-        if self._viewing_mode is None:
-            logger.info("No viewing mode active — auto-starting scenery mode for manual slew")
+        if self._viewing_mode != "scenery":
+            if self._viewing_mode is not None:
+                logger.info(
+                    f"Stopping {self._viewing_mode} tracking before manual slew"
+                )
+                try:
+                    self.stop_view_mode()
+                    time.sleep(0.5)
+                except Exception as _e:
+                    logger.warning(f"[speed_move] stop_view_mode failed (non-fatal): {_e}")
+            logger.info("Starting scenery mode for manual slew")
             self.start_scenery_mode()
             time.sleep(1)
+        # Firmware motor-angle frame is reversed by 180° from the logical
+        # joystick frame used by API/UI. Convert here centrally so all callers
+        # (nudge + manual_goto) behave consistently.
+        fw_angle = (int(angle) + 180) % 360
         self._send_command(
             "scope_speed_move",
-            params={"speed": int(speed), "angle": int(angle), "dur_sec": int(dur_sec)},
+            params={"speed": int(speed), "angle": fw_angle, "dur_sec": int(dur_sec)},
             expect_response=False,
         )
-        logger.info(f"Speed move: speed={speed} angle={angle}° dur={dur_sec}s")
+        logger.info(
+            f"Speed move: speed={speed} angle={int(angle)}° fw_angle={fw_angle}° dur={dur_sec}s"
+        )
         return {"success": True}
 
     def speed_stop(self) -> bool:
@@ -1242,6 +1329,8 @@ class SeestarClient:
         import math
         import time as _time
 
+        run_id = f"manual_goto_{int(_time.time() * 1000)}"
+
         # Clamp target to safe range
         if target_alt < self._SLEW_ALT_MIN or target_alt > self._SLEW_ALT_MAX:
             msg = f"Target alt {target_alt:.1f}° outside safe range [{self._SLEW_ALT_MIN}°, {self._SLEW_ALT_MAX}°]"
@@ -1251,10 +1340,21 @@ class SeestarClient:
         start = _time.time()
         stall_count = 0
         prev_distance = None
+        loop_count = 0
 
         logger.info(f"[ManualGoTo] Starting: target alt={target_alt:.1f}° az={target_az:.1f}°")
+        # region agent log
+        _debug_log(
+            run_id,
+            "H11",
+            "src/seestar_client.py:_manual_goto_inner:start",
+            "ManualGoTo started",
+            {"target_alt": target_alt, "target_az": target_az, "viewing_mode": self._viewing_mode},
+        )
+        # endregion
 
         while _time.time() - start < self._SLEW_MAX_DURATION:
+            loop_count += 1
             # Get current position
             telemetry = self.get_telemetry()
             cur_alt = telemetry.get("alt")
@@ -1319,7 +1419,28 @@ class SeestarClient:
 
             # Compute angle for scope_speed_move
             # Seestar convention: 270=up, 0=right, 90=down, 180=left
-            angle = (math.degrees(math.atan2(d_az, d_alt)) - 90) % 360
+            # speed_move adds +180 to convert API→firmware, so API convention is:
+            # 90=up, 180=right, 270=down, 0=left  →  use +90 offset here.
+            angle = (math.degrees(math.atan2(d_az, d_alt)) + 90) % 360
+            if loop_count % 3 == 1:
+                # region agent log
+                _debug_log(
+                    run_id,
+                    "H11_H12",
+                    "src/seestar_client.py:_manual_goto_inner:loop",
+                    "ManualGoTo step",
+                    {
+                        "cur_alt": cur_alt,
+                        "cur_az": cur_az,
+                        "d_alt": d_alt,
+                        "d_az": d_az,
+                        "distance": distance,
+                        "angle_cmd": angle,
+                        "speed_cmd": speed,
+                        "view_mode": self._viewing_mode,
+                    },
+                )
+                # endregion
 
             # Move for a short burst then re-check
             dur = 2 if distance >= self._SLEW_SLOW_THRESHOLD else 1
@@ -1335,6 +1456,15 @@ class SeestarClient:
         # Timeout
         self.speed_stop()
         logger.warning("[ManualGoTo] Timed out")
+        # region agent log
+        _debug_log(
+            run_id,
+            "H11_H12",
+            "src/seestar_client.py:_manual_goto_inner:timeout",
+            "ManualGoTo timed out",
+            {"elapsed_s": round(_time.time() - start, 1), "target_alt": target_alt, "target_az": target_az},
+        )
+        # endregion
         return {"error": "Timed out", "elapsed": round(_time.time() - start, 1)}
 
     def open_arm(self) -> bool:
@@ -1443,9 +1573,21 @@ class SeestarClient:
         get_device_state into a single flat dict.  Sub-calls that time out
         or fail are skipped rather than raising.
         """
-        import os as _os, math as _math
-
         telemetry: dict = {}
+        run_id = f"telemetry_{int(time.time() * 1000)}"
+
+        # region agent log
+        _debug_log(
+            run_id,
+            "H2_H3",
+            "src/seestar_client.py:get_telemetry:start",
+            "Telemetry entry state",
+            {
+                "client_viewing_mode": self._viewing_mode,
+                "connected": self._connected,
+            },
+        )
+        # endregion
 
         # RA / Dec
         try:
@@ -1455,28 +1597,133 @@ class SeestarClient:
             if r:
                 telemetry["ra"] = r.get("ra")
                 telemetry["dec"] = r.get("dec")
+                # region agent log
+                _debug_log(
+                    run_id,
+                    "H4",
+                    "src/seestar_client.py:get_telemetry:equ",
+                    "scope_get_equ_coord response",
+                    {
+                        "ra": telemetry.get("ra"),
+                        "dec": telemetry.get("dec"),
+                    },
+                )
+                # endregion
         except Exception:
             pass
 
-        # Compute Alt/Az from RA/Dec — must match goto_altaz spherical model (not ICRS Star).
+        # Compute Alt/Az.
+        # Primary telemetry alt/az should represent actual mount pointing from
+        # scope RA/Dec so values move during manual slews in any mode.
+        # For sun/moon tracking we also compute target_alt/target_az for
+        # diagnostics (where the ephemeris target is), but we do not overwrite
+        # mount pointing alt/az with those values.
+        lat, lon, _elev = get_observer_coordinates()
+        # region agent log
+        _debug_log(
+            run_id,
+            "H3",
+            "src/seestar_client.py:get_telemetry:observer",
+            "Observer coordinates used for telemetry",
+            {"lat": lat, "lon": lon, "elev": _elev},
+        )
+        # endregion
+        global _telemetry_warned_zero_observer
+        if lat == 0.0 and lon == 0.0 and not _telemetry_warned_zero_observer:
+            _telemetry_warned_zero_observer = True
+            logger.warning(
+                "[Telemetry] Observer at 0°,0° — set .env OBSERVER_* or load the "
+                "map page (syncs lat/lon to server). Wrong azimuth until site is set."
+            )
+
+        # Scope RA/Dec → alt/az (always computed for diagnostics when available)
         if telemetry.get("ra") is not None and telemetry.get("dec") is not None:
             try:
                 from src.constants import EARTH_TIMESCALE
 
-                lat = float(_os.getenv("OBSERVER_LATITUDE", "0"))
-                lon = float(_os.getenv("OBSERVER_LONGITUDE", "0"))
                 t = EARTH_TIMESCALE.now()
-                alt_d, az_d = _altaz_from_equatorial_for_goto(
+                scope_alt, scope_az = _altaz_from_equatorial_for_goto(
                     float(telemetry["ra"]),
                     float(telemetry["dec"]),
                     lat,
                     lon,
                     float(t.gast),
                 )
-                telemetry["alt"] = round(alt_d, 3)
-                telemetry["az"] = round(az_d, 3)
+                telemetry["scope_alt"] = round(scope_alt, 3)
+                telemetry["scope_az"] = round(scope_az, 3)
+                # region agent log
+                _debug_log(
+                    run_id,
+                    "H4",
+                    "src/seestar_client.py:get_telemetry:scope_altaz",
+                    "Scope RA/Dec converted to Alt/Az",
+                    {
+                        "scope_alt": telemetry.get("scope_alt"),
+                        "scope_az": telemetry.get("scope_az"),
+                    },
+                )
+                # endregion
             except Exception as _altaz_err:
-                logger.warning(f"[Telemetry] Alt/Az computation failed: {_altaz_err}")
+                logger.warning(f"[Telemetry] Scope Alt/Az computation failed: {_altaz_err}")
+
+        # Optional target ephemeris in sun/moon mode (diagnostic only).
+        if self._viewing_mode in ("sun", "moon"):
+            try:
+                sf_alt, sf_az = _skyfield_target_altaz(
+                    self._viewing_mode, lat, lon, _elev
+                )
+                telemetry["target_alt"] = round(sf_alt, 3)
+                telemetry["target_az"] = round(sf_az, 3)
+                # region agent log
+                _debug_log(
+                    run_id,
+                    "H1_H2",
+                    "src/seestar_client.py:get_telemetry:branch_skyfield",
+                    "Using Skyfield Alt/Az branch",
+                    {
+                        "client_viewing_mode": self._viewing_mode,
+                        "skyfield_alt": telemetry.get("target_alt"),
+                        "skyfield_az": telemetry.get("target_az"),
+                        "scope_alt": telemetry.get("scope_alt"),
+                        "scope_az": telemetry.get("scope_az"),
+                    },
+                )
+                # endregion
+
+                # Diagnostic: compare scope-derived vs Skyfield
+                if telemetry.get("scope_az") is not None:
+                    global _telemetry_warned_scope_offset
+                    delta_az = ((telemetry["scope_az"] - sf_az + 180) % 360) - 180
+                    delta_alt = telemetry["scope_alt"] - sf_alt
+                    telemetry["scope_delta_az"] = round(delta_az, 1)
+                    telemetry["scope_delta_alt"] = round(delta_alt, 1)
+                    if abs(delta_az) > 90 and not _telemetry_warned_scope_offset:
+                        _telemetry_warned_scope_offset = True
+                        logger.warning(
+                            f"[Telemetry] Scope az={telemetry['scope_az']:.1f}° vs "
+                            f"Skyfield {self._viewing_mode} az={sf_az:.1f}° "
+                            f"(delta={delta_az:+.1f}°) — possible compass/init error"
+                        )
+            except Exception as _sf_err:
+                logger.warning(f"[Telemetry] Skyfield alt/az failed: {_sf_err}")
+
+        # Primary alt/az for UI.
+        # In sun/moon tracking mode, scope_get_equ_coord may return a stale
+        # cached GoTo target rather than the actual current pointing, making
+        # scope_alt/scope_az unreliable.  Use the Skyfield ephemeris position
+        # (target_alt/target_az) as primary in those modes — it is always
+        # accurate and updates every poll.  In scenery/none mode where there
+        # is no ephemeris target, fall back to the scope RA/Dec conversion.
+        if self._viewing_mode in ("sun", "moon") and telemetry.get("target_alt") is not None:
+            telemetry["alt"] = telemetry["target_alt"]
+            telemetry["az"] = telemetry["target_az"]
+        elif telemetry.get("scope_alt") is not None:
+            telemetry["alt"] = telemetry["scope_alt"]
+            telemetry["az"] = telemetry["scope_az"]
+        elif telemetry.get("target_alt") is not None:
+            # Fallback if scope conversion is unavailable.
+            telemetry["alt"] = telemetry["target_alt"]
+            telemetry["az"] = telemetry["target_az"]
 
         # View state
         try:
@@ -1484,6 +1731,20 @@ class SeestarClient:
             if r:
                 view = r.get("View") or r
                 telemetry["view_state"] = view
+                # region agent log
+                _debug_log(
+                    run_id,
+                    "H2",
+                    "src/seestar_client.py:get_telemetry:view_state",
+                    "View state fetched",
+                    {
+                        "view_mode_from_state": (
+                            view.get("mode") if isinstance(view, dict) else None
+                        ),
+                        "client_viewing_mode": self._viewing_mode,
+                    },
+                )
+                # endregion
         except Exception:
             pass
 
@@ -1562,8 +1823,51 @@ class SeestarClient:
             telemetry["rtsp_state"] = rtsp.get("state")
             af = vs.get("AutoFocus") or {}
             telemetry["autofocus_state"] = af.get("state")
+            # Keep internal mode in sync with live view-state to avoid stale
+            # status reporting (e.g. stuck on star while scope is in scenery).
+            vm = telemetry.get("view_mode")
+            if vm == "scenery":
+                self._viewing_mode = "scenery"
+            elif vm == "star":
+                self._viewing_mode = "star"
+            elif vm == "none":
+                self._viewing_mode = None
+
+        # region agent log
+        _debug_log(
+            run_id,
+            "H1_H4_H5",
+            "src/seestar_client.py:get_telemetry:return",
+            "Final telemetry payload highlights",
+            {
+                "ra": telemetry.get("ra"),
+                "dec": telemetry.get("dec"),
+                "alt": telemetry.get("alt"),
+                "az": telemetry.get("az"),
+                "scope_alt": telemetry.get("scope_alt"),
+                "scope_az": telemetry.get("scope_az"),
+                "target_alt": telemetry.get("target_alt"),
+                "target_az": telemetry.get("target_az"),
+                "view_mode": telemetry.get("view_mode"),
+            },
+        )
+        # endregion
 
         return telemetry
+
+    def get_cached_telemetry(self) -> Dict[str, Any]:
+        """Return telemetry cached by the heartbeat loop.
+
+        Returns the last successful ``get_telemetry()`` result with an
+        ``age_ms`` field indicating staleness.  Falls back to a live call
+        if the cache is empty (first connect, before heartbeat has run).
+        """
+        if self._cached_telemetry:
+            data = dict(self._cached_telemetry)
+            data["age_ms"] = int((time.time() - self._cached_telemetry_ts) * 1000)
+            return data
+        # Cache not yet populated — do a live call (only happens once)
+        return self.get_telemetry()
 
     def start_view_star(
         self,
@@ -1735,10 +2039,26 @@ class SeestarClient:
         dict
             Status information including connection and recording state
         """
+        viewing_mode = self._viewing_mode
+        try:
+            t = self.get_telemetry()
+            vm = t.get("view_mode")
+            if vm == "scenery":
+                viewing_mode = "scenery"
+            elif vm == "star":
+                viewing_mode = "star"
+            elif vm == "none":
+                viewing_mode = None
+            elif vm == "solar_sys" and viewing_mode not in ("sun", "moon"):
+                viewing_mode = "sun"
+            self._viewing_mode = viewing_mode
+        except Exception:
+            pass
+
         status = {
             "connected": self._connected,
             "recording": self._recording,
-            "viewing_mode": self._viewing_mode,
+            "viewing_mode": viewing_mode,
             "host": self.host,
             "port": self.port,
         }
