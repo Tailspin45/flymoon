@@ -51,8 +51,8 @@ FFMPEG = get_ffmpeg_path() or "ffmpeg"
 # ---------------------------------------------------------------------------
 # Detection parameters
 # ---------------------------------------------------------------------------
-ANALYSIS_WIDTH = 160
-ANALYSIS_HEIGHT = 90
+ANALYSIS_WIDTH = 90
+ANALYSIS_HEIGHT = 160
 ANALYSIS_FPS = 15
 FRAME_BYTES = ANALYSIS_WIDTH * ANALYSIS_HEIGHT * 3  # RGB24
 
@@ -259,11 +259,10 @@ CENTRE_MASK, EDGE_MASK = _build_spatial_masks(ANALYSIS_HEIGHT, ANALYSIS_WIDTH)
 
 
 def _detect_disk(gray: np.ndarray) -> Optional[tuple]:
-    """Find the Sun/Moon disk in a 160×90 grayscale frame.
+    """Find the Sun/Moon disk in a downscaled grayscale frame.
 
     Returns (cx, cy, radius) or None if no disk found.
-    Uses Hough circle detection with a bright-threshold fallback,
-    matching the approach in transit_analyzer.py but tuned for 160×90.
+    Uses Hough circle detection with a bright-threshold fallback.
     """
     h, w = gray.shape[:2]
     blurred = cv2.GaussianBlur(gray, (5, 5), 1)
@@ -685,6 +684,7 @@ class TransitDetector:
 
         reconnect_delay = 2
         max_reconnect_delay = 30
+        _last_stream_lost_warn = 0.0  # Throttle "Stream lost" to once per 60s
 
         while self._running:
             try:
@@ -735,10 +735,17 @@ class TransitDetector:
             if not self._running:
                 break
 
-            # Reconnect with backoff
-            logger.warning(
-                f"[Detector] Stream lost — reconnecting in {reconnect_delay}s"
-            )
+            # Reconnect with backoff. Throttle log to avoid spam when RTSP unavailable.
+            now_ = time.time()
+            if now_ - _last_stream_lost_warn >= 60:
+                logger.warning(
+                    f"[Detector] Stream lost — reconnecting in {reconnect_delay}s"
+                )
+                _last_stream_lost_warn = now_
+            else:
+                logger.debug(
+                    f"[Detector] Stream lost — reconnecting in {reconnect_delay}s"
+                )
             self._emit_status("reconnecting")
             time.sleep(reconnect_delay)
             reconnect_delay = min(reconnect_delay * 2, max_reconnect_delay)

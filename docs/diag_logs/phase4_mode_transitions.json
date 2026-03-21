@@ -1,0 +1,96 @@
+{
+  "phase": "phase4_mode_transitions",
+  "host": "192.168.4.112",
+  "port": 4700,
+  "cycles": 3,
+  "tests": [
+    {
+      "test": "connect",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "test": "baseline_solar_mode",
+      "status": "WARN",
+      "detail": "mode=solar_sys (expected solar)"
+    },
+    {
+      "test": "mode_transition_cycles",
+      "status": "FAIL",
+      "detail": "errors in 3 cycles \u2014 see raw data"
+    },
+    {
+      "test": "nudge_then_solar",
+      "status": "WARN",
+      "detail": "mode=solar_sys \u2014 check raw"
+    }
+  ],
+  "raw": {
+    "cycles": [
+      {
+        "cycle": 1,
+        "scenery_mode_actual": "scenery",
+        "scenery_telemetry": {
+          "alt": 44.515,
+          "az": 233.047,
+          "scope_alt": 44.51,
+          "scope_az": 233.054
+        },
+        "solar_mode_actual": "solar_sys",
+        "solar_telemetry": {
+          "alt": 42.861,
+          "az": 233.811,
+          "target_alt": 42.861,
+          "target_az": 233.811
+        }
+      },
+      {
+        "cycle": 2,
+        "scenery_mode_actual": "scenery",
+        "scenery_telemetry": {
+          "alt": 44.515,
+          "az": 233.047,
+          "scope_alt": 44.511,
+          "scope_az": 233.053
+        },
+        "solar_mode_actual": "solar_sys",
+        "solar_telemetry": {
+          "alt": 42.825,
+          "az": 233.864,
+          "target_alt": 42.825,
+          "target_az": 233.864
+        }
+      },
+      {
+        "cycle": 3,
+        "scenery_mode_actual": "scenery",
+        "scenery_telemetry": {
+          "alt": 44.515,
+          "az": 233.047,
+          "scope_alt": 44.509,
+          "scope_az": 233.057
+        },
+        "solar_mode_actual": "solar_sys",
+        "solar_telemetry": {
+          "alt": 42.789,
+          "az": 233.917,
+          "target_alt": 42.789,
+          "target_az": 233.917
+        }
+      }
+    ],
+    "initial_mode": "solar_sys",
+    "nudge_then_solar": {
+      "mode": "solar_sys",
+      "alt": 42.754,
+      "az": 233.97,
+      "target_alt": 42.754,
+      "target_az": 233.97
+    }
+  },
+  "summary": {
+    "passed": 1,
+    "warned": 2,
+    "failed": 1
+  }
+}

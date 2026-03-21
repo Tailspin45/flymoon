@@ -10,6 +10,7 @@ import json
 import os
 import subprocess
 import threading
+import time
 from datetime import datetime
 from typing import Any, Dict, Optional
 
@@ -22,6 +23,12 @@ from src.constants import ASTRO_EPHEMERIS, get_ffmpeg_path
 FFMPEG = get_ffmpeg_path() or "ffmpeg"
 from src.position import get_my_pos
 from src.seestar_client import SeestarClient
+from src.site_context import (
+    clear_observer_browser_override,
+    get_observer_coordinates,
+    observer_snapshot_for_api,
+    set_observer_from_browser,
+)
 from src.solar_timelapse import get_timelapse
 
 # Get EARTH reference for position calculations
@@ -33,6 +40,27 @@ EARTH = ASTRO_EPHEMERIS["earth"]
 _user_settings: dict = {
     "min_reconnect_altitude": None,  # degrees; None → fall back to env var
 }
+
+_DEBUG_LOG_PATH = "/Users/Tom/flymoon/.cursor/debug-616e1a.log"
+_DEBUG_SESSION_ID = "616e1a"
+
+
+def _agent_debug_log(run_id: str, hypothesis_id: str, location: str, message: str, data: dict) -> None:
+    try:
+        payload = {
+            "sessionId": _DEBUG_SESSION_ID,
+            "id": f"log_{int(time.time() * 1000)}_{threading.get_ident()}",
+            "timestamp": int(time.time() * 1000),
+            "location": location,
+            "message": message,
+            "data": data,
+            "runId": run_id,
+            "hypothesisId": hypothesis_id,
+        }
+        with open(_DEBUG_LOG_PATH, "a", encoding="utf-8") as fh:
+            fh.write(json.dumps(payload, separators=(",", ":")) + "\n")
+    except Exception:
+        pass
 
 
 def _probe_rtsp_stream(host: str, timeout_seconds: int = 5) -> bool:
@@ -64,8 +92,12 @@ def _probe_rtsp_stream(host: str, timeout_seconds: int = 5) -> bool:
 
 
 def _ensure_rtsp_ready(client) -> bool:
-    """Check whether the scope is streaming RTSP — probe only, never force a mode."""
-    return _probe_rtsp_stream(client.host)
+    """Check whether the scope is streaming RTSP — never change scope mode here."""
+    ok = _probe_rtsp_stream(client.host)
+    if not ok:
+        mode = getattr(client, "_viewing_mode", None)
+        logger.warning(f"[RTSP] Probe failed (mode={mode})")
+    return ok
 
 
 # Mock Telescope Client for Testing
@@ -120,6 +152,14 @@ class MockSeestarClient:
 
         time.sleep(0.3)
         logger.info("[Mock] Started lunar viewing mode")
+        return True
+
+    def start_scenery_mode(self) -> bool:
+        """Simulate starting scenery mode."""
+        import time
+
+        time.sleep(0.3)
+        logger.info("[Mock] Started scenery viewing mode")
         return True
 
     def stop_view_mode(self) -> bool:
@@ -414,14 +454,11 @@ def get_telescope_client() -> Optional[SeestarClient]:
             try:
                 from src.astro import target_above_min_altitude
 
-                lat = float(os.getenv("OBSERVER_LATITUDE", "0"))
-                lon = float(os.getenv("OBSERVER_LONGITUDE", "0"))
-                elev = float(os.getenv("OBSERVER_ELEVATION", "0"))
                 _env_min_alt = float(os.getenv("MIN_TARGET_ALTITUDE", "10"))
 
-                def _make_horizon_check(client, lat, lon, elev, env_min_alt):
+                def _make_horizon_check(client, env_min_alt):
                     def _check():
-                        # Prefer the value pushed from the browser; fall back to .env
+                        lat, lon, elev = get_observer_coordinates()
                         min_alt = (
                             _user_settings.get("min_reconnect_altitude") or env_min_alt
                         )
@@ -432,7 +469,7 @@ def get_telescope_client() -> Optional[SeestarClient]:
                     return _check
 
                 _telescope_client._above_horizon_check = _make_horizon_check(
-                    _telescope_client, lat, lon, elev, _env_min_alt
+                    _telescope_client, _env_min_alt
                 )
             except Exception as _e:
                 logger.warning(f"[Telescope] Could not set horizon check: {_e}")
@@ -485,50 +522,112 @@ def telescope_goto():
 
     Body: {mode: "radec"|"altaz", ra?, dec?, alt?, az?}
     """
+    run_id = f"goto_{int(time.time() * 1000)}"
     client = get_telescope_client()
+    # region agent log
+    _agent_debug_log(
+        run_id,
+        "H9_H10",
+        "src/telescope_routes.py:telescope_goto:entry",
+        "GoTo route invoked",
+        {"client_exists": bool(client), "connected": bool(client and client.is_connected())},
+    )
+    # endregion
     if not client or not client.is_connected():
         return jsonify({"error": "Telescope not connected"}), 503
 
     data = request.get_json(force=True, silent=True) or {}
     mode = data.get("mode", "altaz")
+    # region agent log
+    _agent_debug_log(
+        run_id,
+        "H9_H10",
+        "src/telescope_routes.py:telescope_goto:payload",
+        "GoTo payload parsed",
+        {"mode": mode, "keys": sorted(list(data.keys()))},
+    )
+    # endregion
 
     try:
         if mode == "radec":
             ra = float(data["ra"])
             dec = float(data["dec"])
             result = client.goto_radec(ra, dec)
+            # region agent log
+            _agent_debug_log(
+                run_id,
+                "H10",
+                "src/telescope_routes.py:telescope_goto:radec_ok",
+                "GoTo RA/Dec command succeeded",
+                {"ra": ra, "dec": dec, "result_type": type(result).__name__},
+            )
+            # endregion
             return jsonify({"success": True, "result": result}), 200
         elif mode == "altaz":
             alt = float(data["alt"])
             az = float(data["az"])
-            lat = float(os.getenv("OBSERVER_LATITUDE", "0"))
-            lon = float(os.getenv("OBSERVER_LONGITUDE", "0"))
-            elev = float(os.getenv("OBSERVER_ELEVATION", "0"))
+            lat, lon, elev = get_observer_coordinates()
+            # region agent log
+            _agent_debug_log(
+                run_id,
+                "H10",
+                "src/telescope_routes.py:telescope_goto:altaz_begin",
+                "GoTo Alt/Az command begin",
+                {"alt": alt, "az": az, "lat": lat, "lon": lon, "elev": elev},
+            )
+            # endregion
+            # Alt/Az GoTo always uses scenery mode + manual motor slew.
+            # Firmware star-GoTo (iscope_start_view mode=star) puts the scope
+            # into sidereal tracking which fights subsequent manual movement.
+            # Scenery mode has no tracking and allows persistent pointing.
             try:
-                result = client.goto_altaz(alt, az, lat, lon, elev)
-                return jsonify({"success": True, "result": result}), 200
-            except RuntimeError as re:
-                if "below horizon" not in str(re).lower():
-                    raise
-                # Below horizon — run manual motor slew in background
-                logger.info(f"[GoTo] Below horizon; starting manual slew to alt={alt} az={az}")
-                t = threading.Thread(
-                    target=client.manual_goto,
-                    args=(alt, az),
-                    daemon=True,
-                )
-                t.start()
-                return jsonify({
-                    "success": True,
-                    "manual_slew": True,
-                    "message": f"Below horizon — manual slewing to alt={alt:.1f}° az={az:.1f}°",
-                }), 200
+                if client._viewing_mode not in (None, "scenery"):
+                    logger.info(
+                        f"[GoTo] Stopping {client._viewing_mode} tracking before manual slew"
+                    )
+                    client.stop_view_mode()
+                    time.sleep(0.5)
+                if client._viewing_mode != "scenery":
+                    client.start_scenery_mode()
+            except Exception as _m:
+                logger.warning(f"[GoTo] Could not switch to scenery mode: {_m}")
+
+            logger.info(f"[GoTo] Manual slewing to alt={alt:.1f}° az={az:.1f}°")
+            t = threading.Thread(
+                target=client.manual_goto,
+                args=(alt, az),
+                daemon=True,
+            )
+            t.start()
+            return jsonify({
+                "success": True,
+                "manual_slew": True,
+                "message": f"Slewing to alt={alt:.1f}° az={az:.1f}°",
+            }), 200
         else:
             return jsonify({"error": f"Unknown mode '{mode}'"}), 400
 
     except (KeyError, ValueError) as e:
+        # region agent log
+        _agent_debug_log(
+            run_id,
+            "H9",
+            "src/telescope_routes.py:telescope_goto:bad_request",
+            "GoTo payload invalid",
+            {"error": str(e)},
+        )
+        # endregion
         return jsonify({"error": f"Invalid parameters: {e}"}), 400
     except Exception as e:
+        # region agent log
+        _agent_debug_log(
+            run_id,
+            "H10",
+            "src/telescope_routes.py:telescope_goto:exception",
+            "GoTo route exception",
+            {"error": str(e), "type": type(e).__name__},
+        )
+        # endregion
         return handle_error(e)
 
 
@@ -640,12 +739,16 @@ def telescope_focus_step():
 
 
 def telescope_telemetry():
-    """GET /telescope/telemetry — live RA/Dec/Alt/Az and device state."""
+    """GET /telescope/telemetry — cached RA/Dec/Alt/Az and device state.
+
+    Serves telemetry cached by the heartbeat loop (refreshed every ~3s)
+    to avoid socket contention between HTTP polls and the heartbeat.
+    """
     client = get_telescope_client()
     if not client or not client.is_connected():
         return jsonify({"error": "Telescope not connected"}), 503
     try:
-        data = client.get_telemetry()
+        data = client.get_cached_telemetry()
         return jsonify(data), 200
     except Exception as e:
         return handle_error(e)
@@ -657,7 +760,7 @@ def get_camera_settings():
     if not client or not client.is_connected():
         return jsonify({"error": "Telescope not connected"}), 503
     try:
-        telemetry = client.get_telemetry()
+        telemetry = client.get_cached_telemetry()
         device = telemetry.get("device") or {}
         return jsonify({
             "gain": device.get("gain"),
@@ -782,6 +885,7 @@ def discover_seestar():
 
     # --- Pass 1: UDP broadcast scan_iscope (ALP protocol, port 4720) ---
     udp_found = []
+    sock = None
     try:
         UDP_PORT = 4720
         message = _json.dumps({"id": 1, "method": "scan_iscope", "params": ""}) + "\r\n"
@@ -799,9 +903,14 @@ def discover_seestar():
                     udp_found.append(ip)
             except _socket.timeout:
                 break
-        sock.close()
     except Exception as e:
         logger.debug(f"[Discover] UDP broadcast error (non-fatal): {e}")
+    finally:
+        if sock:
+            try:
+                sock.close()
+            except Exception:
+                pass
 
     if udp_found:
         logger.info(f"[Discover] UDP found: {udp_found}")
@@ -863,15 +972,19 @@ def connect_telescope():
 
         client.connect()
 
-        # Initialise viewing mode to a sane default so recording isn't blocked
-        # after a reconnect when the user hasn't clicked Track Sun/Moon yet.
-        from datetime import datetime
-
+        # Put scope into solar mode so RTSP stream is available. Always sun (not
+        # time-of-day moon) — transit app is sun-first; moon is user-selected later.
         if hasattr(client, "_viewing_mode") and client._viewing_mode is None:
-            client._viewing_mode = "sun" if 6 <= datetime.now().hour < 18 else "moon"
-            logger.info(
-                f"[Telescope] Default viewing mode set to '{client._viewing_mode}' on connect"
-            )
+            client._viewing_mode = "sun"
+            logger.info("[Telescope] Starting solar view to enable RTSP stream")
+            try:
+                client.start_solar_mode()
+                import time
+                time.sleep(2)  # Let scope spin up RTSP
+            except Exception as e:
+                logger.warning(
+                    f"[Telescope] Could not start solar view: {e} — RTSP may be unavailable"
+                )
 
         auto_resume = os.getenv("SOLAR_TIMELAPSE_AUTO_RESUME", "true").strip().lower()
         if auto_resume in ("1", "true", "yes", "on"):
@@ -957,9 +1070,7 @@ def get_telescope_status():
         try:
             from src.eclipse_monitor import get_eclipse_monitor
 
-            lat = float(os.getenv("OBSERVER_LATITUDE", "0"))
-            lon = float(os.getenv("OBSERVER_LONGITUDE", "0"))
-            elev = float(os.getenv("OBSERVER_ELEVATION", "0"))
+            lat, lon, elev = get_observer_coordinates()
             return get_eclipse_monitor().get_upcoming_eclipse(lat, lon, elev)
         except Exception as ex:
             logger.warning(f"[Telescope] Eclipse check failed: {ex}")
@@ -2090,12 +2201,8 @@ def get_target_visibility():
     try:
         from tzlocal import get_localzone
 
-        # Get observer position from environment
-        latitude = float(os.getenv("OBSERVER_LATITUDE", "0"))
-        longitude = float(os.getenv("OBSERVER_LONGITUDE", "0"))
-        elevation = float(os.getenv("OBSERVER_ELEVATION", "0"))
+        latitude, longitude, elevation = get_observer_coordinates()
 
-        # Create observer position
         observer_position = get_my_pos(
             lat=latitude, lon=longitude, elevation=elevation, base_ref=EARTH
         )
@@ -2155,10 +2262,7 @@ def switch_to_sun():
         if not client or not client.is_connected():
             return jsonify({"error": "Not connected to telescope"}), 400
 
-        # Get observer position
-        latitude = float(os.getenv("OBSERVER_LATITUDE", "0"))
-        longitude = float(os.getenv("OBSERVER_LONGITUDE", "0"))
-        elevation = float(os.getenv("OBSERVER_ELEVATION", "0"))
+        latitude, longitude, elevation = get_observer_coordinates()
 
         observer_position = get_my_pos(
             lat=latitude, lon=longitude, elevation=elevation, base_ref=EARTH
@@ -2217,10 +2321,7 @@ def switch_to_moon():
         if not client or not client.is_connected():
             return jsonify({"error": "Not connected to telescope"}), 400
 
-        # Get observer position
-        latitude = float(os.getenv("OBSERVER_LATITUDE", "0"))
-        longitude = float(os.getenv("OBSERVER_LONGITUDE", "0"))
-        elevation = float(os.getenv("OBSERVER_ELEVATION", "0"))
+        latitude, longitude, elevation = get_observer_coordinates()
 
         observer_position = get_my_pos(
             lat=latitude, lon=longitude, elevation=elevation, base_ref=EARTH
@@ -2261,6 +2362,33 @@ def switch_to_moon():
                     "azimuth": moon_coords["azimuthal"],
                     "message": "✓ Remove solar filter if installed - Lunar viewing safe without filter",
                     "warning": "remove_solar_filter",
+                }
+            ),
+            200,
+        )
+
+    except Exception as e:
+        return handle_error(e)
+
+
+def switch_to_scenery():
+    """POST /telescope/mode/scenery - Switch telescope to scenery mode (no tracking)."""
+    logger.info("[Telescope] POST /telescope/mode/scenery")
+
+    try:
+        client = get_telescope_client()
+        if not client or not client.is_connected():
+            return jsonify({"error": "Not connected to telescope"}), 400
+
+        client.start_scenery_mode()
+
+        logger.info("[Telescope] Switched to scenery viewing mode")
+        return (
+            jsonify(
+                {
+                    "success": True,
+                    "target": "scenery",
+                    "message": "Scenery mode active — no sidereal tracking, manual positioning enabled",
                 }
             ),
             200,
@@ -2461,12 +2589,31 @@ def update_user_settings():
             )
         except (TypeError, ValueError):
             return jsonify({"error": "min_reconnect_altitude must be a number"}), 400
-    return jsonify({"ok": True, "settings": _user_settings})
+    if data.get("observer_revert_to_env") is True:
+        clear_observer_browser_override()
+        logger.info("[Settings] Observer browser override cleared — using .env OBSERVER_*")
+    if "observer_latitude" in data and "observer_longitude" in data:
+        try:
+            lat = float(data["observer_latitude"])
+            lon = float(data["observer_longitude"])
+            raw_e = data.get("observer_elevation", 0)
+            elev = float(raw_e) if raw_e not in (None, "") else 0.0
+            set_observer_from_browser(lat, lon, elev)
+            eff_lat, eff_lon, eff_elev = get_observer_coordinates()
+            logger.info(
+                f"[Settings] Observer site from browser: {lat:.5f}°, {lon:.5f}°, {elev:.0f}m "
+                f"(effective for telescope: {eff_lat:.5f}°, {eff_lon:.5f}°, {eff_elev:.0f}m)"
+            )
+        except (TypeError, ValueError) as e:
+            return jsonify({"error": f"Invalid observer_latitude/longitude: {e}"}), 400
+    return jsonify(
+        {"ok": True, "settings": {**_user_settings, **observer_snapshot_for_api()}}
+    )
 
 
 def get_user_settings():
     """GET /api/settings — return current server-side UI settings."""
-    return jsonify(_user_settings)
+    return jsonify({**_user_settings, **observer_snapshot_for_api()})
 
 
 def register_routes(app):
@@ -2518,6 +2665,12 @@ def register_routes(app):
         "/telescope/target/moon",
         "telescope_switch_moon",
         switch_to_moon,
+        methods=["POST"],
+    )
+    app.add_url_rule(
+        "/telescope/mode/scenery",
+        "telescope_switch_scenery",
+        switch_to_scenery,
         methods=["POST"],
     )
 
@@ -2858,6 +3011,19 @@ def _auto_connect_background():
                     "connect manually from the telescope page"
                 )
                 return
+
+            # Always solar mode for RTSP (see telescope_connect)
+            if hasattr(client, "_viewing_mode") and client._viewing_mode is None:
+                import time as _time
+                client._viewing_mode = "sun"
+                logger.info("[Telescope] Auto-connect: starting solar view for RTSP")
+                try:
+                    client.start_solar_mode()
+                    _time.sleep(2)
+                except Exception as e:
+                    logger.warning(
+                        f"[Telescope] Auto-connect: could not start solar view: {e}"
+                    )
 
         else:
             logger.info("[Telescope] Auto-connect: already connected")

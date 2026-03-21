@@ -204,6 +204,11 @@ def _parse_opensky_flight(callsign: str, os_data: dict) -> dict:
             if os_data.get("last_contact")
             else None
         ),
+        "position_stale": (
+            (_time.time() - os_data["last_contact"]) > 20
+            if os_data.get("last_contact")
+            else False
+        ),
         "icao24": os_data.get("icao24", ""),
         "vertical_rate": vr,
         "squawk": os_data.get("squawk"),
@@ -452,6 +457,7 @@ def check_transit(
                 "waypoints": flight.get("waypoints", []),
                 "position_source": flight.get("position_source", "flightaware"),
                 "position_age_s": flight.get("position_age_s"),
+                "position_stale": flight.get("position_stale", False),
             }
 
     if response:
@@ -490,6 +496,7 @@ def check_transit(
         "waypoints": flight.get("waypoints", []),
         "position_source": flight.get("position_source", "flightaware"),
         "position_age_s": flight.get("position_age_s"),
+        "position_stale": flight.get("position_stale", False),
     }
 
     # Include closest approach data if we found any
@@ -519,8 +526,14 @@ def get_transits(
     test_mode: bool = False,
     custom_bbox: dict = None,
     data_source: str = "hybrid",
-    enrich: bool = True,
+    enrich: bool = False,
 ) -> Dict[str, Any]:
+    # FlightAware is never used for prediction. Only for post-capture enrichment.
+    if data_source == "fa-only":
+        logger.info(
+            "[Data] fa-only requested but FA is disabled for prediction; using opensky-only"
+        )
+        data_source = "opensky-only"
     API_KEY = get_aeroapi_key()
 
     logger.debug(f"{latitude=}, {longitude=}, {elevation=}")
@@ -718,6 +731,17 @@ def get_transits(
                 EARTH,
                 target_positions=target_positions,
             )
+            if result.get("position_stale") and result.get("possibility_level") in (
+                PossibilityLevel.HIGH.value,
+                PossibilityLevel.MEDIUM.value,
+            ):
+                age = result.get("position_age_s", "?")
+                logger.warning(
+                    f"[Stale] {result.get('id', '?')} position is {age}s old — "
+                    f"angular error may be up to {float(age or 0) * 900 / 3600 / 200 * 57.3:.2f}° "
+                    f"(level={result.get('possibility_level')})"
+                )
+
             if (
                 enrich
                 and data_source not in ("fa-only",)

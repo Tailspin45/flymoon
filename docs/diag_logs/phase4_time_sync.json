@@ -1,0 +1,110 @@
+{
+  "phase": "phase4_time_sync",
+  "host": "192.168.4.112",
+  "port": 4700,
+  "utc_at_run": "2026-03-21T22:07:46.349839+00:00",
+  "tests": [
+    {
+      "test": "connect",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "test": "pre_sync_equ_coord",
+      "status": "PASS",
+      "detail": "ra=0.119722 dec=0.460556"
+    },
+    {
+      "test": "pi_set_time",
+      "status": "PASS",
+      "detail": "response=0"
+    },
+    {
+      "test": "post_sync_equ_coord",
+      "status": "PASS",
+      "detail": "ra=0.12 dec=0.466944"
+    },
+    {
+      "test": "scope_ra_vs_sun",
+      "status": "PASS",
+      "detail": "\u0394ra=0.95\u00b0 \u0394dec=0.10\u00b0 \u2014 scope tracking Sun"
+    },
+    {
+      "test": "scope_get_horiz_coord",
+      "status": "PASS",
+      "detail": "EXISTS: [45.433333, 229.591111]"
+    },
+    {
+      "test": "telemetry",
+      "status": "PASS",
+      "detail": "view_mode=solar_sys firmware=7.06"
+    }
+  ],
+  "raw": {
+    "pre_sync_equ": {
+      "ra": 0.119722,
+      "dec": 0.460556
+    },
+    "pi_set_time": 0,
+    "post_sync_equ": {
+      "ra": 0.12,
+      "dec": 0.466944
+    },
+    "skyfield_sun": {
+      "ra_h": 0.056855754573038,
+      "dec_deg": 0.3686129902393933,
+      "alt": 45.08162969274256,
+      "az": 230.295361676865,
+      "gast": 10.09374404281168
+    },
+    "delta_ra_deg": 0.947,
+    "delta_dec_deg": 0.098,
+    "horiz_coord": [
+      45.433333,
+      229.591111
+    ],
+    "telemetry": {
+      "ra": 0.12,
+      "dec": 0.464167,
+      "scope_alt": 45.424,
+      "scope_az": 229.6,
+      "alt": 45.424,
+      "az": 229.6,
+      "cpu_temp": 77.699997,
+      "battery_capacity": 100,
+      "charger_status": "Full",
+      "charge_online": true,
+      "battery_temp": 39,
+      "is_overtemp": false,
+      "battery_overtemp": false,
+      "focuser_step": 1649,
+      "focuser_state": "idle",
+      "focuser_max_step": 2600,
+      "focus_pos": 1649,
+      "mount_tracking": true,
+      "mount_closed": false,
+      "mount_move_type": "none",
+      "storage_free_mb": 39135,
+      "storage_used_pct": 34,
+      "wifi_ssid": "SpyMesh",
+      "wifi_signal": -64,
+      "firmware_ver": "7.06",
+      "serial_number": "faf1da48",
+      "tilt_angle": 1.388185,
+      "compass_direction": 215.376221,
+      "heater_enable": false,
+      "view_mode": "solar_sys",
+      "view_target": "Sun",
+      "view_stage": "RTSP",
+      "lp_filter": false,
+      "manual_exp": false,
+      "rtsp_state": "working",
+      "autofocus_state": null
+    }
+  },
+  "summary": {
+    "passed": 7,
+    "warned": 0,
+    "failed": 0
+  }
+}

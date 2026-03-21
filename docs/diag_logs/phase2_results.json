@@ -1,0 +1,596 @@
+[
+  {
+    "file": "solar-src-1.mp4",
+    "target": "sun",
+    "duration_s": 60.0,
+    "disk_detected": true,
+    "disk_radius": 530,
+    "num_events": 17,
+    "events": [
+      {
+        "start_s": 0.0,
+        "end_s": 2.9,
+        "dur_ms": 2900,
+        "frames": 518,
+        "confidence": "high"
+      },
+      {
+        "start_s": 4.8,
+        "end_s": 4.967,
+        "dur_ms": 167,
+        "frames": 5,
+        "confidence": "medium"
+      },
+      {
+        "start_s": 15.7,
+        "end_s": 16.067,
+        "dur_ms": 367,
+        "frames": 7,
+        "confidence": "high"
+      },
+      {
+        "start_s": 16.733,
+        "end_s": 16.933,
+        "dur_ms": 200,
+        "frames": 6,
+        "confidence": "medium"
+      },
+      {
+        "start_s": 17.9,
+        "end_s": 18.167,
+        "dur_ms": 267,
+        "frames": 9,
+        "confidence": "low"
+      },
+      {
+        "start_s": 20.367,
+        "end_s": 20.633,
+        "dur_ms": 266,
+        "frames": 6,
+        "confidence": "medium"
+      },
+      {
+        "start_s": 25.0,
+        "end_s": 25.767,
+        "dur_ms": 767,
+        "frames": 15,
+        "confidence": "low"
+      },
+      {
+        "start_s": 26.767,
+        "end_s": 27.133,
+        "dur_ms": 366,
+        "frames": 8,
+        "confidence": "high"
+      },
+      {
+        "start_s": 29.5,
+        "end_s": 29.967,
+        "dur_ms": 467,
+        "frames": 14,
+        "confidence": "low"
+      },
+      {
+        "start_s": 34.867,
+        "end_s": 36.267,
+        "dur_ms": 1400,
+        "frames": 50,
+        "confidence": "medium"
+      },
+      {
+        "start_s": 37.733,
+        "end_s": 38.8,
+        "dur_ms": 1067,
+        "frames": 62,
+        "confidence": "medium"
+      },
+      {
+        "start_s": 39.4,
+        "end_s": 40.1,
+        "dur_ms": 700,
+        "frames": 22,
+        "confidence": "low"
+      },
+      {
+        "start_s": 40.767,
+        "end_s": 41.433,
+        "dur_ms": 666,
+        "frames": 55,
+        "confidence": "medium"
+      },
+      {
+        "start_s": 42.4,
+        "end_s": 43.133,
+        "dur_ms": 733,
+        "frames": 35,
+        "confidence": "medium"
+      },
+      {
+        "start_s": 44.6,
+        "end_s": 44.867,
+        "dur_ms": 267,
+        "frames": 8,
+        "confidence": "low"
+      },
+      {
+        "start_s": 45.9,
+        "end_s": 48.767,
+        "dur_ms": 2867,
+        "frames": 154,
+        "confidence": "high"
+      },
+      {
+        "start_s": 50.5,
+        "end_s": 52.233,
+        "dur_ms": 1733,
+        "frames": 172,
+        "confidence": "high"
+      }
+    ],
+    "total_blobs": 10541,
+    "error": null
+  },
+  {
+    "file": "solar-src-2.mp4",
+    "target": "sun",
+    "duration_s": 61.73,
+    "disk_detected": true,
+    "disk_radius": 296,
+    "num_events": 8,
+    "events": [
+      {
+        "start_s": 2.867,
+        "end_s": 3.933,
+        "dur_ms": 1066,
+        "frames": 63,
+        "confidence": "high"
+      },
+      {
+        "start_s": 16.8,
+        "end_s": 17.667,
+        "dur_ms": 867,
+        "frames": 103,
+        "confidence": "high"
+      },
+      {
+        "start_s": 21.6,
+        "end_s": 23.8,
+        "dur_ms": 2200,
+        "frames": 66,
+        "confidence": "high"
+      },
+      {
+        "start_s": 29.833,
+        "end_s": 31.6,
+        "dur_ms": 1767,
+        "frames": 54,
+        "confidence": "high"
+      },
+      {
+        "start_s": 34.533,
+        "end_s": 35.233,
+        "dur_ms": 700,
+        "frames": 21,
+        "confidence": "high"
+      },
+      {
+        "start_s": 55.667,
+        "end_s": 55.967,
+        "dur_ms": 300,
+        "frames": 9,
+        "confidence": "high"
+      },
+      {
+        "start_s": 57.667,
+        "end_s": 58.0,
+        "dur_ms": 333,
+        "frames": 11,
+        "confidence": "high"
+      },
+      {
+        "start_s": 59.133,
+        "end_s": 60.0,
+        "dur_ms": 867,
+        "frames": 26,
+        "confidence": "high"
+      }
+    ],
+    "total_blobs": 6571,
+    "error": null
+  },
+  {
+    "file": "solar-src-3.mp4",
+    "target": "sun",
+    "duration_s": 12.8,
+    "disk_detected": true,
+    "disk_radius": 106,
+    "num_events": 0,
+    "events": [],
+    "total_blobs": 44,
+    "error": null
+  },
+  {
+    "file": "solar-src-4.mp4",
+    "target": "sun",
+    "duration_s": 9.6,
+    "disk_detected": true,
+    "disk_radius": 269,
+    "num_events": 3,
+    "events": [
+      {
+        "start_s": 2.44,
+        "end_s": 5.08,
+        "dur_ms": 2640,
+        "frames": 88,
+        "confidence": "high"
+      },
+      {
+        "start_s": 6.2,
+        "end_s": 6.72,
+        "dur_ms": 520,
+        "frames": 13,
+        "confidence": "medium"
+      },
+      {
+        "start_s": 9.04,
+        "end_s": 9.44,
+        "dur_ms": 400,
+        "frames": 12,
+        "confidence": "low"
+      }
+    ],
+    "total_blobs": 8596,
+    "error": null
+  },
+  {
+    "file": "solar-src-5.mp4",
+    "target": "sun",
+    "duration_s": 39.79,
+    "disk_detected": true,
+    "disk_radius": 415,
+    "num_events": 12,
+    "events": [
+      {
+        "start_s": 0.042,
+        "end_s": 0.542,
+        "dur_ms": 500,
+        "frames": 21,
+        "confidence": "medium"
+      },
+      {
+        "start_s": 4.713,
+        "end_s": 4.922,
+        "dur_ms": 209,
+        "frames": 5,
+        "confidence": "medium"
+      },
+      {
+        "start_s": 11.094,
+        "end_s": 11.428,
+        "dur_ms": 334,
+        "frames": 5,
+        "confidence": "high"
+      },
+      {
+        "start_s": 14.264,
+        "end_s": 14.681,
+        "dur_ms": 417,
+        "frames": 7,
+        "confidence": "high"
+      },
+      {
+        "start_s": 15.933,
+        "end_s": 16.808,
+        "dur_ms": 875,
+        "frames": 19,
+        "confidence": "low"
+      },
+      {
+        "start_s": 17.726,
+        "end_s": 17.976,
+        "dur_ms": 250,
+        "frames": 4,
+        "confidence": "low"
+      },
+      {
+        "start_s": 20.604,
+        "end_s": 20.729,
+        "dur_ms": 125,
+        "frames": 4,
+        "confidence": "high"
+      },
+      {
+        "start_s": 22.105,
+        "end_s": 23.232,
+        "dur_ms": 1127,
+        "frames": 23,
+        "confidence": "low"
+      },
+      {
+        "start_s": 26.318,
+        "end_s": 26.652,
+        "dur_ms": 334,
+        "frames": 7,
+        "confidence": "low"
+      },
+      {
+        "start_s": 29.279,
+        "end_s": 30.03,
+        "dur_ms": 751,
+        "frames": 13,
+        "confidence": "low"
+      },
+      {
+        "start_s": 32.533,
+        "end_s": 34.701,
+        "dur_ms": 2168,
+        "frames": 32,
+        "confidence": "medium"
+      },
+      {
+        "start_s": 36.161,
+        "end_s": 38.539,
+        "dur_ms": 2378,
+        "frames": 83,
+        "confidence": "low"
+      }
+    ],
+    "total_blobs": 5229,
+    "error": null
+  },
+  {
+    "file": "solar-transit-1b.mp4",
+    "target": "sun",
+    "duration_s": 6.03,
+    "disk_detected": true,
+    "disk_radius": 240,
+    "num_events": 2,
+    "events": [
+      {
+        "start_s": 0.0,
+        "end_s": 2.667,
+        "dur_ms": 2667,
+        "frames": 58,
+        "confidence": "high"
+      },
+      {
+        "start_s": 5.467,
+        "end_s": 5.967,
+        "dur_ms": 500,
+        "frames": 18,
+        "confidence": "high"
+      }
+    ],
+    "total_blobs": 270,
+    "error": null
+  },
+  {
+    "file": "solar-transit-1c.mp4",
+    "target": "sun",
+    "duration_s": 8.03,
+    "disk_detected": true,
+    "disk_radius": 443,
+    "num_events": 2,
+    "events": [
+      {
+        "start_s": 0.8,
+        "end_s": 1.133,
+        "dur_ms": 333,
+        "frames": 26,
+        "confidence": "medium"
+      },
+      {
+        "start_s": 2.167,
+        "end_s": 2.533,
+        "dur_ms": 366,
+        "frames": 40,
+        "confidence": "high"
+      }
+    ],
+    "total_blobs": 786,
+    "error": null
+  },
+  {
+    "file": "solar-transit-2.mp4",
+    "target": "sun",
+    "duration_s": 6.03,
+    "disk_detected": false,
+    "disk_radius": 540,
+    "num_events": 3,
+    "events": [
+      {
+        "start_s": 0.0,
+        "end_s": 0.367,
+        "dur_ms": 367,
+        "frames": 385,
+        "confidence": "high"
+      },
+      {
+        "start_s": 1.767,
+        "end_s": 2.0,
+        "dur_ms": 233,
+        "frames": 5,
+        "confidence": "medium"
+      },
+      {
+        "start_s": 4.667,
+        "end_s": 5.533,
+        "dur_ms": 866,
+        "frames": 42,
+        "confidence": "high"
+      }
+    ],
+    "total_blobs": 1254,
+    "error": null
+  },
+  {
+    "file": "solar-transit-3-full.mp4",
+    "target": "sun",
+    "duration_s": 12.8,
+    "disk_detected": true,
+    "disk_radius": 106,
+    "num_events": 0,
+    "events": [],
+    "total_blobs": 44,
+    "error": null
+  },
+  {
+    "file": "solar-transit-3a.mp4",
+    "target": "sun",
+    "duration_s": 4.03,
+    "disk_detected": true,
+    "disk_radius": 185,
+    "num_events": 2,
+    "events": [
+      {
+        "start_s": 0.233,
+        "end_s": 0.333,
+        "dur_ms": 100,
+        "frames": 4,
+        "confidence": "high"
+      },
+      {
+        "start_s": 3.433,
+        "end_s": 3.533,
+        "dur_ms": 100,
+        "frames": 4,
+        "confidence": "high"
+      }
+    ],
+    "total_blobs": 36,
+    "error": null
+  },
+  {
+    "file": "solar-transit-3b.mp4",
+    "target": "sun",
+    "duration_s": 4.03,
+    "disk_detected": true,
+    "disk_radius": 346,
+    "num_events": 1,
+    "events": [
+      {
+        "start_s": 0.0,
+        "end_s": 0.467,
+        "dur_ms": 467,
+        "frames": 15,
+        "confidence": "high"
+      }
+    ],
+    "total_blobs": 163,
+    "error": null
+  },
+  {
+    "file": "solar-transit-3c.mp4",
+    "target": "sun",
+    "duration_s": 4.03,
+    "disk_detected": false,
+    "disk_radius": 360,
+    "num_events": 1,
+    "events": [
+      {
+        "start_s": 2.3,
+        "end_s": 3.133,
+        "dur_ms": 833,
+        "frames": 24,
+        "confidence": "high"
+      }
+    ],
+    "total_blobs": 103,
+    "error": null
+  },
+  {
+    "file": "solar-transit-4.mp4",
+    "target": "sun",
+    "duration_s": 5.04,
+    "disk_detected": true,
+    "disk_radius": 269,
+    "num_events": 1,
+    "events": [
+      {
+        "start_s": 4.64,
+        "end_s": 5.0,
+        "dur_ms": 360,
+        "frames": 28,
+        "confidence": "high"
+      }
+    ],
+    "total_blobs": 1371,
+    "error": null
+  },
+  {
+    "file": "solar-transit-5.mp4",
+    "target": "sun",
+    "duration_s": 5.09,
+    "disk_detected": true,
+    "disk_radius": 432,
+    "num_events": 1,
+    "events": [
+      {
+        "start_s": 3.42,
+        "end_s": 4.963,
+        "dur_ms": 1543,
+        "frames": 35,
+        "confidence": "high"
+      }
+    ],
+    "total_blobs": 514,
+    "error": null
+  },
+  {
+    "file": "transit-1.mp4",
+    "target": "moon",
+    "duration_s": 2.0,
+    "disk_detected": true,
+    "disk_radius": 391,
+    "num_events": 1,
+    "events": [
+      {
+        "start_s": 0.633,
+        "end_s": 1.167,
+        "dur_ms": 534,
+        "frames": 68,
+        "confidence": "high"
+      }
+    ],
+    "total_blobs": 68,
+    "error": null
+  },
+  {
+    "file": "transit-2.mp4",
+    "target": "moon",
+    "duration_s": 5.2,
+    "disk_detected": true,
+    "disk_radius": 373,
+    "num_events": 1,
+    "events": [
+      {
+        "start_s": 1.9,
+        "end_s": 3.4,
+        "dur_ms": 1500,
+        "frames": 180,
+        "confidence": "high"
+      }
+    ],
+    "total_blobs": 194,
+    "error": null
+  },
+  {
+    "file": "transit-3.mp4",
+    "target": "moon",
+    "duration_s": 1.13,
+    "disk_detected": true,
+    "disk_radius": 413,
+    "num_events": 1,
+    "events": [
+      {
+        "start_s": 0.333,
+        "end_s": 0.633,
+        "dur_ms": 300,
+        "frames": 66,
+        "confidence": "high"
+      }
+    ],
+    "total_blobs": 91,
+    "error": null
+  }
+]

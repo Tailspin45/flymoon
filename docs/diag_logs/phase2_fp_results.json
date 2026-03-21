@@ -1,0 +1,321 @@
+[
+  {
+    "file": "solar-src-1.mp4",
+    "target": "sun",
+    "duration_s": 60.0,
+    "disk_detected": true,
+    "disk_radius": 530,
+    "total_events": 17,
+    "expected_events": 4,
+    "false_positives": 13,
+    "fp_details": [
+      {
+        "start_s": 0.0,
+        "end_s": 2.9,
+        "dur_ms": 2900,
+        "confidence": "high"
+      },
+      {
+        "start_s": 4.8,
+        "end_s": 4.967,
+        "dur_ms": 167,
+        "confidence": "medium"
+      },
+      {
+        "start_s": 15.7,
+        "end_s": 16.067,
+        "dur_ms": 367,
+        "confidence": "high"
+      },
+      {
+        "start_s": 16.733,
+        "end_s": 16.933,
+        "dur_ms": 200,
+        "confidence": "medium"
+      },
+      {
+        "start_s": 17.9,
+        "end_s": 18.167,
+        "dur_ms": 267,
+        "confidence": "low"
+      },
+      {
+        "start_s": 20.367,
+        "end_s": 20.633,
+        "dur_ms": 266,
+        "confidence": "medium"
+      },
+      {
+        "start_s": 29.5,
+        "end_s": 29.967,
+        "dur_ms": 467,
+        "confidence": "low"
+      },
+      {
+        "start_s": 34.867,
+        "end_s": 36.267,
+        "dur_ms": 1400,
+        "confidence": "medium"
+      },
+      {
+        "start_s": 37.733,
+        "end_s": 38.8,
+        "dur_ms": 1067,
+        "confidence": "medium"
+      },
+      {
+        "start_s": 39.4,
+        "end_s": 40.1,
+        "dur_ms": 700,
+        "confidence": "low"
+      },
+      {
+        "start_s": 40.767,
+        "end_s": 41.433,
+        "dur_ms": 666,
+        "confidence": "medium"
+      },
+      {
+        "start_s": 42.4,
+        "end_s": 43.133,
+        "dur_ms": 733,
+        "confidence": "medium"
+      },
+      {
+        "start_s": 44.6,
+        "end_s": 44.867,
+        "dur_ms": 267,
+        "confidence": "low"
+      }
+    ],
+    "error": null
+  },
+  {
+    "file": "solar-src-2.mp4",
+    "target": "sun",
+    "duration_s": 61.73,
+    "disk_detected": true,
+    "disk_radius": 296,
+    "total_events": 8,
+    "expected_events": 1,
+    "false_positives": 7,
+    "fp_details": [
+      {
+        "start_s": 2.867,
+        "end_s": 3.933,
+        "dur_ms": 1066,
+        "confidence": "high"
+      },
+      {
+        "start_s": 21.6,
+        "end_s": 23.8,
+        "dur_ms": 2200,
+        "confidence": "high"
+      },
+      {
+        "start_s": 29.833,
+        "end_s": 31.6,
+        "dur_ms": 1767,
+        "confidence": "high"
+      },
+      {
+        "start_s": 34.533,
+        "end_s": 35.233,
+        "dur_ms": 700,
+        "confidence": "high"
+      },
+      {
+        "start_s": 55.667,
+        "end_s": 55.967,
+        "dur_ms": 300,
+        "confidence": "high"
+      },
+      {
+        "start_s": 57.667,
+        "end_s": 58.0,
+        "dur_ms": 333,
+        "confidence": "high"
+      },
+      {
+        "start_s": 59.133,
+        "end_s": 60.0,
+        "dur_ms": 867,
+        "confidence": "high"
+      }
+    ],
+    "error": null
+  },
+  {
+    "file": "solar-src-3.mp4",
+    "target": "sun",
+    "duration_s": 12.8,
+    "disk_detected": true,
+    "disk_radius": 106,
+    "total_events": 0,
+    "expected_events": 0,
+    "false_positives": 0,
+    "fp_details": [],
+    "error": null
+  },
+  {
+    "file": "solar-src-4.mp4",
+    "target": "sun",
+    "duration_s": 9.6,
+    "disk_detected": true,
+    "disk_radius": 269,
+    "total_events": 3,
+    "expected_events": 1,
+    "false_positives": 2,
+    "fp_details": [
+      {
+        "start_s": 6.2,
+        "end_s": 6.72,
+        "dur_ms": 520,
+        "confidence": "medium"
+      },
+      {
+        "start_s": 9.04,
+        "end_s": 9.44,
+        "dur_ms": 400,
+        "confidence": "low"
+      }
+    ],
+    "error": null
+  },
+  {
+    "file": "solar-src-5.mp4",
+    "target": "sun",
+    "duration_s": 39.79,
+    "disk_detected": true,
+    "disk_radius": 415,
+    "total_events": 12,
+    "expected_events": 1,
+    "false_positives": 11,
+    "fp_details": [
+      {
+        "start_s": 0.042,
+        "end_s": 0.542,
+        "dur_ms": 500,
+        "confidence": "medium"
+      },
+      {
+        "start_s": 4.713,
+        "end_s": 4.922,
+        "dur_ms": 209,
+        "confidence": "medium"
+      },
+      {
+        "start_s": 14.264,
+        "end_s": 14.681,
+        "dur_ms": 417,
+        "confidence": "high"
+      },
+      {
+        "start_s": 15.933,
+        "end_s": 16.808,
+        "dur_ms": 875,
+        "confidence": "low"
+      },
+      {
+        "start_s": 17.726,
+        "end_s": 17.976,
+        "dur_ms": 250,
+        "confidence": "low"
+      },
+      {
+        "start_s": 20.604,
+        "end_s": 20.729,
+        "dur_ms": 125,
+        "confidence": "high"
+      },
+      {
+        "start_s": 22.105,
+        "end_s": 23.232,
+        "dur_ms": 1127,
+        "confidence": "low"
+      },
+      {
+        "start_s": 26.318,
+        "end_s": 26.652,
+        "dur_ms": 334,
+        "confidence": "low"
+      },
+      {
+        "start_s": 29.279,
+        "end_s": 30.03,
+        "dur_ms": 751,
+        "confidence": "low"
+      },
+      {
+        "start_s": 32.533,
+        "end_s": 34.701,
+        "dur_ms": 2168,
+        "confidence": "medium"
+      },
+      {
+        "start_s": 36.161,
+        "end_s": 38.539,
+        "dur_ms": 2378,
+        "confidence": "low"
+      }
+    ],
+    "error": null
+  },
+  {
+    "file": "transit-1.mp4",
+    "target": "moon",
+    "duration_s": 2.0,
+    "disk_detected": true,
+    "disk_radius": 391,
+    "total_events": 1,
+    "expected_events": 0,
+    "false_positives": 1,
+    "fp_details": [
+      {
+        "start_s": 0.633,
+        "end_s": 1.167,
+        "dur_ms": 534,
+        "confidence": "high"
+      }
+    ],
+    "error": null
+  },
+  {
+    "file": "transit-2.mp4",
+    "target": "moon",
+    "duration_s": 5.2,
+    "disk_detected": true,
+    "disk_radius": 373,
+    "total_events": 1,
+    "expected_events": 0,
+    "false_positives": 1,
+    "fp_details": [
+      {
+        "start_s": 1.9,
+        "end_s": 3.4,
+        "dur_ms": 1500,
+        "confidence": "high"
+      }
+    ],
+    "error": null
+  },
+  {
+    "file": "transit-3.mp4",
+    "target": "moon",
+    "duration_s": 1.13,
+    "disk_detected": true,
+    "disk_radius": 413,
+    "total_events": 1,
+    "expected_events": 0,
+    "false_positives": 1,
+    "fp_details": [
+      {
+        "start_s": 0.333,
+        "end_s": 0.633,
+        "dur_ms": 300,
+        "confidence": "high"
+      }
+    ],
+    "error": null
+  }
+]

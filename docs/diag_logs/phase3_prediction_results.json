@@ -1,0 +1,135 @@
+{
+  "phase": "phase3_prediction_validation",
+  "observer": {
+    "lat": 33.111369,
+    "lon": -117.310169,
+    "elev": 45.0
+  },
+  "target": "sun",
+  "ref_time": "2026-03-21T21:55:22.865509+00:00",
+  "tests": [
+    {
+      "test": "ang_sep same point",
+      "status": "PASS",
+      "detail": "0.000000\u00b0"
+    },
+    {
+      "test": "ang_sep pure alt diff",
+      "status": "PASS",
+      "detail": "got 5.0000\u00b0, expected 5.0000\u00b0"
+    },
+    {
+      "test": "ang_sep horizon az diff",
+      "status": "PASS",
+      "detail": "got 30.0000\u00b0, expected 30.0000\u00b0"
+    },
+    {
+      "test": "ang_sep near zenith",
+      "status": "PASS",
+      "detail": "spherical=1.4142\u00b0"
+    },
+    {
+      "test": "ang_sep sun-moon known date",
+      "status": "PASS",
+      "detail": "below horizon \u2014 skipped"
+    },
+    {
+      "test": "geo_to_altaz vs skyfield",
+      "status": "PASS",
+      "detail": "\u0394alt=0.0000\u00b0 \u0394az=0.0000\u00b0"
+    },
+    {
+      "test": "predict_pos error budget",
+      "status": "PASS",
+      "detail": "err=0.0000 km < 1 km"
+    },
+    {
+      "test": "predict_pos angular error",
+      "status": "PASS",
+      "detail": "0.0187\u00b0/km at 200km"
+    },
+    {
+      "test": "synthetic transit prediction",
+      "status": "PASS",
+      "detail": "level=MEDIUM sep=2.698\u00b0 at t=5.03min (expected \u22648min)"
+    }
+  ],
+  "threshold_analysis": [
+    {
+      "dist_km": 50,
+      "alt_km": 8,
+      "slant_km": 50.6,
+      "2deg_lateral_km": 1.77
+    },
+    {
+      "dist_km": 50,
+      "alt_km": 10,
+      "slant_km": 51.0,
+      "2deg_lateral_km": 1.78
+    },
+    {
+      "dist_km": 50,
+      "alt_km": 12,
+      "slant_km": 51.4,
+      "2deg_lateral_km": 1.79
+    },
+    {
+      "dist_km": 100,
+      "alt_km": 8,
+      "slant_km": 100.3,
+      "2deg_lateral_km": 3.5
+    },
+    {
+      "dist_km": 100,
+      "alt_km": 10,
+      "slant_km": 100.5,
+      "2deg_lateral_km": 3.51
+    },
+    {
+      "dist_km": 100,
+      "alt_km": 12,
+      "slant_km": 100.7,
+      "2deg_lateral_km": 3.52
+    },
+    {
+      "dist_km": 200,
+      "alt_km": 8,
+      "slant_km": 200.2,
+      "2deg_lateral_km": 6.99
+    },
+    {
+      "dist_km": 200,
+      "alt_km": 10,
+      "slant_km": 200.2,
+      "2deg_lateral_km": 6.99
+    },
+    {
+      "dist_km": 200,
+      "alt_km": 12,
+      "slant_km": 200.4,
+      "2deg_lateral_km": 6.99
+    },
+    {
+      "dist_km": 400,
+      "alt_km": 8,
+      "slant_km": 400.1,
+      "2deg_lateral_km": 13.97
+    },
+    {
+      "dist_km": 400,
+      "alt_km": 10,
+      "slant_km": 400.1,
+      "2deg_lateral_km": 13.97
+    },
+    {
+      "dist_km": 400,
+      "alt_km": 12,
+      "slant_km": 400.2,
+      "2deg_lateral_km": 13.97
+    }
+  ],
+  "summary": {
+    "passed": 9,
+    "failed": 0
+  }
+}

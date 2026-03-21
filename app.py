@@ -50,6 +50,27 @@ from src.constants import (
 # SETUP
 load_dotenv()
 
+
+def _flymoon_code_revision() -> str:
+    """Short git SHA for “am I running the code I think I am?” (see /config)."""
+    rev = os.getenv("FLYMOON_REVISION", "").strip()
+    if rev:
+        return rev
+    try:
+        import subprocess
+
+        root = os.path.dirname(os.path.abspath(__file__))
+        return subprocess.check_output(
+            ["git", "rev-parse", "--short", "HEAD"],
+            cwd=root,
+            stderr=subprocess.DEVNULL,
+            timeout=2,
+            text=True,
+        ).strip()
+    except Exception:
+        return "unknown"
+
+
 from src import logger, telescope_routes
 from src.astro import CelestialObject, get_rise_set_times
 from src.config_wizard import ConfigWizard
@@ -240,6 +261,7 @@ def get_config():
             ),
             "cacheEnabled": True,
             "cacheTTLSeconds": 600,
+            "codeRevision": _flymoon_code_revision(),
             "openaipApiKey": os.getenv("OPENAIP_API_KEY", ""),
             "observerLatitude": os.getenv("OBSERVER_LATITUDE", ""),
             "observerLongitude": os.getenv("OBSERVER_LONGITUDE", ""),
@@ -459,10 +481,7 @@ def get_all_flights():
                     f"min for az {coords.get('azimuthal',0):.0f}°: {min_altitude}°, "
                     f"above_min={target_above_min})"
                 )
-                # Only enrich HIGH transits via FA when the telescope is
-                # connected and can actually act on the data.
-                tc = telescope_routes.get_telescope_client()
-                enrich = bool(tc and tc.is_connected()) and target_above_min
+                # Never enrich on prediction. FA is only used post-capture.
                 data = get_transits(
                     latitude,
                     longitude,
@@ -471,7 +490,7 @@ def get_all_flights():
                     test_mode,
                     custom_bbox,
                     data_source,
-                    enrich=enrich,
+                    enrich=False,
                 )
                 if data.get("bbox_used"):
                     all_bboxes_used.append(data["bbox_used"])
@@ -1062,6 +1081,11 @@ if __name__ == "__main__":
         exit(1)
 
     print(f"🚀 Starting server on port {port}")
+    print(
+        f"📌 Code revision: {_flymoon_code_revision()} — "
+        "confirm in browser console (config.codeRevision) after refresh; "
+        "if stale: pull, restart, or PYTHONDONTWRITEBYTECODE=1 python3 -B app.py"
+    )
 
     # Reduce werkzeug logging noise
     import logging
@@ -1084,10 +1108,9 @@ if __name__ == "__main__":
 
         def server_bind(self):
             self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-            try:
-                self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEPORT, 1)
-            except (AttributeError, OSError):
-                pass
+            # Note: SO_REUSEPORT intentionally NOT set — it allows multiple
+            # processes to bind the same port, so a stale server survives
+            # restart and steals requests from the new one.
             super().server_bind()
 
         def process_request(self, request, client_address):

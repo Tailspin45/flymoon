@@ -17,7 +17,7 @@ let transitTickInterval = null; // 1-second local countdown tick
 let transitCaptureActive = false;
 let upcomingTransits = [];
 const capturedTransits = new Set(); // flight IDs triggered this session — persists across array replacements
-let currentZoom = 1.0;
+let currentZoom = 2.0;
 
 // Favorites stored in localStorage
 function getFavorites() {
@@ -66,6 +66,15 @@ function _updateDeleteBtnState(path, isFav) {
 let zoomStep = 0.1;
 let _previewLastError = 0; // timestamp of last preview onerror (ms)
 const _PREVIEW_BACKOFF_MS = 5000; // 5s between retry attempts after stream failure
+let _previewCheckTimer = null;
+let _lastPreviewRefreshMs = 0;
+const _PREVIEW_REFRESH_INTERVAL_MS = Infinity; // never restart a healthy stream — onerror handles failures
+const _DEBUG_INGEST_URL = 'http://127.0.0.1:7352/ingest/42acc25b-9174-476d-8462-1b85f40db694';
+const _DEBUG_SESSION_ID = '616e1a';
+
+function _agentDebugLog(runId, hypothesisId, location, message, data) {
+    fetch(_DEBUG_INGEST_URL,{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'616e1a'},body:JSON.stringify({sessionId:_DEBUG_SESSION_ID,runId,hypothesisId,location,message,data,timestamp:Date.now()})}).catch(()=>{});
+}
 let isSimulating = false;
 let simulationVideo = null;
 let disconnectedPollCount = 0; // consecutive disconnected polls before stopping preview
@@ -492,14 +501,28 @@ async function switchToMoon() {
     }
 }
 
+async function switchToScenery() {
+    console.log('[Telescope] Switching to Scenery');
+    showStatus('Switching to Scenery mode...', 'info');
+
+    const result = await apiCall('/telescope/mode/scenery', 'POST');
+    if (result && result.success) {
+        showStatus('Scenery mode active — no tracking, manual positioning enabled', 'success', 5000);
+        stopPreview();
+        _previewLastError = 0;
+        setTimeout(startPreview, 3000);
+    }
+}
+
 function checkTargetMismatch() {
     const banner = document.getElementById('mismatchBanner');
     const text   = document.getElementById('mismatchText');
     const btn    = document.getElementById('mismatchSwitchBtn');
     if (!banner || !text || !btn) return;
 
-    // Only relevant when connected and in a known viewing mode
-    if (!isConnected || !currentViewingMode) { banner.style.display = 'none'; return; }
+    // Only relevant when connected and in sun or moon viewing mode
+    // Scenery mode is target-neutral — no mismatch possible
+    if (!isConnected || !currentViewingMode || (currentViewingMode !== 'sun' && currentViewingMode !== 'moon')) { banner.style.display = 'none'; return; }
 
     const flights = (window.lastFlightData && window.lastFlightData.flights) || [];
     const oppositeTarget = currentViewingMode === 'sun' ? 'moon' : 'sun';
@@ -955,7 +978,8 @@ function updateTimelapseUI(data) {
 // LIVE PREVIEW
 // ============================================================================
 
-function startPreview() {
+function startPreview(forceRefresh = false) {
+    const runId = `preview_${Date.now()}`;
     
     const previewImage = document.getElementById('previewImage');
     const previewPlaceholder = document.getElementById('previewPlaceholder');
@@ -965,22 +989,37 @@ function startPreview() {
     
     if (!previewImage) {
         console.error('[Telescope] Preview image element not found');
+        // #region agent log
+        _agentDebugLog(runId,'H6','static/telescope.js:startPreview:noElement','previewImage missing',{});
+        // #endregion
         return;
     }
 
-    // Already streaming — don't restart
-    if (previewImage.style.display === 'block' && previewImage.src) return;
-
-    // Enforce backoff after a stream error
-    if (_previewLastError && (Date.now() - _previewLastError) < _PREVIEW_BACKOFF_MS) {
-        return;
+    // Keep stream alive without constantly restarting ffmpeg/RTSP.
+    // Refresh immediately when forced (mode changes/reconnect), otherwise
+    // only refresh periodically.
+    if (!forceRefresh && previewImage.style.display === 'block' && previewImage.src) {
+        if ((Date.now() - _lastPreviewRefreshMs) < _PREVIEW_REFRESH_INTERVAL_MS) {
+            return;
+        }
     }
+
+    // Refresh stream source so preview can recover from stale sockets.
+    if (_previewCheckTimer) {
+        clearTimeout(_previewCheckTimer);
+        _previewCheckTimer = null;
+    }
+    previewImage.removeAttribute('src');
     
     // Set stream URL (adds timestamp to avoid caching)
     const streamUrl = `/telescope/preview/stream.mjpg?t=${Date.now()}`;
     
+    // Re-center once the first frame renders and natural dimensions are known
+    previewImage.onload = () => { applyZoom(); previewImage.onload = null; };
+
     previewImage.src = streamUrl;
-    
+    _lastPreviewRefreshMs = Date.now();
+
     // Show image, hide placeholder
     previewImage.style.display = 'block';
     if (previewPlaceholder) {
@@ -994,7 +1033,6 @@ function startPreview() {
     
     // Confirm stream is live by polling for a successful HEAD request to the MJPEG endpoint
     // (MJPEG <img> streams don't fire onload, so we verify separately)
-    let _streamCheckTimer = null;
     const checkStream = async () => {
         try {
             const r = await fetch(streamUrl, { method: 'HEAD', signal: AbortSignal.timeout(4000) });
@@ -1002,7 +1040,7 @@ function startPreview() {
                 if (previewStatusDot) previewStatusDot.className = 'status-dot connected';
                 if (previewStatusText) previewStatusText.textContent = 'Live Stream Active';
                 if (previewTitleIcon) previewTitleIcon.textContent = '🟢';
-                currentZoom = 1.0;
+                currentZoom = 2.0;
                 applyZoom();
             } else {
                 // Server responded but not OK — stream not ready
@@ -1012,14 +1050,14 @@ function startPreview() {
             }
         } catch (_) {
             // Fetch failed — retry once more after 3s before giving up
-            _streamCheckTimer = setTimeout(async () => {
+            _previewCheckTimer = setTimeout(async () => {
                 try {
                     const r2 = await fetch(streamUrl, { method: 'HEAD', signal: AbortSignal.timeout(4000) });
                     if (r2.ok) {
                         if (previewStatusDot) previewStatusDot.className = 'status-dot connected';
                         if (previewStatusText) previewStatusText.textContent = 'Live Stream Active';
                         if (previewTitleIcon) previewTitleIcon.textContent = '🟢';
-                        currentZoom = 1.0;
+                        currentZoom = 2.0;
                         applyZoom();
                     } else {
                         if (previewStatusDot) previewStatusDot.className = 'status-dot disconnected';
@@ -1047,6 +1085,9 @@ function startPreview() {
         if (previewStatusDot) previewStatusDot.className = 'status-dot disconnected';
         if (previewStatusText) previewStatusText.textContent = 'Stream unavailable';
         if (previewTitleIcon) previewTitleIcon.textContent = '🔴';
+        // #region agent log
+        _agentDebugLog(runId,'H6','static/telescope.js:startPreview:onerror','preview image error',{streamUrl,isConnected});
+        // #endregion
     };
 }
 
@@ -1061,12 +1102,12 @@ function zoomOut() {
 }
 
 function zoomReset() {
-    currentZoom = 1.0;
+    currentZoom = 2.0;
     applyZoom();
 }
 
 function zoomFit() {
-    currentZoom = 1.0;
+    currentZoom = 2.0;
     applyZoom();
 }
 
@@ -1305,6 +1346,12 @@ function _formatApiError(data, status) {
 }
 
 async function apiCall(endpoint, method = 'GET', body = null) {
+    const runId = `api_${Date.now()}`;
+    if (endpoint === '/telescope/goto') {
+        // #region agent log
+        _agentDebugLog(runId,'H9','static/telescope.js:apiCall:send','apiCall send /telescope/goto',{method,hasBody:!!body,body});
+        // #endregion
+    }
     try {
         const options = {
             method: method,
@@ -1325,12 +1372,27 @@ async function apiCall(endpoint, method = 'GET', body = null) {
         const data = await response.json();
 
         if (!response.ok) {
+            if (endpoint === '/telescope/goto') {
+                // #region agent log
+                _agentDebugLog(runId,'H9_H10','static/telescope.js:apiCall:response_error','apiCall /telescope/goto non-ok response',{status:response.status,data});
+                // #endregion
+            }
             throw new Error(_formatApiError(data, response.status));
+        }
+        if (endpoint === '/telescope/goto') {
+            // #region agent log
+            _agentDebugLog(runId,'H9_H10','static/telescope.js:apiCall:response_ok','apiCall /telescope/goto ok response',{status:response.status,data});
+            // #endregion
         }
 
         return data;
 
     } catch (error) {
+        if (endpoint === '/telescope/goto') {
+            // #region agent log
+            _agentDebugLog(runId,'H9_H10','static/telescope.js:apiCall:catch','apiCall /telescope/goto catch',{message:error?.message || String(error)});
+            // #endregion
+        }
         console.error(`[Telescope] API call failed: ${endpoint}`, error);
         showStatus(`Error: ${error.message}`, 'error');
         return null;
@@ -1342,6 +1404,8 @@ async function apiCall(endpoint, method = 'GET', body = null) {
 // ============================================================================
 
 let _telemetryInterval = null;
+const _TELEMETRY_POLL_MS = 2000;
+let _telemetryPollInFlight = false;
 
 function initControlPanel() {
     loadSavedLocations();
@@ -1351,7 +1415,7 @@ function initControlPanel() {
 
 function startTelemetryPolling() {
     if (_telemetryInterval) return;
-    _telemetryInterval = setInterval(_pollTelemetry, 5000);
+    _telemetryInterval = setInterval(_pollTelemetry, _TELEMETRY_POLL_MS);
     _pollTelemetry(); // immediate first fetch
     document.getElementById('telemetryStrip').style.display = '';
 }
@@ -1370,14 +1434,20 @@ function _setText(id, val) {
 }
 
 async function _pollTelemetry() {
+    if (_telemetryPollInFlight) return;
+    _telemetryPollInFlight = true;
     try {
         const controller = new AbortController();
         const timer = setTimeout(() => controller.abort(), 6000);
-        const res = await fetch('/telescope/telemetry', { signal: controller.signal });
+        const res = await fetch(`/telescope/telemetry?t=${Date.now()}`, {
+            signal: controller.signal,
+            cache: 'no-store',
+        });
         clearTimeout(timer);
         if (!res.ok) return;
         const d = await res.json();
         const fmt = (v, dp=2) => v != null ? (+v).toFixed(dp) : '—';
+        const runId = `telemetry_ui_${Date.now()}`;
 
         // Pointing
         _setText('telmRA',  fmt(d.ra,  4) + (d.ra  != null ? 'h' : ''));
@@ -1388,6 +1458,9 @@ async function _pollTelemetry() {
         // Bidirectional Alt/Az — update GoTo inputs unless user has edited them
         const altIn = document.getElementById('gotoAlt');
         const azIn  = document.getElementById('gotoAz');
+        // #region agent log
+        _agentDebugLog(runId,'H7_H8','static/telescope.js:_pollTelemetry:inputs','telemetry before goto overwrite check',{alt:d.alt,az:d.az,altUserEdited:!!(altIn&&altIn.dataset.userEdited),azUserEdited:!!(azIn&&azIn.dataset.userEdited),altActive:document.activeElement===altIn,azActive:document.activeElement===azIn,shownAlt:document.getElementById('telmAlt')?.textContent,shownAz:document.getElementById('telmAz')?.textContent});
+        // #endregion
         if (altIn && !altIn.dataset.userEdited && document.activeElement !== altIn && d.alt != null)
             altIn.value = (+d.alt).toFixed(1);
         if (azIn && !azIn.dataset.userEdited && document.activeElement !== azIn && d.az != null)
@@ -1450,6 +1523,7 @@ async function _pollTelemetry() {
         } catch (_ae) { /* non-fatal */ }
 
     } catch (_) { /* non-fatal */ }
+    finally { _telemetryPollInFlight = false; }
 }
 
 // -- GoTo mode radio toggle --
@@ -1470,7 +1544,7 @@ function nudgeStart(angle) {
     nudgeStop(); // clear any existing
     const speed = document.querySelector('input[name="nudgeSpeed"]:checked')?.value === 'fast' ? 80 : 20;
     // Send immediately, then repeat every 2s for held button
-    const send = () => apiCall('/telescope/nudge', 'POST', { speed, angle, dur_sec: 3 });
+    const send = () => apiCall('/telescope/nudge', 'POST', { speed, angle, dur_sec: 2 });
     send();
     _nudgeInterval = setInterval(send, 2000);
 }
@@ -1483,12 +1557,17 @@ function nudgeStop() {
     apiCall('/telescope/nudge/stop', 'POST', {});
 }
 
-// Mark GoTo inputs as user-edited so telemetry doesn't overwrite them
-document.addEventListener('DOMContentLoaded', () => {
-    ['gotoAlt','gotoAz','gotoRa','gotoDec'].forEach(id => {
-        const el = document.getElementById(id);
-        if (el) el.addEventListener('input', () => { el.dataset.userEdited = '1'; });
-    });
+// Mark GoTo inputs as user-edited so telemetry doesn't overwrite them.
+// Use delegated handler in case control-panel DOM is recreated.
+document.addEventListener('input', (ev) => {
+    const el = ev.target;
+    if (!el || !el.id) return;
+    if (el.id === 'gotoAlt' || el.id === 'gotoAz' || el.id === 'gotoRa' || el.id === 'gotoDec') {
+        el.dataset.userEdited = '1';
+        // #region agent log
+        _agentDebugLog(`input_${Date.now()}`,'H7','static/telescope.js:input:userEdited','marked goto input userEdited',{id:el.id,value:el.value});
+        // #endregion
+    }
 });
 
 async function gotoExecute(overrideAlt, overrideAz) {
@@ -1520,7 +1599,9 @@ async function gotoExecute(overrideAlt, overrideAz) {
         // Resume telemetry updates in GoTo fields
         ['gotoAlt','gotoAz','gotoRa','gotoDec'].forEach(id => {
             const el = document.getElementById(id);
-            if (el) delete el.dataset.userEdited;
+            if (el) {
+                delete el.dataset.userEdited;
+            }
         });
     }
 }

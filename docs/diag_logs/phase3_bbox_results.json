@@ -1,0 +1,77 @@
+{
+  "phase": "phase3_bbox_coverage",
+  "observer": {
+    "lat": 33.111369,
+    "lon": -117.310169
+  },
+  "tests": [
+    {
+      "test": "bbox contains ground point (8 azimuths)",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "test": "bbox captures 15-min inbound aircraft",
+      "status": "PASS",
+      "detail": "aircraft at (30.87,-117.31)"
+    },
+    {
+      "test": "bbox low altitude valid",
+      "status": "PASS",
+      "detail": "area=268,056 km\u00b2"
+    },
+    {
+      "test": "bbox FL350 altitude valid",
+      "status": "PASS",
+      "detail": "area=231,113 km\u00b2"
+    }
+  ],
+  "size_table": [
+    {
+      "alt_deg": 5,
+      "width_deg": 5.521,
+      "height_deg": 4.678,
+      "area_km2": 268056
+    },
+    {
+      "alt_deg": 10,
+      "width_deg": 5.307,
+      "height_deg": 4.471,
+      "area_km2": 246271
+    },
+    {
+      "alt_deg": 20,
+      "width_deg": 5.198,
+      "height_deg": 4.366,
+      "area_km2": 235526
+    },
+    {
+      "alt_deg": 30,
+      "width_deg": 5.159,
+      "height_deg": 4.329,
+      "area_km2": 231845
+    },
+    {
+      "alt_deg": 45,
+      "width_deg": 5.132,
+      "height_deg": 4.303,
+      "area_km2": 229207
+    },
+    {
+      "alt_deg": 60,
+      "width_deg": 5.116,
+      "height_deg": 4.288,
+      "area_km2": 227690
+    },
+    {
+      "alt_deg": 75,
+      "width_deg": 5.104,
+      "height_deg": 4.277,
+      "area_km2": 226582
+    }
+  ],
+  "summary": {
+    "passed": 4,
+    "failed": 0
+  }
+}

@@ -1,0 +1,117 @@
+{
+  "phase": "phase4_position_feedback",
+  "host": "192.168.4.112",
+  "port": 4700,
+  "nudge_direction": "up",
+  "nudge_sec": 2,
+  "tests": [
+    {
+      "test": "connect",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "test": "switch_to_scenery",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "test": "nudge_sent",
+      "status": "PASS",
+      "detail": "direction=up fw_angle=270\u00b0"
+    },
+    {
+      "test": "equ_coord_updates_after_nudge",
+      "status": "PASS",
+      "detail": "\u0394RA=0.258\u00b0 \u0394Dec=0.332\u00b0 \u2014 position feedback WORKS in scenery"
+    },
+    {
+      "test": "tilt_updates_after_nudge",
+      "status": "WARN",
+      "detail": "\u0394tilt=0.03\u00b0 \u2014 may not have moved far enough"
+    },
+    {
+      "test": "horiz_coord_exists",
+      "status": "PASS",
+      "detail": "before=[45.296111, 229.8225] after=[44.864167, 229.8225]"
+    },
+    {
+      "test": "restore_solar",
+      "status": "PASS",
+      "detail": ""
+    }
+  ],
+  "raw": {
+    "initial_mode": "solar_sys",
+    "initial_view_state": {
+      "state": "working",
+      "lapse_ms": 9931873,
+      "mode": "solar_sys",
+      "target_type": "sun",
+      "cam_id": 0,
+      "target_name": "Sun",
+      "lp_filter": false,
+      "planet_correction": true,
+      "scan_planet_tip": true,
+      "manual_exp": false,
+      "RTSP": {
+        "state": "working",
+        "lapse_ms": 9930332,
+        "roi_index": 0,
+        "port": 4554
+      },
+      "stage": "RTSP"
+    },
+    "snapshot_before": {
+      "label": "before",
+      "ts": 1774130916.4393458,
+      "equ": {
+        "ra": 0.120278,
+        "dec": 0.470278
+      },
+      "horiz": [
+        45.314722,
+        229.805278
+      ],
+      "tilt": 1.441029,
+      "compass": 216.813751
+    },
+    "snapshot_scenery_pre": {
+      "label": "scenery_pre_nudge",
+      "ts": 1774130927.3128262,
+      "equ": {
+        "ra": 0.120833,
+        "dec": 0.465556
+      },
+      "horiz": [
+        45.296111,
+        229.8225
+      ],
+      "tilt": 1.401513,
+      "compass": 217.939072
+    },
+    "snapshot_after": {
+      "label": "after_nudge",
+      "ts": 1774130932.716062,
+      "equ": {
+        "ra": 0.103611,
+        "dec": 0.133611
+      },
+      "horiz": [
+        44.864167,
+        229.8225
+      ],
+      "tilt": 1.373161,
+      "compass": 213.951263
+    },
+    "delta_ra_h": 0.017222,
+    "delta_dec_deg": 0.331945,
+    "delta_tilt_deg": 0.028,
+    "delta_compass_deg": 3.988
+  },
+  "summary": {
+    "passed": 6,
+    "warned": 1,
+    "failed": 0
+  }
+}
