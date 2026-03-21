@@ -1262,8 +1262,10 @@ class SeestarClient:
     def speed_move(self, speed: int, angle: int, dur_sec: int = 3) -> dict:
         """Raw motor move — no horizon check.
 
-        API angle convention (after +180 firmware correction):
-          90=up  180=right  270=down  0=left
+        Firmware angle convention (empirically confirmed, Phase 4):
+          90=up  270=down  0=right  180=left
+        API angle convention (after +180 firmware offset applied here):
+          270=up  90=down  180=right  0=left
 
         Always switches to scenery mode first.  Tracking modes (sun/moon/star)
         fight speed_move — the tracking loop snaps the scope back after each
@@ -1417,11 +1419,13 @@ class SeestarClient:
             # Choose speed
             speed = self._SLEW_SLOW_SPEED if distance < self._SLEW_SLOW_THRESHOLD else self._SLEW_FAST_SPEED
 
-            # Compute angle for scope_speed_move
-            # Seestar convention: 270=up, 0=right, 90=down, 180=left
+            # Compute angle for scope_speed_move.
+            # Empirically confirmed firmware convention (Phase 4 diag):
+            #   fw 90=up, 270=down, 0=right, 180=left
             # speed_move adds +180 to convert API→firmware, so API convention is:
-            # 90=up, 180=right, 270=down, 0=left  →  use +90 offset here.
-            angle = (math.degrees(math.atan2(d_az, d_alt)) + 90) % 360
+            #   api 270=up, 90=down, 180=right, 0=left
+            # Formula: negate d_alt so atan2 maps (up=270, right=180) correctly.
+            angle = (math.degrees(math.atan2(d_az, -d_alt)) + 90) % 360
             if loop_count % 3 == 1:
                 # region agent log
                 _debug_log(
@@ -1589,6 +1593,19 @@ class SeestarClient:
         )
         # endregion
 
+        # Direct alt/az from firmware (no RA/Dec conversion needed).
+        # scope_get_horiz_coord returns [alt_deg, az_deg] — faster and immune
+        # to pi_set_time / LST errors.  Used as primary in scenery mode.
+        try:
+            h = self._send_command(
+                "scope_get_horiz_coord", quiet=True, timeout_override=5
+            )
+            if isinstance(h, (list, tuple)) and len(h) >= 2:
+                telemetry["horiz_alt"] = round(float(h[0]), 3)
+                telemetry["horiz_az"] = round(float(h[1]), 3)
+        except Exception:
+            pass
+
         # RA / Dec
         try:
             r = self._send_command(
@@ -1707,21 +1724,23 @@ class SeestarClient:
             except Exception as _sf_err:
                 logger.warning(f"[Telemetry] Skyfield alt/az failed: {_sf_err}")
 
-        # Primary alt/az for UI.
-        # In sun/moon tracking mode, scope_get_equ_coord may return a stale
-        # cached GoTo target rather than the actual current pointing, making
-        # scope_alt/scope_az unreliable.  Use the Skyfield ephemeris position
-        # (target_alt/target_az) as primary in those modes — it is always
-        # accurate and updates every poll.  In scenery/none mode where there
-        # is no ephemeris target, fall back to the scope RA/Dec conversion.
+        # Primary alt/az for UI and servo loop.
+        # Priority:
+        #   1. sun/moon mode → Skyfield ephemeris (immune to stale RA/Dec)
+        #   2. scenery mode  → scope_get_horiz_coord (direct firmware alt/az,
+        #                       no RA/Dec conversion, updates on every move)
+        #   3. fallback      → RA/Dec → alt/az conversion via scope_alt/scope_az
         if self._viewing_mode in ("sun", "moon") and telemetry.get("target_alt") is not None:
             telemetry["alt"] = telemetry["target_alt"]
             telemetry["az"] = telemetry["target_az"]
+        elif telemetry.get("horiz_alt") is not None:
+            # Scenery mode (or any mode): use direct firmware alt/az
+            telemetry["alt"] = telemetry["horiz_alt"]
+            telemetry["az"] = telemetry["horiz_az"]
         elif telemetry.get("scope_alt") is not None:
             telemetry["alt"] = telemetry["scope_alt"]
             telemetry["az"] = telemetry["scope_az"]
         elif telemetry.get("target_alt") is not None:
-            # Fallback if scope conversion is unavailable.
             telemetry["alt"] = telemetry["target_alt"]
             telemetry["az"] = telemetry["target_az"]
 
@@ -1830,6 +1849,11 @@ class SeestarClient:
                 self._viewing_mode = "scenery"
             elif vm == "star":
                 self._viewing_mode = "star"
+            elif vm in ("solar_sys", "solar"):
+                # Firmware uses "solar_sys" for solar tracking mode
+                self._viewing_mode = "sun"
+            elif vm == "lunar":
+                self._viewing_mode = "moon"
             elif vm == "none":
                 self._viewing_mode = None
 
@@ -1844,6 +1868,8 @@ class SeestarClient:
                 "dec": telemetry.get("dec"),
                 "alt": telemetry.get("alt"),
                 "az": telemetry.get("az"),
+                "horiz_alt": telemetry.get("horiz_alt"),
+                "horiz_az": telemetry.get("horiz_az"),
                 "scope_alt": telemetry.get("scope_alt"),
                 "scope_az": telemetry.get("scope_az"),
                 "target_alt": telemetry.get("target_alt"),

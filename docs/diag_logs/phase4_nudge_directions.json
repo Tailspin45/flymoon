@@ -1,0 +1,126 @@
+{
+  "phase": "phase4_nudge_directions",
+  "host": "192.168.4.112",
+  "port": 4700,
+  "directions_tested": [
+    "up",
+    "down",
+    "left",
+    "right"
+  ],
+  "nudge_sec": 2,
+  "tests": [
+    {
+      "test": "connect",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "test": "switch_to_scenery",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "test": "nudge_up",
+      "status": "WARN",
+      "detail": "\u0394tilt=-0.021\u00b0 \u2014 no measurable movement"
+    },
+    {
+      "test": "nudge_down",
+      "status": "FAIL",
+      "detail": "\u0394tilt=+0.117\u00b0 \u2014 WRONG DIRECTION (expected tilt decreases (arm lowers))"
+    },
+    {
+      "test": "nudge_left",
+      "status": "PASS",
+      "detail": "\u0394compass=-0.440\u00b0"
+    },
+    {
+      "test": "nudge_right",
+      "status": "PASS",
+      "detail": "\u0394compass=+1.481\u00b0"
+    },
+    {
+      "test": "restore_solar",
+      "status": "PASS",
+      "detail": ""
+    }
+  ],
+  "raw": {
+    "nudge_tests": [
+      {
+        "direction": "up",
+        "api_angle": 90,
+        "fw_angle": 270,
+        "tilt_before": 1.361856,
+        "tilt_after": 1.341151,
+        "delta_tilt": -0.021,
+        "compass_before": 214.702316,
+        "compass_after": 217.381729,
+        "delta_compass": 2.679,
+        "ra_before": 0.125,
+        "ra_after": 0.108056,
+        "delta_ra_deg": -0.2542,
+        "dec_before": 0.495556,
+        "dec_after": 0.174722,
+        "delta_dec": -0.3208
+      },
+      {
+        "direction": "down",
+        "api_angle": 270,
+        "fw_angle": 90,
+        "tilt_before": 1.294071,
+        "tilt_after": 1.411392,
+        "delta_tilt": 0.117,
+        "compass_before": 217.672028,
+        "compass_after": 219.901932,
+        "delta_compass": 2.23,
+        "ra_before": 0.109444,
+        "ra_after": 0.128611,
+        "delta_ra_deg": 0.2875,
+        "dec_before": 0.174722,
+        "dec_after": 0.494444,
+        "delta_dec": 0.3197
+      },
+      {
+        "direction": "left",
+        "api_angle": 0,
+        "fw_angle": 180,
+        "tilt_before": 1.345957,
+        "tilt_after": 1.38395,
+        "delta_tilt": 0.038,
+        "compass_before": 216.483734,
+        "compass_after": 216.043747,
+        "delta_compass": -0.44,
+        "ra_before": 0.13,
+        "ra_after": 0.146944,
+        "delta_ra_deg": 0.2542,
+        "dec_before": 0.494444,
+        "dec_after": 0.295833,
+        "delta_dec": -0.1986
+      },
+      {
+        "direction": "right",
+        "api_angle": 180,
+        "fw_angle": 0,
+        "tilt_before": 1.294827,
+        "tilt_after": 1.319824,
+        "delta_tilt": 0.025,
+        "compass_before": 212.741882,
+        "compass_after": 214.22287,
+        "delta_compass": 1.481,
+        "ra_before": 0.148333,
+        "ra_after": 0.133889,
+        "delta_ra_deg": -0.2167,
+        "dec_before": 0.295833,
+        "dec_after": 0.495556,
+        "delta_dec": 0.1997
+      }
+    ]
+  },
+  "summary": {
+    "passed": 5,
+    "warned": 1,
+    "failed": 1
+  }
+}

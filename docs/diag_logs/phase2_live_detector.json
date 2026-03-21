@@ -1,0 +1,17 @@
+[
+  {
+    "file": "transit-2.mp4",
+    "target": "moon",
+    "sensitivity_scale": 0.3,
+    "frames_fed": 80,
+    "duration_s": 5.33,
+    "disk_detected": true,
+    "disk_found_at_frame": 30,
+    "disk_found_at_s": 2.0,
+    "disk_radius": 31,
+    "detected": false,
+    "num_detections": 0,
+    "detections": [],
+    "error": null
+  }
+]
