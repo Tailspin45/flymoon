@@ -36,8 +36,11 @@ CACHE_TTL: int = 60
 # How long to pause after a 429 rate-limit response (seconds)
 BACKOFF_429: int = 300
 
-# Maximum age of an OpenSky position before we ignore it (seconds)
-MAX_POSITION_AGE: int = 60
+# Maximum age of an OpenSky position before we ignore it (seconds).
+# At 900 km/h, a 30 s stale position drifts ~7.5 km → ~1.4° angular error at
+# 200 km distance. Positions older than this are discarded to avoid missed
+# HIGH transits from stale-data outliers.
+MAX_POSITION_AGE: int = 30
 
 # Timeout for OpenSky HTTP requests
 REQUEST_TIMEOUT: int = 5

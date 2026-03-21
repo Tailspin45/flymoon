@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html><head><meta charset="utf-8"/>
+<title>Phase 3: Bbox Coverage Map</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<style>body{margin:0} #map{height:100vh}</style>
+</head><body>
+<div id="map"></div>
+<script>
+var map = L.map('map').setView([33.111369, -117.310169], 7);
+L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
+  {attribution:'© OpenStreetMap'}).addTo(map);
+L.circleMarker([33.111369, -117.310169], {radius:8,color:'black',fillColor:'white',fillOpacity:1})
+  .bindPopup('Observer').addTo(map);
+L.rectangle([[30.874507980817597,-119.36997880787007],[35.345269095428364,-114.03254973142742]],{color:'red',weight:1,fillOpacity:0.05}).bindPopup('alt=10° az=90°').addTo(map);
+L.rectangle([[30.365957815330987,-119.96362925488518],[34.83671892994175,-114.65670874511486]],{color:'red',weight:1,fillOpacity:0.05}).bindPopup('alt=10° az=180°').addTo(map);
+L.rectangle([[30.874507980817597,-120.58778826857261],[35.345269095428364,-115.25035919212993]],{color:'red',weight:1,fillOpacity:0.05}).bindPopup('alt=10° az=270°').addTo(map);
+L.rectangle([[30.92817070344635,-119.62121529630394],[35.29387237141094,-114.40914448230308]],{color:'orange',weight:1,fillOpacity:0.05}).bindPopup('alt=20° az=90°').addTo(map);
+L.rectangle([[30.681431585508758,-119.9089299224601],[35.04713325347335,-114.71140807753993]],{color:'orange',weight:1,fillOpacity:0.05}).bindPopup('alt=20° az=180°').addTo(map);
+L.rectangle([[30.92817070344635,-120.21119351769694],[35.29387237141094,-114.99912270369607]],{color:'orange',weight:1,fillOpacity:0.05}).bindPopup('alt=20° az=270°').addTo(map);
+L.rectangle([[30.94662345756549,-119.70846454192247],[35.275838362616476,-114.539941783181]],{color:'yellow',weight:1,fillOpacity:0.05}).bindPopup('alt=30° az=90°').addTo(map);
+L.rectangle([[30.79099447609494,-119.88987008440023],[35.120209381145926,-114.7304679155998]],{color:'yellow',weight:1,fillOpacity:0.05}).bindPopup('alt=30° az=180°').addTo(map);
+L.rectangle([[30.94662345756549,-120.08039621681903],[35.275838362616476,-114.91187345807757]],{color:'yellow',weight:1,fillOpacity:0.05}).bindPopup('alt=30° az=270°').addTo(map);
+L.rectangle([[30.95986770588382,-119.77136355740552],[35.26277823409079,-114.63423943996213]],{color:'green',weight:1,fillOpacity:0.05}).bindPopup('alt=45° az=90°').addTo(map);
+L.rectangle([[30.86998157530463,-119.87610891313231],[35.1728921035116,-114.74422908686772]],{color:'green',weight:1,fillOpacity:0.05}).bindPopup('alt=45° az=180°').addTo(map);
+L.rectangle([[30.95986770588382,-119.9860985600379],[35.26277823409079,-114.84897444259451]],{color:'green',weight:1,fillOpacity:0.05}).bindPopup('alt=45° az=270°').addTo(map);
+L.rectangle([[30.96749181208005,-119.80767771205453],[35.25521550123526,-114.6886829475016]],{color:'blue',weight:1,fillOpacity:0.05}).bindPopup('alt=60° az=90°').addTo(map);
+L.rectangle([[30.915584798295875,-119.86815608107487],[35.20330848745109,-114.75218191892516]],{color:'blue',weight:1,fillOpacity:0.05}).bindPopup('alt=60° az=180°').addTo(map);
+L.rectangle([[30.96749181208005,-119.93165505249843],[35.25521550123526,-114.8126602879455]],{color:'blue',weight:1,fillOpacity:0.05}).bindPopup('alt=60° az=270°').addTo(map);
+
+// Legend
+var legend = L.control({position:'bottomright'});
+legend.onAdd = function() {
+  var d = L.DomUtil.create('div','info legend');
+  d.innerHTML = '<b>Target alt</b><br>';
+  d.innerHTML += '<span style="color:red">■</span> 10°<br>';
+  d.innerHTML += '<span style="color:orange">■</span> 20°<br>';
+  d.innerHTML += '<span style="color:yellow">■</span> 30°<br>';
+  d.innerHTML += '<span style="color:green">■</span> 45°<br>';
+  d.innerHTML += '<span style="color:blue">■</span> 60°<br>';
+  return d;};
+legend.addTo(map);
+</script></body></html>
