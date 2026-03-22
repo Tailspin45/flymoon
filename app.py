@@ -1064,12 +1064,13 @@ if __name__ == "__main__":
             try:
                 sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
                 sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-                try:
-                    sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEPORT, 1)
-                except (AttributeError, OSError):
-                    pass
                 sock.bind(("0.0.0.0", p))
                 sock.close()
+                if p != 8000:
+                    print(
+                        f"⚠️  Port 8000 in use — starting on {p}. "
+                        "A stale app.py may be running; check: lsof -iTCP:8000 -sTCP:LISTEN"
+                    )
                 port = p
                 break
             except OSError:
@@ -1132,10 +1133,17 @@ if __name__ == "__main__":
 
     server = ReusableWSGIServer("0.0.0.0", port, app, handler=WSGIRequestHandler)
 
+    # Capture `os` in the closure now — import inside a signal handler can
+    # block on the import lock if another thread is mid-import when Ctrl-C
+    # fires.  Similarly, print() acquires the stdout lock, so background
+    # threads printing at the same instant cause the handler to deadlock
+    # before reaching os._exit().  os.write() to fd 2 (stderr) is
+    # async-signal-safe and never blocks.
+    import os as _os_for_shutdown
+
     def _shutdown(sig, frame):
-        print("\n🛑 Shutting down…")
-        import os as _os
-        _os._exit(0)
+        _os_for_shutdown.write(2, b"\nShutting down...\n")
+        _os_for_shutdown._exit(0)
 
     signal.signal(signal.SIGINT, _shutdown)
     signal.signal(signal.SIGTERM, _shutdown)
