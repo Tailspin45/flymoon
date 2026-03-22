@@ -1,0 +1,35 @@
+{
+  "duration_s": 7202.854320049286,
+  "consumers": [
+    {
+      "name": "detector",
+      "total_frames": 107981,
+      "stream_deaths": 0,
+      "max_gap_s": 2.0,
+      "avg_recovery_s": null,
+      "max_recovery_s": null,
+      "avg_fps": 15.0,
+      "status": "\u2705 PASS"
+    },
+    {
+      "name": "hires",
+      "total_frames": 229497,
+      "stream_deaths": 0,
+      "max_gap_s": 2.1,
+      "avg_recovery_s": null,
+      "max_recovery_s": null,
+      "avg_fps": 31.9,
+      "status": "\u2705 PASS"
+    },
+    {
+      "name": "preview",
+      "total_frames": 76501,
+      "stream_deaths": 0,
+      "max_gap_s": 3.7,
+      "avg_recovery_s": null,
+      "max_recovery_s": null,
+      "avg_fps": 10.6,
+      "status": "\u2705 PASS"
+    }
+  ]
+}

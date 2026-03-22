@@ -593,9 +593,35 @@ def telescope_goto():
                 logger.warning(f"[GoTo] Could not switch to scenery mode: {_m}")
 
             logger.info(f"[GoTo] Manual slewing to alt={alt:.1f}° az={az:.1f}°")
+            # After slew, solar/lunar tracking stays OFF until user re-enters sun/moon
+            # mode (Seestar app or Flymoon "Switch to Sun/Moon") unless resume_tracking
+            # is set — see _manual_goto_then_resume below.
+            resume = (data.get("resume_tracking") or "").strip().lower()
+            if resume not in ("", "sun", "moon"):
+                resume = ""
+
+            def _manual_goto_then_resume():
+                result = client.manual_goto(alt, az)
+                if result.get("status") != "arrived":
+                    logger.info(
+                        f"[GoTo] No resume_tracking — slew finished with {result!r}"
+                    )
+                    return
+                if resume == "sun":
+                    try:
+                        client.start_solar_mode()
+                        logger.info("[GoTo] Resumed solar tracking after Alt/Az slew")
+                    except Exception as ex:
+                        logger.warning(f"[GoTo] resume_tracking=sun failed: {ex}")
+                elif resume == "moon":
+                    try:
+                        client.start_lunar_mode()
+                        logger.info("[GoTo] Resumed lunar tracking after Alt/Az slew")
+                    except Exception as ex:
+                        logger.warning(f"[GoTo] resume_tracking=moon failed: {ex}")
+
             t = threading.Thread(
-                target=client.manual_goto,
-                args=(alt, az),
+                target=_manual_goto_then_resume,
                 daemon=True,
             )
             t.start()
@@ -603,6 +629,13 @@ def telescope_goto():
                 "success": True,
                 "manual_slew": True,
                 "message": f"Slewing to alt={alt:.1f}° az={az:.1f}°",
+                "tracking_note": (
+                    "Solar/lunar tracking is OFF during this slew (scenery mode). "
+                    "Use Switch to Sun/Moon in the UI or the Seestar app to turn tracking "
+                    "back on — or pass resume_tracking: 'sun' or 'moon' in this request "
+                    "to re-enable after the slew completes successfully."
+                ),
+                "resume_tracking": resume or None,
             }), 200
         else:
             return jsonify({"error": f"Unknown mode '{mode}'"}), 400
@@ -659,7 +692,16 @@ def telescope_nudge():
         angle = int(data.get("angle", 0))
         dur = int(data.get("dur_sec", 2))
         result = client.speed_move(speed, angle, dur)
-        return jsonify({"success": True, "result": result}), 200
+        return jsonify(
+            {
+                "success": True,
+                "result": result,
+                "tracking_note": (
+                    "Nudge switches to scenery mode — solar/lunar tracking is OFF until "
+                    "you use Switch to Sun/Moon or the Seestar app."
+                ),
+            }
+        ), 200
     except Exception as e:
         return handle_error(e)
 
@@ -1061,20 +1103,30 @@ def disconnect_telescope():
         return handle_error(e)
 
 
+_eclipse_cache: dict = {"data": None, "ts": 0.0}
+_ECLIPSE_CACHE_TTL = 60.0  # seconds
+
+
 def get_telescope_status():
     """GET /telescope/status - Get current telescope status."""
     logger.debug("[Telescope] GET /telescope/status")
 
     def _get_eclipse_data():
-        """Return upcoming eclipse dict or None (never raises)."""
+        """Return upcoming eclipse dict or None (never raises). Cached 60 s."""
+        import time as _time
+        now = _time.monotonic()
+        if now - _eclipse_cache["ts"] < _ECLIPSE_CACHE_TTL:
+            return _eclipse_cache["data"]
         try:
             from src.eclipse_monitor import get_eclipse_monitor
-
             lat, lon, elev = get_observer_coordinates()
-            return get_eclipse_monitor().get_upcoming_eclipse(lat, lon, elev)
+            result = get_eclipse_monitor().get_upcoming_eclipse(lat, lon, elev)
         except Exception as ex:
             logger.warning(f"[Telescope] Eclipse check failed: {ex}")
-            return None
+            result = None
+        _eclipse_cache["data"] = result
+        _eclipse_cache["ts"] = now
+        return result
 
     try:
         client = get_telescope_client()
@@ -1099,16 +1151,25 @@ def get_telescope_status():
                 200,
             )
 
-        status = client.get_status()
-        status["enabled"] = is_enabled()
-        status["mock_mode"] = is_mock_mode()
-        status["eclipse"] = _get_eclipse_data()
-
-        # Recording is active if either the RTSP recorder or the
-        # backend TransitRecorder (Seestar internal) is running.
+        # Use the heartbeat cache (updated every ~3 s) so this endpoint
+        # never blocks on live Seestar socket calls.  Calling get_status()
+        # directly triggered get_telemetry() which makes 4+ sequential
+        # network commands and caused the "Failed to fetch" toast.
+        cached = client.get_cached_telemetry() if hasattr(client, "get_cached_telemetry") else {}
         backend_recording = bool(getattr(client, "_recording", False))
-        status["recording"] = _recording_state["active"] or backend_recording
-        if _recording_state["active"] and _recording_state["start_time"]:
+        recording_active = _recording_state["active"] or backend_recording
+
+        status = {
+            "connected": client.is_connected(),
+            "recording": recording_active,
+            "viewing_mode": getattr(client, "_viewing_mode", cached.get("view_mode")),
+            "host": client.host,
+            "port": client.port,
+            "enabled": is_enabled(),
+            "mock_mode": is_mock_mode(),
+            "eclipse": _get_eclipse_data(),
+        }
+        if recording_active and _recording_state["start_time"]:
             status["recording_duration"] = (
                 datetime.now() - _recording_state["start_time"]
             ).total_seconds()
