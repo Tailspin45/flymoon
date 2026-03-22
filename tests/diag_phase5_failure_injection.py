@@ -90,9 +90,8 @@ def test_a_jsonrpc_reconnect(host: str, port: int, recovery_timeout: int) -> boo
     except Exception as exc:
         print(f"  [{_ts()}] WARNING: start_solar_mode raised {exc} — continuing anyway")
 
-    telem_before = client.get_telemetry()
-    print(f"  [{_ts()}] Telemetry before drop: connected={telem_before.get('connected')} "
-          f"mode={telem_before.get('client_viewing_mode')}")
+    print(f"  [{_ts()}] Telemetry before drop: connected={client._connected} "
+          f"mode={client._viewing_mode}")
 
     # Forcibly close the socket
     print(f"\n  [{_ts()}] Closing socket to simulate network drop …")
@@ -120,9 +119,8 @@ def test_a_jsonrpc_reconnect(host: str, port: int, recovery_timeout: int) -> boo
 
     if reconnected:
         print(f"  [{_ts()}] Reconnected in {recovery_s:.1f}s")
-        telem_after = client.get_telemetry()
-        print(f"  [{_ts()}] Telemetry after reconnect: connected={telem_after.get('connected')} "
-              f"mode={telem_after.get('client_viewing_mode')}")
+        print(f"  [{_ts()}] Telemetry after reconnect: connected={client._connected} "
+              f"mode={client._viewing_mode}")
     else:
         print(f"  [{_ts()}] {FAIL}: Heartbeat did NOT reconnect within {recovery_timeout}s")
 
@@ -281,9 +279,8 @@ def test_c_mode_cycling(host: str, port: int, cycles: int) -> bool:
                     mismatches.append(msg)
                     cycle_ok = False
 
-                telem = client.get_telemetry()
-                if not telem.get("connected"):
-                    msg = f"[cycle {cycle}] after '{mode}': telemetry.connected=False"
+                if not client._connected:
+                    msg = f"[cycle {cycle}] after '{mode}': client._connected=False"
                     errors.append(msg)
                     cycle_ok = False
 
