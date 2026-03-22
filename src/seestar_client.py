@@ -1850,8 +1850,13 @@ class SeestarClient:
             elif vm == "star":
                 self._viewing_mode = "star"
             elif vm in ("solar_sys", "solar"):
-                # Firmware uses "solar_sys" for solar tracking mode
-                self._viewing_mode = "sun"
+                # Firmware uses "solar_sys" for both solar and the brief
+                # transition period after start_lunar_mode.  Only overwrite
+                # _viewing_mode when we are not already in sun/moon — this
+                # prevents a race where firmware still reports solar_sys
+                # while we are mid-transition to lunar mode.
+                if self._viewing_mode not in ("sun", "moon"):
+                    self._viewing_mode = "sun"
             elif vm == "lunar":
                 self._viewing_mode = "moon"
             elif vm == "none":
