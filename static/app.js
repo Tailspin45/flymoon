@@ -317,6 +317,7 @@ function updateDataSourceButton() {
         sessionStorage.setItem('dsbDismissed', '1');
     };
     banner.querySelector('button').addEventListener('click', dismiss);
+    setTimeout(dismiss, 6000);
 })();
 
 document.addEventListener('DOMContentLoaded', updateDataSourceButton);

@@ -331,11 +331,11 @@ def main():
     print(f"{'='*60}\n")
 
     # Verify ffmpeg is available
+    global FFMPEG
     try:
         subprocess.run([FFMPEG, "-version"], capture_output=True, check=True)
     except (subprocess.CalledProcessError, FileNotFoundError):
         from src.constants import get_ffmpeg_path
-        global FFMPEG
         FFMPEG = get_ffmpeg_path() or "ffmpeg"
 
     # Create consumers

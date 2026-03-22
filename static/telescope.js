@@ -1580,6 +1580,10 @@ async function gotoExecute(overrideAlt, overrideAz) {
         const az  = overrideAz  !== undefined ? overrideAz  : parseFloat(azEl.value || azEl.placeholder);
         if (isNaN(alt) || isNaN(az)) { showStatus('Enter Alt and Az values', 'error', 3000); return; }
         body = { mode: 'altaz', alt, az };
+        // Alt/Az slew uses scenery mode (tracking off). Re-enter sun/moon after
+        // slew completes if we were tracking that body (see telescope_routes).
+        if (currentViewingMode === 'sun') body.resume_tracking = 'sun';
+        else if (currentViewingMode === 'moon') body.resume_tracking = 'moon';
     } else {
         const raEl  = document.getElementById('gotoRa');
         const decEl = document.getElementById('gotoDec');
@@ -1592,7 +1596,16 @@ async function gotoExecute(overrideAlt, overrideAz) {
     const result = await apiCall('/telescope/goto', 'POST', body);
     if (result) {
         if (result.manual_slew) {
-            showStatus(result.message || 'Manual slewing — watch telemetry for progress', 'info', 15000);
+            const msg = result.message || 'Manual slewing — watch telemetry for progress';
+            if (result.resume_tracking) {
+                showStatus(
+                    `${msg} — will re-enable ${result.resume_tracking} tracking when aligned`,
+                    'info',
+                    15000,
+                );
+            } else {
+                showStatus(msg, 'info', 15000);
+            }
         } else {
             showStatus('GoTo command sent', 'success', 3000);
         }
