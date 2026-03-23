@@ -5096,11 +5096,27 @@ function appendDetectionEvent(event) {
     const flightStr = flight ? `${flight.name} (${flight.aircraft_type})` : 'Unknown';
     const sepStr = flight ? `${flight.separation_deg}°` : '';
 
+    // D3: numeric confidence score badge
+    const cscore = event.confidence_score;
+    const cCol = (cscore >= 0.65) ? '#4caf50' : (cscore >= 0.4) ? '#ff9800' : '#9e9e9e';
+    const cBadge = (cscore != null)
+        ? ` <span style="color:${cCol};font-size:0.82em" title="Confidence score">${Math.round(cscore * 100)}%</span>`
+        : '';
+    // D3: prediction match badge
+    const predFid = event.predicted_flight_id;
+    const evFlight = event.flight_info;
+    const predMatched = predFid && evFlight && evFlight.name && predFid === evFlight.name;
+    const predBadge = predFid
+        ? (predMatched
+            ? ' <span style="color:#4caf50;font-size:0.75em" title="Prediction matched">✅match</span>'
+            : ` <span style="color:#ff9800;font-size:0.75em" title="Primed for ${predFid}">🎯primed</span>`)
+        : '';
+
     const row = document.createElement('div');
     row.className = 'detect-event-row';
     row.innerHTML =
         `<span class="detect-event-time">${ts}</span>` +
-        `<span class="detect-event-flight">${flightStr}</span>` +
+        `<span class="detect-event-flight">${flightStr}${cBadge}${predBadge}</span>` +
         `<span class="detect-event-sep">${sepStr}</span>`;
 
     // If there's a recording file, make it clickable
@@ -5581,6 +5597,114 @@ async function runHarnessValidate() {
     } finally {
         _harnessDisableButtons(false);
     }
+}
+
+// ============================================================================
+// D4 — Detection event history log panel
+// ============================================================================
+
+let _detEventsPanel = null;
+let _detEventsFetched = false;
+
+/**
+ * Create or toggle the detection-event-history panel inside detectPanel.
+ * Fetches from /api/transit-events the first time it's opened.
+ */
+window.toggleDetectionEventHistory = async function() {
+    const detectPanel = document.getElementById('detectPanel');
+    if (!detectPanel) return;
+
+    if (_detEventsPanel) {
+        _detEventsPanel.style.display =
+            _detEventsPanel.style.display === 'none' ? '' : 'none';
+        return;
+    }
+
+    _detEventsPanel = document.createElement('div');
+    _detEventsPanel.id = 'detEventsPanel';
+    _detEventsPanel.style.cssText =
+        'margin:8px 0;background:#1a1a2e;border:1px solid #2a2a4a;border-radius:6px;padding:8px;';
+
+    const title = document.createElement('div');
+    title.style.cssText = 'font-weight:600;font-size:0.85em;color:#90caf9;margin-bottom:6px;';
+    title.textContent = '📋 Detection Event History (last 7 days)';
+    _detEventsPanel.appendChild(title);
+
+    const tableWrap = document.createElement('div');
+    tableWrap.id = 'detEventsTableWrap';
+    tableWrap.style.cssText = 'overflow-x:auto;max-height:260px;overflow-y:auto;';
+    tableWrap.innerHTML = '<div style="color:#555;font-size:0.8em;padding:6px">Loading…</div>';
+    _detEventsPanel.appendChild(tableWrap);
+
+    detectPanel.appendChild(_detEventsPanel);
+    await _refreshDetectionEventHistory();
+};
+
+async function _refreshDetectionEventHistory() {
+    const wrap = document.getElementById('detEventsTableWrap');
+    if (!wrap) return;
+
+    let events = [];
+    try {
+        const resp = await fetch('/api/transit-events');
+        if (resp.ok) events = await resp.json();
+    } catch (_) {
+        wrap.innerHTML = '<div style="color:#e57373;font-size:0.8em;padding:4px">Failed to load events</div>';
+        return;
+    }
+
+    if (!events.length) {
+        wrap.innerHTML = '<div style="color:#555;font-size:0.8em;padding:4px">No detection events recorded yet</div>';
+        return;
+    }
+
+    const cols = [
+        { key: 'timestamp',          label: 'Time',         fmt: v => v ? new Date(v).toLocaleString('en-US', {month:'short',day:'numeric',hour:'2-digit',minute:'2-digit',second:'2-digit',hour12:false}) : '—' },
+        { key: 'detected_flight_id', label: 'Flight',       fmt: v => v || '<span style="color:#555">unconfirmed</span>' },
+        { key: 'predicted_flight_id',label: 'Predicted',    fmt: v => v || '—' },
+        { key: 'confidence_score',   label: 'Score',        fmt: v => {
+            const n = parseFloat(v);
+            if (isNaN(n)) return '—';
+            const col = n >= 0.65 ? '#4caf50' : n >= 0.4 ? '#ff9800' : '#9e9e9e';
+            return `<span style="color:${col};font-weight:600">${(n*100).toFixed(0)}%</span>`;
+        }},
+        { key: 'confidence',         label: 'Grade',        fmt: v => v === 'strong'
+            ? '<span style="color:#4caf50">strong</span>'
+            : '<span style="color:#9e9e9e">weak</span>' },
+        { key: 'centre_ratio',       label: 'CR',           fmt: v => parseFloat(v).toFixed(1) || '—' },
+        { key: 'detection_confirmed',label: 'Confirmed',    fmt: v => v === '1' || v === 1
+            ? '✅' : '⬜' },
+        { key: 'notes',              label: 'Notes',        fmt: v => v
+            ? `<span style="color:#90caf9;font-size:0.85em">${v}</span>`
+            : '' },
+    ];
+
+    const tbl = document.createElement('table');
+    tbl.style.cssText = 'width:100%;border-collapse:collapse;font-size:0.78em;';
+    const thead = tbl.createTHead();
+    const hrow = thead.insertRow();
+    cols.forEach(c => {
+        const th = document.createElement('th');
+        th.textContent = c.label;
+        th.style.cssText = 'padding:3px 6px;text-align:left;color:#90caf9;border-bottom:1px solid #2a2a4a;white-space:nowrap;position:sticky;top:0;background:#1a1a2e;';
+        hrow.appendChild(th);
+    });
+
+    const tbody = tbl.createTBody();
+    events.slice(0, 100).forEach(ev => {
+        const tr = tbody.insertRow();
+        tr.style.cssText = 'border-bottom:1px solid #1e1e3a;';
+        tr.onmouseenter = () => tr.style.background = '#1e1e3a';
+        tr.onmouseleave = () => tr.style.background = '';
+        cols.forEach(c => {
+            const td = tr.insertCell();
+            td.style.cssText = 'padding:3px 6px;white-space:nowrap;';
+            td.innerHTML = c.fmt(ev[c.key] ?? '');
+        });
+    });
+
+    wrap.innerHTML = '';
+    wrap.appendChild(tbl);
 }
 
 // ============================================================================

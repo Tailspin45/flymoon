@@ -40,6 +40,8 @@ import time
 from datetime import datetime
 from typing import Any, Callable, Deque, Dict, List, Optional
 
+import math
+
 import cv2
 import numpy as np
 
@@ -47,6 +49,52 @@ from src import logger
 from src.constants import get_ffmpeg_path
 
 FFMPEG = get_ffmpeg_path() or "ffmpeg"
+
+# ---------------------------------------------------------------------------
+# D1: PyWavelets import — optional; falls back to raw Signal B if unavailable
+# ---------------------------------------------------------------------------
+try:
+    import pywt as _pywt
+
+    _PYWT_AVAILABLE = True
+except ImportError:
+    _pywt = None  # type: ignore[assignment]
+    _PYWT_AVAILABLE = False
+
+
+def _wavelet_detrend(buf: "collections.deque") -> float:
+    """Return wavelet-detrended magnitude of the last sample in *buf*.
+
+    Applies a level-3 sym4 DWT to the buffer, zeroes the approximation
+    (slow atmospheric / cloud-edge trend), reconstructs the detail-only
+    signal, and returns abs(last sample).  Falls back to raw abs(buf[-1])
+    if pywt is unavailable or the buffer is too short.
+
+    At 15 fps, level-3 separates:
+      • Approx  (> ~2 s)  — cloud edges, background drift        [removed]
+      • Detail  (0.13–2 s)— transit impulse, atmospheric shimmer [kept]
+    """
+    if not _PYWT_AVAILABLE or len(buf) < 16:
+        return float(abs(buf[-1]))
+    try:
+        arr = np.array(buf, dtype=np.float32)
+        # Cap level so pywt never hits boundary-effect territory
+        max_lvl = _pywt.dwt_max_level(len(arr), "sym4")
+        level = max(1, min(3, max_lvl))
+        coeffs = _pywt.wavedec(arr, "sym4", mode="periodization", level=level)
+        coeffs[0][:] = 0.0  # zero approximation (slow trend)
+        detail = _pywt.waverec(coeffs, "sym4", mode="periodization")
+        # abs() converts bipolar detail to positive magnitude
+        return float(abs(detail[-1])) if len(detail) > 0 else float(abs(arr[-1]))
+    except Exception:
+        return float(abs(buf[-1]))
+
+
+# D2: Matched-filter gate template durations (frames at 15fps)
+# Covers 0.27 s (fast crossing) → 2.0 s (large aircraft near limb)
+_MF_TEMPLATES: tuple = (4, 7, 12, 18, 30)
+# Fraction of template frames that must be "triggered" for a match
+_MF_THRESHOLD_FRAC: float = 0.70
 
 # ---------------------------------------------------------------------------
 # Detection parameters
@@ -345,6 +393,7 @@ class DetectionEvent:
         "flight_info",
         "frame_idx",
         "confidence",
+        "confidence_score",   # D3: numeric [0,1] probability score
         "centre_ratio",
         "frame_path",
         "diff_path",
@@ -361,6 +410,7 @@ class DetectionEvent:
         threshold_b: float,
         frame_idx: int,
         confidence: str = "weak",
+        confidence_score: float = 0.0,
         centre_ratio: float = 0.0,
     ):
         self.timestamp = timestamp
@@ -370,6 +420,7 @@ class DetectionEvent:
         self.threshold_b = threshold_b
         self.frame_idx = frame_idx
         self.confidence = confidence
+        self.confidence_score = confidence_score
         self.centre_ratio = centre_ratio
         self.recording_file: Optional[str] = None
         self.flight_info: Optional[Dict] = None
@@ -389,7 +440,9 @@ class DetectionEvent:
             "recording_file": self.recording_file,
             "flight_info": self.flight_info,
             "confidence": self.confidence,
+            "confidence_score": round(self.confidence_score, 3),  # D3
             "centre_ratio": round(self.centre_ratio, 2),
+            "predicted_flight_id": getattr(self, "predicted_flight_id", None),
         }
         if self.frame_path:
             d["frame_path"] = self.frame_path
@@ -495,6 +548,15 @@ class TransitDetector:
 
         # B4 — Prediction-detection cross-link
         self._primed_events: dict = {}  # {flight_id: primed-event dict}
+
+        # D1 — Wavelet detrending: raw Signal-B ring buffer for pywt
+        _wt_size = 64  # 4.3 s at 15 fps; level-3 sym4 requires >= 32
+        self._wt_buf: collections.deque = collections.deque(maxlen=_wt_size)
+
+        # D2 — Matched-filter gate: per-frame triggered boolean history
+        self._triggered_buf: collections.deque = collections.deque(
+            maxlen=max(_MF_TEMPLATES) + 5
+        )
 
         # Active recording process (for auto-record on detection)
         self._rec_process: Optional[subprocess.Popen] = None
@@ -1051,7 +1113,14 @@ class TransitDetector:
         diff_b -= mean_shift_b
         self._current_diff_b = diff_b
         weighted = np.abs(diff_b) * weight_2d[:, :, np.newaxis]
-        score_b = float(weighted.mean())
+        score_b_raw = float(weighted.mean())
+
+        # D1 — Wavelet detrending: push raw value, compute detrended magnitude.
+        # The wavelet detail signal removes slow drifts (cloud edges, background
+        # lighting ramp) that inflate the EMA reference and cause false positives.
+        # Falls back to raw score_b if pywt is unavailable.
+        self._wt_buf.append(score_b_raw)
+        score_b = _wavelet_detrend(self._wt_buf)
 
         # --- Spatial concentration: inner disk vs limb/edge ---
         abs_diff_gray = np.abs(diff_b).mean(axis=2)  # H×W
@@ -1169,6 +1238,22 @@ class TransitDetector:
             self._consec_above = 0
             self._track_agree_count = 0  # reset track on any threshold break
 
+        # D2 — Matched-filter gate: record per-frame trigger state and check
+        # whether any template duration has >= 70% triggered frames.  This
+        # catches slow transits (>7 frames) that momentarily dip below threshold
+        # during a seeing spike, as well as very fast crossings (< consec_required).
+        self._triggered_buf.append(triggered)
+        mf_gate = False
+        mf_duration_f = 0
+        buf_list = list(self._triggered_buf)
+        for _n in _MF_TEMPLATES:
+            if len(buf_list) >= _n:
+                _n_hit = sum(buf_list[-_n:])
+                if _n_hit >= max(3, int(_MF_THRESHOLD_FRAC * _n)):
+                    mf_gate = True
+                    mf_duration_f = _n
+                    break
+
         # B4: raise sensitivity during a primed prediction window
         _now = time.time()
         _active_prime = next(
@@ -1185,22 +1270,31 @@ class TransitDetector:
             else self.consec_frames_required
         )
 
-        if self._consec_above >= effective_consec:
+        consec_gate = self._consec_above >= effective_consec
+
+        if consec_gate or mf_gate:
             # --- Centroid track gate ---
             # Require that a minimum fraction of streak frames showed consistent
             # directional motion.  Noise produces _track_agree_count ~ 0 even
             # when both signals are spuriously elevated; real transits produce
             # monotonically moving centroids so agree_count climbs reliably.
+            # For matched-filter-only events the track requirement is halved
+            # (slow aircraft move centroids more gradually).
             min_agree = int(effective_consec * self.track_min_agree_frac)
+            if mf_gate and not consec_gate:
+                min_agree = max(1, min_agree // 2)
             track_ok = self._track_agree_count >= min_agree
 
-            self._consec_above = 0  # reset so next event starts clean
-            self._track_agree_count = 0
+            if consec_gate:
+                self._consec_above = 0  # reset so next event starts clean
+                self._track_agree_count = 0
+            if mf_gate:
+                self._triggered_buf.clear()  # prevent immediate re-trigger
 
             if not track_ok:
                 logger.debug(
                     f"[Detector] Track gate suppressed: agree={self._track_agree_count} "
-                    f"need={min_agree}/{effective_consec}"
+                    f"need={min_agree} (consec={consec_gate}, mf={mf_gate})"
                 )
             else:
                 now = time.time()
@@ -1212,6 +1306,9 @@ class TransitDetector:
                     self._fire_detection(
                         score_a, score_b, thresh_a, thresh_b, centre_ratio,
                         predicted_flight_id=predicted_fid,
+                        mf_gate=mf_gate,
+                        mf_duration_f=mf_duration_f,
+                        effective_consec=effective_consec,
                     )
 
     @staticmethod
@@ -1238,14 +1335,40 @@ class TransitDetector:
         thresh_b: float,
         centre_ratio: float,
         predicted_flight_id: Optional[str] = None,
+        mf_gate: bool = False,
+        mf_duration_f: int = 0,
+        effective_consec: int = 0,
     ) -> None:
         """Handle a confirmed transit detection."""
         self._detection_count += 1
         ts = datetime.now()
 
-        # Confidence based on signal-to-threshold ratio
-        sig_ratio = min(score_a / max(thresh_a, 0.001), score_b / max(thresh_b, 0.001))
-        confidence = "strong" if sig_ratio > 2.0 else "weak"
+        # D3 — Probabilistic confidence score: sigmoid of multi-signal SNR.
+        # Combines signal-to-threshold ratio, spatial centre/edge ratio, and
+        # centroid track agreement into a [0,1] probability score.
+        snr_a = score_a / max(thresh_a, 0.001)
+        snr_b = score_b / max(thresh_b, 0.001)
+        snr = min(snr_a, snr_b)
+        ratio_factor = min(centre_ratio / 5.0, 1.0)
+        _ec = effective_consec or self.consec_frames_required
+        track_factor = min(self._track_agree_count / max(_ec, 1), 1.0)
+        # Sigmoid logit: centred so SNR=1.5+good_ratio+good_track → score ≈ 0.5
+        _logit = 0.5 * snr + 0.3 * ratio_factor + 0.2 * track_factor - 1.2
+        if mf_gate and not (self._consec_above >= _ec):
+            _logit -= 0.15  # slight penalty for matched-filter-only event
+        _logit = max(-10.0, min(10.0, _logit))
+        confidence_score = round(1.0 / (1.0 + math.exp(-_logit)), 3)
+
+        # Categorical confidence label kept for backward compatibility
+        confidence = "strong" if snr > 2.0 else "weak"
+
+        # Build notes for the event log
+        _notes_parts = []
+        if predicted_flight_id:
+            _notes_parts.append("primed")
+        if mf_gate:
+            _notes_parts.append(f"matched_filter:{mf_duration_f}f")
+        _notes = ",".join(_notes_parts)
 
         event = DetectionEvent(
             timestamp=ts,
@@ -1255,6 +1378,7 @@ class TransitDetector:
             threshold_b=thresh_b,
             frame_idx=self._frame_idx,
             confidence=confidence,
+            confidence_score=confidence_score,
             centre_ratio=centre_ratio,
         )
         # Attach prediction cross-link (B4)
@@ -1262,10 +1386,10 @@ class TransitDetector:
 
         logger.info(
             f"[Detector] TRANSIT DETECTED at {ts.strftime('%H:%M:%S.%f')[:-3]} "
-            f"[{confidence}] "
+            f"[{confidence}|score={confidence_score:.2f}] "
             f"(A={score_a:.4f}/{thresh_a:.4f}, B={score_b:.4f}/{thresh_b:.4f}, "
-            f"CR={centre_ratio:.2f}, "
-            f"consec={self.consec_frames_required}f/{self.consec_frames_required/ANALYSIS_FPS:.0f}ms"
+            f"CR={centre_ratio:.2f}, gate={'mf' if mf_gate else 'consec'}"
+            + (f":{mf_duration_f}f" if mf_gate else "")
             + (f", primed={predicted_flight_id}" if predicted_flight_id else "") + ")"
         )
 
@@ -1716,6 +1840,10 @@ class TransitDetector:
             pred_sep = ""
             if pred_fid and pred_fid in self._primed_events:
                 pred_sep = round(self._primed_events[pred_fid].get("sep_deg", 0), 4)
+            # Reconstruct notes from the event's stored state
+            _n_parts = []
+            if pred_fid:
+                _n_parts.append("primed")
             row = {
                 "timestamp": event.timestamp.isoformat(),
                 "detected_flight_id": flight.get("name", ""),
@@ -1723,10 +1851,11 @@ class TransitDetector:
                 "prediction_sep_deg": pred_sep,
                 "detection_confirmed": 1 if flight.get("name") else 0,
                 "confidence": event.confidence,
+                "confidence_score": getattr(event, "confidence_score", ""),  # D3
                 "signal_a": round(event.signal_a, 5),
                 "signal_b": round(event.signal_b, 5),
                 "centre_ratio": round(event.centre_ratio, 3),
-                "notes": "primed" if pred_fid else "",
+                "notes": ",".join(_n_parts),
             }
             log_transit_event(row, dest)
             logger.debug(f"[Detector] Event logged → {dest}")

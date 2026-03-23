@@ -947,6 +947,47 @@ def telescope_page():
     return redirect("/")
 
 
+@app.route("/api/transit-events")
+def api_transit_events():
+    """Return detection events from transit_events_*.csv logs (last 7 days).
+
+    D4 — Detection event log UI data source.
+    """
+    import csv
+    import glob
+
+    from src.constants import TRANSIT_EVENTS_LOGFILENAME
+
+    pattern = TRANSIT_EVENTS_LOGFILENAME.replace("{date_}", "*")
+    files = sorted(glob.glob(pattern), reverse=True)[:7]
+
+    events = []
+    for filepath in files:
+        try:
+            with open(filepath, newline="", encoding="utf-8") as fh:
+                for row in csv.DictReader(fh):
+                    events.append(
+                        {
+                            "timestamp": row.get("timestamp", ""),
+                            "detected_flight_id": row.get("detected_flight_id", ""),
+                            "predicted_flight_id": row.get("predicted_flight_id", ""),
+                            "prediction_sep_deg": row.get("prediction_sep_deg", ""),
+                            "detection_confirmed": row.get("detection_confirmed", ""),
+                            "confidence": row.get("confidence", ""),
+                            "confidence_score": row.get("confidence_score", ""),
+                            "signal_a": row.get("signal_a", ""),
+                            "signal_b": row.get("signal_b", ""),
+                            "centre_ratio": row.get("centre_ratio", ""),
+                            "notes": row.get("notes", ""),
+                        }
+                    )
+        except OSError:
+            continue
+
+    events.sort(key=lambda x: x["timestamp"], reverse=True)
+    return jsonify(events[:500])
+
+
 @app.route("/transit-log")
 def transit_log():
     """Return deduplicated near-miss log: best angular separation per flight per day."""

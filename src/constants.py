@@ -72,10 +72,11 @@ TRANSIT_EVENTS_FIELDS = [
     "prediction_sep_deg", # best predicted angular separation (° or empty)
     "detection_confirmed",# 1 = enrichment found a nearby aircraft, 0 = unconfirmed
     "confidence",         # 'strong' or 'weak' (detector signal-to-threshold ratio)
+    "confidence_score",   # D3: numeric probability in [0,1] (sigmoid of SNR/ratio/track)
     "signal_a",           # raw Signal A value at detection time
-    "signal_b",           # raw Signal B value at detection time
+    "signal_b",           # raw Signal B value at detection time (wavelet-detrended if pywt)
     "centre_ratio",       # inner/outer disc ratio at detection time
-    "notes",              # free-text annotations
+    "notes",              # free-text annotations (includes 'matched_filter' when D2 fires)
 ]
 
 # Astro data
