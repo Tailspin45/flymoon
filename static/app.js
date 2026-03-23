@@ -508,7 +508,7 @@ function renderRichFlightRow(item, bodyTable) {
     }
     row.appendChild(vsCell);
 
-    // Col 8 — Sky Δ
+    // Col 8 — Sky Δ  (separation + optional IMM ±1σ uncertainty band)
     const skyCell = document.createElement('td');
     skyCell.style.whiteSpace = 'nowrap';
     if (item.alt_diff != null && item.az_diff != null) {
@@ -516,7 +516,13 @@ function renderRichFlightRow(item, bodyTable) {
         const sep = item.angular_separation;
         // Color by angular separation: HIGH ≤2°, MEDIUM ≤4°
         const c = (sep != null && sep <= 2.0) ? '#4caf50' : (sep != null && sep <= 4.0) ? '#ff9800' : '#888';
-        skyCell.innerHTML = `<span style="color:${c}" title="Δalt ${ad}°, Δaz ${azd}°${sep != null ? ', sep ' + sep.toFixed(1) + '°' : ''}">↕${ad}° ↔${azd}°</span>`;
+        const sigma = item.sep_1sigma;
+        const sigmaStr = (sigma != null && sigma > 0)
+            ? ` <span style="color:#9e9e9e;font-size:0.82em" title="IMM 1σ position uncertainty">±${sigma.toFixed(2)}°</span>`
+            : '';
+        skyCell.innerHTML =
+            `<span style="color:${c}" title="Δalt ${ad}°, Δaz ${azd}°${sep != null ? ', sep ' + sep.toFixed(2) + '°' : ''}">↕${ad}° ↔${azd}°</span>` +
+            sigmaStr;
     } else {
         skyCell.innerHTML = '<span style="color:#444">—</span>';
     }
@@ -1213,7 +1219,11 @@ function updateFlightRow(row, flight) {
                 cell.style.fontStyle = "";
             }
         } else if (column === "angular_separation") {
-            cell.textContent = value.toFixed(2) + "º";
+            const sigma1 = flight.sep_1sigma;
+            const sigTxt = (sigma1 != null && sigma1 > 0)
+                ? ` <span style="color:#9e9e9e;font-size:0.82em" title="IMM 1σ uncertainty">±${sigma1.toFixed(2)}°</span>`
+                : '';
+            cell.innerHTML = value.toFixed(2) + "º" + sigTxt;
         } else {
             cell.textContent = value;
         }
@@ -1679,7 +1689,7 @@ const HELP_CONTENT = {
 <p>Each row records the <strong>closest angular approach</strong> for that flight:</p>
 <ul>
 <li><strong>Alt° / Az°</strong> — altitude and azimuth separation at closest approach</li>
-<li><strong>Sep°</strong> — total angular separation (red &lt;0.25° = inside the disk; orange &lt;0.5° = grazing limb)</li>
+<li><strong>Sep°</strong> — total angular separation (red &lt;0.25° = inside the disk; orange &lt;0.5° = grazing limb). <span style="color:#9e9e9e">±σ</span> after the value is the 1-sigma position uncertainty from the IMM Kalman filter — narrows over successive ADS-B updates.</li>
 <li><strong>ETA min</strong> — minutes to predicted closest approach at time of detection</li>
 <li><strong>Scope</strong> — whether the Seestar was connected and in which mode</li>
 </ul>

@@ -146,7 +146,9 @@ def transit_corridor_bbox(
     # Distance from observer to the transit ground point.
     # tan(alt) = aircraft_altitude / ground_distance  →  d = alt / tan(alt)
     # Clamp alt to avoid division by zero / absurdly large distances.
-    alt_clamped = max(target_alt_deg, 3.0)
+    # C4: raised minimum from 3° to 5° — below 5° the bbox geometry degrades
+    # significantly and including aircraft from the full hemisphere is safer.
+    alt_clamped = max(target_alt_deg, 5.0)
     from math import tan
 
     ground_dist_km = (aircraft_altitude_m / 1000.0) / tan(radians(alt_clamped))
@@ -174,11 +176,24 @@ def transit_corridor_bbox(
     travel_km = max_speed_kmh * (time_window_minutes / 60.0)
     # Also include the ground_dist uncertainty (aircraft may be at 8–12 km alt)
     radius_km = travel_km + ground_dist_km * 0.2  # 20% alt uncertainty margin
+
+    # C4: low-elevation azimuth-margin buffer
+    # When the target is near the horizon, the azimuth uncertainty from pointing
+    # error or atmospheric refraction maps to a large lateral offset at the
+    # transit ground point.  Scale the lateral (lon) extent by an additional
+    # factor: azimuth_scale = max(1.0, sin(15°)/sin(alt)) capped at 3×.
+    # This widens the bbox east/west to capture aircraft on skewed approach
+    # paths that a nominal-azimuth box would miss.
+    if target_alt_deg < 15.0:
+        az_scale = min(3.0, sin(radians(15.0)) / max(sin(radians(target_alt_deg)), 0.087))
+    else:
+        az_scale = 1.0
+
     radius_km = min(radius_km, 600.0)
 
     # Convert radius to degrees (approximate, good enough for a bbox)
     lat_delta = radius_km / 111.32
-    lon_delta = radius_km / (111.32 * cos(radians(tgp_lat)) + 1e-9)
+    lon_delta = (radius_km * az_scale) / (111.32 * cos(radians(tgp_lat)) + 1e-9)
 
     return AreaBoundingBox(
         lat_lower_left=tgp_lat - lat_delta,

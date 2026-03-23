@@ -347,15 +347,47 @@ def check_transit(
     # Base altitude (metres); used as floor/ceiling reference for clamping
     _base_elevation = float(flight.get("elevation") or flight.get("aircraft_elevation", 0) or 0)
 
+    # C1/C2 — IMM Kalman filter: update per-aircraft state and use for prediction
+    # The filter is advanced 5 s per loop iteration (matching INTERVAL_IN_SECS)
+    # for numerically stable uncertainty growth over the 15-minute window.
+    _imm_state = None
+    _imm_running = None   # carries the propagated IMM state step-by-step
+    _min_sep_sigma_m: Optional[float] = None
+    _icao24 = (flight.get("icao24") or "").strip().lower()
+    if _icao24:
+        try:
+            _obs_lat = float(os.getenv("OBSERVER_LATITUDE", "0"))
+            _obs_lon = float(os.getenv("OBSERVER_LONGITUDE", "0"))
+            from src.imm_kalman import (
+                advance_state as _imm_advance,
+                extract_position as _imm_extract,
+                update_filter as _imm_update,
+            )
+            _imm_state = _imm_update(_icao24, flight, _obs_lat, _obs_lon)
+            _imm_running = _imm_state  # will be advanced each step
+        except Exception as _e:
+            logger.debug(f"[IMM] init failed for {_icao24}: {_e}")
+            _imm_state = None
+
     for idx, minute in enumerate(window_time):
-        # Get future position of plane
-        future_lat, future_lon = predict_position(
-            lat=flight["latitude"],
-            lon=flight["longitude"],
-            speed=flight["speed"],
-            direction=flight["direction"],
-            minutes=minute,
-        )
+        # C1: use IMM for position prediction when filter is available.
+        # Advance the running state by INTERVAL_IN_SECS on every step except
+        # the first (minute == 0 → use current filter position directly).
+        if _imm_running is not None:
+            if idx > 0:
+                _imm_running = _imm_advance(_imm_running, float(INTERVAL_IN_SECS))
+            future_lat, future_lon, _step_sigma_m = _imm_extract(
+                _imm_running, _obs_lat, _obs_lon
+            )
+        else:
+            future_lat, future_lon = predict_position(
+                lat=flight["latitude"],
+                lon=flight["longitude"],
+                speed=flight["speed"],
+                direction=flight["direction"],
+                minutes=minute,
+            )
+            _step_sigma_m = None
 
         future_time = ref_datetime + timedelta(minutes=minute)
 
@@ -438,6 +470,7 @@ def check_transit(
         # (no hard gate — classification handles thresholds)
         if future_alt > 0 and sep < min_sep_seen:
             min_sep_seen = sep
+            _min_sep_sigma_m = _step_sigma_m
             response = {
                 "id": flight.get("name") or flight.get("id", ""),
                 "fa_flight_id": flight.get("fa_flight_id", ""),
@@ -482,6 +515,27 @@ def check_transit(
         response["is_possible_transit"] = (
             0 if level == PossibilityLevel.UNLIKELY.value else 1
         )
+        # C2: angular uncertainty at closest approach (degrees, 1σ)
+        if _min_sep_sigma_m is not None:
+            try:
+                from src.imm_kalman import angular_sigma as _angular_sigma
+                from math import sqrt as _sqrt
+                # Slant distance from observer to aircraft (metres)
+                _elev_m = float(response.get("aircraft_elevation") or 0)
+                _horiz_km = float(response.get("angular_separation", 0))
+                # Approximate slant using elevation and (angular_separation gives degrees;
+                # compute rough horizontal distance from altitude and target altitude)
+                _target_alt_deg = float(response.get("target_alt", 1))
+                _plane_elev_m = _elev_m if _elev_m > 0 else 10000.0
+                _dist_m = _plane_elev_m / max(
+                    __import__("math").sin(__import__("math").radians(abs(_target_alt_deg))), 0.05
+                )
+                _sep_1sigma_deg = _angular_sigma(_min_sep_sigma_m, _dist_m)
+                response["sep_1sigma"] = round(_sep_1sigma_deg, 4)
+            except Exception:
+                response["sep_1sigma"] = None
+        else:
+            response["sep_1sigma"] = None
         return response
 
     # Return closest approach data even if threshold not met
@@ -544,6 +598,13 @@ def get_transits(
     data_source: str = "hybrid",
     enrich: bool = False,
 ) -> Dict[str, Any]:
+    # Periodically clean up stale IMM filter states
+    try:
+        from src.imm_kalman import cleanup_stale_filters as _imm_cleanup
+        _imm_cleanup()
+    except Exception:
+        pass
+
     # FlightAware is never used for prediction. Only for post-capture enrichment.
     if data_source == "fa-only":
         logger.info(
