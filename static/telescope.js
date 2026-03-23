@@ -4992,6 +4992,9 @@ async function pollDetectionStatus() {
         // Disc-lost watchdog (T03)
         updateDiscLostWarning(result.disc_lost_warning || false, result.disk_detected || false);
 
+        // B4: primed prediction window indicator
+        updatePrimedEventBadge(result.primed_events || []);
+
         updateDetectionUI();
     } catch (e) {
         // Silent — polling failure is transient; don't reset isDetecting
@@ -5024,12 +5027,45 @@ function updateDiscLostWarning(lostWarning, diskDetected) {
     }
 }
 
+function updatePrimedEventBadge(primedEvents) {
+    const badgeId = 'primedEventBadge';
+    let el = document.getElementById(badgeId);
+
+    if (primedEvents && primedEvents.length > 0) {
+        const ev = primedEvents[0]; // show first/nearest
+        const etaLabel = ev.eta_s > 0 ? `ETA ${ev.eta_s}s` : 'NOW';
+        const text = `Primed: ${ev.flight_id}  ${etaLabel}  (${ev.sep_deg}°)`;
+        if (!el) {
+            el = document.createElement('div');
+            el.id = badgeId;
+            el.style.cssText =
+                'background:#1c3a1c; color:#86efac; border:1px solid #22c55e; ' +
+                'border-radius:6px; padding:6px 10px; margin:6px 0; font-size:0.82em; ' +
+                'display:flex; align-items:center; gap:6px;';
+            el.innerHTML =
+                '<span style="font-size:1.1em;">🎯</span>' +
+                `<span id="${badgeId}Text"></span>`;
+            const log = document.getElementById('detectEventLog');
+            if (log && log.parentNode) log.parentNode.insertBefore(el, log);
+        }
+        const textEl = document.getElementById(`${badgeId}Text`);
+        if (textEl) textEl.textContent = text;
+    } else if (el) {
+        el.remove();
+    }
+}
+
 function onTransitDetected(event) {
     const ts = new Date(event.timestamp).toLocaleTimeString();
     const flight = event.flight_info;
+    const predicted = event.predicted_flight_id;
     let msg = `🎯 Transit detected at ${ts}`;
     if (flight) {
         msg += ` — ${flight.name} (${flight.aircraft_type}) ${flight.separation_deg}°`;
+    }
+    if (predicted) {
+        const matchLabel = flight && flight.name === predicted ? '✅ prediction match' : `predicted: ${predicted}`;
+        msg += `  [${matchLabel}]`;
     }
     showStatus(msg, 'success', 10000);
 

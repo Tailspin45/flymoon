@@ -634,6 +634,16 @@ class TransitDetector:
                 "track_min_mag": self.track_min_mag,
                 "track_min_agree_frac": self.track_min_agree_frac,
             },
+            # B4: active primed prediction windows (flight_id → ETA info)
+            "primed_events": [
+                {
+                    "flight_id": e["flight_id"],
+                    "eta_s": round(e["expires_at"] - time.time() - 30, 0),
+                    "sep_deg": round(e.get("sep_deg", 0), 2),
+                }
+                for e in self._primed_events.values()
+                if time.time() <= e["expires_at"]
+            ],
         }
 
     def get_latest_hires_jpeg(self) -> Optional[bytes]:

@@ -262,24 +262,24 @@ const DATA_SOURCES = {
     },
     'opensky-only': {
         icon: '🌐',
-        label: 'OpenSky Only',
+        label: 'Multi-Source (no FA)',
         cost: 'Free',
         color: '#10b981',
-        note: 'Positions every 60s, no aircraft type or airline data. Zero FlightAware cost.',
+        note: 'Queries OpenSky + ADSB-One (airplanes.live) + ADS-B Exchange (if key set) in parallel. No FlightAware enrichment. Zero cost.',
     },
     'hybrid': {
         icon: '⚡',
-        label: 'Hybrid (OpenSky + FA)',
+        label: 'Hybrid (Multi-Source + FA)',
         cost: 'Free (within $5 credit)',
         color: '#a78bfa',
-        note: 'OpenSky for continuous positions; FlightAware only on HIGH-probability transits. Typically <250 FA calls/month — covered by the free $5 credit.',
+        note: 'OpenSky + ADSB-One + ADS-B Exchange for positions; FlightAware only on HIGH-probability transits. Typically <250 FA calls/month — covered by the free $5 credit.',
     },
     'adsb-local': {
         icon: '📡',
-        label: 'ADS-B Receiver + FA',
+        label: 'Local ADS-B + FA',
         cost: '~$0/month',
         color: '#06b6d4',
-        note: 'Local RTL-SDR receiver for real-time positions. Near-zero ongoing cost. Requires hardware.',
+        note: 'Local RTL-SDR / dump1090 receiver merged with OpenSky + ADSB-One. Near-zero ongoing cost. Requires hardware (set ADSB_LOCAL_URL in .env).',
     },
 };
 
@@ -552,11 +552,12 @@ function renderRichFlightRow(item, bodyTable) {
     const srcMap = {
         'opensky':     { label: 'OS',      color: '#4caf50', title: 'OpenSky' },
         'flightaware': { label: 'FA',      color: '#5b9bd5', title: 'FlightAware' },
-        'adsb':        { label: 'ADS-B',   color: '#00e5ff', title: 'Direct ADS-B' },
-        'mlat':        { label: 'MLAT',    color: '#ffeb3b', title: 'Multilateration' },
+        'adsb':        { label: 'ADS-B',   color: '#00e5ff', title: 'ADS-B (ADSB-One / ADS-B Exchange)' },
+        'mlat':        { label: 'MLAT',    color: '#ffeb3b', title: 'Multilateration (ADSB-One / ADS-B Exchange)' },
         'flarm':       { label: 'FLARM',   color: '#66bb6a', title: 'FLARM' },
         'asterix':     { label: 'ASTERIX', color: '#ce93d8', title: 'ASTERIX surveillance' },
         'track':       { label: 'TRK',     color: '#2196f3', title: 'Track-derived' },
+        'other':       { label: 'OTHER',   color: '#9e9e9e', title: 'Other surveillance source' },
     };
     const src = (item.position_source || 'flightaware').toLowerCase();
     const si = srcMap[src] || { label: src.toUpperCase(), color: '#888', title: src };
@@ -837,10 +838,11 @@ function updateFlightTableFull(flights) {
                 "opensky":     { label: "OS",      color: "#4caf50", title: "OpenSky (~10s latency)" },
                 "flightaware": { label: "FA",       color: "#888",    title: "FlightAware (60–300s latency)" },
                 "track":       { label: "TRK",      color: "#2196f3", title: "Track-derived velocity" },
-                "adsb":        { label: "ADS-B",    color: "#00e5ff", title: "Direct ADS-B (<5s latency)" },
-                "mlat":        { label: "MLAT",     color: "#ffeb3b", title: "Multilateration" },
+                "adsb":        { label: "ADS-B",    color: "#00e5ff", title: "ADS-B (<5s latency) — ADSB-One or ADS-B Exchange" },
+                "mlat":        { label: "MLAT",     color: "#ffeb3b", title: "Multilateration (ADSB-One/ADS-B Exchange)" },
                 "flarm":       { label: "FLARM",    color: "#66bb6a", title: "FLARM" },
                 "asterix":     { label: "ASTERIX",  color: "#ce93d8", title: "ASTERIX surveillance" },
+                "other":       { label: "OTHER",    color: "#9e9e9e", title: "Other surveillance source" },
             };
             const si = srcMap[flight.position_source] || { label: flight.position_source.toUpperCase(), color: "#888", title: flight.position_source };
             const age = flight.position_age_s != null ? ` (${flight.position_age_s}s)` : "";
@@ -2316,10 +2318,11 @@ function fetchFlights() {
                 "opensky":      { label: "OS",      color: "#4caf50", title: "OpenSky (~10s latency)" },
                 "flightaware":  { label: "FA",       color: "#888",    title: "FlightAware (60–300s latency)" },
                 "track":        { label: "TRK",      color: "#2196f3", title: "Track-derived velocity" },
-                "adsb":         { label: "ADS-B",    color: "#00e5ff", title: "Direct ADS-B (<5s latency)" },
-                "mlat":         { label: "MLAT",     color: "#ffeb3b", title: "Multilateration" },
+                "adsb":         { label: "ADS-B",    color: "#00e5ff", title: "ADS-B (<5s latency) — ADSB-One or ADS-B Exchange" },
+                "mlat":         { label: "MLAT",     color: "#ffeb3b", title: "Multilateration (ADSB-One / ADS-B Exchange)" },
                 "flarm":        { label: "FLARM",    color: "#66bb6a", title: "FLARM" },
                 "asterix":      { label: "ASTERIX",  color: "#ce93d8", title: "ASTERIX surveillance" },
+                "other":        { label: "OTHER",    color: "#9e9e9e", title: "Other surveillance source" },
             };
             const srcInfo = srcMap[src] || { label: src.toUpperCase(), color: "#888", title: src };
             const ageStr = srcAge != null ? ` (${srcAge}s)` : "";
