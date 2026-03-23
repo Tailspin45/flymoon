@@ -41,11 +41,14 @@ _user_settings: dict = {
     "min_reconnect_altitude": None,  # degrees; None → fall back to env var
 }
 
-_DEBUG_LOG_PATH = "/Users/Tom/flymoon/.cursor/debug-616e1a.log"
-_DEBUG_SESSION_ID = "616e1a"
+# NDJSON agent log — only written when FLYMOON_AGENT_DEBUG_LOG is set (file path).
+_DEBUG_LOG_PATH = os.getenv("FLYMOON_AGENT_DEBUG_LOG", "").strip()
+_DEBUG_SESSION_ID = os.getenv("FLYMOON_AGENT_DEBUG_SESSION", "flymoon")
 
 
 def _agent_debug_log(run_id: str, hypothesis_id: str, location: str, message: str, data: dict) -> None:
+    if not _DEBUG_LOG_PATH:
+        return
     try:
         payload = {
             "sessionId": _DEBUG_SESSION_ID,
@@ -115,6 +118,8 @@ class MockSeestarClient:
         self._connected = False
         self._recording = False
         self._recording_start_time: Optional[datetime] = None
+        self._viewing_mode: Optional[str] = None  # sun | moon | scenery — mirrors SeestarClient
+        self._mock_telemetry_ts: float = 0.0
         logger.info(f"[Mock] Initialized mock Seestar client for {host}:{port}")
 
     def connect(self) -> bool:
@@ -143,6 +148,7 @@ class MockSeestarClient:
         import time
 
         time.sleep(0.3)
+        self._viewing_mode = "sun"
         logger.info("[Mock] Started solar viewing mode")
         return True
 
@@ -151,6 +157,7 @@ class MockSeestarClient:
         import time
 
         time.sleep(0.3)
+        self._viewing_mode = "moon"
         logger.info("[Mock] Started lunar viewing mode")
         return True
 
@@ -159,6 +166,7 @@ class MockSeestarClient:
         import time
 
         time.sleep(0.3)
+        self._viewing_mode = "scenery"
         logger.info("[Mock] Started scenery viewing mode")
         return True
 
@@ -167,6 +175,7 @@ class MockSeestarClient:
         import time
 
         time.sleep(0.2)
+        self._viewing_mode = None
         logger.info("[Mock] Stopped viewing mode")
         return True
 
@@ -285,10 +294,6 @@ class MockSeestarClient:
         logger.info(f"[Mock] goto_altaz alt={alt} az={az}")
         return {"result": "ok"}
 
-    def stop_view_mode(self):
-        logger.info("[Mock] stop_view_mode")
-        return True
-
     def speed_move(self, speed, angle, dur_sec=3):
         logger.info(f"[Mock] speed_move speed={speed} angle={angle} dur={dur_sec}")
         return {"result": "ok"}
@@ -342,14 +347,33 @@ class MockSeestarClient:
         return {"result": "ok"}
 
     def get_telemetry(self):
+        import time as _time
+
+        self._mock_telemetry_ts = _time.time()
+        vm = "none"
+        if self._viewing_mode == "sun":
+            vm = "solar_sys"
+        elif self._viewing_mode == "moon":
+            vm = "lunar"
+        elif self._viewing_mode == "scenery":
+            vm = "scenery"
         return {
             "ra": 5.5,
             "dec": 22.0,
             "alt": 45.0,
             "az": 180.0,
+            "view_mode": vm,
             "view_state": "idle",
             "device": {"battery": 85},
         }
+
+    def get_cached_telemetry(self) -> Dict[str, Any]:
+        """Mirror SeestarClient: cached snapshot + age_ms (mock has no heartbeat)."""
+        import time as _time
+
+        data = dict(self.get_telemetry())
+        data["age_ms"] = int((_time.time() - self._mock_telemetry_ts) * 1000)
+        return data
 
     def start_view_star(self, ra, dec, target_name="", lp_filter=False):
         logger.info(f"[Mock] start_view_star {target_name}")

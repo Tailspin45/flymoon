@@ -312,12 +312,18 @@ function updateDataSourceButton() {
     document.getElementById('dsb-note').textContent = ds.note;
     banner.style.borderColor = ds.color;
     banner.style.display = 'flex';
+    let autoDismissTimer = null;
     const dismiss = () => {
+        if (autoDismissTimer !== null) {
+            clearTimeout(autoDismissTimer);
+            autoDismissTimer = null;
+        }
         banner.style.display = 'none';
         sessionStorage.setItem('dsbDismissed', '1');
     };
-    banner.querySelector('button').addEventListener('click', dismiss);
-    setTimeout(dismiss, 6000);
+    const btn = document.getElementById('dsbDismissBtn') || banner.querySelector('button');
+    if (btn) btn.addEventListener('click', dismiss);
+    autoDismissTimer = setTimeout(dismiss, 6000);
 })();
 
 document.addEventListener('DOMContentLoaded', updateDataSourceButton);
