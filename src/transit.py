@@ -334,13 +334,18 @@ def check_transit(
         id, origin, destination, time, target_alt, plane_alt, target_az, plane_az, alt_diff, az_diff,
         is_possible_transit, and change_elev.
     """
-    min_diff_combined = float("inf")
+    min_exit_metric = float("inf")  # tracks the metric used for early-exit
     min_sep_seen = float("inf")  # track true minimum angular separation
     response = None
     closest_approach = None  # Track closest approach even if threshold not met
     no_decreasing_count = 0
     _pts_per_min = NUM_SECONDS_PER_MIN // INTERVAL_IN_SECS
     _no_decrease_limit = 3 * _pts_per_min  # bail after 3 min of increasing diff
+
+    # Vertical rate for altitude projection (m/s); None or 0 means no correction
+    _vertical_rate_ms = flight.get("vertical_rate") or 0.0
+    # Base altitude (metres); used as floor/ceiling reference for clamping
+    _base_elevation = float(flight.get("elevation") or flight.get("aircraft_elevation", 0) or 0)
 
     for idx, minute in enumerate(window_time):
         # Get future position of plane
@@ -354,11 +359,15 @@ def check_transit(
 
         future_time = ref_datetime + timedelta(minutes=minute)
 
-        # Convert future position of plane to alt-azimuthal coordinates
-        # Support both 'elevation' (internal) and 'aircraft_elevation' (API response) field names
-        flight_elevation = flight.get("elevation") or flight.get(
-            "aircraft_elevation", 0
-        )
+        # Project altitude forward using vertical rate (T02).
+        # Only apply when the base altitude looks valid (>300 m = airborne),
+        # and clamp to a plausible cruise envelope [300 m, 15 000 m].
+        if _base_elevation > 300 and _vertical_rate_ms:
+            flight_elevation = _base_elevation + _vertical_rate_ms * minute * 60.0
+            flight_elevation = max(300.0, min(15000.0, flight_elevation))
+        else:
+            flight_elevation = _base_elevation
+
         future_alt, future_az = geographic_to_altaz(
             future_lat,
             future_lon,
@@ -394,15 +403,25 @@ def check_transit(
                 "plane_az": round(float(future_az), 2),
             }
 
-        # Early exit: if diff has been consistently increasing for ~3 min, skip rest
+        # Compute true angular separation (spherical law of cosines)
+        sep = angular_separation(t_alt, t_az, future_alt, future_az)
+
+        # Early exit (T01): use spherical separation as the exit metric when the
+        # aircraft is above the horizon, so grazing trajectories are not cut short
+        # by the less-accurate diff_combined heuristic.  Fall back to diff_combined
+        # for below-horizon steps where sep is geometrically meaningless.
+        exit_metric = sep if future_alt > 0 else diff_combined
+
+        # Early exit: if the exit metric has been consistently increasing for ~3 min
         if no_decreasing_count >= _no_decrease_limit:
-            logger.debug(f"diff is increasing, stop checking, min={round(minute, 2)}")
+            logger.debug(f"sep increasing, stop checking, min={round(minute, 2)}")
             break
 
-        if diff_combined < min_diff_combined:
+        if exit_metric < min_exit_metric:
             no_decreasing_count = 0
-            min_diff_combined = diff_combined
-            # Always track closest approach
+            min_exit_metric = exit_metric
+            # Always track closest approach (use diff_combined so the record is
+            # meaningful even when the aircraft is below the horizon)
             closest_approach = {
                 "alt_diff": round(float(alt_diff), 3),
                 "az_diff": round(float(az_diff), 3),
@@ -414,9 +433,6 @@ def check_transit(
             }
         else:
             no_decreasing_count += 1
-
-        # Compute true angular separation (spherical law of cosines)
-        sep = angular_separation(t_alt, t_az, future_alt, future_az)
 
         # Track closest approach for ALL aircraft above horizon
         # (no hard gate — classification handles thresholds)

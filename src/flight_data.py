@@ -107,6 +107,38 @@ def sort_results(data: List[dict]) -> List[dict]:
     return sorted(data, key=_custom_sort)
 
 
+def log_transit_event(event_dict: dict, dest_path: str) -> None:
+    """Append one row to the transit event confirmation log (TRANSIT_EVENTS_LOGFILENAME).
+
+    This is a synchronous write called from a background thread inside
+    TransitDetector._fire_detection().  Creates the directory and header row if needed.
+
+    Args:
+        event_dict: Keys matching TRANSIT_EVENTS_FIELDS (missing keys written as "").
+        dest_path:  Absolute or relative path to the daily CSV file.
+    """
+    from src.constants import TRANSIT_EVENTS_FIELDS
+
+    os.makedirs(os.path.dirname(dest_path), exist_ok=True)
+
+    needs_header = not os.path.exists(dest_path) or os.path.getsize(dest_path) == 0
+    if not needs_header:
+        # Verify header matches current schema; if not, start fresh
+        with open(dest_path, "r", newline="") as f:
+            existing_header = f.readline().strip().split(",")
+        if existing_header != TRANSIT_EVENTS_FIELDS:
+            import shutil
+            shutil.move(dest_path, dest_path.replace(".csv", "_old_schema.csv"))
+            needs_header = True
+
+    row = {f: event_dict.get(f, "") for f in TRANSIT_EVENTS_FIELDS}
+    with open(dest_path, "a", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=TRANSIT_EVENTS_FIELDS, extrasaction="ignore")
+        if needs_header:
+            writer.writeheader()
+        writer.writerow(row)
+
+
 async def save_possible_transits(data: List[dict], dest_path: str) -> None:
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     rows_to_write = []

@@ -4989,9 +4989,38 @@ async function pollDetectionStatus() {
             detectionPollInterval = null;
         }
 
+        // Disc-lost watchdog (T03)
+        updateDiscLostWarning(result.disc_lost_warning || false, result.disk_detected || false);
+
         updateDetectionUI();
     } catch (e) {
         // Silent — polling failure is transient; don't reset isDetecting
+    }
+}
+
+function updateDiscLostWarning(lostWarning, diskDetected) {
+    const warnId = 'discLostWarning';
+    let el = document.getElementById(warnId);
+
+    if (lostWarning && !diskDetected) {
+        if (!el) {
+            el = document.createElement('div');
+            el.id = warnId;
+            el.style.cssText =
+                'background:#7c2d12; color:#fed7aa; border:1px solid #ea580c; ' +
+                'border-radius:6px; padding:6px 10px; margin:6px 0; font-size:0.82em; ' +
+                'display:flex; align-items:center; gap:6px;';
+            el.innerHTML =
+                '<span style="font-size:1.1em;">⚠️</span>' +
+                '<span>Disc lost — telescope may be mispointed or solar tracking is off.</span>';
+            // Insert before the event log inside the detect panel
+            const log = document.getElementById('detectEventLog');
+            if (log && log.parentNode) {
+                log.parentNode.insertBefore(el, log);
+            }
+        }
+    } else if (el) {
+        el.remove();
     }
 }
 

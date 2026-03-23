@@ -248,3 +248,20 @@ def fetch_opensky_positions(
     logger.info(f"OpenSky: {len(result)} aircraft in bbox (of {len(states)} states)")
     _cache[key] = {"ts": now, "data": result}
     return result
+
+
+def get_latest_snapshot() -> Dict[str, dict]:
+    """Return the most recently fetched aircraft positions from any cached bbox.
+
+    Used by TransitDetector._enrich_event() to avoid a new OpenSky call at
+    detection time (which may hit 429 backoff or return stale data).  The
+    cached snapshot from the TransitMonitor's last prediction run is typically
+    only 10–30 s old and covers a much wider corridor bbox than the fallback
+    enrichment bbox.
+
+    Returns an empty dict if no cache entry exists.
+    """
+    if not _cache:
+        return {}
+    latest = max(_cache.values(), key=lambda v: v["ts"])
+    return latest["data"]

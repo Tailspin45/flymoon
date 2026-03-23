@@ -95,6 +95,10 @@ REF_FREEZE_FRAMES = ANALYSIS_FPS * 5  # 5 seconds
 # the bright interior) reliably produce.
 CENTRE_EDGE_RATIO_MIN = float(os.getenv("CENTRE_EDGE_RATIO_MIN", "2.5"))
 
+# Disc-lost watchdog: emit a warning after this many consecutive frames with no
+# disc detected.  At 15 fps, 60 frames = 4 seconds.  Configurable via env.
+DISC_LOST_THRESHOLD = int(os.getenv("DISC_LOST_THRESHOLD", "60"))
+
 # Signal trace logging (1fps = every ANALYSIS_FPS frames)
 SIGNAL_TRACE_INTERVAL = ANALYSIS_FPS
 SIGNAL_TRACE_SECONDS = 60
@@ -483,6 +487,10 @@ class TransitDetector:
         self._disk_weight: Optional[np.ndarray] = None  # float32 H×W — smooth weight
         self._disk_detected = False
 
+        # Disc-lost watchdog state
+        self._disc_lost_frames: int = 0   # consecutive frames without a disc
+        self._disc_lost_warning: bool = False  # True once threshold crossed
+
         # Active recording process (for auto-record on detection)
         self._rec_process: Optional[subprocess.Popen] = None
         self._rec_file: Optional[str] = None
@@ -531,6 +539,8 @@ class TransitDetector:
         self._limb_mask = None
         self._disk_weight = None
         self._disk_detected = False
+        self._disc_lost_frames = 0
+        self._disc_lost_warning = False
 
         self._thread = threading.Thread(
             target=self._reader_loop, name="transit-detector", daemon=True
@@ -599,6 +609,8 @@ class TransitDetector:
             "recent_events": [e.to_dict() for e in list(self.events)[-10:]],
             "recording_active": self._rec_process is not None,
             "disk_detected": self._disk_detected,
+            "disc_lost_warning": self._disc_lost_warning,
+            "disc_lost_frames": self._disc_lost_frames,
             "disk_info": (
                 {
                     "cx": self._disk_cx,
@@ -895,9 +907,40 @@ class TransitDetector:
                     ANALYSIS_HEIGHT, ANALYSIS_WIDTH, cx, cy, r, self.disk_margin_pct
                 )
                 self._disk_detected = True
+                # Reset disc-lost watchdog when disc is (re-)acquired
+                if self._disc_lost_frames > 0 or self._disc_lost_warning:
+                    if self._disc_lost_warning:
+                        logger.info("[Detector] Disc re-acquired — clearing disc-lost warning")
+                        self._emit_status("disc_reacquired")
+                    self._disc_lost_frames = 0
+                    self._disc_lost_warning = False
             elif self._disk_detected:
                 logger.debug("[Detector] Disk lost — falling back to rectangular masks")
                 self._disk_detected = False
+
+        # --- Disc-lost watchdog ---
+        if not self._disk_detected:
+            self._disc_lost_frames += 1
+            if (
+                self._disc_lost_frames >= DISC_LOST_THRESHOLD
+                and not self._disc_lost_warning
+            ):
+                self._disc_lost_warning = True
+                logger.warning(
+                    f"[Detector] ⚠️ Disc lost for {self._disc_lost_frames} frames "
+                    f"({self._disc_lost_frames / ANALYSIS_FPS:.0f}s) — "
+                    "telescope may be mispointed or solar tracking is off."
+                )
+                self._emit_status("disc_lost")
+                # Async Telegram alert (non-blocking)
+                threading.Thread(
+                    target=self._send_disc_lost_alert,
+                    daemon=True,
+                    name="disc-lost-alert",
+                ).start()
+        else:
+            # Disc is present — keep lost counter at zero between detect intervals
+            self._disc_lost_frames = 0
 
         # Select masks: disk-aware if available, else rectangular fallback
         use_disk = self._disk_detected and self._disk_mask is not None
@@ -1143,6 +1186,11 @@ class TransitDetector:
 
         # Store event
         self.events.append(event)  # deque(maxlen=100) discards oldest automatically
+
+        # Write to transit event confirmation log (T05)
+        threading.Thread(
+            target=self._log_event, args=(event,), name="detect-log", daemon=True
+        ).start()
 
         # Enrich with flight data (async, non-blocking)
         threading.Thread(
@@ -1548,6 +1596,39 @@ class TransitDetector:
         logger.info(f"[Detector] Recording finalized: {filepath}")
 
     # ------------------------------------------------------------------
+    # Transit event log (T05)
+    # ------------------------------------------------------------------
+
+    def _log_event(self, event: "DetectionEvent") -> None:
+        """Write a detection event to the daily transit_events_*.csv log."""
+        try:
+            from datetime import date as _date
+
+            from src.constants import TRANSIT_EVENTS_LOGFILENAME
+            from src.flight_data import log_transit_event
+
+            date_ = _date.today().strftime("%Y%m%d")
+            dest = TRANSIT_EVENTS_LOGFILENAME.format(date_=date_)
+
+            flight = event.flight_info or {}
+            row = {
+                "timestamp": event.timestamp.isoformat(),
+                "detected_flight_id": flight.get("name", ""),
+                "predicted_flight_id": "",  # filled by T08/T09 cross-link
+                "prediction_sep_deg": "",
+                "detection_confirmed": 1 if flight.get("name") else 0,
+                "confidence": event.confidence,
+                "signal_a": round(event.signal_a, 5),
+                "signal_b": round(event.signal_b, 5),
+                "centre_ratio": round(event.centre_ratio, 3),
+                "notes": "",
+            }
+            log_transit_event(row, dest)
+            logger.debug(f"[Detector] Event logged → {dest}")
+        except Exception as exc:
+            logger.warning(f"[Detector] Event log write failed: {exc}")
+
+    # ------------------------------------------------------------------
     # FlightAware enrichment
     # ------------------------------------------------------------------
 
@@ -1674,8 +1755,51 @@ class TransitDetector:
     def _fetch_flights_for_enrichment(
         lat_ll: float, lon_ll: float, lat_ur: float, lon_ur: float
     ) -> list:
-        """Fetch aircraft list for enrichment — prefers OpenSky (free) over FA (paid)."""
-        # 1) Try OpenSky first (free, ~60s cache built-in)
+        """Fetch aircraft list for enrichment — prefers OpenSky (free) over FA (paid).
+
+        Enrichment strategy (T04):
+          1. Use the latest cached OpenSky snapshot from any bbox (set by TransitMonitor).
+             This is typically only 10–30 s old and covers the full corridor.
+          2. If the snapshot is too old (>90 s) or empty, issue a fresh OpenSky bbox query.
+          3. Fall back to FlightAware if OpenSky is unavailable.
+        """
+        # 1a) Try the pre-cached wide-corridor snapshot first (avoids a new API call)
+        try:
+            from src.opensky import get_latest_snapshot
+
+            snapshot = get_latest_snapshot()
+            if snapshot:
+                flights = []
+                for callsign, pos in snapshot.items():
+                    if pos.get("on_ground"):
+                        continue
+                    lat, lon = pos.get("lat"), pos.get("lon")
+                    if lat is None or lon is None:
+                        continue
+                    flights.append(
+                        {
+                            "name": callsign.strip(),
+                            "latitude": lat,
+                            "longitude": lon,
+                            "elevation": pos.get("altitude_m") or 10000,
+                            "elevation_feet": int(
+                                (pos.get("altitude_m") or 10000) / 0.3048
+                            ),
+                            "aircraft_type": "",
+                            "origin": "",
+                            "destination": "",
+                        }
+                    )
+                if flights:
+                    logger.debug(
+                        f"[Detector] enrich: using pre-cached snapshot "
+                        f"({len(flights)} aircraft)"
+                    )
+                    return flights
+        except Exception as exc:
+            logger.debug(f"[Detector] snapshot enrichment failed: {exc}")
+
+        # 1b) Fall back to a fresh OpenSky bbox query (free, ~60s cache built-in)
         try:
             from src.opensky import fetch_opensky_positions
 
@@ -1739,6 +1863,23 @@ class TransitDetector:
     # ------------------------------------------------------------------
     # Status emission
     # ------------------------------------------------------------------
+
+    def _send_disc_lost_alert(self) -> None:
+        """Send a Telegram alert when the disc has been lost for too long."""
+        try:
+            import asyncio
+
+            from src.telegram_notify import send_telegram_simple
+
+            asyncio.run(
+                send_telegram_simple(
+                    "⚠️ <b>Disc lost</b> — telescope may be mispointed or solar "
+                    f"tracking is off ({self._disc_lost_frames // ANALYSIS_FPS}s without disc). "
+                    "Check the live preview."
+                )
+            )
+        except Exception as exc:
+            logger.debug(f"[Detector] Disc-lost Telegram alert failed: {exc}")
 
     def _emit_status(self, state: str) -> None:
         """Notify status callback."""
