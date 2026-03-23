@@ -349,6 +349,7 @@ class DetectionEvent:
         "frame_path",
         "diff_path",
         "signal_trace",
+        "predicted_flight_id",  # B4: callsign from prediction cross-link
     )
 
     def __init__(
@@ -375,6 +376,7 @@ class DetectionEvent:
         self.frame_path: Optional[str] = None
         self.diff_path: Optional[str] = None
         self.signal_trace: Optional[List[Dict]] = None
+        self.predicted_flight_id: Optional[str] = None  # B4
 
     def to_dict(self) -> Dict[str, Any]:
         d: Dict[str, Any] = {
@@ -490,6 +492,9 @@ class TransitDetector:
         # Disc-lost watchdog state
         self._disc_lost_frames: int = 0   # consecutive frames without a disc
         self._disc_lost_warning: bool = False  # True once threshold crossed
+
+        # B4 — Prediction-detection cross-link
+        self._primed_events: dict = {}  # {flight_id: primed-event dict}
 
         # Active recording process (for auto-record on detection)
         self._rec_process: Optional[subprocess.Popen] = None
@@ -630,6 +635,69 @@ class TransitDetector:
                 "track_min_agree_frac": self.track_min_agree_frac,
             },
         }
+
+    def get_latest_hires_jpeg(self) -> Optional[bytes]:
+        """Return the most recent full-resolution JPEG frame from the hi-res buffer.
+
+        Used by SolarTimelapse to tap the existing hi-res reader instead of
+        opening a separate RTSP connection, reducing concurrent connections to
+        the Seestar from 3+ down to 2 (low-res detection + hi-res buffer).
+
+        Returns None if the detector is not running or the buffer is empty.
+        """
+        if not self._running or not self._hires_buffer:
+            return None
+        return self._hires_buffer[-1]  # most recent complete JPEG
+
+    # ------------------------------------------------------------------
+    # B4 — Prediction-detection cross-link
+    # ------------------------------------------------------------------
+
+    def prime_for_event(
+        self,
+        eta_s: float,
+        flight_id: str,
+        sep_deg: float = 0.0,
+    ) -> None:
+        """Pre-arm the detector for a predicted transit.
+
+        For the duration of the predicted event window the detection
+        sensitivity is raised (consecutive-frames gate is halved) and
+        post-detection enrichment can match the fired event back to the
+        scheduled flight.
+
+        Parameters
+        ----------
+        eta_s:
+            Estimated seconds until mid-transit from now.
+        flight_id:
+            Callsign or unique identifier of the predicted flight.
+        sep_deg:
+            Predicted angular separation at closest approach (degrees).
+        """
+        import time as _time
+
+        entry = {
+            "flight_id": flight_id,
+            "eta_s": eta_s,
+            "sep_deg": sep_deg,
+            "primed_at": _time.time(),
+            "expires_at": _time.time() + eta_s + 30,  # 30 s post-transit grace
+        }
+        self._primed_events[flight_id] = entry
+        logger.info(
+            f"[Detector] Primed for {flight_id} in {eta_s:.0f}s "
+            f"(sep={sep_deg:.2f}°) — sensitivity raised"
+        )
+
+    def get_primed_flight_id(self, event_ts: float) -> Optional[str]:
+        """Return the flight_id of any primed event active at *event_ts*, or None."""
+        for fid, entry in list(self._primed_events.items()):
+            if event_ts <= entry["expires_at"]:
+                return fid
+            # Expired — clean up
+            del self._primed_events[fid]
+        return None
 
     def update_settings(
         self,
@@ -1091,13 +1159,29 @@ class TransitDetector:
             self._consec_above = 0
             self._track_agree_count = 0  # reset track on any threshold break
 
-        if self._consec_above >= self.consec_frames_required:
+        # B4: raise sensitivity during a primed prediction window
+        _now = time.time()
+        _active_prime = next(
+            (e for e in self._primed_events.values() if _now <= e["expires_at"]),
+            None,
+        )
+        # Expire stale entries
+        for _fid in [fid for fid, e in self._primed_events.items() if _now > e["expires_at"]]:
+            del self._primed_events[_fid]
+
+        effective_consec = (
+            max(1, self.consec_frames_required // 2)
+            if _active_prime
+            else self.consec_frames_required
+        )
+
+        if self._consec_above >= effective_consec:
             # --- Centroid track gate ---
             # Require that a minimum fraction of streak frames showed consistent
             # directional motion.  Noise produces _track_agree_count ~ 0 even
             # when both signals are spuriously elevated; real transits produce
             # monotonically moving centroids so agree_count climbs reliably.
-            min_agree = int(self.consec_frames_required * self.track_min_agree_frac)
+            min_agree = int(effective_consec * self.track_min_agree_frac)
             track_ok = self._track_agree_count >= min_agree
 
             self._consec_above = 0  # reset so next event starts clean
@@ -1106,16 +1190,18 @@ class TransitDetector:
             if not track_ok:
                 logger.debug(
                     f"[Detector] Track gate suppressed: agree={self._track_agree_count} "
-                    f"need={min_agree}/{self.consec_frames_required}"
+                    f"need={min_agree}/{effective_consec}"
                 )
             else:
                 now = time.time()
                 if now - self._last_detection_time >= DETECTION_COOLDOWN:
                     self._last_detection_time = now
+                    predicted_fid = _active_prime["flight_id"] if _active_prime else None
                     # Freeze reference to prevent transit frames corrupting baseline
                     self._ref_freeze_until = self._frame_idx + REF_FREEZE_FRAMES
                     self._fire_detection(
-                        score_a, score_b, thresh_a, thresh_b, centre_ratio
+                        score_a, score_b, thresh_a, thresh_b, centre_ratio,
+                        predicted_flight_id=predicted_fid,
                     )
 
     @staticmethod
@@ -1141,6 +1227,7 @@ class TransitDetector:
         thresh_a: float,
         thresh_b: float,
         centre_ratio: float,
+        predicted_flight_id: Optional[str] = None,
     ) -> None:
         """Handle a confirmed transit detection."""
         self._detection_count += 1
@@ -1160,13 +1247,16 @@ class TransitDetector:
             confidence=confidence,
             centre_ratio=centre_ratio,
         )
+        # Attach prediction cross-link (B4)
+        event.predicted_flight_id = predicted_flight_id
 
         logger.info(
-            f"[Detector] 🎯 TRANSIT DETECTED at {ts.strftime('%H:%M:%S.%f')[:-3]} "
+            f"[Detector] TRANSIT DETECTED at {ts.strftime('%H:%M:%S.%f')[:-3]} "
             f"[{confidence}] "
             f"(A={score_a:.4f}/{thresh_a:.4f}, B={score_b:.4f}/{thresh_b:.4f}, "
             f"CR={centre_ratio:.2f}, "
-            f"consec={self.consec_frames_required}f/{self.consec_frames_required/ANALYSIS_FPS:.0f}ms)"
+            f"consec={self.consec_frames_required}f/{self.consec_frames_required/ANALYSIS_FPS:.0f}ms"
+            + (f", primed={predicted_flight_id}" if predicted_flight_id else "") + ")"
         )
 
         # Save diagnostic frames — discard event if we can't produce evidence
@@ -1611,17 +1701,22 @@ class TransitDetector:
             dest = TRANSIT_EVENTS_LOGFILENAME.format(date_=date_)
 
             flight = event.flight_info or {}
+            pred_fid = getattr(event, "predicted_flight_id", None) or ""
+            # Look up sep_deg from primed_events if still present
+            pred_sep = ""
+            if pred_fid and pred_fid in self._primed_events:
+                pred_sep = round(self._primed_events[pred_fid].get("sep_deg", 0), 4)
             row = {
                 "timestamp": event.timestamp.isoformat(),
                 "detected_flight_id": flight.get("name", ""),
-                "predicted_flight_id": "",  # filled by T08/T09 cross-link
-                "prediction_sep_deg": "",
+                "predicted_flight_id": pred_fid,
+                "prediction_sep_deg": pred_sep,
                 "detection_confirmed": 1 if flight.get("name") else 0,
                 "confidence": event.confidence,
                 "signal_a": round(event.signal_a, 5),
                 "signal_b": round(event.signal_b, 5),
                 "centre_ratio": round(event.centre_ratio, 3),
-                "notes": "",
+                "notes": "primed" if pred_fid else "",
             }
             log_transit_event(row, dest)
             logger.debug(f"[Detector] Event logged → {dest}")

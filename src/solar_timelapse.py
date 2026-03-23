@@ -663,6 +663,12 @@ class SolarTimelapse:
     def _grab_frame(self) -> Tuple[bool, Optional[str]]:
         """Grab a single JPEG frame from the RTSP stream via ffmpeg.
 
+        Optimisation: if a TransitDetector is actively running its hi-res
+        reader, reuse its latest JPEG frame instead of opening a separate RTSP
+        connection.  This keeps concurrent RTSP connections at ≤2 (low-res
+        detection reader + hi-res buffer reader) even when the timelapse and
+        detector are both active.
+
         After capture, annotates the frame with sunspot circles and a
         timestamp overlay, saving the annotated version alongside the raw.
         """
@@ -672,37 +678,63 @@ class SolarTimelapse:
         seq = self._frame_count + 1
         filename = f"frame_{seq:05d}.jpg"
         filepath = os.path.join(self._frames_dir, filename)
-        rtsp_url = f"rtsp://{self._host}:{self._rtsp_port}/stream"
 
-        cmd = [
-            FFMPEG,
-            "-rtsp_transport",
-            "tcp",
-            "-i",
-            rtsp_url,
-            "-frames:v",
-            "1",
-            "-update",
-            "1",
-            "-q:v",
-            "2",
-            "-y",
-            filepath,
-        ]
-
+        # ── Try detector hi-res buffer first (zero extra RTSP connections) ──
+        jpeg_bytes: Optional[bytes] = None
         try:
-            result = subprocess.run(
-                cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, timeout=15
-            )
-            if result.returncode != 0:
-                stderr_tail = result.stderr.decode(errors="replace")[-200:].strip()
-                self._log_frame_grab_fail(f"Frame grab failed: {stderr_tail}")
-                return False, f"FFmpeg error: {stderr_tail}"
+            from src.transit_detector import get_detector
+
+            det = get_detector()
+            if det is not None:
+                jpeg_bytes = det.get_latest_hires_jpeg()
+        except Exception:
+            jpeg_bytes = None
+
+        if jpeg_bytes and len(jpeg_bytes) > 1000:
+            try:
+                with open(filepath, "wb") as fh:
+                    fh.write(jpeg_bytes)
+                logger.debug("[Timelapse] Frame grabbed from detector hi-res buffer (no new RTSP)")
+            except Exception as exc:
+                logger.warning(f"[Timelapse] Failed to write buffer frame: {exc}")
+                jpeg_bytes = None  # fall through to ffmpeg below
+
+        if not jpeg_bytes or not os.path.exists(filepath) or os.path.getsize(filepath) < 100:
+            # Fall back: spawn ffmpeg to grab a single frame from RTSP
+            rtsp_url = f"rtsp://{self._host}:{self._rtsp_port}/stream"
+            cmd = [
+                FFMPEG,
+                "-rtsp_transport",
+                "tcp",
+                "-i",
+                rtsp_url,
+                "-frames:v",
+                "1",
+                "-update",
+                "1",
+                "-q:v",
+                "2",
+                "-y",
+                filepath,
+            ]
+            try:
+                result = subprocess.run(
+                    cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, timeout=15
+                )
+                if result.returncode != 0:
+                    stderr_tail = result.stderr.decode(errors="replace")[-200:].strip()
+                    self._log_frame_grab_fail(f"Frame grab failed: {stderr_tail}")
+                    return False, f"FFmpeg error: {stderr_tail}"
+            except subprocess.TimeoutExpired:
+                self._log_frame_grab_fail("Frame grab timed out")
+                return False, "FFmpeg timed out"
 
             if not os.path.exists(filepath) or os.path.getsize(filepath) < 100:
                 self._log_frame_grab_fail(f"Frame too small or missing: {filepath}")
                 return False, "Frame too small or missing"
 
+        # ── Both paths (buffer + ffmpeg) converge here ────────────────────
+        try:
             if not self._stabilize_frame(filepath):
                 return False, "Stabilization failed"
 
@@ -713,12 +745,9 @@ class SolarTimelapse:
                 logger.info(f"[Timelapse] Frame {seq} captured + annotated")
             return True, None
 
-        except subprocess.TimeoutExpired:
-            self._log_frame_grab_fail("Frame grab timed out")
-            return False, "RTSP timeout"
-        except Exception as e:
-            self._log_frame_grab_fail(f"Frame grab error: {e}")
-            return False, str(e)
+        except Exception as exc:
+            self._log_frame_grab_fail(f"Frame post-processing error: {exc}")
+            return False, str(exc)
 
     def _stabilize_frame(self, frame_path: str) -> bool:
         """Stabilize frame in-place by locking the solar disk center to the anchor position.

@@ -670,30 +670,28 @@ def get_transits(
 
         elif data_source == "adsb-local":
             # ── ADS-B local receiver mode ─────────────────────────────────
+            # Implemented via flight_sources._fetch_adsb_local; falls through
+            # to the multi-source block which includes the local source.
             adsb_url = os.getenv("ADSB_LOCAL_URL", "")
             if not adsb_url:
                 logger.warning(
                     "[ADS-B] data_source=adsb-local but ADSB_LOCAL_URL is not set in .env. "
-                    "Falling back to OpenSky. Set ADSB_LOCAL_URL=http://<receiver-ip>/data/aircraft.json "
-                    "to use a local RTL-SDR / dump1090 / tar1090 receiver."
+                    "Falling back to multi-source (OpenSky + ADSB-One). "
+                    "Set ADSB_LOCAL_URL=http://<receiver-ip>/data/aircraft.json."
                 )
-                data_source = "hybrid"  # fall through to OpenSky block below
             else:
-                # TODO: implement local ADS-B JSON fetch from ADSB_LOCAL_URL
-                logger.warning(
-                    f"[ADS-B] Local receiver at {adsb_url} — not yet implemented; falling back to OpenSky"
-                )
-                data_source = "hybrid"
+                logger.info(f"[ADS-B] Local receiver mode — {adsb_url}")
+            data_source = "hybrid"  # fall through to multi-source block below
 
         if not test_mode and data_source in ("hybrid", "opensky-only"):
-            # ── Hybrid / OpenSky-only mode (default) ─────────────────────
-            # Use OpenSky Network for all position data (~60s cache, free).
-            # FA is only called on HIGH-probability transits for metadata.
-            logger.info(f"[Data] {data_source} mode — using OpenSky as primary source")
-            from src.opensky import fetch_opensky_positions
+            # ── Multi-source mode (default) ───────────────────────────────
+            # Queries OpenSky + ADSB-One + ADS-B Exchange (if key set) +
+            # local receiver (if URL set) in parallel and merges results.
+            # FA is only called post-capture for metadata enrichment.
+            from src.flight_sources import fetch_multi_source_positions
 
             try:
-                opensky_data = fetch_opensky_positions(
+                combined_data = fetch_multi_source_positions(
                     bbox.lat_lower_left,
                     bbox.long_lower_left,
                     bbox.lat_upper_right,
@@ -701,25 +699,25 @@ def get_transits(
                 )
             except Exception as exc:
                 logger.warning(
-                    f"[OpenSky] fetch failed: {exc}; flight_data will be empty"
+                    f"[MultiSource] fetch failed: {exc}; flight_data will be empty"
                 )
-                opensky_data = {}
+                combined_data = {}
 
             flight_data = []
-            for callsign, os_pos in opensky_data.items():
-                if os_pos.get("on_ground"):
-                    continue  # skip ground traffic
-                lat, lon = os_pos.get("lat"), os_pos.get("lon")
+            for callsign, pos in combined_data.items():
+                if pos.get("on_ground"):
+                    continue  # already filtered in each source, double-check
+                lat, lon = pos.get("lat"), pos.get("lon")
                 if lat is None or lon is None:
                     continue
                 if not (
                     bbox.lat_lower_left <= lat <= bbox.lat_upper_right
                     and bbox.long_lower_left <= lon <= bbox.long_upper_right
                 ):
-                    continue  # outside bounding box
-                flight_data.append(_parse_opensky_flight(callsign, os_pos))
+                    continue  # radius queries may extend outside bbox
+                flight_data.append(_parse_opensky_flight(callsign, pos))
 
-            logger.info(f"[OpenSky] {len(flight_data)} airborne aircraft in bbox")
+            logger.info(f"[MultiSource] {len(flight_data)} airborne aircraft in bbox")
 
         logger.info(
             f"[Transit] Running full trajectory check on {len(flight_data)} aircraft"

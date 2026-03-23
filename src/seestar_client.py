@@ -2133,7 +2133,11 @@ class TransitRecorder:
         )
 
     def schedule_transit_recording(
-        self, flight_id: str, eta_seconds: float, transit_duration_estimate: float = 2.0
+        self,
+        flight_id: str,
+        eta_seconds: float,
+        transit_duration_estimate: float = 2.0,
+        sep_deg: float = 0.0,
     ) -> bool:
         """
         Schedule automated recording for a predicted transit.
@@ -2183,6 +2187,16 @@ class TransitRecorder:
                 f"Scheduling transit {flight_id}: start in {start_delay:.1f}s, "
                 f"record for {total_duration:.1f}s"
             )
+
+            # B4 — pre-arm the TransitDetector sensitivity for this event
+            try:
+                from src.transit_detector import get_detector
+
+                det = get_detector()
+                if det is not None:
+                    det.prime_for_event(eta_seconds, flight_id, sep_deg=sep_deg)
+            except Exception as _prime_exc:
+                logger.debug(f"prime_for_event skipped: {_prime_exc}")
 
             # Schedule start
             start_timer = threading.Timer(

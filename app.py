@@ -682,6 +682,7 @@ def get_all_flights():
                             flight_id=flight_id,
                             eta_seconds=eta_seconds,
                             transit_duration_estimate=2.0,  # Aircraft transits ~0.5-2 seconds
+                            sep_deg=flight.get("angular_separation", 0.0),
                         )
                         logger.info(
                             f"📹 Scheduled recording for {flight_id} (ETA: {eta_seconds:.0f}s)"
