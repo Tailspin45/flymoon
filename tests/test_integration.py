@@ -121,13 +121,8 @@ def main():
     print("=" * 80)
     print()
 
-    test_data = _load_test_data()
-    if not test_data:
-        print(f"Test data file not found: {_TEST_FILE}")
-        print("Run: python3 data/test_data_generator.py")
-        return 1
-
     try:
+        # Regenerates dual_tracking scenario and runs classification checks
         test_data_classification()
         print("✓ TEST DATA INTEGRATION TEST PASSED")
         print()
