@@ -3273,6 +3273,7 @@ def update_detection_settings():
                 sensitivity_scale=body.get("sensitivity_scale"),
                 track_min_mag=body.get("track_min_mag"),
                 track_min_agree_frac=body.get("track_min_agree_frac"),
+                mf_threshold_frac=body.get("mf_threshold_frac"),
             )
         else:
             # No detector running — just echo back what was sent (used by UI
@@ -3286,6 +3287,7 @@ def update_detection_settings():
                 "track_min_agree_frac": body.get(
                     "track_min_agree_frac", TRACK_MIN_AGREE_FRAC
                 ),
+                "mf_threshold_frac": body.get("mf_threshold_frac", 0.70),
             }
         return jsonify({"success": True, "settings": settings}), 200
 

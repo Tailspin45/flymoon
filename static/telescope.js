@@ -105,6 +105,8 @@ window.initTelescope = function() {
     destroyTelescope(); // clear any existing intervals
     ensureHarnessUI();
     ensureTuningUI();
+    ensureInterceptChart();
+    ensureSignalSparkline();
 
     // Status polling (always poll while panel is open)
     statusPollInterval = setInterval(updateStatus, 2000);
@@ -4995,6 +4997,16 @@ async function pollDetectionStatus() {
         // B4: primed prediction window indicator
         updatePrimedEventBadge(result.primed_events || []);
 
+        // D4/Phase D: live signal sparkline
+        if (result.signal_trace && result.signal_trace.length > 0 && isDetecting) {
+            const sparkCard = document.getElementById('signalSparkCard');
+            if (sparkCard) sparkCard.style.display = '';
+            _pushSignalTrace(result.signal_trace);
+        } else {
+            const sparkCard = document.getElementById('signalSparkCard');
+            if (sparkCard && !isDetecting) sparkCard.style.display = 'none';
+        }
+
         updateDetectionUI();
     } catch (e) {
         // Silent — polling failure is transient; don't reset isDetecting
@@ -5229,6 +5241,7 @@ const TUNING_DEFAULTS = {
     sensitivity_scale: 1.0,
     track_min_mag: 2.0,
     track_min_agree_frac: 0.6,
+    mf_threshold_frac: 0.70,
 };
 
 /** Load saved tuning from localStorage (fallback to defaults). */
@@ -5240,6 +5253,7 @@ function _loadTuning() {
         sensitivity_scale:    parseFloat(localStorage.getItem('det_sensitivity')    ?? TUNING_DEFAULTS.sensitivity_scale),
         track_min_mag:        parseFloat(localStorage.getItem('det_track_mag')      ?? TUNING_DEFAULTS.track_min_mag),
         track_min_agree_frac: parseFloat(localStorage.getItem('det_track_agree')    ?? TUNING_DEFAULTS.track_min_agree_frac),
+        mf_threshold_frac:    parseFloat(localStorage.getItem('det_mf_thresh')      ?? TUNING_DEFAULTS.mf_threshold_frac),
     };
 }
 
@@ -5262,12 +5276,14 @@ function _syncTuningSliders(s) {
     const ss = document.getElementById('tunSensitivity');
     const tm = document.getElementById('tunTrackMag');
     const ta = document.getElementById('tunTrackAgree');
+    const mf = document.getElementById('tunMFThresh');
     if (m)  { m.value  = Math.round((s.disk_margin_pct ?? TUNING_DEFAULTS.disk_margin_pct) * 100); _updateTuningLabel('tunMargin'); }
     if (r)  { r.value  = s.centre_ratio_min ?? TUNING_DEFAULTS.centre_ratio_min; _updateTuningLabel('tunRatio'); }
     if (c)  { c.value  = s.consec_frames ?? TUNING_DEFAULTS.consec_frames; _updateTuningLabel('tunConsec'); }
     if (ss) { ss.value = s.sensitivity_scale ?? TUNING_DEFAULTS.sensitivity_scale; _updateTuningLabel('tunSensitivity'); }
     if (tm) { tm.value = s.track_min_mag ?? TUNING_DEFAULTS.track_min_mag; _updateTuningLabel('tunTrackMag'); }
     if (ta) { ta.value = Math.round((s.track_min_agree_frac ?? TUNING_DEFAULTS.track_min_agree_frac) * 100); _updateTuningLabel('tunTrackAgree'); }
+    if (mf) { mf.value = Math.round((s.mf_threshold_frac ?? TUNING_DEFAULTS.mf_threshold_frac) * 100); _updateTuningLabel('tunMFThresh'); }
 }
 
 function _updateTuningLabel(id) {
@@ -5285,23 +5301,39 @@ function ensureTuningUI() {
 
     const card = document.createElement('div');
     card.id = 'tuningCard';
-    card.className = 'harness-card';
+    card.style.cssText =
+        'background:#111122; border:1px solid rgba(255,255,255,0.08); border-radius:8px; ' +
+        'margin-bottom:8px; overflow:hidden;';
+
     card.innerHTML = `
-        <div class="harness-card-title">⚙️ Detection Tuning</div>
-        <div style="font-size:0.82em; color:#888; margin-bottom:8px;">Changes apply immediately to the live detector.</div>
-        ${_tuningSliderRow('tunMargin',  'Edge Margin %', 5, 50, Math.round(saved.disk_margin_pct*100),
-            'Exclude the outermost N% of disk radius (limb zone). Higher = fewer false positives from limb jitter.')}
-        ${_tuningSliderRow('tunRatio',   'Centre Ratio', 0.5, 6, saved.centre_ratio_min, 0.1,
-            'Inner-disk signal must be N× the limb signal. Higher = stricter concentration requirement.')}
-        ${_tuningSliderRow('tunConsec',  'Consec Frames', 2, 20, saved.consec_frames, 1,
-            'How many consecutive frames must exceed the signal threshold before a detection fires — a <em>time</em> gate (~0.5 s at default 7 frames). Prevents single-frame noise spikes. Does not care about <em>where</em> the motion is going, only that it is strong enough for long enough.')}
-        ${_tuningSliderRow('tunSensitivity', 'Sensitivity', 0.2, 3.0, saved.sensitivity_scale, 0.1,
-            'Multiplier applied to both adaptive thresholds. Below 1 = lower bar (more detections). Above 1 = higher bar (fewer detections). Adjust if you are getting too many or too few alerts.')}
-        ${_tuningSliderRow('tunTrackMag', 'Track Min Motion (px)', 0, 10, saved.track_min_mag, 0.1,
-            'A <em>spatial</em> gate — complements Consec Frames. Sets the minimum pixel displacement of the detected blob\'s centroid between frames to count as real directional motion. Atmospheric shimmer moves the centroid randomly by ≤2 px with no consistent direction; a real aircraft moves 3–8 px per frame in a straight line. Frames below this threshold abstain from the direction vote. Set to 0 to disable.')}
-        ${_tuningSliderRow('tunTrackAgree', 'Track Agreement %', 0, 100, Math.round(saved.track_min_agree_frac * 100), 5,
-            'What fraction of the streak frames (that cleared Track Min Motion) must agree on direction before the detection fires. 60% = default. Set to 0 to disable the direction gate entirely.')}
-        <button class="btn btn-secondary btn-compact" style="margin-top:6px; width:100%;" onclick="_resetTuning()">↩ Reset to defaults</button>
+        <button id="tuningToggleBtn" onclick="_toggleTuningBody()"
+            style="width:100%; background:transparent; border:none; padding:8px 12px;
+                   display:flex; justify-content:space-between; align-items:center;
+                   cursor:pointer; color:#888; font-size:0.82em; font-weight:600;
+                   letter-spacing:0.05em;">
+            <span>⚙️ DETECTION TUNING</span>
+            <span id="tuningChevron" style="opacity:0.5; transition:transform 0.2s;">▾</span>
+        </button>
+        <div id="tuningBody" style="display:none; padding:0 12px 10px 12px;">
+            <div style="font-size:0.79em; color:#666; margin-bottom:8px;">
+                Changes apply immediately to the live detector.
+            </div>
+            ${_tuningSliderRow('tunMargin',  'Edge Margin %', 5, 50, Math.round(saved.disk_margin_pct*100),
+                'Exclude the outermost N% of disk radius (limb zone). Higher = fewer false positives from limb jitter.')}
+            ${_tuningSliderRow('tunRatio',   'Centre Ratio', 0.5, 6, saved.centre_ratio_min, 0.1,
+                'Inner-disk signal must be N× the limb signal. Higher = stricter concentration requirement.')}
+            ${_tuningSliderRow('tunConsec',  'Consec Frames (fast gate)', 2, 20, saved.consec_frames, 1,
+                '<strong>Fast gate</strong> — fires when N consecutive frames all exceed the signal threshold. Runs <em>in parallel</em> with the matched-filter gate (D2); a transit only needs to pass <em>one</em> of the two gates. Lower this for very fast aircraft; raise it to suppress noise. The MF gate covers slow transits that would miss here.')}
+            ${_tuningSliderRow('tunMFThresh', 'MF Gate Threshold %', 50, 100, Math.round(saved.mf_threshold_frac * 100), 5,
+                '<strong>Matched-filter gate</strong> — fires when at least N% of frames inside a sliding window (4 / 7 / 12 / 18 / 30 frames) are triggered. Lower = more sensitive to intermittent or slow transits; higher = stricter pattern required. Default 70%. Runs alongside the fast Consec gate.')}
+            ${_tuningSliderRow('tunSensitivity', 'Sensitivity', 0.2, 3.0, saved.sensitivity_scale, 0.1,
+                'Multiplier applied to both adaptive thresholds — affects <em>both</em> the fast Consec gate and the MF gate. Below 1 = lower bar (more detections). Above 1 = higher bar (fewer detections). Adjust if you are getting too many or too few alerts.')}
+            ${_tuningSliderRow('tunTrackMag', 'Track Min Motion (px)', 0, 10, saved.track_min_mag, 0.1,
+                'A <em>spatial</em> gate — complements Consec Frames. Sets the minimum pixel displacement of the detected blob\'s centroid between frames to count as real directional motion. Atmospheric shimmer moves the centroid randomly by ≤2 px with no consistent direction; a real aircraft moves 3–8 px per frame in a straight line. Frames below this threshold abstain from the direction vote. Set to 0 to disable.')}
+            ${_tuningSliderRow('tunTrackAgree', 'Track Agreement %', 0, 100, Math.round(saved.track_min_agree_frac * 100), 5,
+                'What fraction of the streak frames (that cleared Track Min Motion) must agree on direction before the detection fires. 60% = default. Set to 0 to disable the direction gate entirely.')}
+            <button class="btn btn-secondary btn-compact" style="margin-top:6px; width:100%;" onclick="_resetTuning()">↩ Reset to defaults</button>
+        </div>
     `;
 
     // Insert before the harness panel (or event log)
@@ -5315,7 +5347,7 @@ function ensureTuningUI() {
     }
 
     // Wire up sliders
-    ['tunMargin', 'tunRatio', 'tunConsec', 'tunSensitivity', 'tunTrackMag', 'tunTrackAgree'].forEach(id => {
+    ['tunMargin', 'tunRatio', 'tunConsec', 'tunMFThresh', 'tunSensitivity', 'tunTrackMag', 'tunTrackAgree'].forEach(id => {
         const el = document.getElementById(id);
         if (!el) return;
         el.addEventListener('input', () => {
@@ -5323,6 +5355,15 @@ function ensureTuningUI() {
             _debouncedApplyTuning();
         });
     });
+}
+
+function _toggleTuningBody() {
+    const body = document.getElementById('tuningBody');
+    const chevron = document.getElementById('tuningChevron');
+    if (!body) return;
+    const open = body.style.display !== 'none';
+    body.style.display = open ? 'none' : '';
+    if (chevron) chevron.style.transform = open ? '' : 'rotate(180deg)';
 }
 
 let _tuningDebounceTimer = null;
@@ -5335,6 +5376,7 @@ function _debouncedApplyTuning() {
         const ss = document.getElementById('tunSensitivity');
         const tm = document.getElementById('tunTrackMag');
         const ta = document.getElementById('tunTrackAgree');
+        const mf = document.getElementById('tunMFThresh');
         const settings = {
             disk_margin_pct:      m  ? parseFloat(m.value)  / 100 : TUNING_DEFAULTS.disk_margin_pct,
             centre_ratio_min:     r  ? parseFloat(r.value)        : TUNING_DEFAULTS.centre_ratio_min,
@@ -5342,6 +5384,7 @@ function _debouncedApplyTuning() {
             sensitivity_scale:    ss ? parseFloat(ss.value)       : TUNING_DEFAULTS.sensitivity_scale,
             track_min_mag:        tm ? parseFloat(tm.value)       : TUNING_DEFAULTS.track_min_mag,
             track_min_agree_frac: ta ? parseInt(ta.value) / 100   : TUNING_DEFAULTS.track_min_agree_frac,
+            mf_threshold_frac:    mf ? parseInt(mf.value)  / 100  : TUNING_DEFAULTS.mf_threshold_frac,
         };
         localStorage.setItem('det_disk_margin',   settings.disk_margin_pct);
         localStorage.setItem('det_centre_ratio',  settings.centre_ratio_min);
@@ -5349,6 +5392,7 @@ function _debouncedApplyTuning() {
         localStorage.setItem('det_sensitivity',   settings.sensitivity_scale);
         localStorage.setItem('det_track_mag',     settings.track_min_mag);
         localStorage.setItem('det_track_agree',   settings.track_min_agree_frac);
+        localStorage.setItem('det_mf_thresh',     settings.mf_threshold_frac);
         _applyDetectionSettings(settings);
     }, 300);
 }
@@ -5360,6 +5404,7 @@ function _resetTuning() {
     localStorage.removeItem('det_sensitivity');
     localStorage.removeItem('det_track_mag');
     localStorage.removeItem('det_track_agree');
+    localStorage.removeItem('det_mf_thresh');
     _syncTuningSliders(TUNING_DEFAULTS);
     _applyDetectionSettings(TUNING_DEFAULTS);
 }
@@ -5722,6 +5767,493 @@ window.destroyTelescope = function() {
 
 document.addEventListener('DOMContentLoaded', () => {
     ensureHarnessUI();
+    ensureInterceptChart();
+    ensureSignalSparkline();
 });
+
+// ============================================================================
+// INTERCEPT APPROACH CHART — live angular separation vs time (Phase C/D)
+// ============================================================================
+
+const _interceptHistory = new Map(); // flightId → {points, color, label, target}
+const _DISC_DEG = 0.53;
+const _INTERCEPT_WINDOW_MS = 30 * 60 * 1000; // 30 min
+const _INTERCEPT_MAX_PTS = 90;
+
+let _interceptCanvas = null;
+let _interceptCtx = null;
+let _interceptRAF = null;
+
+/** Convert #rrggbb → rgba(r,g,b,a) */
+function _hexToRgba(hex, alpha) {
+    const r = parseInt(hex.slice(1, 3), 16);
+    const g = parseInt(hex.slice(3, 5), 16);
+    const b = parseInt(hex.slice(5, 7), 16);
+    return `rgba(${r},${g},${b},${alpha})`;
+}
+
+/**
+ * Push one flight data-point into the intercept chart.
+ * Called from app.js after every flight poll for HIGH/MEDIUM transits.
+ */
+window.pushInterceptPoint = function(flight) {
+    const id = String(flight.id || flight.name || '').trim().toUpperCase();
+    if (!id || flight.angular_separation == null) return;
+    const level = parseInt(flight.possibility_level ?? 0);
+    if (level < 2) return; // only MEDIUM (2) and HIGH (3)
+
+    const color = level >= 3 ? '#4caf50' : '#ff9800';
+    if (!_interceptHistory.has(id)) {
+        _interceptHistory.set(id, { points: [], color, label: id, target: flight.target || 'sun' });
+    }
+    const entry = _interceptHistory.get(id);
+    entry.color = color;
+    entry.points.push({
+        t: Date.now(),
+        sep: parseFloat(flight.angular_separation),
+        sigma: parseFloat(flight.sep_1sigma ?? 0) || 0,
+        level,
+    });
+    if (entry.points.length > _INTERCEPT_MAX_PTS) entry.points.shift();
+
+    // Prune flights absent > 40 min
+    const stale = Date.now() - 40 * 60 * 1000;
+    for (const [k, v] of _interceptHistory) {
+        if (!v.points.length || v.points[v.points.length - 1].t < stale) {
+            _interceptHistory.delete(k);
+        }
+    }
+
+    if (!_interceptRAF) {
+        _interceptRAF = requestAnimationFrame(() => { _interceptRAF = null; _drawInterceptChart(); });
+    }
+};
+
+function _resizeInterceptCanvas() {
+    const canvas = _interceptCanvas;
+    if (!canvas || !canvas.parentElement) return;
+    const dpr = window.devicePixelRatio || 1;
+    const w = canvas.parentElement.clientWidth - 20; // card padding
+    const h = 170;
+    canvas.width = Math.round(w * dpr);
+    canvas.height = Math.round(h * dpr);
+    canvas.style.width = w + 'px';
+    canvas.style.height = h + 'px';
+    _interceptCtx = canvas.getContext('2d');
+    _drawInterceptChart();
+}
+
+function _drawInterceptChart() {
+    const canvas = _interceptCanvas;
+    if (!canvas || !_interceptCtx) return;
+    const ctx = _interceptCtx;
+    const dpr = window.devicePixelRatio || 1;
+    const W = canvas.width / dpr;
+    const H = canvas.height / dpr;
+
+    const ML = 34, MR = 10, MT = 10, MB = 22;
+    const CW = W - ML - MR;
+    const CH = H - MT - MB;
+    if (CW < 10 || CH < 10) return;
+
+    ctx.save();
+    ctx.scale(dpr, dpr);
+    ctx.clearRect(0, 0, W, H);
+
+    // Background
+    ctx.fillStyle = '#080814';
+    ctx.fillRect(0, 0, W, H);
+
+    // Gather scale
+    const now = Date.now();
+    const xMin = now - _INTERCEPT_WINDOW_MS;
+    let yMax = 5.0;
+    let hasData = false;
+
+    for (const [, entry] of _interceptHistory) {
+        for (const pt of entry.points) {
+            if (pt.t >= xMin) {
+                hasData = true;
+                yMax = Math.max(yMax, pt.sep + pt.sigma + 0.8);
+            }
+        }
+    }
+    yMax = Math.ceil(yMax / 2) * 2;
+
+    const xPx = t => ML + ((t - xMin) / _INTERCEPT_WINDOW_MS) * CW;
+    const yPx = deg => MT + CH * (1 - Math.max(0, Math.min(deg, yMax)) / yMax);
+
+    // Zone fills
+    const discY = yPx(_DISC_DEG);
+    const highY = yPx(Math.min(2.0, yMax));
+    const medY  = yPx(Math.min(4.0, yMax));
+    const botY  = yPx(0);
+
+    if (4.0 < yMax) {
+        ctx.fillStyle = 'rgba(255,235,59,0.04)';
+        ctx.fillRect(ML, medY, CW, highY - medY);
+    }
+    if (2.0 < yMax) {
+        ctx.fillStyle = 'rgba(255,152,0,0.07)';
+        ctx.fillRect(ML, highY, CW, discY - highY);
+    }
+    ctx.fillStyle = 'rgba(244,67,54,0.12)';
+    ctx.fillRect(ML, discY, CW, botY - discY);
+
+    // Horizontal grid
+    ctx.strokeStyle = 'rgba(255,255,255,0.05)';
+    ctx.lineWidth = 1;
+    const gridStep = yMax > 8 ? 2 : 1;
+    for (let d = gridStep; d < yMax; d += gridStep) {
+        const py = yPx(d);
+        ctx.beginPath(); ctx.moveTo(ML, py); ctx.lineTo(ML + CW, py); ctx.stroke();
+    }
+
+    // Zone boundary dashes
+    const _dashed = (deg, color, dash) => {
+        if (deg > yMax) return;
+        ctx.save();
+        ctx.strokeStyle = color; ctx.lineWidth = 1; ctx.setLineDash(dash);
+        const py = yPx(deg);
+        ctx.beginPath(); ctx.moveTo(ML, py); ctx.lineTo(ML + CW, py); ctx.stroke();
+        ctx.restore();
+    };
+    _dashed(4.0, 'rgba(255,235,59,0.3)', [4, 4]);
+    _dashed(2.0, 'rgba(255,152,0,0.45)', [4, 3]);
+    _dashed(_DISC_DEG, 'rgba(244,67,54,0.55)', [2, 2]);
+
+    // Y axis labels
+    ctx.fillStyle = '#555';
+    ctx.font = '9px sans-serif';
+    ctx.textAlign = 'right';
+    ctx.textBaseline = 'middle';
+    for (let d = 0; d <= yMax; d += gridStep) {
+        const py = yPx(d);
+        if (py < MT - 2 || py > MT + CH + 2) continue;
+        ctx.fillText(d + '°', ML - 3, py);
+    }
+
+    // Disc label
+    if (_DISC_DEG <= yMax) {
+        ctx.fillStyle = 'rgba(244,67,54,0.6)';
+        ctx.font = '8px sans-serif';
+        ctx.textAlign = 'left';
+        ctx.fillText('disc', ML + 3, discY - 5);
+    }
+
+    // X axis labels
+    ctx.fillStyle = '#444';
+    ctx.font = '9px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'top';
+    for (const min of [-25, -15, -5, 0]) {
+        const px = xPx(now + min * 60 * 1000);
+        if (px < ML + 5 || px > ML + CW - 5) continue;
+        ctx.fillText(min === 0 ? 'now' : `${min}m`, px, MT + CH + 4);
+    }
+
+    // "Now" hairline
+    ctx.save();
+    ctx.strokeStyle = 'rgba(255,255,255,0.18)';
+    ctx.lineWidth = 1;
+    ctx.setLineDash([3, 3]);
+    const nowX = xPx(now);
+    ctx.beginPath(); ctx.moveTo(nowX, MT); ctx.lineTo(nowX, MT + CH); ctx.stroke();
+    ctx.restore();
+
+    // Chart border
+    ctx.strokeStyle = 'rgba(255,255,255,0.08)';
+    ctx.lineWidth = 1;
+    ctx.setLineDash([]);
+    ctx.strokeRect(ML, MT, CW, CH);
+
+    // Clip for flight lines
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(ML, MT, CW, CH);
+    ctx.clip();
+
+    for (const [, entry] of _interceptHistory) {
+        const pts = entry.points.filter(p => p.t >= xMin - 120000);
+        if (!pts.length) continue;
+        const col = entry.color;
+
+        // ±1σ band
+        if (pts.some(p => p.sigma > 0)) {
+            ctx.beginPath();
+            ctx.moveTo(xPx(pts[0].t), yPx(pts[0].sep + pts[0].sigma));
+            pts.forEach(p => ctx.lineTo(xPx(p.t), yPx(p.sep + p.sigma)));
+            for (let i = pts.length - 1; i >= 0; i--) {
+                ctx.lineTo(xPx(pts[i].t), yPx(Math.max(0, pts[i].sep - pts[i].sigma)));
+            }
+            ctx.closePath();
+            ctx.fillStyle = _hexToRgba(col, 0.14);
+            ctx.fill();
+        }
+
+        // Main line — glow effect
+        ctx.shadowColor = col;
+        ctx.shadowBlur = 4;
+        ctx.strokeStyle = col;
+        ctx.lineWidth = 2;
+        ctx.lineJoin = 'round';
+        ctx.beginPath();
+        pts.forEach((p, i) => {
+            const px = xPx(p.t), py = yPx(p.sep);
+            i === 0 ? ctx.moveTo(px, py) : ctx.lineTo(px, py);
+        });
+        ctx.stroke();
+        ctx.shadowBlur = 0;
+
+        // Endpoint dot
+        const last = pts[pts.length - 1];
+        const lx = xPx(last.t), ly = yPx(last.sep);
+        ctx.beginPath();
+        ctx.arc(lx, ly, 4, 0, Math.PI * 2);
+        ctx.fillStyle = col;
+        ctx.fill();
+        ctx.strokeStyle = 'rgba(255,255,255,0.8)';
+        ctx.lineWidth = 1;
+        ctx.stroke();
+
+        // Flight label
+        const labelX = lx + 6;
+        if (labelX + 55 < ML + CW) {
+            ctx.fillStyle = col;
+            ctx.font = 'bold 9px monospace';
+            ctx.textAlign = 'left';
+            ctx.textBaseline = 'middle';
+            ctx.fillText(entry.label, labelX, ly);
+        }
+    }
+
+    ctx.restore(); // end clip
+
+    // Empty state
+    if (!hasData) {
+        ctx.fillStyle = 'rgba(255,255,255,0.15)';
+        ctx.font = '11px sans-serif';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText('Waiting for HIGH / MEDIUM transits…', ML + CW / 2, MT + CH / 2);
+    }
+
+    // Update flight legend
+    const legendEl = document.getElementById('interceptLegend');
+    if (legendEl) {
+        const parts = [];
+        for (const [, entry] of _interceptHistory) {
+            if (!entry.points.length) continue;
+            const last = entry.points[entry.points.length - 1];
+            if (last.t < xMin) continue;
+            const sigStr = last.sigma > 0 ? ` ±${last.sigma.toFixed(2)}` : '';
+            parts.push(`<span style="color:${entry.color}">● ${entry.label} ${last.sep.toFixed(2)}°${sigStr}</span>`);
+        }
+        legendEl.innerHTML = parts.join('  ');
+    }
+
+    ctx.restore(); // end scale
+}
+
+function ensureInterceptChart() {
+    const detectPanel = document.getElementById('detectPanel');
+    if (!detectPanel || document.getElementById('interceptChartCard')) return;
+
+    const card = document.createElement('div');
+    card.id = 'interceptChartCard';
+    card.style.cssText =
+        'background:#0a0a18; border:1px solid rgba(255,255,255,0.1); border-radius:8px; ' +
+        'padding:10px; margin-bottom:8px;';
+
+    card.innerHTML = `
+        <div style="display:flex; justify-content:space-between; align-items:center;
+                    font-size:0.78em; font-weight:600; color:#667; margin-bottom:6px;
+                    letter-spacing:0.06em; text-transform:uppercase;">
+            <span>📡 Intercept Approach</span>
+            <span id="interceptLegend" style="font-weight:400; font-size:0.95em;
+                    text-transform:none; letter-spacing:0;"></span>
+        </div>
+        <canvas id="interceptCanvas" style="display:block; border-radius:4px;"></canvas>
+        <div style="display:flex; gap:10px; font-size:0.72em; margin-top:5px;
+                    padding-top:4px; border-top:1px solid rgba(255,255,255,0.05);">
+            <span style="color:rgba(244,67,54,0.7)">■ disc &lt;0.53°</span>
+            <span style="color:rgba(255,152,0,0.65)">■ HIGH &lt;2°</span>
+            <span style="color:rgba(255,235,59,0.55)">■ MED &lt;4°</span>
+            <span style="color:rgba(100,100,200,0.5); margin-left:auto;">last 30 min</span>
+        </div>
+    `;
+
+    if (detectPanel.firstChild) {
+        detectPanel.insertBefore(card, detectPanel.firstChild);
+    } else {
+        detectPanel.appendChild(card);
+    }
+
+    _interceptCanvas = card.querySelector('#interceptCanvas');
+    _resizeInterceptCanvas();
+
+    if (window.ResizeObserver) {
+        new ResizeObserver(() => _resizeInterceptCanvas()).observe(card);
+    }
+}
+
+// ============================================================================
+// DETECTION SIGNAL SPARKLINE — Signal A/B vs thresholds (Phase D)
+// ============================================================================
+
+let _signalCanvas = null;
+let _signalCtx = null;
+const _signalBuf = [];
+const _SIGNAL_MAX_PTS = 90;
+
+// Only append new points (avoid duplicates by timestamp)
+let _lastSignalT = 0;
+
+function _pushSignalTrace(tracePoints) {
+    for (const pt of tracePoints) {
+        if ((pt.t || 0) > _lastSignalT) {
+            _signalBuf.push(pt);
+            _lastSignalT = pt.t;
+        }
+    }
+    while (_signalBuf.length > _SIGNAL_MAX_PTS) _signalBuf.shift();
+    _drawSignalSparkline();
+}
+
+function _resizeSignalCanvas() {
+    const canvas = _signalCanvas;
+    if (!canvas || !canvas.parentElement) return;
+    const dpr = window.devicePixelRatio || 1;
+    const w = canvas.parentElement.clientWidth - 20;
+    const h = 56;
+    canvas.width = Math.round(w * dpr);
+    canvas.height = Math.round(h * dpr);
+    canvas.style.width = w + 'px';
+    canvas.style.height = h + 'px';
+    _signalCtx = canvas.getContext('2d');
+    _drawSignalSparkline();
+}
+
+function _drawSignalSparkline() {
+    const canvas = _signalCanvas;
+    if (!canvas || !_signalCtx || _signalBuf.length < 2) return;
+    const ctx = _signalCtx;
+    const dpr = window.devicePixelRatio || 1;
+    const W = canvas.width / dpr;
+    const H = canvas.height / dpr;
+    const pts = _signalBuf;
+    const n = pts.length;
+    const HA = Math.floor(H / 2) - 1;
+    const HB = H - HA - 2;
+
+    ctx.save();
+    ctx.scale(dpr, dpr);
+    ctx.clearRect(0, 0, W, H);
+
+    const xPx = i => (i / Math.max(n - 1, 1)) * W;
+
+    const _drawPane = (yOff, pH, aKey, tKey, color, label) => {
+        const vals = pts.map(p => p[aKey] ?? 0);
+        const thresh = pts.map(p => p[tKey] ?? 0);
+        const pMax = Math.max(...vals, ...thresh, 1e-9);
+
+        const yPx = v => yOff + pH - 1 - (v / pMax) * (pH - 4);
+
+        // Background
+        ctx.fillStyle = '#0d0d20';
+        ctx.fillRect(0, yOff, W, pH);
+
+        // Label
+        ctx.fillStyle = '#3a3a5a';
+        ctx.font = '8px sans-serif';
+        ctx.textAlign = 'left';
+        ctx.textBaseline = 'top';
+        ctx.fillText(label, 2, yOff + 2);
+
+        // Threshold line (dashed orange)
+        ctx.save();
+        ctx.strokeStyle = 'rgba(255,152,0,0.4)';
+        ctx.lineWidth = 1;
+        ctx.setLineDash([2, 3]);
+        ctx.beginPath();
+        pts.forEach((p, i) => {
+            const tv = p[tKey];
+            if (tv == null) return;
+            i === 0 ? ctx.moveTo(xPx(i), yPx(tv)) : ctx.lineTo(xPx(i), yPx(tv));
+        });
+        ctx.stroke();
+        ctx.restore();
+
+        // Fill under triggered segments
+        pts.forEach((p, i) => {
+            if (i === 0) return;
+            const v = p[aKey] ?? 0;
+            const tv = p[tKey] ?? 0;
+            if (v > tv && tv > 0) {
+                ctx.fillStyle = _hexToRgba(color, 0.15);
+                const x0 = xPx(i - 1), x1 = xPx(i);
+                ctx.fillRect(x0, yPx(vals[i - 1]), x1 - x0 + 1, yPx(0) - yPx(vals[i - 1]));
+            }
+        });
+
+        // Signal line
+        ctx.strokeStyle = color;
+        ctx.lineWidth = 1.5;
+        ctx.beginPath();
+        pts.forEach((p, i) => {
+            const v = p[aKey] ?? 0;
+            i === 0 ? ctx.moveTo(xPx(i), yPx(v)) : ctx.lineTo(xPx(i), yPx(v));
+        });
+        ctx.stroke();
+    };
+
+    _drawPane(0, HA, 'a', 'ta', '#4fc3f7', 'Sig A');
+
+    // Divider
+    ctx.fillStyle = 'rgba(255,255,255,0.04)';
+    ctx.fillRect(0, HA + 1, W, 2);
+
+    _drawPane(HA + 2, HB, 'b', 'tb', '#81c784', 'Sig B');
+
+    ctx.restore();
+}
+
+function ensureSignalSparkline() {
+    const detectPanel = document.getElementById('detectPanel');
+    if (!detectPanel || document.getElementById('signalSparkCard')) return;
+
+    const card = document.createElement('div');
+    card.id = 'signalSparkCard';
+    card.style.cssText =
+        'background:#0a0a18; border:1px solid rgba(255,255,255,0.08); border-radius:8px; ' +
+        'padding:8px 10px 6px 10px; margin-bottom:8px; display:none;';
+
+    card.innerHTML = `
+        <div style="display:flex; justify-content:space-between; align-items:center;
+                    font-size:0.72em; font-weight:600; color:#445; margin-bottom:5px;
+                    letter-spacing:0.06em; text-transform:uppercase;">
+            <span>📊 Detection Signals</span>
+            <span style="font-weight:400; color:#334; text-transform:none;">— dashed = threshold</span>
+        </div>
+        <canvas id="signalCanvas" style="display:block; border-radius:3px;"></canvas>
+    `;
+
+    // Insert after intercept chart
+    const interceptCard = document.getElementById('interceptChartCard');
+    if (interceptCard && interceptCard.parentNode === detectPanel) {
+        interceptCard.insertAdjacentElement('afterend', card);
+    } else if (detectPanel.firstChild) {
+        detectPanel.insertBefore(card, detectPanel.firstChild);
+    } else {
+        detectPanel.appendChild(card);
+    }
+
+    _signalCanvas = card.querySelector('#signalCanvas');
+    _resizeSignalCanvas();
+
+    if (window.ResizeObserver) {
+        new ResizeObserver(() => _resizeSignalCanvas()).observe(card);
+    }
+}
 
 console.log('[Telescope] Module loaded');

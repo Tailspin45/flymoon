@@ -1150,6 +1150,11 @@ function updateTrackedFlight() {
         if (typeof updateSingleAircraftMarker === 'function') {
             updateSingleAircraftMarker(trackedFlight);
         }
+
+        // Push to intercept approach chart
+        if (typeof window.pushInterceptPoint === 'function' && trackedFlight.is_possible_transit === 1) {
+            window.pushInterceptPoint(trackedFlight);
+        }
     })
     .catch(error => {
         console.error('Track mode update error:', error);
@@ -2125,6 +2130,13 @@ function fetchFlights() {
         });
         const filteredFlights = Object.values(seenFlights);
         console.log(`Dedupe: ${data.flights.length} flights -> ${filteredFlights.length} unique`);
+
+        // Phase C/D: push HIGH/MEDIUM transit candidates to the intercept approach chart
+        if (typeof window.pushInterceptPoint === 'function') {
+            filteredFlights.forEach(f => {
+                if (f.is_possible_transit === 1) window.pushInterceptPoint(f);
+            });
+        }
 
         // Debug: show transit candidates
         filteredFlights.forEach(f => {

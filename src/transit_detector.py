@@ -484,6 +484,7 @@ class TransitDetector:
         self.disk_margin_pct: float = DISK_MARGIN_PCT
         self.centre_ratio_min: float = CENTRE_EDGE_RATIO_MIN
         self.consec_frames_required: int = CONSEC_FRAMES_REQUIRED
+        self.mf_threshold_frac: float = _MF_THRESHOLD_FRAC
 
         self._running = False
         self._process: Optional[subprocess.Popen] = None
@@ -695,6 +696,7 @@ class TransitDetector:
                 "sensitivity_scale": self.sensitivity_scale,
                 "track_min_mag": self.track_min_mag,
                 "track_min_agree_frac": self.track_min_agree_frac,
+                "mf_threshold_frac": self.mf_threshold_frac,
             },
             # B4: active primed prediction windows (flight_id → ETA info)
             "primed_events": [
@@ -706,6 +708,7 @@ class TransitDetector:
                 for e in self._primed_events.values()
                 if time.time() <= e["expires_at"]
             ],
+            "signal_trace": list(self._signal_trace),
         }
 
     def get_latest_hires_jpeg(self) -> Optional[bytes]:
@@ -779,6 +782,7 @@ class TransitDetector:
         sensitivity_scale: Optional[float] = None,
         track_min_mag: Optional[float] = None,
         track_min_agree_frac: Optional[float] = None,
+        mf_threshold_frac: Optional[float] = None,
     ) -> Dict[str, Any]:
         """Update live detection parameters without restarting the detector.
 
@@ -800,11 +804,14 @@ class TransitDetector:
             self.track_min_mag = float(max(0.0, min(20.0, track_min_mag)))
         if track_min_agree_frac is not None:
             self.track_min_agree_frac = float(max(0.0, min(1.0, track_min_agree_frac)))
+        if mf_threshold_frac is not None:
+            self.mf_threshold_frac = float(max(0.3, min(1.0, mf_threshold_frac)))
         logger.info(
             f"[Detector] Settings updated: margin={self.disk_margin_pct:.0%} "
             f"ratio_min={self.centre_ratio_min} consec={self.consec_frames_required} "
             f"sens={self.sensitivity_scale:.2f} "
-            f"track_mag={self.track_min_mag} track_agree={self.track_min_agree_frac:.0%}"
+            f"track_mag={self.track_min_mag} track_agree={self.track_min_agree_frac:.0%} "
+            f"mf_thresh={self.mf_threshold_frac:.0%}"
         )
         return self.get_status()["settings"]
 
@@ -1249,7 +1256,7 @@ class TransitDetector:
         for _n in _MF_TEMPLATES:
             if len(buf_list) >= _n:
                 _n_hit = sum(buf_list[-_n:])
-                if _n_hit >= max(3, int(_MF_THRESHOLD_FRAC * _n)):
+                if _n_hit >= max(3, int(self.mf_threshold_frac * _n)):
                     mf_gate = True
                     mf_duration_f = _n
                     break
