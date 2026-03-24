@@ -1896,6 +1896,49 @@ def analyze_file():
         return handle_error(e)
 
 
+
+def isolate_transit_route():
+    """POST /telescope/files/isolate-transit
+
+    Lightweight transit-frame isolation for short det_*.mp4 clips.
+    Returns per-frame darkness scores and transit spans without needing
+    a full disk-detection analysis.
+
+    Body: { path: "captures/...", peak_time_s: <float|null> }
+    """
+    logger.info("[Telescope] POST /telescope/files/isolate-transit")
+    try:
+        req = request.get_json(force=True) if request.is_json else {}
+        rel_path = req.get("path", "")
+        if not rel_path:
+            return jsonify({"error": "Missing path"}), 400
+
+        captures_abs = os.path.abspath("static/captures")
+        abs_path = os.path.abspath(os.path.join("static", rel_path))
+        if not abs_path.startswith(captures_abs):
+            return jsonify({"error": "Invalid file path"}), 403
+        if not os.path.exists(abs_path):
+            return jsonify({"error": "File not found"}), 404
+        if not abs_path.lower().endswith(".mp4"):
+            return jsonify({"error": "Only MP4 files supported"}), 400
+
+        from src.transit_analyzer import isolate_transit_frames
+
+        peak_time_s = req.get("peak_time_s")
+        if peak_time_s is not None:
+            try:
+                peak_time_s = float(peak_time_s)
+            except (TypeError, ValueError):
+                peak_time_s = None
+
+        result = isolate_transit_frames(abs_path, peak_time_s=peak_time_s)
+        return jsonify(result), 200
+
+    except Exception as exc:
+        logger.error(f"[Telescope] isolate-transit error: {exc}")
+        return handle_error(exc)
+
+
 def composite_from_frames_route():
     """POST /telescope/files/composite-from-frames
 
@@ -2859,6 +2902,12 @@ def register_routes(app):
         "/telescope/files/composite-from-frames",
         "telescope_composite_from_frames",
         composite_from_frames_route,
+        methods=["POST"],
+    )
+    app.add_url_rule(
+        "/telescope/files/isolate-transit",
+        "telescope_isolate_transit",
+        isolate_transit_route,
         methods=["POST"],
     )
 

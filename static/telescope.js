@@ -2914,6 +2914,8 @@ var _loopSegment = null; // { start, end } for segment looping, or true for full
 var _markedFrames = new Set(); // frame indices marked for composite
 var _videoFps = 30; // detected fps of current video
 var _scrubSlider = null; // reference to the range input
+// Isolation result for det_*.mp4 clips (transit spans / scores from backend)
+var _isolateResult = null;
 
 /** Build HTML strip showing diff heatmap and trigger frame beside the video. */
 function _buildCompanionStrip(fileInfo) {
@@ -2943,6 +2945,306 @@ function _buildCompanionStrip(fileInfo) {
     return parts.join('');
 }
 
+// ---------------------------------------------------------------------------
+// Transit isolation for det_*.mp4 clips (lightweight, no disk-detect needed)
+// ---------------------------------------------------------------------------
+
+/**
+ * Call the backend isolate-transit endpoint for a det_*.mp4 clip.
+ * On success, draws red span marks on markedFrameBar and auto-seeks the
+ * hidden video to the peak transit frame, setting a 3s loop around it.
+ */
+async function _runIsolateTransit(apiPath, peakHint) {
+    _isolateResult = null;
+    try {
+        const body = { path: apiPath };
+        if (peakHint != null) body.peak_time_s = peakHint;
+        const resp = await fetch('/telescope/files/isolate-transit', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(body),
+        });
+        if (!resp.ok) return;
+        const data = await resp.json();
+        if (data.error) { console.warn('[isolate]', data.error); return; }
+        _isolateResult = data;
+        _drawTransitSpans();
+        // Add Prev/Next buttons (idempotent)
+        _ensureTransitNavButtons();
+        // Auto-seek to peak and set 3s loop
+        const vid = document.getElementById('hiddenVid');
+        if (vid && data.peak_time_s != null) {
+            const ps = parseFloat(data.peak_time_s);
+            const half = 1.5;
+            _loopSegment = { start: Math.max(0, ps - half), end: ps + half };
+            vid.currentTime = _loopSegment.start;
+            vid.play().catch(() => {});
+        }
+    } catch (err) {
+        console.warn('[isolate] error:', err);
+    }
+}
+
+/**
+ * Draw red transit-span tick marks on markedFrameBar.
+ * Yellow ticks (user-marked frames) are preserved alongside.
+ */
+function _drawTransitSpans() {
+    const bar = document.getElementById('markedFrameBar');
+    if (!bar) return;
+    const total = _frameTotalCount || 1;
+    // Re-render yellow user marks first
+    bar.innerHTML = '';
+    for (const f of _markedFrames) {
+        const pct = (f / Math.max(1, total - 1)) * 100;
+        const tick = document.createElement('div');
+        tick.style.cssText = `position:absolute; left:${pct}%; top:0; width:2px; height:100%; background:#fd0; border-radius:1px; cursor:pointer;`;
+        tick.title = `Marked frame ${f}`;
+        tick.onclick = () => { const v = document.querySelector('#fileViewerBody video'); if (v) { v.pause(); v.currentTime = f / _videoFps; } };
+        bar.appendChild(tick);
+    }
+    // Red transit spans
+    if (!_isolateResult || !_isolateResult.spans) return;
+    for (const [s, e] of _isolateResult.spans) {
+        const pctL = (s / Math.max(1, total - 1)) * 100;
+        const pctW = Math.max(0.5, ((e - s + 1) / Math.max(1, total - 1)) * 100);
+        const span = document.createElement('div');
+        span.style.cssText = `position:absolute; left:${pctL}%; top:0; width:${pctW}%; height:100%; background:rgba(255,60,60,0.7); border-radius:2px; cursor:pointer;`;
+        span.title = `Transit span: frames ${s}–${e}`;
+        span.onclick = () => { const v = document.querySelector('#fileViewerBody video'); if (v) { v.pause(); v.currentTime = s / _videoFps; } };
+        bar.appendChild(span);
+    }
+    // Peak frame indicator (bright green)
+    if (_isolateResult.peak_frame != null) {
+        const pct = (_isolateResult.peak_frame / Math.max(1, total - 1)) * 100;
+        const pk = document.createElement('div');
+        pk.style.cssText = `position:absolute; left:${pct}%; top:0; width:3px; height:100%; background:#0f0; border-radius:1px; cursor:pointer;`;
+        pk.title = `Peak transit frame ${_isolateResult.peak_frame}`;
+        pk.onclick = () => { const v = document.querySelector('#fileViewerBody video'); if (v) { v.pause(); v.currentTime = _isolateResult.peak_frame / _videoFps; } };
+        bar.appendChild(pk);
+    }
+}
+
+/** Inject Prev/Next transit-span buttons into the scrubber control row. */
+function _ensureTransitNavButtons() {
+    if (document.getElementById('transitPrevBtn')) return; // already there
+    const counter = document.getElementById('frameCounter');
+    if (!counter || !counter.parentNode) return;
+    const prev = document.createElement('button');
+    prev.id = 'transitPrevBtn';
+    prev.className = 'btn-viewer';
+    prev.style.cssText = 'font-size:0.8em; padding:2px 7px;';
+    prev.title = 'Jump to previous transit span';
+    prev.textContent = '⏮ Transit';
+    prev.onclick = () => _jumpToTransitSpan(-1);
+    const next = document.createElement('button');
+    next.id = 'transitNextBtn';
+    next.className = 'btn-viewer';
+    next.style.cssText = 'font-size:0.8em; padding:2px 7px;';
+    next.title = 'Jump to next transit span';
+    next.textContent = 'Transit ⏭';
+    next.onclick = () => _jumpToTransitSpan(1);
+    counter.parentNode.insertBefore(prev, counter.nextSibling);
+    counter.parentNode.insertBefore(next, prev.nextSibling);
+}
+
+/** Jump to the previous (-1) or next (+1) transit span relative to current frame. */
+function _jumpToTransitSpan(dir) {
+    if (!_isolateResult || !_isolateResult.spans || !_isolateResult.spans.length) return;
+    const vid = document.getElementById('hiddenVid');
+    if (!vid) return;
+    const spans = _isolateResult.spans;
+    const cur = _currentFrame;
+    let target = null;
+    if (dir > 0) {
+        // next span whose start > cur
+        target = spans.find(([s]) => s > cur);
+        if (!target) target = spans[0]; // wrap
+    } else {
+        // previous span whose end < cur
+        const prev = [...spans].reverse().find(([, e]) => e < cur);
+        target = prev || spans[spans.length - 1]; // wrap
+    }
+    if (target) {
+        vid.pause();
+        const [s, e] = target;
+        const mid = (s + e) / 2;
+        vid.currentTime = Math.max(0, mid / _videoFps - 0.2);
+        _loopSegment = { start: Math.max(0, s / _videoFps - 0.2), end: e / _videoFps + 0.4 };
+        vid.play().catch(() => {});
+    }
+}
+
+
+// ---------------------------------------------------------------------------
+// Sidecar signal chart — uses live-detector data from det_*.json
+// ---------------------------------------------------------------------------
+
+/**
+ * Load the enriched sidecar and populate transit marks + signal chart.
+ * The sidecar.signal field contains scores_a/b, thresh_a/b, triggered,
+ * and transit_hires_frame — all computed by the live detector at fire time.
+ */
+function _loadSidecarSignal(sidecar, videoPath) {
+    const sig = sidecar.signal || {};
+    const hiresFps = 30;                 // hires buffer is always 30fps
+    const analysisFps = sig.analysis_fps || 15;
+    const step = Math.round(hiresFps / analysisFps);  // detector frames → hires frames
+
+    // Build _isolateResult from sidecar data so scrub bar marks work
+    const triggered = sig.triggered || [];
+    const spans = [];
+    let inSpan = false, spanStart = 0;
+    for (let i = 0; i < triggered.length; i++) {
+        if (triggered[i] && !inSpan) { inSpan = true; spanStart = i; }
+        else if (!triggered[i] && inSpan) {
+            inSpan = false;
+            if (i - spanStart >= 1) spans.push([spanStart * step, (i - 1) * step]);
+        }
+    }
+    if (inSpan) spans.push([spanStart * step, (triggered.length - 1) * step]);
+
+    const transitHiresFrame = sig.transit_hires_frame != null
+        ? sig.transit_hires_frame
+        : Math.round((sidecar.peak_time_s || 1.0) * hiresFps);
+
+    _isolateResult = {
+        spans: spans.length > 0 ? spans : [[Math.max(0, transitHiresFrame - 8), transitHiresFrame + 8]],
+        peak_frame: transitHiresFrame,
+        peak_time_s: sidecar.peak_time_s || (transitHiresFrame / hiresFps),
+    };
+    _drawTransitSpans();
+    _ensureTransitNavButtons();
+
+    // Auto-seek to transit
+    const vid = document.getElementById('hiddenVid');
+    if (vid && _isolateResult.peak_time_s != null) {
+        const ps = _isolateResult.peak_time_s;
+        _loopSegment = { start: Math.max(0, ps - 1.0), end: ps + 1.5 };
+        vid.currentTime = _loopSegment.start;
+        vid.play().catch(() => {});
+    }
+
+    // Confidence banner
+    const conf = sig.confidence_score != null ? `${Math.round(sig.confidence_score * 100)}%` : '';
+    const gate = sig.gate_detail || sig.gate_type || '';
+    const cnn = sig.cnn_confidence != null ? ` · CNN ${Math.round(sig.cnn_confidence * 100)}%` : '';
+    _setScanBanner('success', `✅ Live detection: ${gate} · confidence ${conf}${cnn}`);
+
+    // Draw signal chart
+    _drawSidecarSignalChart(sig, step);
+}
+
+/** Render the live-detector signal_a / signal_b history chart below the scrub bar. */
+function _drawSidecarSignalChart(sig, step) {
+    const root = document.getElementById('frameViewerRoot');
+    if (!root) return;
+
+    let card = document.getElementById('replaySignalCard');
+    if (!card) {
+        card = document.createElement('div');
+        card.id = 'replaySignalCard';
+        card.style.cssText = 'width:100%; padding:4px 12px 6px; background:#111; border-top:1px solid #333; flex-shrink:0;';
+        card.innerHTML =
+            '<div style="color:#888; font-size:0.7em; margin-bottom:2px;">📊 Live-detector signal — ' +
+            '<span style="color:#0cf;">A</span> consec diff · ' +
+            '<span style="color:#f80;">B</span> EMA/wavelet · ' +
+            '<span style="color:#0cf; opacity:0.5;">─ ─</span> threshold A · ' +
+            '<span style="color:#f80; opacity:0.5;">─ ─</span> threshold B</div>' +
+            '<canvas id="replaySignalCanvas" style="width:100%; height:56px; display:block;"></canvas>';
+        const scrubber = document.getElementById('frameScrubber');
+        if (scrubber && scrubber.parentNode) {
+            scrubber.parentNode.insertBefore(card, scrubber.nextSibling);
+        } else {
+            root.appendChild(card);
+        }
+    }
+
+    const canvas = document.getElementById('replaySignalCanvas');
+    if (!canvas) return;
+    const W = canvas.offsetWidth || 600;
+    const H = 56;
+    canvas.width = W;
+    canvas.height = H;
+    const ctx = canvas.getContext('2d');
+    ctx.fillStyle = '#111';
+    ctx.fillRect(0, 0, W, H);
+
+    const sa = sig.scores_a || [];
+    const sb = sig.scores_b || [];
+    const ta_val = sig.thresh_a || 0;
+    const tb_val = sig.thresh_b || 0;
+    const triggered = sig.triggered || [];
+    const n = Math.max(sa.length, sb.length);
+    if (n < 2) return;
+
+    const ta = new Array(n).fill(ta_val);
+    const tb = new Array(n).fill(tb_val);
+
+    const allVals = [...sa, ...sb, ta_val, tb_val].filter(v => v > 0);
+    const maxVal = Math.max(...allVals, 1e-6);
+    const toY = v => H - 2 - Math.round((Math.min(v, maxVal) / maxVal) * (H - 4));
+    const toX = i => Math.round((i / Math.max(n - 1, 1)) * (W - 1));
+
+    // Shade triggered spans
+    ctx.fillStyle = 'rgba(255,60,60,0.2)';
+    let inSpan = false, spanX = 0;
+    for (let i = 0; i < triggered.length; i++) {
+        if (triggered[i] && !inSpan) { inSpan = true; spanX = toX(i); }
+        else if (!triggered[i] && inSpan) { inSpan = false; ctx.fillRect(spanX, 0, toX(i) - spanX, H); }
+    }
+    if (inSpan) ctx.fillRect(spanX, 0, W - spanX, H);
+
+    // Transit event marker (brighter)
+    const peakDetFrame = sig.trigger_det_frame;
+    if (peakDetFrame != null && peakDetFrame < n) {
+        const px = toX(peakDetFrame);
+        ctx.fillStyle = 'rgba(255,80,80,0.5)';
+        ctx.fillRect(Math.max(0, px - 6), 0, 12, H);
+        ctx.fillStyle = '#fff';
+        ctx.font = '9px monospace';
+        ctx.fillText('⚡', px - 4, 9);
+    }
+
+    const drawLine = (arr, color, dash) => {
+        ctx.beginPath();
+        ctx.strokeStyle = color;
+        ctx.lineWidth = 1.2;
+        ctx.setLineDash(dash ? [3, 3] : []);
+        for (let i = 0; i < arr.length; i++) {
+            const x = toX(i), y = toY(arr[i]);
+            if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+        }
+        ctx.stroke();
+    };
+
+    drawLine(ta, 'rgba(0,200,255,0.4)', true);
+    drawLine(tb, 'rgba(255,136,0,0.4)', true);
+    drawLine(sa, '#0cf', false);
+    drawLine(sb, '#f80', false);
+    ctx.setLineDash([]);
+
+    // Playhead cursor — updated on scrub
+    canvas._step = step;
+    canvas._n = n;
+}
+
+/** Update the playhead cursor on the signal chart as the user scrubs. */
+function _updateSidecarChartCursor() {
+    const canvas = document.getElementById('replaySignalCanvas');
+    if (!canvas || !canvas._n) return;
+    // Lightweight redraw: the chart base is already painted; just draw/erase the cursor
+    // by triggering a full redraw via _drawSidecarSignalChart with cached sig
+    // (expensive for large arrays — skip cursor update if n > 1000)
+    if (canvas._n > 500) return;
+    const W = canvas.width, H = canvas.height;
+    const ctx = canvas.getContext('2d');
+    const detFrame = Math.round(_currentFrame / Math.max(1, canvas._step || 2));
+    const x = Math.round((detFrame / Math.max(canvas._n - 1, 1)) * (W - 1));
+    // We can't easily erase just the cursor without full redraw, so skip live cursor
+    // The chart is static and the scrub bar already shows position.
+}
+
 function viewFile(path, name, opts) {
     opts = opts || {};
     name = name || path.split('/').pop();
@@ -2968,6 +3270,7 @@ function viewFile(path, name, opts) {
     _setScanBanner(null); // clear any previous scan result
     _loopSegment = null;
     _markedFrames = new Set();
+    _isolateResult = null;
     _scrubSlider = null;
     // Resolve companion images for this file
     const curFileInfo = files.find(f => f.path === path) || {};
@@ -2998,7 +3301,7 @@ function viewFile(path, name, opts) {
                     `←/→ step · Shift ±10 · Space play/pause · M mark` +
                   `</div>` +
                 `</div>` +
-                `<div id="markedFrameBar" style="position:relative; width:100%; height:8px; background:#222; margin-top:4px; border-radius:4px; overflow:hidden;" title="Yellow ticks = marked frames"></div>` +
+                `<div id="markedFrameBar" style="position:relative; width:100%; height:8px; background:#222; margin-top:4px; border-radius:4px; overflow:hidden;" title="Yellow = marked frames · Red = transit spans · Green = peak frame"></div>` +
               `</div>` +
               `<div id="buildCompositeRow" style="display:none; padding:4px 8px; background:#1a1a1a; border-top:1px solid #222; text-align:center; flex-shrink:0;">` +
                 `<button class="btn-viewer" id="buildCompositeBtn" onclick="buildCompositeFromMarked()">🖼 Build Composite (<span id="compositeCountBtn">0</span>)</button>` +
@@ -3029,7 +3332,28 @@ function viewFile(path, name, opts) {
             _updateFivePanel();
         });
         vid.addEventListener('seeked', updateAfterSeek);
-        vid.addEventListener('loadedmetadata', () => { _initFrameScrubber(vid); updateAfterSeek(); });
+        const _isDetClip = /\/det_[^/]+\.mp4$/i.test(path);
+        // For det_*.mp4 clips: load the sidecar JSON which contains the exact
+        // live-detector signal data (no replay needed).  Fall back to lightweight
+        // isolation for older clips that predate the enriched sidecar format.
+        const _maybeAutoIsolate = () => {
+            if (!_isDetClip) return;
+            const apiPath = path.replace(/^\/static\//, '');
+            const sidecarPath = path.replace(/\.mp4$/i, '.json');
+            fetch(sidecarPath).then(r => r.ok ? r.json() : null).then(sidecar => {
+                const peak = sidecar && sidecar.peak_time_s != null ? sidecar.peak_time_s : null;
+                if (sidecar && sidecar.signal) {
+                    // New format: use live-detector signal directly
+                    _loadSidecarSignal(sidecar, path);
+                } else {
+                    // Legacy: fall back to lightweight frame-diff isolation
+                    _runIsolateTransit(apiPath, peak);
+                }
+            }).catch(() => {
+                _runIsolateTransit(apiPath, null);
+            });
+        };
+        vid.addEventListener('loadedmetadata', () => { _initFrameScrubber(vid); updateAfterSeek(); _maybeAutoIsolate(); });
         vid.addEventListener('loadeddata', () => { _initFrameScrubber(vid); updateAfterSeek(); });
         if (vid.readyState >= 1) { _initFrameScrubber(vid); updateAfterSeek(); }
         _extractFrameThumbs(vid);
@@ -3306,20 +3630,8 @@ function _updateMarkedUI() {
         if (buildCount) buildCount.textContent = count;
     }
 
-    // Draw tick marks on the marked-frame bar
-    const bar = document.getElementById('markedFrameBar');
-    if (!bar) return;
-    const total = _frameTotalCount || 1;
-    bar.innerHTML = '';
-    for (const f of _markedFrames) {
-        const pct = (f / Math.max(1, total - 1)) * 100;
-        const tick = document.createElement('div');
-        tick.style.cssText = `position:absolute; left:${pct}%; top:0; width:2px; height:100%; background:#fd0; border-radius:1px;`;
-        tick.title = `Frame ${f}`;
-        tick.style.cursor = 'pointer';
-        tick.onclick = () => { const v = document.querySelector('#fileViewerBody video'); if (v) { v.pause(); v.currentTime = f / _videoFps; } };
-        bar.appendChild(tick);
-    }
+    // Draw tick marks + transit spans on the marked-frame bar
+    _drawTransitSpans();
 }
 
 async function buildCompositeFromMarked() {

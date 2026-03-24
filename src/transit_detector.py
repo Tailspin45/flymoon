@@ -119,9 +119,9 @@ DETECTION_COOLDOWN = int(os.getenv("DETECTION_COOLDOWN", "30"))
 DETECTION_RECORD_DURATION = 10
 
 # Pre-buffer: seconds of video to keep BEFORE detection trigger
-PRE_BUFFER_SECONDS = int(os.getenv("DETECTION_PRE_BUFFER", "5"))
+PRE_BUFFER_SECONDS = int(os.getenv("DETECTION_PRE_BUFFER", "3"))
 # Post-buffer: seconds of video to keep AFTER detection trigger
-POST_BUFFER_SECONDS = int(os.getenv("DETECTION_POST_BUFFER", "5"))
+POST_BUFFER_SECONDS = int(os.getenv("DETECTION_POST_BUFFER", "4"))
 
 # --- Phase 1 algorithm parameters ---
 # Consecutive frames both signals must exceed threshold before firing.
@@ -576,6 +576,10 @@ class TransitDetector:
         self._hires_buffer: Deque[bytes] = collections.deque(
             maxlen=PRE_BUFFER_SECONDS * 30  # ~30fps full-res, JPEG-compressed
         )
+        # Monotonic counter: total JPEGs ever appended to _hires_buffer.
+        # Used by the post-buffer collector instead of len(deque) which is
+        # always == maxlen once the buffer is full (the bug in the original code).
+        self._hires_frame_total: int = 0
         self._hires_fps: float = 30.0
         self._hires_width: int = 0
         self._hires_height: int = 0
@@ -627,6 +631,7 @@ class TransitDetector:
         # Start full-res circular buffer reader alongside detection
         if self.record_on_detect:
             self._hires_buffer.clear()
+            self._hires_frame_total = 0
             self._hires_thread = threading.Thread(
                 target=self._hires_reader_loop, name="hires-buffer", daemon=True
             )
@@ -993,6 +998,7 @@ class TransitDetector:
                         buf = buf[eoi_pos + 2 :]
 
                         self._hires_buffer.append(jpeg_data)
+                        self._hires_frame_total += 1
 
                         # Get dimensions from first frame
                         if not got_dimensions:
@@ -1458,9 +1464,25 @@ class TransitDetector:
         # Snapshot signal trace
         event.signal_trace = list(self._signal_trace)
 
-        # Auto-record
+        # Auto-record — pass a signal snapshot so the sidecar contains the
+        # exact per-frame data used by the live detector (no replay needed).
         if self.record_on_detect:
-            rec_file = self._start_detection_recording(ts)
+            _sig_snapshot = {
+                "scores_a":   list(self._scores_a),
+                "scores_b":   list(self._scores_b),
+                "thresh_a":   float(thresh_a),
+                "thresh_b":   float(thresh_b),
+                "triggered":  list(self._triggered_buf),
+                "trigger_det_frame": int(self._frame_idx),
+                "disc_cx":    int(self._disk_cx) if self._disk_cx is not None else None,
+                "disc_cy":    int(self._disk_cy) if self._disk_cy is not None else None,
+                "disc_r":     int(self._disk_radius) if self._disk_radius is not None else None,
+                "confidence_score": float(confidence_score),
+                "gate_type":  ("matched_filter" if mf_gate else "consec"),
+                "gate_detail": (f"matched_filter:{mf_duration_f}f" if mf_gate else f"consec:{_ec}f"),
+                "cnn_confidence": float(cnn_confidence) if cnn_confidence else None,
+            }
+            rec_file = self._start_detection_recording(ts, signal_snapshot=_sig_snapshot)
             event.recording_file = rec_file
 
         # Store event
@@ -1613,7 +1635,7 @@ class TransitDetector:
             logger.error(f"[Detector] Diagnostic frame save failed: {e}")
             return False
 
-    def _start_detection_recording(self, ts: datetime) -> Optional[str]:
+    def _start_detection_recording(self, ts: datetime, signal_snapshot: Optional[dict] = None) -> Optional[str]:
         """Save pre-buffer frames + capture post-buffer from the circular buffer.
 
         The hi-res reader continuously fills _hires_buffer with JPEG frames.
@@ -1638,33 +1660,43 @@ class TransitDetector:
         filepath = os.path.join(year_month, filename)
         self._rec_file = filepath
 
-        # Snapshot the pre-buffer
-        pre_frames = list(self._hires_buffer)
+        # Snapshot the pre-buffer and trim to a tight window around the transit.
+        # The transit just fired, so it's at the very tail of the hires buffer.
+        # Keep only PRE_TIGHT_SECS before the trigger + POST_BUFFER_SECONDS after.
+        PRE_TIGHT_SECS = 1  # 1s before transit — enough context, avoids dark start
+        _hires_fps_approx = 30
+        _tight_pre = int(PRE_TIGHT_SECS * _hires_fps_approx)
+        _all_pre = list(self._hires_buffer)
+        pre_frames = _all_pre[-_tight_pre:] if len(_all_pre) > _tight_pre else _all_pre
         pre_count = len(pre_frames)
 
         logger.info(
-            f"[Detector] Recording: {pre_count} pre-buffer frames + "
+            f"[Detector] Recording: {pre_count} tight-pre frames + "
             f"{POST_BUFFER_SECONDS}s post-buffer → {filepath}"
         )
 
         # Collect post-buffer in a background thread
+        # Capture signal_snapshot in closure for the sidecar
+        _captured_signal_snapshot = signal_snapshot
+
         def _capture_and_write():
             try:
-                # Collect post-buffer frames
+                # Collect post-buffer frames.
+                # Use _hires_frame_total (monotonically increasing) instead of
+                # len(_hires_buffer) which is always == maxlen once full and
+                # therefore never signals new arrivals (the original bug).
                 post_frames = []
                 target_post = int(POST_BUFFER_SECONDS * 30)
                 deadline = time.monotonic() + POST_BUFFER_SECONDS + 2
-                buf_snapshot_len = len(self._hires_buffer)
+                snapshot_count = self._hires_frame_total
 
                 while len(post_frames) < target_post and time.monotonic() < deadline:
-                    current_len = len(self._hires_buffer)
-                    if current_len > buf_snapshot_len:
-                        # New frames arrived — grab them
-                        new_frames = list(self._hires_buffer)[
-                            -(current_len - buf_snapshot_len) :
-                        ]
-                        post_frames.extend(new_frames)
-                        buf_snapshot_len = current_len
+                    new_total = self._hires_frame_total
+                    arrived = new_total - snapshot_count - len(post_frames)
+                    if arrived > 0:
+                        # Grab the freshest `arrived` frames from the tail
+                        tail = list(self._hires_buffer)
+                        post_frames.extend(tail[-arrived:])
                     time.sleep(0.03)
 
                 all_frames = pre_frames + post_frames
@@ -1752,7 +1784,7 @@ class TransitDetector:
                     f"= {written/fps:.1f}s → {filepath}"
                 )
 
-                self._finalize_recording(filepath, ts, 0)
+                self._finalize_recording(filepath, ts, 0, signal_snapshot=_captured_signal_snapshot)
 
             except Exception as e:
                 logger.error(f"[Detector] Buffer recording failed: {e}")
@@ -1764,6 +1796,69 @@ class TransitDetector:
         ).start()
 
         return filepath
+
+    def _trim_recording(self, filepath: str, min_luma: float = 15.0) -> None:
+        """Trim dark / blank leading frames from a freshly encoded det_*.mp4.
+
+        Uses ffprobe to read the mean luminance of each frame.  Walks forward
+        until a frame exceeds *min_luma* (default 15/255 — anything brighter
+        than near-black counts as the disc appearing).  Re-encodes from that
+        point if the trim saves at least 0.5 s.  Falls back silently on any
+        error so the original file is always preserved.
+        """
+        try:
+            r = subprocess.run(
+                [
+                    FFMPEG,
+                    "-i", filepath,
+                    "-vf", "signalstats",
+                    "-f", "null",
+                    "-",
+                ],
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+            # signalstats writes YAVG (mean Y luma) per frame to stderr
+            import re as _re
+            first_good: Optional[float] = None
+            for line in r.stderr.splitlines():
+                m_t = _re.search(r"pts_time:([\d.]+)", line)
+                m_y = _re.search(r"YAVG:([\d.]+)", line)
+                if m_t:
+                    cur_t = float(m_t.group(1))
+                if m_y and float(m_y.group(1)) >= min_luma:
+                    first_good = cur_t
+                    break
+
+            if first_good is None or first_good < 0.5:
+                return  # nothing to trim
+
+            logger.info(
+                "[Detector] Trimming %s dark leading seconds from %s",
+                f"{first_good:.2f}",
+                os.path.basename(filepath),
+            )
+            tmp = filepath + ".tmp.mp4"
+            subprocess.run(
+                [
+                    FFMPEG,
+                    "-y",
+                    "-ss", str(first_good),
+                    "-i", filepath,
+                    "-c", "copy",
+                    tmp,
+                ],
+                capture_output=True,
+                timeout=30,
+            )
+            if os.path.exists(tmp) and os.path.getsize(tmp) > 0:
+                os.replace(tmp, filepath)
+            else:
+                if os.path.exists(tmp):
+                    os.remove(tmp)
+        except Exception as exc:
+            logger.debug("[Detector] _trim_recording skipped: %s", exc)
 
     def _peak_scene_time(
         self, filepath: str, search_secs: float = 3.0
@@ -1819,7 +1914,7 @@ class TransitDetector:
         except Exception:
             return None
 
-    def _finalize_recording(self, filepath: str, ts: datetime, duration: int) -> None:
+    def _finalize_recording(self, filepath: str, ts: datetime, duration: int, signal_snapshot: Optional[dict] = None) -> None:
         """Generate thumbnail + metadata after buffer recording is written."""
         if not os.path.exists(filepath):
             logger.warning(f"[Detector] Recording file missing: {filepath}")
@@ -1829,6 +1924,7 @@ class TransitDetector:
         # (peak scene-change score = maximum pixel difference = aircraft at disc centre).
         # Falls back to first frame if the scene-change scan fails.
         thumb_path = filepath.rsplit(".", 1)[0] + "_thumb.jpg"
+        seek_time: Optional[float] = None
         try:
             seek_time = self._peak_scene_time(filepath)
             seek_args = ["-ss", str(seek_time)] if seek_time is not None else []
@@ -1857,15 +1953,45 @@ class TransitDetector:
         except Exception as e:
             logger.warning(f"[Detector] Thumbnail failed: {e}")
 
-        # Save metadata
+        # Save metadata sidecar — includes the live-detector signal data so the
+        # viewer can render signal charts and transit marks without any replay.
         meta_path = filepath.rsplit(".", 1)[0] + ".json"
-        meta = {
+        meta: dict = {
             "timestamp": ts.isoformat(),
             "duration": duration,
             "source": "transit_detection",
             "type": "video",
             "detection": True,
+            "peak_time_s": round(seek_time, 3) if seek_time is not None else None,
         }
+        if signal_snapshot:
+            # Compute per-frame adaptive thresholds relative to the snapshot.
+            # The snapshot contains the rolling history at the moment of trigger.
+            # We expose the last N scores plus the threshold that was active.
+            sa_list = signal_snapshot.get("scores_a", [])
+            sb_list = signal_snapshot.get("scores_b", [])
+            ta = signal_snapshot.get("thresh_a", 0.0)
+            tb = signal_snapshot.get("thresh_b", 0.0)
+            triggered = signal_snapshot.get("triggered", [])
+            # Build uniform thresh arrays matching score length for the viewer
+            meta["signal"] = {
+                "scores_a":   [round(v, 5) for v in sa_list],
+                "scores_b":   [round(v, 5) for v in sb_list],
+                "thresh_a":   round(ta, 5),
+                "thresh_b":   round(tb, 5),
+                "triggered":  list(triggered),
+                "trigger_det_frame": signal_snapshot.get("trigger_det_frame"),
+                "disc_cx":    signal_snapshot.get("disc_cx"),
+                "disc_cy":    signal_snapshot.get("disc_cy"),
+                "disc_r":     signal_snapshot.get("disc_r"),
+                "confidence_score": signal_snapshot.get("confidence_score"),
+                "gate_type":  signal_snapshot.get("gate_type"),
+                "gate_detail": signal_snapshot.get("gate_detail"),
+                "cnn_confidence": signal_snapshot.get("cnn_confidence"),
+                # Peak in video-frame coordinates (transit is ~1s = 30 hires-fps frames in)
+                "transit_hires_frame": int(30 * 1.0),  # 1s tight-pre at 30fps
+                "analysis_fps": ANALYSIS_FPS,
+            }
         try:
             with open(meta_path, "w") as f:
                 json.dump(meta, f, indent=2)

@@ -1681,6 +1681,124 @@ def composite_from_frames(
     }
 
 
+
+# ── Lightweight isolation helper for det_*.mp4 clips ─────────────────────────
+
+
+def isolate_transit_frames(
+    video_path: str,
+    peak_time_s: Optional[float] = None,
+    ref_frames: int = 30,
+    luma_drop_frac: float = 0.015,
+) -> dict:
+    """Identify frames where an aircraft transits the solar/lunar disc.
+
+    Designed for short ``det_*.mp4`` clips (~7 s) where the disc already fills
+    most of the frame.  Works by:
+
+    1. Building a per-pixel median reference from the first ``ref_frames``
+       frames (assumed to be clear disc / background).
+    2. Computing a per-frame *darkness score*: mean absolute deviation from
+       the reference.  A transit darkens a small region → raises the score.
+    3. Marking frames where the score exceeds
+       ``luma_drop_frac * 255`` as *transit frames*.
+    4. Grouping consecutive marked frames into spans.
+
+    Returns a dict with:
+      ``fps``          – frame rate of the video
+      ``total_frames`` – total frame count
+      ``scores``       – list of per-frame darkness scores (float, 0-1)
+      ``spans``        – list of [start_frame, end_frame] transit spans
+      ``peak_frame``   – frame index of maximum score
+      ``peak_time_s``  – time of peak in seconds
+      ``error``        – None on success, message string on failure
+    """
+    path = Path(video_path)
+    if not path.exists():
+        return {"error": f"File not found: {video_path}"}
+
+    cap = cv2.VideoCapture(str(path))
+    if not cap.isOpened():
+        return {"error": f"Cannot open: {video_path}"}
+
+    try:
+        fps = float(cap.get(cv2.CAP_PROP_FPS)) or 30.0
+        total = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+
+        # Build reference from first ref_frames (or all if video is short)
+        ref_count = min(ref_frames, max(1, total - 5))
+        ref_stack = []
+        for _ in range(ref_count):
+            ok, frame = cap.read()
+            if not ok:
+                break
+            gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+            gray = cv2.resize(gray, (160, 90), interpolation=cv2.INTER_AREA)
+            ref_stack.append(gray.astype(np.float32))
+
+        if not ref_stack:
+            return {"error": "Could not read reference frames"}
+
+        reference = np.median(np.stack(ref_stack, axis=0), axis=0)
+
+        # Scan all remaining frames
+        scores_raw = [0.0] * ref_count  # reference section: score = 0
+        while True:
+            ok, frame = cap.read()
+            if not ok:
+                break
+            gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+            gray = cv2.resize(gray, (160, 90), interpolation=cv2.INTER_AREA)
+            diff = np.abs(gray.astype(np.float32) - reference)
+            scores_raw.append(float(diff.mean()))
+
+        if len(scores_raw) < 3:
+            return {"error": "Video too short to analyse"}
+
+        threshold = luma_drop_frac * 255.0
+        max_score = max(scores_raw) or 1.0
+        scores_norm = [round(s / max_score, 4) for s in scores_raw]
+
+        # Mark transit frames
+        marked = [s >= threshold for s in scores_raw]
+
+        # Group consecutive marked frames into spans (min 2 consecutive)
+        spans: List[List[int]] = []
+        in_span = False
+        start_i = 0
+        for i, hit in enumerate(marked):
+            if hit and not in_span:
+                in_span = True
+                start_i = i
+            elif not hit and in_span:
+                in_span = False
+                if (i - start_i) >= 2:
+                    spans.append([start_i, i - 1])
+        if in_span and (len(marked) - start_i) >= 2:
+            spans.append([start_i, len(marked) - 1])
+
+        # Peak frame
+        peak_idx = int(np.argmax(scores_raw))
+
+        # If caller supplied a hint from the .json sidecar, use that for seeking
+        if peak_time_s is not None:
+            hint_frame = int(round(peak_time_s * fps))
+            if 0 <= hint_frame < len(scores_raw):
+                peak_idx = hint_frame
+
+        return {
+            "fps": fps,
+            "total_frames": len(scores_raw),
+            "scores": scores_norm,
+            "spans": spans,
+            "peak_frame": peak_idx,
+            "peak_time_s": round(peak_idx / fps, 3),
+            "error": None,
+        }
+    finally:
+        cap.release()
+
+
 # ── CLI entry point ──────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
