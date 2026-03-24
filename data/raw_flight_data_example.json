@@ -4,8 +4,8 @@
       "ident": "SYN_HIGH",
       "ident_icao": "SYN_HIGH",
       "ident_iata": "SH1",
-      "fa_flight_id": "SYN_HIGH-1774202683-synthetic",
-      "actual_off": "2026-03-22T17:04:43Z",
+      "fa_flight_id": "SYN_HIGH-1774308097-synthetic",
+      "actual_off": "2026-03-23T22:21:37Z",
       "actual_on": "None",
       "origin": {
         "code": "KLAX",
@@ -23,14 +23,14 @@
       },
       "waypoints": [],
       "last_position": {
-        "fa_flight_id": "SYN_HIGH-1774202683-synthetic",
+        "fa_flight_id": "SYN_HIGH-1774308097-synthetic",
         "altitude": 350,
         "altitude_change": "-",
         "groundspeed": 450,
-        "heading": 225,
-        "latitude": 33.49335440524339,
-        "longitude": -116.71347624907969,
-        "timestamp": "2026-03-22T18:04:43Z",
+        "heading": 337,
+        "latitude": 32.48064231839744,
+        "longitude": -117.18353113861944,
+        "timestamp": "2026-03-23T23:21:37Z",
         "update_type": "A"
       },
       "aircraft_type": "B738"
@@ -40,6 +40,6 @@
   "num_pages": 1,
   "_test_metadata": {
     "scenario": "phase5_synthetic_transit",
-    "generated_at": "2026-03-22T18:04:43.841587+00:00"
+    "generated_at": "2026-03-23T23:21:37.302850+00:00"
   }
 }

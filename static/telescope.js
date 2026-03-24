@@ -3372,10 +3372,13 @@ function viewFile(path, name, opts) {
     if (actionsEl) {
         const hasPrev = _viewerIndex > 0;
         const hasNext = _viewerIndex >= 0 && _viewerIndex < files.length - 1;
+        // det_*.mp4 clips are confirmed transits — analysis buttons are redundant.
+        // Only show Solar/Lunar Transit analyze buttons for vid_* and other recordings.
+        const _isDetFile = /\/det_[^/]+\.mp4$/i.test(path);
         const scanBtn = isVideo
             ? `<button class="btn-viewer" onmousedown="frameStepStart(-1)" onmouseup="frameStepStop()" onmouseleave="frameStepStop()" title="Back 1 frame (hold to repeat)">◁</button>` +
-              `<button class="btn-viewer btn-viewer-sun" id="scanTransitBtn" onclick="scanTransit('sun')" title="Analyze for solar transit">☀️ Solar Transit</button>` +
-              `<button class="btn-viewer btn-viewer-moon" onclick="scanTransit('moon')" title="Analyze for lunar transit">🌙 Lunar Transit</button>` +
+              (!_isDetFile ? `<button class="btn-viewer btn-viewer-sun" id="scanTransitBtn" onclick="scanTransit('sun')" title="Analyze for solar transit">☀️ Solar Transit</button>` +
+              `<button class="btn-viewer btn-viewer-moon" onclick="scanTransit('moon')" title="Analyze for lunar transit">🌙 Lunar Transit</button>` : '') +
               `<button class="btn-viewer" onmousedown="frameStepStart(1)" onmouseup="frameStepStop()" onmouseleave="frameStepStop()" title="Forward 1 frame (hold to repeat)">▷</button>`
             : '';
         // Show composite image button if an analyzed_xxx.jpg exists for this file
