@@ -985,7 +985,66 @@ def api_transit_events():
             continue
 
     events.sort(key=lambda x: x["timestamp"], reverse=True)
+    # Enrich each event with any existing human label from transit_labels.csv
+    labels = _load_transit_labels()
+    for ev in events:
+        ev["label"] = labels.get(ev.get("timestamp", ""), "")
     return jsonify(events[:500])
+
+
+@app.route("/api/transit-events/label", methods=["POST"])
+def api_label_transit_event():
+    """T23 — Save a human TP/FP/FN label for a detection event.
+
+    Body: {"timestamp": "...", "label": "tp"|"fp"|"fn"|"tn", "notes": "..."}
+    Appends to data/transit_labels.csv (creates if absent).
+    """
+    import csv as _csv
+
+    body = request.get_json(force=True) or {}
+    ts = body.get("timestamp", "").strip()
+    label = body.get("label", "").strip().lower()
+    notes = body.get("notes", "").strip()
+
+    if not ts or label not in ("tp", "fp", "fn", "tn"):
+        return jsonify({"error": "timestamp and label (tp/fp/fn/tn) required"}), 400
+
+    labels_path = "data/transit_labels.csv"
+    os.makedirs("data", exist_ok=True)
+    first_write = not os.path.exists(labels_path)
+    with open(labels_path, "a", newline="", encoding="utf-8") as fh:
+        writer = _csv.writer(fh)
+        if first_write:
+            writer.writerow(["timestamp", "label", "notes", "labeled_at"])
+        from datetime import datetime as _dt, timezone as _tz
+        writer.writerow([ts, label, notes, _dt.now(_tz.utc).isoformat()])
+
+    # Invalidate cached labels
+    _load_transit_labels.cache = None  # type: ignore[attr-defined]
+
+    return jsonify({"ok": True, "timestamp": ts, "label": label})
+
+
+def _load_transit_labels() -> dict:
+    """Return {timestamp → label} from data/transit_labels.csv (last label wins)."""
+    import csv as _csv
+    cache = getattr(_load_transit_labels, "cache", None)
+    if cache is not None:
+        return cache
+    labels: dict = {}
+    path = "data/transit_labels.csv"
+    if os.path.exists(path):
+        try:
+            with open(path, newline="", encoding="utf-8") as fh:
+                for row in _csv.DictReader(fh):
+                    ts = row.get("timestamp", "").strip()
+                    lbl = row.get("label", "").strip()
+                    if ts and lbl:
+                        labels[ts] = lbl
+        except OSError:
+            pass
+    _load_transit_labels.cache = labels  # type: ignore[attr-defined]
+    return labels
 
 
 @app.route("/transit-log")

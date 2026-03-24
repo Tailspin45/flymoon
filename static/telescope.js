@@ -5703,6 +5703,9 @@ async function _refreshDetectionEventHistory() {
         return;
     }
 
+    const _LABEL_COLORS = { tp: '#4caf50', fp: '#f44336', fn: '#ff9800', tn: '#9e9e9e' };
+    const _LABEL_ICONS  = { tp: '✅TP', fp: '❌FP', fn: '⚠️FN', tn: '⬜TN' };
+
     const cols = [
         { key: 'timestamp',          label: 'Time',         fmt: v => v ? new Date(v).toLocaleString('en-US', {month:'short',day:'numeric',hour:'2-digit',minute:'2-digit',second:'2-digit',hour12:false}) : '—' },
         { key: 'detected_flight_id', label: 'Flight',       fmt: v => v || '<span style="color:#555">unconfirmed</span>' },
@@ -5716,12 +5719,23 @@ async function _refreshDetectionEventHistory() {
         { key: 'confidence',         label: 'Grade',        fmt: v => v === 'strong'
             ? '<span style="color:#4caf50">strong</span>'
             : '<span style="color:#9e9e9e">weak</span>' },
-        { key: 'centre_ratio',       label: 'CR',           fmt: v => parseFloat(v).toFixed(1) || '—' },
-        { key: 'detection_confirmed',label: 'Confirmed',    fmt: v => v === '1' || v === 1
-            ? '✅' : '⬜' },
         { key: 'notes',              label: 'Notes',        fmt: v => v
-            ? `<span style="color:#90caf9;font-size:0.85em">${v}</span>`
+            ? `<span style="color:#90caf9;font-size:0.82em">${v}</span>`
             : '' },
+        { key: 'label',              label: 'Label',        fmt: (v, ev) => {
+            const cur = v || '';
+            const ts = (ev.timestamp || '').replace(/"/g, '&quot;');
+            const btns = ['tp','fp','fn'].map(lbl => {
+                const active = cur === lbl;
+                const col = active ? _LABEL_COLORS[lbl] : '#333';
+                const bord = active ? _LABEL_COLORS[lbl] : '#444';
+                return `<button onclick="_labelEvent('${ts}','${lbl}',this)"
+                    style="background:${col};border:1px solid ${bord};color:#fff;
+                    padding:1px 5px;border-radius:3px;cursor:pointer;font-size:0.78em;
+                    margin-right:2px;">${_LABEL_ICONS[lbl]}</button>`;
+            }).join('');
+            return `<span style="display:inline-flex;align-items:center;">${btns}</span>`;
+        }},
     ];
 
     const tbl = document.createElement('table');
@@ -5744,12 +5758,38 @@ async function _refreshDetectionEventHistory() {
         cols.forEach(c => {
             const td = tr.insertCell();
             td.style.cssText = 'padding:3px 6px;white-space:nowrap;';
-            td.innerHTML = c.fmt(ev[c.key] ?? '');
+            td.innerHTML = c.fmt(ev[c.key] ?? '', ev);
         });
     });
 
     wrap.innerHTML = '';
     wrap.appendChild(tbl);
+}
+
+/** T23 — Send a TP/FP/FN label for a detection event to the backend. */
+async function _labelEvent(timestamp, label, btnEl) {
+    try {
+        const resp = await fetch('/api/transit-events/label', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ timestamp, label }),
+        });
+        if (!resp.ok) throw new Error(await resp.text());
+
+        // Visual feedback: highlight the active button in its row
+        const row = btnEl.closest('tr');
+        if (row) {
+            row.querySelectorAll('button').forEach(b => {
+                const lbl = b.textContent.toLowerCase().replace(/[^a-z]/g, '').slice(0, 2);
+                const _LABEL_COLORS_JS = { tp: '#4caf50', fp: '#f44336', fn: '#ff9800' };
+                const active = lbl === label;
+                b.style.background = active ? (_LABEL_COLORS_JS[lbl] || '#555') : '#333';
+                b.style.borderColor = active ? (_LABEL_COLORS_JS[lbl] || '#666') : '#444';
+            });
+        }
+    } catch (e) {
+        console.error('[Label]', e);
+    }
 }
 
 // ============================================================================

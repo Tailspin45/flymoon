@@ -572,6 +572,50 @@ def analyze_video(
             d.time_seconds = actual_duration
     transit_events = _group_detections(moving_detections, fps)
 
+    # E4 — CNN second-stage classification of each detected event
+    if transit_events:
+        try:
+            from src.transit_classifier import get_classifier as _get_clf
+            _clf = _get_clf()
+            if _clf.available:
+                import cv2 as _cv2
+                import numpy as _np
+                _CLIP_T = 15
+                _cap2 = _cv2.VideoCapture(str(path))
+                try:
+                    for ev in transit_events:
+                        try:
+                            s0 = float(ev.get("start_seconds", 0))
+                            s1 = float(ev.get("end_seconds", s0 + 1))
+                            center_s = (s0 + s1) / 2.0
+                            src_step = max(1, round(fps / 15))
+                            half_span_f = (_CLIP_T * src_step) // 2
+                            start_f = max(0, int(center_s * fps) - half_span_f)
+                            clip_frames = []
+                            fi = start_f
+                            while len(clip_frames) < _CLIP_T:
+                                _cap2.set(_cv2.CAP_PROP_POS_FRAMES, fi)
+                                ok, frame_bgr = _cap2.read()
+                                if not ok:
+                                    break
+                                gray = _cv2.cvtColor(frame_bgr, _cv2.COLOR_BGR2GRAY)
+                                gray = _cv2.resize(gray, (90, 160), interpolation=_cv2.INTER_AREA)
+                                clip_frames.append(gray)
+                                fi += src_step
+                            if clip_frames:
+                                while len(clip_frames) < _CLIP_T:
+                                    clip_frames.append(clip_frames[-1])
+                                clip_arr = _np.stack(clip_frames[:_CLIP_T], axis=0)
+                                _, cnn_conf = _clf.classify(clip_arr)
+                                ev["cnn_confidence"] = round(float(cnn_conf), 4)
+                        except Exception as _ev_exc:
+                            logger.debug("[CNN] event classification error: %s", _ev_exc)
+                            ev["cnn_confidence"] = None
+                finally:
+                    _cap2.release()
+        except Exception as _clf_exc:
+            logger.debug("[CNN] analyzer classification skipped: %s", _clf_exc)
+
     # ── Composite still image (replaces annotated video) ─────────────────────
     # One background frame with transit positions overlaid.
     composite_path = path.with_name("analyzed_" + base_stem + ".jpg")

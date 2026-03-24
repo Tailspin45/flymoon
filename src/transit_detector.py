@@ -485,6 +485,9 @@ class TransitDetector:
         self.centre_ratio_min: float = CENTRE_EDGE_RATIO_MIN
         self.consec_frames_required: int = CONSEC_FRAMES_REQUIRED
         self.mf_threshold_frac: float = _MF_THRESHOLD_FRAC
+        self.cnn_gate_threshold: float = float(
+            os.environ.get("CNN_GATE_THRESHOLD", "0.40")
+        )
 
         self._running = False
         self._process: Optional[subprocess.Popen] = None
@@ -558,6 +561,12 @@ class TransitDetector:
         self._triggered_buf: collections.deque = collections.deque(
             maxlen=max(_MF_TEMPLATES) + 5
         )
+
+        # E3 — CNN second-stage gate: ring buffer of last CLIP_T analysis frames
+        _CNN_CLIP_T = 15
+        self._cnn_buf: collections.deque = collections.deque(maxlen=_CNN_CLIP_T)
+        self._cnn_gate_threshold: float = 0.40  # suppress if CNN transit prob < threshold
+        self._cnn_available: Optional[bool] = None  # lazily resolved on first fire
 
         # Active recording process (for auto-record on detection)
         self._rec_process: Optional[subprocess.Popen] = None
@@ -697,6 +706,8 @@ class TransitDetector:
                 "track_min_mag": self.track_min_mag,
                 "track_min_agree_frac": self.track_min_agree_frac,
                 "mf_threshold_frac": self.mf_threshold_frac,
+                "cnn_gate_threshold": self.cnn_gate_threshold,
+                "cnn_available": bool(self._cnn_available),
             },
             # B4: active primed prediction windows (flight_id → ETA info)
             "primed_events": [
@@ -783,6 +794,7 @@ class TransitDetector:
         track_min_mag: Optional[float] = None,
         track_min_agree_frac: Optional[float] = None,
         mf_threshold_frac: Optional[float] = None,
+        cnn_gate_threshold: Optional[float] = None,
     ) -> Dict[str, Any]:
         """Update live detection parameters without restarting the detector.
 
@@ -806,6 +818,8 @@ class TransitDetector:
             self.track_min_agree_frac = float(max(0.0, min(1.0, track_min_agree_frac)))
         if mf_threshold_frac is not None:
             self.mf_threshold_frac = float(max(0.3, min(1.0, mf_threshold_frac)))
+        if cnn_gate_threshold is not None:
+            self.cnn_gate_threshold = float(max(0.0, min(1.0, cnn_gate_threshold)))
         logger.info(
             f"[Detector] Settings updated: margin={self.disk_margin_pct:.0%} "
             f"ratio_min={self.centre_ratio_min} consec={self.consec_frames_required} "
@@ -1143,6 +1157,9 @@ class TransitDetector:
 
         self._prev_frame = frame.copy()
 
+        # E3 — Buffer grayscale frames for CNN second-stage gate
+        self._cnn_buf.append(frame[:, :, 0].copy())  # single channel from RGB24
+
         # --- Store scores ---
         self._scores_a.append(score_a)
         self._scores_b.append(score_b)
@@ -1347,6 +1364,35 @@ class TransitDetector:
         effective_consec: int = 0,
     ) -> None:
         """Handle a confirmed transit detection."""
+
+        # E3 — CNN second-stage gate: suppress if model says no-transit
+        cnn_confidence: float = 0.0
+        cnn_verdict: str = "n/a"
+        if self._cnn_available is None:
+            # Resolve once per detector lifetime
+            try:
+                from src.transit_classifier import get_classifier
+                self._cnn_available = get_classifier().available
+            except Exception:
+                self._cnn_available = False
+
+        if self._cnn_available and len(self._cnn_buf) >= 15:
+            try:
+                from src.transit_classifier import get_classifier
+                frames = np.stack(list(self._cnn_buf), axis=0)  # (15, H, W) uint8
+                is_transit, cnn_confidence = get_classifier(
+                    confidence_threshold=self.cnn_gate_threshold
+                ).classify(frames)
+                cnn_verdict = f"cnn:{cnn_confidence:.2f}"
+                if not is_transit:
+                    logger.info(
+                        "[Detector] CNN gate suppressed detection (confidence=%.3f < %.2f)",
+                        cnn_confidence, self.cnn_gate_threshold,
+                    )
+                    return  # ← suppressed by CNN
+            except Exception as _cnn_exc:
+                logger.debug("[CNN] gate error: %s", _cnn_exc)
+
         self._detection_count += 1
         ts = datetime.now()
 
@@ -1375,6 +1421,8 @@ class TransitDetector:
             _notes_parts.append("primed")
         if mf_gate:
             _notes_parts.append(f"matched_filter:{mf_duration_f}f")
+        if cnn_verdict != "n/a":
+            _notes_parts.append(cnn_verdict)
         _notes = ",".join(_notes_parts)
 
         event = DetectionEvent(
