@@ -141,7 +141,9 @@
         <p class="loading-text">Loading flight data...</p>
     </div>
 
-    <div id="transitCountdown" style="display: none; position: fixed; top: 0; left: 0; right: 0; z-index: 1000; text-align: center; font-size: 1.5em; font-weight: bold; font-variant-numeric: tabular-nums; padding: 12px 20px; border-radius: 0 0 8px 8px; box-shadow: 0 4px 16px rgba(0,0,0,0.5); pointer-events: none;"></div>
+    <div id="transitCountdown" style="display: none; position: fixed; top: 0; left: 0; right: 0; z-index: 1000; text-align: center; font-size: 1.5em; font-weight: bold; font-variant-numeric: tabular-nums; padding: 12px 48px 12px 20px; border-radius: 0 0 8px 8px; box-shadow: 0 4px 16px rgba(0,0,0,0.5); pointer-events: auto;">
+      <button onclick="window._dismissTransitBanner()" style="position:absolute;right:10px;top:50%;transform:translateY(-50%);background:rgba(0,0,0,0.25);border:none;color:#fff;font-size:1rem;line-height:1;padding:2px 8px;border-radius:4px;cursor:pointer;" title="Dismiss">×</button>
+    </div>
 
     <div id="mapContainer" style="display: none;">
         <div style="display: flex; align-items: flex-start; gap: 0;">

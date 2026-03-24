@@ -210,7 +210,7 @@ def calculate_adaptive_interval(flights: list) -> int:
     - 600s (10 min) otherwise
     """
     if not flights:
-        return 600  # 10 minutes if no flights
+        return 120  # 2 minutes if no flights
 
     # Find closest high/medium probability transit
     priority_transits = [
@@ -223,18 +223,18 @@ def calculate_adaptive_interval(flights: list) -> int:
 
     if not priority_transits:
         # Only low probability or no transits
-        return 600  # 10 minutes
+        return 120  # 2 minutes
 
     closest_transit_time = min(priority_transits)
 
     if closest_transit_time < 2:  # <2 min away
-        return 30  # 30 seconds
+        return 10  # 10 seconds
     elif closest_transit_time < 5:  # <5 min away
-        return 60  # 1 minute
+        return 30  # 30 seconds
     elif closest_transit_time < 10:  # <10 min away
-        return 120  # 2 minutes
+        return 60  # 1 minute
     else:
-        return 600  # 10 minutes (default)
+        return 120  # 2 minutes (default)
 
 
 @app.route("/")

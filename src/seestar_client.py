@@ -607,33 +607,33 @@ class SeestarClient:
         """
         from datetime import datetime, timezone
 
-        # 1. Location sync (same site as map → /api/settings, else .env)
+        # 1. Location sync — fire-and-forget (scope does not always ACK this)
         lat, lon, _elev = get_observer_coordinates()
         try:
-            result = self._send_command(
+            self._send_command(
                 "set_user_location",
                 params={"lat": lat, "lon": lon, "force": True},
+                expect_response=False,
                 quiet=True,
-                timeout_override=5,
             )
-            logger.info(f"[Init] set_user_location lat={lat} lon={lon} → {result}")
+            logger.info(f"[Init] set_user_location sent (lat={lat} lon={lon})")
         except Exception as e:
             logger.warning(f"[Init] set_user_location FAILED (lat={lat} lon={lon}): {e}")
 
-        # 2. Clock sync
+        # 2. Clock sync — fire-and-forget
         try:
             now = datetime.now(timezone.utc)
-            result = self._send_command(
+            self._send_command(
                 "pi_set_time",
                 params=[{
                     "year": now.year, "mon": now.month, "day": now.day,
                     "hour": now.hour, "min": now.minute, "sec": now.second,
                     "time_zone": "UTC",
                 }],
+                expect_response=False,
                 quiet=True,
-                timeout_override=5,
             )
-            logger.info(f"[Init] pi_set_time {now.strftime('%Y-%m-%dT%H:%M:%SZ')} → {result}")
+            logger.info(f"[Init] pi_set_time sent ({now.strftime('%Y-%m-%dT%H:%M:%SZ')})")
         except Exception as e:
             logger.warning(f"[Init] pi_set_time FAILED: {e}")
 
@@ -641,8 +641,8 @@ class SeestarClient:
         try:
             self._send_command(
                 "pi_is_verified",
+                expect_response=False,
                 quiet=True,
-                timeout_override=5,
             )
             logger.debug("[Init] pi_is_verified sent")
         except Exception as e:
@@ -729,6 +729,10 @@ class SeestarClient:
                 self.socket.connect((self.host, self.port))
                 self._connected = True
                 logger.info("Connected to Seestar")
+
+                # Brief settle: scope sends a burst of Event messages immediately
+                # after TCP connect; wait for them to clear before sending init cmds.
+                time.sleep(0.4)
 
                 # Send initialization sequence (mirrors ALP's startup behaviour).
                 # This syncs the scope's location and clock, and verifies the

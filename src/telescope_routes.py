@@ -804,17 +804,60 @@ def telescope_focus_step():
         return handle_error(e)
 
 
+def _telemetry_pointing_usable(payload: dict) -> bool:
+    """True if payload has at least one mount pointing field the UI can show."""
+    if not payload:
+        return False
+    for key in (
+        "alt",
+        "az",
+        "ra",
+        "dec",
+        "horiz_alt",
+        "horiz_az",
+        "scope_alt",
+        "scope_az",
+        "target_alt",
+        "target_az",
+    ):
+        if payload.get(key) is not None:
+            return True
+    return False
+
+
 def telescope_telemetry():
     """GET /telescope/telemetry — cached RA/Dec/Alt/Az and device state.
 
     Serves telemetry cached by the heartbeat loop (refreshed every ~3s)
     to avoid socket contention between HTTP polls and the heartbeat.
+
+    If the cache is empty of pointing data (e.g. heartbeat not yet run, or
+    first cycle returned only view_state), forces a live ``get_telemetry()``
+    on a throttled basis so the panel populates promptly.
     """
+    import time as _time
+
     client = get_telescope_client()
     if not client or not client.is_connected():
         return jsonify({"error": "Telescope not connected"}), 503
     try:
-        data = client.get_cached_telemetry()
+        data = dict(client.get_cached_telemetry())
+        now = _time.time()
+        last_live = float(getattr(client, "_telemetry_http_live_ts", 0.0) or 0.0)
+        if not _telemetry_pointing_usable(data) and now - last_live >= 2.5:
+            setattr(client, "_telemetry_http_live_ts", now)
+            try:
+                fresh = client.get_telemetry()
+            except Exception as _tel_ex:
+                logger.debug("[Telescope] Live telemetry refresh failed: %s", _tel_ex)
+                fresh = None
+            if isinstance(fresh, dict) and fresh:
+                data = dict(fresh)
+                data["age_ms"] = 0
+                if hasattr(client, "_cached_telemetry"):
+                    client._cached_telemetry = fresh
+                if hasattr(client, "_cached_telemetry_ts"):
+                    client._cached_telemetry_ts = now
         return jsonify(data), 200
     except Exception as e:
         return handle_error(e)

@@ -105,8 +105,7 @@ window.initTelescope = function() {
     destroyTelescope(); // clear any existing intervals
     ensureHarnessUI();
     ensureTuningUI();
-    ensureInterceptChart();
-    ensureSignalSparkline();
+    ensureTransitRadar();
 
     // Status polling (always poll while panel is open)
     statusPollInterval = setInterval(updateStatus, 2000);
@@ -357,8 +356,10 @@ async function updateStatus() {
             console.log('[Scope] Reconnected — mode:', result.viewing_mode);
             _previewLastError = 0;
             _lastConnectedStatus = null;
-            startTelemetryPolling();
         }
+        // Always ensure telemetry polling runs while connected (covers auto-connect,
+        // missed justReconnected edge cases, and page load order).
+        if (isConnected) startTelemetryPolling();
         if (justDisconnected) {
             console.warn('[Scope] Disconnected — prior connected state:', JSON.stringify(_lastConnectedStatus || {}));
             if (result.error) console.warn('[Scope] Server error:', result.error);
@@ -1416,10 +1417,12 @@ function initControlPanel() {
 // -- Telemetry polling --
 
 function startTelemetryPolling() {
+    const strip = document.getElementById('telemetryStrip');
+    if (!strip) return;
     if (_telemetryInterval) return;
     _telemetryInterval = setInterval(_pollTelemetry, _TELEMETRY_POLL_MS);
     _pollTelemetry(); // immediate first fetch
-    document.getElementById('telemetryStrip').style.display = '';
+    strip.style.display = '';
 }
 
 function stopTelemetryPolling() {
@@ -1427,7 +1430,8 @@ function stopTelemetryPolling() {
         clearInterval(_telemetryInterval);
         _telemetryInterval = null;
     }
-    document.getElementById('telemetryStrip').style.display = 'none';
+    const strip = document.getElementById('telemetryStrip');
+    if (strip) strip.style.display = 'none';
 }
 
 function _setText(id, val) {
@@ -1446,8 +1450,19 @@ async function _pollTelemetry() {
             cache: 'no-store',
         });
         clearTimeout(timer);
-        if (!res.ok) return;
+        if (!res.ok) {
+            if (res.status === 503) {
+                console.warn('[Telemetry] Scope not connected (503) — strip may stay empty until connect');
+            } else {
+                console.warn('[Telemetry] HTTP', res.status, res.statusText);
+            }
+            return;
+        }
         const d = await res.json();
+        if (d.error) {
+            console.warn('[Telemetry]', d.error);
+            return;
+        }
         const fmt = (v, dp=2) => v != null ? (+v).toFixed(dp) : '—';
         const runId = `telemetry_ui_${Date.now()}`;
 
@@ -6111,6 +6126,11 @@ async function _labelEvent(timestamp, label, btnEl) {
 // CLEANUP
 // ============================================================================
 
+let _radarAnimFrame = null;
+let _radarSweepAfterDetectTimer = null;
+let _radarLastTransitTs = 0;        // ms — updated every push; sweep runs while fresh
+const RADAR_SWEEP_KEEPALIVE_MS = 660_000; // freeze ~11 min after last transit push (> 10 min poll cycle)
+
 window.destroyTelescope = function() {
     if (statusPollInterval)     { clearInterval(statusPollInterval);     statusPollInterval     = null; }
     if (visibilityPollInterval) { clearInterval(visibilityPollInterval); visibilityPollInterval = null; }
@@ -6118,497 +6138,532 @@ window.destroyTelescope = function() {
     if (transitPollInterval)    { clearInterval(transitPollInterval);    transitPollInterval    = null; }
     if (transitTickInterval)    { clearInterval(transitTickInterval);    transitTickInterval    = null; }
     if (detectionPollInterval)  { clearInterval(detectionPollInterval);  detectionPollInterval  = null; }
+    if (_radarAnimFrame) { cancelAnimationFrame(_radarAnimFrame); _radarAnimFrame = null; }
+    _radarLastTransitTs = 0;
 };
 
 document.addEventListener('DOMContentLoaded', () => {
     ensureHarnessUI();
-    ensureInterceptChart();
-    ensureSignalSparkline();
+    ensureTransitRadar();
 });
 
 // ============================================================================
-// INTERCEPT APPROACH CHART — live angular separation vs time (Phase C/D)
+// TRANSIT RADAR SCOPE
 // ============================================================================
 
-const _interceptHistory = new Map(); // flightId → {points, color, label, target}
-const _DISC_DEG = 0.53;
-const _INTERCEPT_WINDOW_MS = 30 * 60 * 1000; // 30 min
-const _INTERCEPT_MAX_PTS = 90;
+// ── constants ───────────────────────────────────────────────────────────────
+const RADAR_SWEEP_SEC_PER_REV   = 3;       // seconds per full rotation
+const RADAR_PREDICT_HORIZON_S   = 12;      // enhanced-mode look-ahead (s)
+const RADAR_DISC_DEG            = 0.53;    // solar/lunar disc radius (°)
+const RADAR_MAX_SEP_DEG         = 12;      // outer ring = 12° (full LOW range)
+const RADAR_HISTORY_MAX         = 24;      // trail length per blip
+const RADAR_SWEEP_RUN_AFTER_DETECT_S = 30; // seconds sweep stays on after detection
 
-let _interceptCanvas = null;
-let _interceptCtx = null;
-let _interceptRAF = null;
+// ── state ───────────────────────────────────────────────────────────────────
+const _radarTracks       = new Map();  // id → {points[], color, level, label, altFt, speedKmh, heading}
+let   _radarCanvas       = null;
+let   _radarCtx          = null;
+let   _radarSweepStart   = null;       // performance.now() reference (null = frozen)
+let   _radarSweepAngle   = 0;          // frozen angle (rad) when sweep is paused
+let   _radarMode         = 'default';  // 'default' | 'enhanced'
+let   _radarHoveredId    = null;
+let   _radarPinnedId     = null;
+let   _radarHitTest      = [];         // [{id, x, y, r}] rebuilt each frame
+let   _radarSweepActive  = false;
 
-/** Convert #rrggbb → rgba(r,g,b,a) */
+// ── helpers ─────────────────────────────────────────────────────────────────
 function _hexToRgba(hex, alpha) {
-    const r = parseInt(hex.slice(1, 3), 16);
-    const g = parseInt(hex.slice(3, 5), 16);
-    const b = parseInt(hex.slice(5, 7), 16);
+    const r = parseInt(hex.slice(1,3),16);
+    const g = parseInt(hex.slice(3,5),16);
+    const b = parseInt(hex.slice(5,7),16);
     return `rgba(${r},${g},${b},${alpha})`;
 }
 
-/**
- * Push one flight data-point into the intercept chart.
- * Called from app.js after every flight poll for HIGH/MEDIUM transits.
- */
+function _radarAzDelta(azCraft, azTarget) {
+    let d = azCraft - azTarget;
+    while (d >  180) d -= 360;
+    while (d < -180) d += 360;
+    return d;
+}
+function _radarAltFtStr(ft) { return ft != null ? `${Math.round(ft).toLocaleString()} ft` : '—'; }
+function _radarSpeedStr(kmh){ return kmh != null ? `${Math.round(kmh)} km/h` : '—'; }
+
+function _radarVelocity(pts) {
+    if (pts.length < 2) return null;
+    const a = pts[pts.length-2], b = pts[pts.length-1];
+    const dt = (b.t - a.t) / 1000;
+    if (dt < 0.1) return null;
+    return { dAlt: (b.altD - a.altD)/dt, dAz: (b.azD - a.azD)/dt };
+}
+
+function _radarPolar(altD, azD, R) {
+    // azD → tangential, altD → radial; map to canvas polar coords
+    const sepDeg = Math.hypot(altD, azD);
+    const ang    = Math.atan2(azD, altD);  // 0 = up (alt-only offset)
+    const frac   = Math.min(sepDeg / RADAR_MAX_SEP_DEG, 1);
+    return { r: frac * R, ang };
+}
+
+function _radarBlipXY(pt, cx, cy, R) {
+    const { r, ang } = _radarPolar(pt.altD, pt.azD, R);
+    return { x: cx + r * Math.sin(ang), y: cy - r * Math.cos(ang) };
+}
+
+// ── resize ──────────────────────────────────────────────────────────────────
+function _resizeRadarCanvas() {
+    if (!_radarCanvas) return;
+    const W = _radarCanvas.offsetWidth;
+    _radarCanvas.width  = W;
+    _radarCanvas.height = W;
+}
+
+// ── draw frame ──────────────────────────────────────────────────────────────
+function _radarDrawFrame(ts) {
+    _radarAnimFrame = requestAnimationFrame(_radarDrawFrame);
+
+    const canvas = _radarCanvas;
+    if (!canvas || !canvas.isConnected) return;
+    const ctx = _radarCtx;
+    const W = canvas.width, H = canvas.height;
+    if (W < 10 || H < 10) return;
+    const cx = W/2, cy = H/2;
+    const R  = Math.min(cx, cy) - 8;
+
+    // derive active state from last-seen timestamp (no fixed timer)
+    _radarSweepActive = _radarLastTransitTs > 0 &&
+                        (Date.now() - _radarLastTransitTs) < RADAR_SWEEP_KEEPALIVE_MS;
+
+    // sweep angle
+    let sweepAng;
+    if (_radarSweepActive) {
+        if (_radarSweepStart == null) _radarSweepStart = ts;
+        const elapsed = (ts - _radarSweepStart) / 1000;
+        sweepAng = ((elapsed / RADAR_SWEEP_SEC_PER_REV) % 1) * Math.PI * 2;
+        _radarSweepAngle = sweepAng;
+    } else {
+        _radarSweepStart = null;   // reset so it restarts cleanly next time
+        sweepAng = _radarSweepAngle;
+    }
+
+    // ── background ──────────────────────────────────────────────────────────
+    ctx.clearRect(0, 0, W, H);
+    ctx.fillStyle = '#050a10';
+    ctx.fillRect(0, 0, W, H);
+
+    // rings
+    const ringFracs = [0.25, 0.5, 0.75, 1.0];
+    const ringLabels = ['3°','6°','9°','12°'];
+    ctx.strokeStyle = 'rgba(0,180,80,0.18)';
+    ctx.lineWidth   = 1;
+    for (let i = 0; i < ringFracs.length; i++) {
+        ctx.beginPath();
+        ctx.arc(cx, cy, ringFracs[i]*R, 0, Math.PI*2);
+        ctx.stroke();
+        if (ringFracs[i] < 1) {
+            ctx.fillStyle = 'rgba(0,180,80,0.28)';
+            ctx.font = '9px monospace';
+            ctx.textAlign = 'left';
+            ctx.fillText(ringLabels[i], cx + ringFracs[i]*R + 3, cy + 3);
+        }
+    }
+    // disc circle
+    const discR = (RADAR_DISC_DEG / RADAR_MAX_SEP_DEG) * R;
+    ctx.strokeStyle = 'rgba(255,220,50,0.35)';
+    ctx.lineWidth = 1;
+    ctx.setLineDash([3,3]);
+    ctx.beginPath(); ctx.arc(cx, cy, discR, 0, Math.PI*2); ctx.stroke();
+    ctx.setLineDash([]);
+
+    // crosshairs
+    ctx.strokeStyle = 'rgba(0,180,80,0.15)';
+    ctx.lineWidth = 1;
+    [[0, -R, 0, R],[-R, 0, R, 0]].forEach(([x1,y1,x2,y2])=>{
+        ctx.beginPath(); ctx.moveTo(cx+x1,cy+y1); ctx.lineTo(cx+x2,cy+y2); ctx.stroke();
+    });
+
+    // ── sweep wedge (always visible; only rotates when active) ──────────────
+    {
+        const wedgeAlpha = _radarSweepActive ? 0.10 : 0.05;
+        const lineAlpha  = _radarSweepActive ? 0.85 : 0.35;
+        ctx.save();
+        ctx.translate(cx, cy);
+        ctx.rotate(sweepAng);
+        ctx.beginPath();
+        ctx.moveTo(0, 0);
+        ctx.arc(0, 0, R, -Math.PI/2, -Math.PI/2 + Math.PI*0.45);
+        ctx.closePath();
+        ctx.fillStyle = `rgba(0,255,80,${wedgeAlpha})`;
+        ctx.fill();
+        ctx.restore();
+
+        ctx.save();
+        ctx.strokeStyle = `rgba(0,255,80,${lineAlpha})`;
+        ctx.lineWidth = _radarSweepActive ? 1.5 : 1;
+        if (_radarSweepActive) { ctx.shadowBlur = 4; ctx.shadowColor = '#00ff50'; }
+        ctx.beginPath();
+        ctx.moveTo(cx, cy);
+        ctx.lineTo(cx + R*Math.sin(sweepAng), cy - R*Math.cos(sweepAng));
+        ctx.stroke();
+        ctx.restore();
+    }
+
+    // ── blips ────────────────────────────────────────────────────────────────
+    _radarHitTest = [];
+    const beamHalf = Math.PI * 2 / (RADAR_SWEEP_SEC_PER_REV * 60); // ~1 frame
+
+    // sort ascending level so HIGH draws on top
+    const sorted = [..._radarTracks.values()].sort((a,b) => a.level - b.level);
+
+    sorted.forEach(track => {
+        if (!track.points.length) return;
+        const last = track.points[track.points.length-1];
+        const id   = track.id;
+        const color= track.color;
+
+        let drawPts = track.points;
+        if (_radarMode === 'enhanced') {
+            const vel = _radarVelocity(track.points);
+            if (vel) {
+                const pred = [];
+                for (let dt = 1; dt <= RADAR_PREDICT_HORIZON_S; dt++) {
+                    pred.push({
+                        altD: last.altD + vel.dAlt * dt,
+                        azD:  last.azD  + vel.dAz  * dt,
+                        t:    last.t + dt*1000
+                    });
+                }
+                // draw cone
+                if (pred.length >= 2) {
+                    const pA = _radarBlipXY(pred[0], cx, cy, R);
+                    const pB = _radarBlipXY(pred[pred.length-1], cx, cy, R);
+                    ctx.beginPath();
+                    ctx.moveTo(pA.x, pA.y);
+                    ctx.lineTo(pB.x, pB.y);
+                    ctx.strokeStyle = _hexToRgba(color, 0.35);
+                    ctx.lineWidth = 2;
+                    ctx.setLineDash([3,3]);
+                    ctx.stroke();
+                    ctx.setLineDash([]);
+                    // arrowhead
+                    const ang2 = Math.atan2(pB.y-pA.y, pB.x-pA.x);
+                    const al = 7;
+                    ctx.fillStyle = _hexToRgba(color, 0.5);
+                    ctx.beginPath();
+                    ctx.moveTo(pB.x, pB.y);
+                    ctx.lineTo(pB.x - al*Math.cos(ang2-0.4), pB.y - al*Math.sin(ang2-0.4));
+                    ctx.lineTo(pB.x - al*Math.cos(ang2+0.4), pB.y - al*Math.sin(ang2+0.4));
+                    ctx.closePath(); ctx.fill();
+                }
+            }
+        }
+
+        // trail
+        if (drawPts.length > 1) {
+            ctx.beginPath();
+            drawPts.forEach((p, i) => {
+                const {x,y} = _radarBlipXY(p, cx, cy, R);
+                i === 0 ? ctx.moveTo(x,y) : ctx.lineTo(x,y);
+            });
+            ctx.strokeStyle = _hexToRgba(color, 0.25);
+            ctx.lineWidth = 1;
+            ctx.stroke();
+        }
+
+        // blip glow / brightness
+        const {x, y} = _radarBlipXY(last, cx, cy, R);
+        const dAng = _radarSweepActive
+            ? ((sweepAng - _radarPolar(last.altD, last.azD, R).ang) % (Math.PI*2) + Math.PI*2) % (Math.PI*2)
+            : 0;
+        const lit = !_radarSweepActive || dAng < beamHalf + 0.15;
+        const alpha = lit ? 1.0 : 0.55;
+        const blipR = track.level >= 2 ? 5 : 4;
+
+        if (lit && _radarSweepActive) {
+            ctx.save();
+            ctx.shadowBlur  = 12; ctx.shadowColor = color;
+            ctx.fillStyle   = '#fff';
+            ctx.beginPath(); ctx.arc(x, y, blipR+1, 0, Math.PI*2); ctx.fill();
+            ctx.restore();
+        }
+        ctx.fillStyle = _hexToRgba(color, alpha);
+        ctx.beginPath(); ctx.arc(x, y, blipR, 0, Math.PI*2); ctx.fill();
+
+        // ring for hovered/pinned
+        if (id === _radarHoveredId || id === _radarPinnedId) {
+            ctx.strokeStyle = _hexToRgba(color, 0.9);
+            ctx.lineWidth = 1.5;
+            ctx.beginPath(); ctx.arc(x, y, blipR+4, 0, Math.PI*2); ctx.stroke();
+        }
+
+        // label
+        ctx.fillStyle = _hexToRgba(color, 0.85);
+        ctx.font = '9px monospace';
+        ctx.textAlign = 'left';
+        ctx.fillText(track.label, x+7, y+3);
+
+        _radarHitTest.push({id, x, y, r: blipR+5});
+    });
+
+    // centre dot (target body)
+    ctx.fillStyle = 'rgba(255,220,50,0.85)';
+    ctx.beginPath(); ctx.arc(cx, cy, 4, 0, Math.PI*2); ctx.fill();
+
+    // empty state
+    if (_radarTracks.size === 0) {
+        ctx.fillStyle = 'rgba(0,180,80,0.35)';
+        ctx.font = '11px monospace';
+        ctx.textAlign = 'center';
+        ctx.fillText('Waiting for transit candidates…', cx, cy + R*0.55);
+    }
+}
+
+// ── hit testing ──────────────────────────────────────────────────────────────
+function _radarPick(mx, my) {
+    for (const h of _radarHitTest) {
+        if (Math.hypot(mx-h.x, my-h.y) <= h.r) return h.id;
+    }
+    return null;
+}
+
+// ── tooltip ──────────────────────────────────────────────────────────────────
+function _radarShowTooltip(id, x, y) {
+    let tt = document.getElementById('radarTooltip');
+    if (!tt) {
+        tt = document.createElement('div');
+        tt.id = 'radarTooltip';
+        tt.style.cssText =
+            'position:absolute;pointer-events:none;background:rgba(5,12,20,0.92);' +
+            'border:1px solid rgba(0,255,80,0.4);border-radius:6px;padding:6px 9px;' +
+            'font:11px/1.6 monospace;color:#c8ffd0;z-index:9999;white-space:nowrap;' +
+            'box-shadow:0 0 8px rgba(0,255,80,0.25);';
+        document.body.appendChild(tt);
+    }
+    const t = _radarTracks.get(id);
+    if (!t) return;
+    const lvlStr = t.level >= 3 ? 'HIGH' : t.level === 2 ? 'MEDIUM' : 'LOW';
+    const lvlCol = t.level >= 3 ? '#4caf50' : t.level === 2 ? '#ff9800' : '#FFD700';
+    const last   = t.points[t.points.length-1];
+    const sep    = last ? Math.hypot(last.altD, last.azD).toFixed(2) : '—';
+    tt.innerHTML = `
+        <div style="font-weight:700;font-size:12px;letter-spacing:.05em">${t.label}</div>
+        <div>${_radarAltFtStr(t.altFt)}</div>
+        <div>${_radarSpeedStr(t.speedKmh)}</div>
+        <div>Sep&nbsp;<b>${sep}°</b></div>
+        <div style="color:${lvlCol}">${lvlStr}</div>
+    `;
+    const canvas = _radarCanvas;
+    const rect   = canvas ? canvas.getBoundingClientRect() : {left:0,top:0};
+    tt.style.left = (rect.left + x + 12) + 'px';
+    tt.style.top  = (rect.top  + y -  8 + window.scrollY) + 'px';
+    tt.style.display = 'block';
+}
+
+function _radarHideTooltip() {
+    const tt = document.getElementById('radarTooltip');
+    if (tt) tt.style.display = 'none';
+}
+
+// ── sweep control ────────────────────────────────────────────────────────────
+// Sweep stays active as long as transit candidates keep arriving.
+// It freezes only after RADAR_SWEEP_KEEPALIVE_MS with no new pushes.
+function _radarMarkTransitSeen() {
+    _radarLastTransitTs = Date.now();
+}
+
+// Call from outside when a transit is confirmed
+window.onTransitDetected = function() { _radarMarkTransitSeen(); };
+
+// ── pushInterceptPoint (public API for app.js) ───────────────────────────────
 window.pushInterceptPoint = function(flight) {
     const id = String(flight.id || flight.name || '').trim().toUpperCase();
     if (!id || flight.angular_separation == null) return;
     const level = parseInt(flight.possibility_level ?? 0);
-    if (level < 2) return; // only MEDIUM (2) and HIGH (3)
+    if (level < 1 || level > 3) return;
 
-    const color = level >= 3 ? '#4caf50' : '#ff9800';
-    if (!_interceptHistory.has(id)) {
-        _interceptHistory.set(id, { points: [], color, label: id, target: flight.target || 'sun' });
+    const color = level >= 3 ? '#4caf50' : level === 2 ? '#ff9800' : '#FFD700';
+    if (!_radarTracks.has(id)) {
+        _radarTracks.set(id, {id, points:[], color, level, label:id, altFt:null, speedKmh:null, heading:null});
     }
-    const entry = _interceptHistory.get(id);
-    entry.color = color;
-    entry.points.push({
-        t: Date.now(),
-        sep: parseFloat(flight.angular_separation),
-        sigma: parseFloat(flight.sep_1sigma ?? 0) || 0,
-        level,
-    });
-    if (entry.points.length > _INTERCEPT_MAX_PTS) entry.points.shift();
+    const track = _radarTracks.get(id);
+    track.color  = color;
+    track.level  = level;
+    track.label  = id;
+    track.altFt  = flight.altitude != null ? parseFloat(flight.altitude) : null;
+    track.speedKmh = flight.speed != null ? parseFloat(flight.speed) : null;
+    track.heading  = flight.heading != null ? parseFloat(flight.heading) : null;
 
-    // Prune flights absent > 40 min
-    const stale = Date.now() - 40 * 60 * 1000;
-    for (const [k, v] of _interceptHistory) {
-        if (!v.points.length || v.points[v.points.length - 1].t < stale) {
-            _interceptHistory.delete(k);
-        }
+    let altD = parseFloat(flight.alt_diff  ?? 'NaN');
+    let azD  = parseFloat(flight.az_diff   ?? 'NaN');
+    if (!isFinite(altD) || !isFinite(azD)) {
+        // fallback: place blip along altitude axis using angular_separation
+        const sep = parseFloat(flight.angular_separation);
+        altD = isFinite(sep) ? sep : 0;
+        azD  = 0;
     }
+    track.points.push({ altD, azD, t: Date.now() });
+    if (track.points.length > RADAR_HISTORY_MAX) track.points.shift();
 
-    if (!_interceptRAF) {
-        _interceptRAF = requestAnimationFrame(() => { _interceptRAF = null; _drawInterceptChart(); });
-    }
+    if (level >= 1) _radarMarkTransitSeen();
 };
 
-function _resizeInterceptCanvas() {
-    const canvas = _interceptCanvas;
-    if (!canvas || !canvas.parentElement) return;
-    const dpr = window.devicePixelRatio || 1;
-    const w = canvas.parentElement.clientWidth - 20; // card padding
-    const h = 170;
-    canvas.width = Math.round(w * dpr);
-    canvas.height = Math.round(h * dpr);
-    canvas.style.width = w + 'px';
-    canvas.style.height = h + 'px';
-    _interceptCtx = canvas.getContext('2d');
-    _drawInterceptChart();
-}
-
-function _drawInterceptChart() {
-    const canvas = _interceptCanvas;
-    if (!canvas || !_interceptCtx) return;
-    const ctx = _interceptCtx;
-    const dpr = window.devicePixelRatio || 1;
-    const W = canvas.width / dpr;
-    const H = canvas.height / dpr;
-
-    const ML = 34, MR = 10, MT = 10, MB = 22;
-    const CW = W - ML - MR;
-    const CH = H - MT - MB;
-    if (CW < 10 || CH < 10) return;
-
-    ctx.save();
-    ctx.scale(dpr, dpr);
-    ctx.clearRect(0, 0, W, H);
-
-    // Background
-    ctx.fillStyle = '#080814';
-    ctx.fillRect(0, 0, W, H);
-
-    // Gather scale
-    const now = Date.now();
-    const xMin = now - _INTERCEPT_WINDOW_MS;
-    let yMax = 5.0;
-    let hasData = false;
-
-    for (const [, entry] of _interceptHistory) {
-        for (const pt of entry.points) {
-            if (pt.t >= xMin) {
-                hasData = true;
-                yMax = Math.max(yMax, pt.sep + pt.sigma + 0.8);
-            }
-        }
-    }
-    yMax = Math.ceil(yMax / 2) * 2;
-
-    const xPx = t => ML + ((t - xMin) / _INTERCEPT_WINDOW_MS) * CW;
-    const yPx = deg => MT + CH * (1 - Math.max(0, Math.min(deg, yMax)) / yMax);
-
-    // Zone fills
-    const discY = yPx(_DISC_DEG);
-    const highY = yPx(Math.min(2.0, yMax));
-    const medY  = yPx(Math.min(4.0, yMax));
-    const botY  = yPx(0);
-
-    if (4.0 < yMax) {
-        ctx.fillStyle = 'rgba(255,235,59,0.04)';
-        ctx.fillRect(ML, medY, CW, highY - medY);
-    }
-    if (2.0 < yMax) {
-        ctx.fillStyle = 'rgba(255,152,0,0.07)';
-        ctx.fillRect(ML, highY, CW, discY - highY);
-    }
-    ctx.fillStyle = 'rgba(244,67,54,0.12)';
-    ctx.fillRect(ML, discY, CW, botY - discY);
-
-    // Horizontal grid
-    ctx.strokeStyle = 'rgba(255,255,255,0.05)';
-    ctx.lineWidth = 1;
-    const gridStep = yMax > 8 ? 2 : 1;
-    for (let d = gridStep; d < yMax; d += gridStep) {
-        const py = yPx(d);
-        ctx.beginPath(); ctx.moveTo(ML, py); ctx.lineTo(ML + CW, py); ctx.stroke();
-    }
-
-    // Zone boundary dashes
-    const _dashed = (deg, color, dash) => {
-        if (deg > yMax) return;
-        ctx.save();
-        ctx.strokeStyle = color; ctx.lineWidth = 1; ctx.setLineDash(dash);
-        const py = yPx(deg);
-        ctx.beginPath(); ctx.moveTo(ML, py); ctx.lineTo(ML + CW, py); ctx.stroke();
-        ctx.restore();
-    };
-    _dashed(4.0, 'rgba(255,235,59,0.3)', [4, 4]);
-    _dashed(2.0, 'rgba(255,152,0,0.45)', [4, 3]);
-    _dashed(_DISC_DEG, 'rgba(244,67,54,0.55)', [2, 2]);
-
-    // Y axis labels
-    ctx.fillStyle = '#555';
-    ctx.font = '9px sans-serif';
-    ctx.textAlign = 'right';
-    ctx.textBaseline = 'middle';
-    for (let d = 0; d <= yMax; d += gridStep) {
-        const py = yPx(d);
-        if (py < MT - 2 || py > MT + CH + 2) continue;
-        ctx.fillText(d + '°', ML - 3, py);
-    }
-
-    // Disc label
-    if (_DISC_DEG <= yMax) {
-        ctx.fillStyle = 'rgba(244,67,54,0.6)';
-        ctx.font = '8px sans-serif';
-        ctx.textAlign = 'left';
-        ctx.fillText('disc', ML + 3, discY - 5);
-    }
-
-    // X axis labels
-    ctx.fillStyle = '#444';
-    ctx.font = '9px sans-serif';
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'top';
-    for (const min of [-25, -15, -5, 0]) {
-        const px = xPx(now + min * 60 * 1000);
-        if (px < ML + 5 || px > ML + CW - 5) continue;
-        ctx.fillText(min === 0 ? 'now' : `${min}m`, px, MT + CH + 4);
-    }
-
-    // "Now" hairline
-    ctx.save();
-    ctx.strokeStyle = 'rgba(255,255,255,0.18)';
-    ctx.lineWidth = 1;
-    ctx.setLineDash([3, 3]);
-    const nowX = xPx(now);
-    ctx.beginPath(); ctx.moveTo(nowX, MT); ctx.lineTo(nowX, MT + CH); ctx.stroke();
-    ctx.restore();
-
-    // Chart border
-    ctx.strokeStyle = 'rgba(255,255,255,0.08)';
-    ctx.lineWidth = 1;
-    ctx.setLineDash([]);
-    ctx.strokeRect(ML, MT, CW, CH);
-
-    // Clip for flight lines
-    ctx.save();
-    ctx.beginPath();
-    ctx.rect(ML, MT, CW, CH);
-    ctx.clip();
-
-    for (const [, entry] of _interceptHistory) {
-        const pts = entry.points.filter(p => p.t >= xMin - 120000);
-        if (!pts.length) continue;
-        const col = entry.color;
-
-        // ±1σ band
-        if (pts.some(p => p.sigma > 0)) {
-            ctx.beginPath();
-            ctx.moveTo(xPx(pts[0].t), yPx(pts[0].sep + pts[0].sigma));
-            pts.forEach(p => ctx.lineTo(xPx(p.t), yPx(p.sep + p.sigma)));
-            for (let i = pts.length - 1; i >= 0; i--) {
-                ctx.lineTo(xPx(pts[i].t), yPx(Math.max(0, pts[i].sep - pts[i].sigma)));
-            }
-            ctx.closePath();
-            ctx.fillStyle = _hexToRgba(col, 0.14);
-            ctx.fill();
-        }
-
-        // Main line — glow effect
-        ctx.shadowColor = col;
-        ctx.shadowBlur = 4;
-        ctx.strokeStyle = col;
-        ctx.lineWidth = 2;
-        ctx.lineJoin = 'round';
-        ctx.beginPath();
-        pts.forEach((p, i) => {
-            const px = xPx(p.t), py = yPx(p.sep);
-            i === 0 ? ctx.moveTo(px, py) : ctx.lineTo(px, py);
+// ── injectMapTransits: populate upcoming transits list from app.js data ───────
+const _upcomingTransits = [];
+window.injectMapTransits = function(flights) {
+    _upcomingTransits.length = 0;
+    if (!Array.isArray(flights)) return;
+    flights.forEach(f => {
+        const level = parseInt(f.possibility_level ?? 0);
+        if (level < 1) return;
+        _upcomingTransits.push({
+            id:   String(f.id || f.name || '').trim().toUpperCase(),
+            eta:  f.transit_eta_seconds != null ? parseFloat(f.transit_eta_seconds) : null,
+            level,
+            target: f.target || 'sun',
         });
-        ctx.stroke();
-        ctx.shadowBlur = 0;
+    });
+    _upcomingTransits.sort((a,b) => {
+        if (a.eta == null && b.eta == null) return 0;
+        if (a.eta == null) return 1;
+        if (b.eta == null) return -1;
+        return a.eta - b.eta;
+    });
+    _renderUpcomingTransits();
+};
 
-        // Endpoint dot
-        const last = pts[pts.length - 1];
-        const lx = xPx(last.t), ly = yPx(last.sep);
-        ctx.beginPath();
-        ctx.arc(lx, ly, 4, 0, Math.PI * 2);
-        ctx.fillStyle = col;
-        ctx.fill();
-        ctx.strokeStyle = 'rgba(255,255,255,0.8)';
-        ctx.lineWidth = 1;
-        ctx.stroke();
-
-        // Flight label
-        const labelX = lx + 6;
-        if (labelX + 55 < ML + CW) {
-            ctx.fillStyle = col;
-            ctx.font = 'bold 9px monospace';
-            ctx.textAlign = 'left';
-            ctx.textBaseline = 'middle';
-            ctx.fillText(entry.label, labelX, ly);
-        }
+function _renderUpcomingTransits() {
+    const el = document.getElementById('upcomingTransitsList');
+    if (!el) return;
+    if (!_upcomingTransits.length) {
+        el.innerHTML = '<div style="color:#334;font-size:0.8em;padding:4px 0">No upcoming transits</div>';
+        return;
     }
-
-    ctx.restore(); // end clip
-
-    // Empty state
-    if (!hasData) {
-        ctx.fillStyle = 'rgba(255,255,255,0.15)';
-        ctx.font = '11px sans-serif';
-        ctx.textAlign = 'center';
-        ctx.textBaseline = 'middle';
-        ctx.fillText('Waiting for HIGH / MEDIUM transits…', ML + CW / 2, MT + CH / 2);
-    }
-
-    // Update flight legend
-    const legendEl = document.getElementById('interceptLegend');
-    if (legendEl) {
-        const parts = [];
-        for (const [, entry] of _interceptHistory) {
-            if (!entry.points.length) continue;
-            const last = entry.points[entry.points.length - 1];
-            if (last.t < xMin) continue;
-            const sigStr = last.sigma > 0 ? ` ±${last.sigma.toFixed(2)}` : '';
-            parts.push(`<span style="color:${entry.color}">● ${entry.label} ${last.sep.toFixed(2)}°${sigStr}</span>`);
-        }
-        legendEl.innerHTML = parts.join('  ');
-    }
-
-    ctx.restore(); // end scale
+    el.innerHTML = _upcomingTransits.slice(0, 5).map(tr => {
+        const lvlCol = tr.level >= 3 ? '#4caf50' : tr.level === 2 ? '#ff9800' : '#FFD700';
+        const lvlStr = tr.level >= 3 ? 'HIGH' : tr.level === 2 ? 'MED' : 'LOW';
+        const etaStr = tr.eta != null ? `T−${Math.round(tr.eta)}s` : '—';
+        return `<div style="display:flex;justify-content:space-between;align-items:center;
+                    padding:2px 0;border-bottom:1px solid rgba(255,255,255,0.05)">
+            <span style="font-weight:600;letter-spacing:.04em">${tr.id}</span>
+            <span style="color:${lvlCol};font-size:0.75em">${lvlStr}</span>
+            <span style="color:#778;font-size:0.75em">${etaStr}</span>
+        </div>`;
+    }).join('');
 }
 
-function ensureInterceptChart() {
+// ── ensureTransitRadar ────────────────────────────────────────────────────────
+function ensureTransitRadar() {
     const detectPanel = document.getElementById('detectPanel');
-    if (!detectPanel || document.getElementById('interceptChartCard')) return;
+    if (!detectPanel) return;
 
-    const card = document.createElement('div');
-    card.id = 'interceptChartCard';
-    card.style.cssText =
-        'background:#0a0a18; border:1px solid rgba(255,255,255,0.1); border-radius:8px; ' +
-        'padding:10px; margin-bottom:8px;';
+    let card = document.getElementById('transitRadarCard');
+    if (!card) {
+        card = document.createElement('div');
+        card.id = 'transitRadarCard';
+        card.style.cssText =
+            'background:#060d15;border:1px solid rgba(0,255,80,0.15);border-radius:8px;' +
+            'padding:8px 10px 6px;margin-bottom:8px;';
 
-    card.innerHTML = `
-        <div style="display:flex; justify-content:space-between; align-items:center;
-                    font-size:0.78em; font-weight:600; color:#667; margin-bottom:6px;
-                    letter-spacing:0.06em; text-transform:uppercase;">
-            <span>📡 Intercept Approach</span>
-            <span id="interceptLegend" style="font-weight:400; font-size:0.95em;
-                    text-transform:none; letter-spacing:0;"></span>
-        </div>
-        <canvas id="interceptCanvas" style="display:block; border-radius:4px;"></canvas>
-        <div style="display:flex; gap:10px; font-size:0.72em; margin-top:5px;
-                    padding-top:4px; border-top:1px solid rgba(255,255,255,0.05);">
-            <span style="color:rgba(244,67,54,0.7)">■ disc &lt;0.53°</span>
-            <span style="color:rgba(255,152,0,0.65)">■ HIGH &lt;2°</span>
-            <span style="color:rgba(255,235,59,0.55)">■ MED &lt;4°</span>
-            <span style="color:rgba(100,100,200,0.5); margin-left:auto;">last 30 min</span>
-        </div>
-    `;
+        card.innerHTML = `
+            <div style="display:flex;justify-content:space-between;align-items:center;
+                        margin-bottom:6px;">
+                <span style="font-size:0.72em;font-weight:600;color:#2a4a3a;
+                             letter-spacing:.07em;text-transform:uppercase;">
+                    ◎ Transit Radar
+                </span>
+                <div style="display:flex;gap:4px;">
+                    <button id="radarModeDefault" title="Default mode: current position only"
+                        style="font-size:0.68em;padding:2px 8px;border-radius:4px;
+                               background:rgba(0,255,80,0.18);border:1px solid rgba(0,255,80,0.4);
+                               color:#7fffb0;cursor:pointer;">Default</button>
+                    <button id="radarModeEnhanced" title="Enhanced mode: projects trajectory forward ${RADAR_PREDICT_HORIZON_S}s"
+                        style="font-size:0.68em;padding:2px 8px;border-radius:4px;
+                               background:transparent;border:1px solid rgba(0,255,80,0.2);
+                               color:#3a5a4a;cursor:pointer;">Enhanced</button>
+                </div>
+            </div>
+            <div id="upcomingTransitsList"
+                 style="font-size:0.76em;color:#c8ffd0;margin-bottom:6px;min-height:18px;"></div>
+            <canvas id="radarCanvas"
+                    style="display:block;width:100%;aspect-ratio:1;border-radius:4px;
+                           border:1px solid rgba(0,255,80,0.08);"></canvas>
+        `;
 
-    if (detectPanel.firstChild) {
-        detectPanel.insertBefore(card, detectPanel.firstChild);
-    } else {
-        detectPanel.appendChild(card);
-    }
-
-    _interceptCanvas = card.querySelector('#interceptCanvas');
-    _resizeInterceptCanvas();
-
-    if (window.ResizeObserver) {
-        new ResizeObserver(() => _resizeInterceptCanvas()).observe(card);
-    }
-}
-
-// ============================================================================
-// DETECTION SIGNAL SPARKLINE — Signal A/B vs thresholds (Phase D)
-// ============================================================================
-
-let _signalCanvas = null;
-let _signalCtx = null;
-const _signalBuf = [];
-const _SIGNAL_MAX_PTS = 90;
-
-// Only append new points (avoid duplicates by timestamp)
-let _lastSignalT = 0;
-
-function _pushSignalTrace(tracePoints) {
-    for (const pt of tracePoints) {
-        if ((pt.t || 0) > _lastSignalT) {
-            _signalBuf.push(pt);
-            _lastSignalT = pt.t;
+        if (detectPanel.firstChild) {
+            detectPanel.insertBefore(card, detectPanel.firstChild);
+        } else {
+            detectPanel.appendChild(card);
         }
     }
-    while (_signalBuf.length > _SIGNAL_MAX_PTS) _signalBuf.shift();
-    _drawSignalSparkline();
-}
 
-function _resizeSignalCanvas() {
-    const canvas = _signalCanvas;
-    if (!canvas || !canvas.parentElement) return;
-    const dpr = window.devicePixelRatio || 1;
-    const w = canvas.parentElement.clientWidth - 20;
-    const h = 56;
-    canvas.width = Math.round(w * dpr);
-    canvas.height = Math.round(h * dpr);
-    canvas.style.width = w + 'px';
-    canvas.style.height = h + 'px';
-    _signalCtx = canvas.getContext('2d');
-    _drawSignalSparkline();
-}
-
-function _drawSignalSparkline() {
-    const canvas = _signalCanvas;
-    if (!canvas || !_signalCtx || _signalBuf.length < 2) return;
-    const ctx = _signalCtx;
-    const dpr = window.devicePixelRatio || 1;
-    const W = canvas.width / dpr;
-    const H = canvas.height / dpr;
-    const pts = _signalBuf;
-    const n = pts.length;
-    const HA = Math.floor(H / 2) - 1;
-    const HB = H - HA - 2;
-
-    ctx.save();
-    ctx.scale(dpr, dpr);
-    ctx.clearRect(0, 0, W, H);
-
-    const xPx = i => (i / Math.max(n - 1, 1)) * W;
-
-    const _drawPane = (yOff, pH, aKey, tKey, color, label) => {
-        const vals = pts.map(p => p[aKey] ?? 0);
-        const thresh = pts.map(p => p[tKey] ?? 0);
-        const pMax = Math.max(...vals, ...thresh, 1e-9);
-
-        const yPx = v => yOff + pH - 1 - (v / pMax) * (pH - 4);
-
-        // Background
-        ctx.fillStyle = '#0d0d20';
-        ctx.fillRect(0, yOff, W, pH);
-
-        // Label
-        ctx.fillStyle = '#3a3a5a';
-        ctx.font = '8px sans-serif';
-        ctx.textAlign = 'left';
-        ctx.textBaseline = 'top';
-        ctx.fillText(label, 2, yOff + 2);
-
-        // Threshold line (dashed orange)
-        ctx.save();
-        ctx.strokeStyle = 'rgba(255,152,0,0.4)';
-        ctx.lineWidth = 1;
-        ctx.setLineDash([2, 3]);
-        ctx.beginPath();
-        pts.forEach((p, i) => {
-            const tv = p[tKey];
-            if (tv == null) return;
-            i === 0 ? ctx.moveTo(xPx(i), yPx(tv)) : ctx.lineTo(xPx(i), yPx(tv));
-        });
-        ctx.stroke();
-        ctx.restore();
-
-        // Fill under triggered segments
-        pts.forEach((p, i) => {
-            if (i === 0) return;
-            const v = p[aKey] ?? 0;
-            const tv = p[tKey] ?? 0;
-            if (v > tv && tv > 0) {
-                ctx.fillStyle = _hexToRgba(color, 0.15);
-                const x0 = xPx(i - 1), x1 = xPx(i);
-                ctx.fillRect(x0, yPx(vals[i - 1]), x1 - x0 + 1, yPx(0) - yPx(vals[i - 1]));
-            }
-        });
-
-        // Signal line
-        ctx.strokeStyle = color;
-        ctx.lineWidth = 1.5;
-        ctx.beginPath();
-        pts.forEach((p, i) => {
-            const v = p[aKey] ?? 0;
-            i === 0 ? ctx.moveTo(xPx(i), yPx(v)) : ctx.lineTo(xPx(i), yPx(v));
-        });
-        ctx.stroke();
-    };
-
-    _drawPane(0, HA, 'a', 'ta', '#4fc3f7', 'Sig A');
-
-    // Divider
-    ctx.fillStyle = 'rgba(255,255,255,0.04)';
-    ctx.fillRect(0, HA + 1, W, 2);
-
-    _drawPane(HA + 2, HB, 'b', 'tb', '#81c784', 'Sig B');
-
-    ctx.restore();
-}
-
-function ensureSignalSparkline() {
-    const detectPanel = document.getElementById('detectPanel');
-    if (!detectPanel || document.getElementById('signalSparkCard')) return;
-
-    const card = document.createElement('div');
-    card.id = 'signalSparkCard';
-    card.style.cssText =
-        'background:#0a0a18; border:1px solid rgba(255,255,255,0.08); border-radius:8px; ' +
-        'padding:8px 10px 6px 10px; margin-bottom:8px; display:none;';
-
-    card.innerHTML = `
-        <div style="display:flex; justify-content:space-between; align-items:center;
-                    font-size:0.72em; font-weight:600; color:#445; margin-bottom:5px;
-                    letter-spacing:0.06em; text-transform:uppercase;">
-            <span>📊 Detection Signals</span>
-            <span style="font-weight:400; color:#334; text-transform:none;">— dashed = threshold</span>
-        </div>
-        <canvas id="signalCanvas" style="display:block; border-radius:3px;"></canvas>
-    `;
-
-    // Insert after intercept chart
-    const interceptCard = document.getElementById('interceptChartCard');
-    if (interceptCard && interceptCard.parentNode === detectPanel) {
-        interceptCard.insertAdjacentElement('afterend', card);
-    } else if (detectPanel.firstChild) {
-        detectPanel.insertBefore(card, detectPanel.firstChild);
-    } else {
-        detectPanel.appendChild(card);
-    }
-
-    _signalCanvas = card.querySelector('#signalCanvas');
-    _resizeSignalCanvas();
-
+    // bind canvas
+    _radarCanvas = card.querySelector('#radarCanvas');
+    _radarCtx    = _radarCanvas.getContext('2d');
+    _resizeRadarCanvas();
     if (window.ResizeObserver) {
-        new ResizeObserver(() => _resizeSignalCanvas()).observe(card);
+        new ResizeObserver(() => _resizeRadarCanvas()).observe(card);
     }
+
+    // mode buttons
+    const btnDef = card.querySelector('#radarModeDefault');
+    const btnEnh = card.querySelector('#radarModeEnhanced');
+    function _applyMode(m) {
+        _radarMode = m;
+        if (m === 'default') {
+            btnDef.style.background = 'rgba(0,255,80,0.18)';
+            btnDef.style.color = '#7fffb0';
+            btnEnh.style.background = 'transparent';
+            btnEnh.style.color = '#3a5a4a';
+        } else {
+            btnEnh.style.background = 'rgba(0,255,80,0.18)';
+            btnEnh.style.color = '#7fffb0';
+            btnDef.style.background = 'transparent';
+            btnDef.style.color = '#3a5a4a';
+        }
+    }
+    btnDef.onclick = () => _applyMode('default');
+    btnEnh.onclick = () => _applyMode('enhanced');
+    _applyMode(_radarMode);
+
+    // mouse events
+    _radarCanvas.addEventListener('mousemove', e => {
+        const rect = _radarCanvas.getBoundingClientRect();
+        const scaleX = _radarCanvas.width  / rect.width;
+        const scaleY = _radarCanvas.height / rect.height;
+        const mx = (e.clientX - rect.left) * scaleX;
+        const my = (e.clientY - rect.top ) * scaleY;
+        const hit = _radarPick(mx, my);
+        _radarHoveredId = hit;
+        if (hit && hit !== _radarPinnedId) _radarShowTooltip(hit, e.clientX - rect.left, e.clientY - rect.top);
+        else if (!hit && !_radarPinnedId) _radarHideTooltip();
+        _radarCanvas.style.cursor = hit ? 'pointer' : 'default';
+    });
+    _radarCanvas.addEventListener('click', e => {
+        const rect = _radarCanvas.getBoundingClientRect();
+        const scaleX = _radarCanvas.width  / rect.width;
+        const scaleY = _radarCanvas.height / rect.height;
+        const mx = (e.clientX - rect.left) * scaleX;
+        const my = (e.clientY - rect.top ) * scaleY;
+        const hit = _radarPick(mx, my);
+        if (hit) {
+            _radarPinnedId = _radarPinnedId === hit ? null : hit;
+            if (_radarPinnedId) _radarShowTooltip(hit, e.clientX - rect.left, e.clientY - rect.top);
+            else _radarHideTooltip();
+        } else {
+            _radarPinnedId = null;
+            _radarHideTooltip();
+        }
+    });
+    _radarCanvas.addEventListener('mouseleave', () => {
+        _radarHoveredId = null;
+        if (!_radarPinnedId) _radarHideTooltip();
+    });
+
+    // start animation loop (cancel any previous)
+    if (_radarAnimFrame) cancelAnimationFrame(_radarAnimFrame);
+    _radarAnimFrame = requestAnimationFrame(_radarDrawFrame);
+
+    _renderUpcomingTransits();
 }
+
 
 console.log('[Telescope] Module loaded');
