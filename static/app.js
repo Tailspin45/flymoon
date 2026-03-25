@@ -184,6 +184,99 @@ var target = "auto"; // Always auto-detect sun and moon
 var autoGoInterval = null; // Auto-refresh interval
 var refreshTimerLabelInterval = null; // Countdown timer interval
 var softRefreshInterval = null; // For client-side position updates
+var _radarFastInterval  = null; // 3s radar-only recalculate (active transit candidates only)
+var _radarFastInFlight  = false;
+// Last recalculated positions — dead-reckon ONLY from these (not from original fetch)
+// so a hard refresh never jumps the blip back to its starting point.
+var _radarBaseFlights   = null;  // {id → flight object with lat/lon at _radarBaseTs}
+var _radarBaseTs        = 0;     // Date.now() when _radarBaseFlights was last set
+
+function _radarUpdateBase(flights) {
+    // Called by hard refresh and soft refresh to reset the dead-reckoning origin.
+    _radarBaseFlights = {};
+    _radarBaseTs = Date.now();
+    flights.forEach(f => {
+        const id = String(f.id || f.name || '').trim().toUpperCase();
+        if (id) _radarBaseFlights[id] = {...f};
+    });
+}
+
+async function _radarFastUpdate() {
+    if (_radarFastInFlight || !_radarBaseFlights) return;
+    if (typeof window.pushInterceptPoint !== 'function') return;
+
+    const dtSec = (Date.now() - _radarBaseTs) / 1000;
+    if (dtSec > 300) return; // base too stale
+
+    // Dead-reckon only the delta from the last known good positions
+    const candidates = Object.values(_radarBaseFlights)
+        .filter(f => parseInt(f.possibility_level ?? 0) >= 1 || f.is_possible_transit === 1)
+        .map(f => {
+            const updated = {...f};
+            if (updated.latitude && updated.longitude && updated.speed && updated.direction) {
+                const speedKmPerSec = updated.speed / 3600;
+                const distKm = speedKmPerSec * dtSec;
+                const hdgRad = updated.direction * Math.PI / 180;
+                updated.latitude  += (distKm / 111.32) * Math.cos(hdgRad);
+                updated.longitude += (distKm / (111.32 * Math.cos(updated.latitude * Math.PI / 180))) * Math.sin(hdgRad);
+            }
+            if (updated.is_possible_transit === 1 && updated.time != null)
+                updated.time = Math.max(0, updated.time - dtSec / 60);
+            return updated;
+        });
+
+    if (!candidates.length) return;
+
+    _radarFastInFlight = true;
+    try {
+        const latitude  = parseFloat(document.getElementById('latitude')?.value);
+        const longitude = parseFloat(document.getElementById('longitude')?.value);
+        const elevation = parseFloat(document.getElementById('elevation')?.value);
+        if (isNaN(latitude) || isNaN(longitude)) return;
+
+        const disabledTargets = [];
+        if (!sunEnabled)  disabledTargets.push('sun');
+        if (!moonEnabled) disabledTargets.push('moon');
+
+        const res = await fetch('/transits/recalculate', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({
+                flights: candidates, latitude, longitude, elevation,
+                target, ...getQuadrantMinAltitudes(),
+                disabled_targets: disabledTargets
+            })
+        });
+        if (!res.ok) return;
+        const data = await res.json();
+        if (!data.flights) return;
+
+        const activeIds = new Set();
+        data.flights.forEach(f => {
+            const lvl = parseInt(f.possibility_level ?? 0);
+            const sep = parseFloat(f.angular_separation ?? 999);
+            if ((lvl >= 1 || f.is_possible_transit === 1) && sep <= 12) {
+                window.pushInterceptPoint(f);
+                activeIds.add(String(f.id || f.name || '').trim().toUpperCase());
+            }
+        });
+        // Remove tracks for aircraft that have left the zone
+        if (typeof window.pruneRadarTracks === 'function') window.pruneRadarTracks(activeIds);
+
+        if (typeof window.injectMapTransits === 'function') {
+            window.injectMapTransits(data.flights.filter(f => parseInt(f.possibility_level ?? 0) >= 1));
+        }
+    } catch(e) { console.warn('[RadarFast] update failed:', e && e.message ? e.message : e); }
+    finally { _radarFastInFlight = false; }
+}
+
+function _startRadarFastInterval() {
+    if (_radarFastInterval) return;
+    _radarFastInterval = setInterval(_radarFastUpdate, 3000);
+}
+function _stopRadarFastInterval() {
+    if (_radarFastInterval) { clearInterval(_radarFastInterval); _radarFastInterval = null; }
+}
 var remainingSeconds = 120; // Track remaining seconds for countdown (default 2 min)
 var lastFlightData = null; // Cache last flight response for soft refresh
 window.lastFlightUpdateTime = parseInt(sessionStorage.getItem('lastFlightUpdateTime') || '0', 10);
@@ -633,12 +726,14 @@ document.addEventListener('visibilitychange', function() {
         if (autoGoInterval) clearInterval(autoGoInterval);
         if (refreshTimerLabelInterval) clearInterval(refreshTimerLabelInterval);
         if (softRefreshInterval) clearInterval(softRefreshInterval);
+        _stopRadarFastInterval();
     } else if (!document.hidden && pauseWhenHidden) {
         console.log('Page visible - resuming auto-refresh');
         const intervalSecs = currentCheckInterval || appConfig.autoRefreshIntervalMinutes * 60;
         autoGoInterval = setInterval(goFetch, intervalSecs * 1000);
         refreshTimerLabelInterval = setInterval(refreshTimer, 1000);
         softRefreshInterval = setInterval(softRefresh, 15000); // Soft refresh every 15 seconds
+        _startRadarFastInterval();
     }
 });
 
@@ -745,22 +840,15 @@ async function softRefresh() {
             recalcData.flights.forEach(f => { recalcById[String(f.id).trim().toUpperCase()] = f; });
             const mergedFlights = updatedFlights.map(f => recalcById[String(f.id).trim().toUpperCase()] || f);
 
-            // Feed updated transit data to radar and upcoming-transits list
-            if (typeof window.pushInterceptPoint === 'function') {
-                recalcData.flights.forEach(f => {
-                    const lvl = parseInt(f.possibility_level ?? 0);
-                    if (lvl >= 1 || f.is_possible_transit === 1) window.pushInterceptPoint(f);
-                });
-            }
-            if (typeof window.injectMapTransits === 'function') {
-                window.injectMapTransits(recalcData.flights.filter(f => parseInt(f.possibility_level ?? 0) >= 1));
-            }
+            // Update radar dead-reckoning base so fast updates continue from here.
+            // Do NOT call pushInterceptPoint here — _radarFastUpdate is the sole pusher.
+            _radarUpdateBase(mergedFlights);
 
             // Update map markers (full set including non-transit for display)
             if (mapVisible && typeof updateAircraftMarkers === 'function') {
                 updateAircraftMarkers(mergedFlights, latitude, longitude);
             }
-            
+
             console.log(`Soft refresh: Recalculated ${recalcFlights.length}/${updatedFlights.length} transit-candidate flights (+${Math.floor(secondsElapsed)}s)`);
         } else {
             // Fallback to position-only update if recalculation fails
@@ -1167,11 +1255,8 @@ function updateTrackedFlight() {
             updateSingleAircraftMarker(trackedFlight);
         }
 
-        // Push to transit radar
-        if (typeof window.pushInterceptPoint === 'function') {
-            const lvl = parseInt(trackedFlight.possibility_level ?? 0);
-            if (lvl >= 1 || trackedFlight.is_possible_transit === 1) window.pushInterceptPoint(trackedFlight);
-        }
+        // Update radar base so fast update has fresh position for this flight
+        if (_radarBaseFlights) _radarBaseFlights[String(trackedFlight.id||'').trim().toUpperCase()] = {...trackedFlight};
     })
     .catch(error => {
         console.error('Track mode update error:', error);
@@ -2027,6 +2112,7 @@ function fetchFlights() {
         window.lastFlightUpdateTime = Date.now();
         sessionStorage.setItem('lastFlightUpdateTime', String(window.lastFlightUpdateTime));
         lastFlightData = data;
+        _radarUpdateBase(data.flights || []);
         try { sessionStorage.setItem('lastFlightData', JSON.stringify(data)); } catch(e) {}
         updateLastUpdateDisplay();
 
@@ -2175,15 +2261,14 @@ function fetchFlights() {
         const filteredFlights = Object.values(seenFlights);
         console.log(`Dedupe: ${data.flights.length} flights -> ${filteredFlights.length} unique`);
 
-        // Push all coloured (LOW/MEDIUM/HIGH) flights to the transit radar
+        // Radar base update — _radarFastUpdate handles ongoing pushInterceptPoint calls.
+        // But populate transit list immediately so it doesn't wait 3s for the first cycle.
         if (typeof window.pushInterceptPoint === 'function') {
             filteredFlights.forEach(f => {
                 const lvl = parseInt(f.possibility_level ?? 0);
                 if (lvl >= 1 || f.is_possible_transit === 1) window.pushInterceptPoint(f);
             });
         }
-
-        // Inject transit candidates into the telescope panel's upcoming-transit list
         if (typeof window.injectMapTransits === 'function') {
             window.injectMapTransits(filteredFlights.filter(f => parseInt(f.possibility_level ?? 0) >= 1));
         }
@@ -2774,6 +2859,7 @@ function initializeAutoRefresh() {
     
     // Start soft refresh interval (15 seconds)
     softRefreshInterval = setInterval(softRefresh, 15000);
+    _startRadarFastInterval();
     console.log('[Init] Soft refresh started (15s interval)');
     
     // Decide whether to fetch immediately

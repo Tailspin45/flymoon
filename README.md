@@ -11,11 +11,11 @@
 
 ## ✨ What Flymoon Does
 
-Flymoon combines real-time flight data, high-precision celestial mechanics, and telescope automation to give you everything you need to capture an aircraft transiting the Sun or Moon--even an eclipse timelapse:
+Flymoon combines real-time flight data, high-precision celestial mechanics, and telescope automation to give you everything you need to capture an aircraft transiting the Sun or Moon. There's also an eclipse timelapse recorder. Flymoon:
 
 - Predicts which flights will pass close to the Sun or Moon up to **15 minutes ahead**
 - Shows flight paths, altitudes, and transit probability on an **interactive map**
-- Optionally controls a **Seestar S50 telescope** to start recording automatically before the transit and stop after
+- Controls a **Seestar S50 telescope** to start recording automatically before the transit and stop after
 - Analyses recorded video to produce **annotated composite images** showing the aircraft's path across the disc
 - Sends **Telegram alerts** when a high-probability transit is detected
 - Runs **headlessly overnight** on a Mac, Linux box, or Windows PC
@@ -42,7 +42,7 @@ Full setup instructions (Mac, Windows, Linux) → **[SETUP.md](SETUP.md)**
 
 ### Prediction Algorithm
 
-1. **Flight acquisition** — uses OpenSky Network as the primary real-time position source (free, ~60 s cache); FlightAware AeroAPI is called only for HIGH-probability transits to enrich metadata (origin, destination, aircraft type)
+1. **Flight acquisition** — queries FlightAware AeroAPI for all aircraft within the configured bounding box
 2. **Position projection** — extrapolates each aircraft's position up to 15 minutes ahead using constant velocity and heading
 3. **Celestial tracking** — computes Sun/Moon altitude and azimuth with Skyfield + the JPL DE421 ephemeris, accounting for atmospheric refraction
 4. **Angular separation** — numerical optimisation finds the moment of closest approach between the aircraft path and the celestial disc
@@ -98,7 +98,7 @@ Recommended sequence:
   <img src="docs/flymoon-map.png" alt="Flymoon map interface" width="100%">
 </p>
 
-- **Per-quadrant minimum altitude** — set independent minimum angles for North, East, South, and West to mask out trees, rooftops, or other obstructions; only flights near the Sun/Moon when it is above your local horizon count
+- **Per-quadrant minimum altitude** — set independent minimum angles for North, East, South, and West to mask out trees, rooftops, or other obstructions; only flights near the Sun/Moon when it is above your local horizon count. Click the center to set all quadrants to zero
 - **Altitude bars** — thin horizontal bars on each flight indicator show cruising altitude at a glance
 - **Route & track overlay** — click any indicator to show the planned route ahead and historical track behind
 - **Azimuth arrows** — on-map arrows point toward the Sun and Moon from your observer position
@@ -109,7 +109,7 @@ Recommended sequence:
 
 ## 🔭 Telescope Integration
 
-Flymoon connects directly to the Seestar S50 over TCP (JSON-RPC 2.0, port 4700) — no bridge app required.
+Flymoon connects directly to the Seestar S50 over TCP — no bridge app required.
 
 - **Auto-discovery** — scans the local subnet to find the scope's IP automatically
 - **Solar & lunar modes** — switches the scope to the correct imaging mode for the selected target
@@ -135,15 +135,13 @@ Flymoon connects directly to the Seestar S50 over TCP (JSON-RPC 2.0, port 4700) 
 ### `transit_capture.py` — Telescope control or Telegram fallback
 ```bash
 # Fully automated (Seestar + Telegram)
-python3 transit_capture.py --latitude $OBSERVER_LATITUDE --longitude $OBSERVER_LONGITUDE --target sun
+python3 transit_capture.py --latitude 51.5 --longitude -0.12 --target sun
 
 # Notifications only
-python3 transit_capture.py --latitude $OBSERVER_LATITUDE --longitude $OBSERVER_LONGITUDE --target sun --manual
+python3 transit_capture.py --latitude 51.5 --longitude -0.12 --target sun --manual
 ```
 
-Pass the same `OBSERVER_LATITUDE` / `OBSERVER_LONGITUDE` values from your `.env`. The script does not read them from the environment automatically.
-
-The script runs continuously and handles its own scheduling.
+Both scripts run continuously in the background and handle their own scheduling.
 
 ### macOS App Bundle
 
@@ -160,7 +158,7 @@ pip install -r requirements-windows.txt
 python windows_monitor.py
 ```
 
-Tray icon colours: **gray** = idle (not monitoring) · **green** = monitoring, no transits · **orange** = HIGH probability transit detected · **red** = error fetching data.
+Tray icon colours: **gray** = idle · **green** = monitoring · **orange** = transit detected · **red** = error.
 
 ---
 
@@ -175,6 +173,7 @@ Copy `.env.mock` to `.env` and fill in:
 | `LAT/LONG_LOWER_LEFT / UPPER_RIGHT` | Flight search bounding box |
 | `TELEGRAM_BOT_TOKEN / CHAT_ID` | Telegram alerts (optional) |
 | `ENABLE_SEESTAR / SEESTAR_HOST` | Telescope control (optional) |
+| `SEESTAR_ALPACA_URL` | Optional `seestar_alp` sidecar endpoint for stable `/v1/seestar/*` API |
 | `SEESTAR_PRE_BUFFER / POST_BUFFER` | Recording window in seconds (default: 10) |
 | `FLYMOON_BROWSER` | Startup browser preference (`default` or `chrome`) |
 | `FLYMOON_NO_BROWSER` | Disable browser auto-open on startup when set |
@@ -209,15 +208,11 @@ Flymoon binds to `0.0.0.0:8000` by default (LAN-accessible). Gallery write opera
 
 Issues and pull requests welcome — especially transit photographs!
 
-**Share your captures** → [GitHub Discussions / Issue #21](https://github.com/dbetm/flymoon/issues/21)
+**Share your captures** → [GitHub Discussions / Issue #21](https://github.com/Tailspin45/flymoon/issues/21)
 
 ---
 
 ## 📝 Credits
-
-**David Betancourt** — original Flymoon concept and initial implementation.
-
-**Kai Yung** — [seestar_alp](https://github.com/smart-underworld/seestar_alp), whose reverse-engineered Seestar protocol underpins Flymoon's direct TCP control and optional Alpaca sidecar integration.
 
 | Component | Project | Licence |
 |-----------|---------|---------|

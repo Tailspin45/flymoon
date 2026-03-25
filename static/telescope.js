@@ -69,12 +69,6 @@ const _PREVIEW_BACKOFF_MS = 5000; // 5s between retry attempts after stream fail
 let _previewCheckTimer = null;
 let _lastPreviewRefreshMs = 0;
 const _PREVIEW_REFRESH_INTERVAL_MS = Infinity; // never restart a healthy stream — onerror handles failures
-const _DEBUG_INGEST_URL = 'http://127.0.0.1:7352/ingest/42acc25b-9174-476d-8462-1b85f40db694';
-const _DEBUG_SESSION_ID = '616e1a';
-
-function _agentDebugLog(runId, hypothesisId, location, message, data) {
-    fetch(_DEBUG_INGEST_URL,{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'616e1a'},body:JSON.stringify({sessionId:_DEBUG_SESSION_ID,runId,hypothesisId,location,message,data,timestamp:Date.now()})}).catch(()=>{});
-}
 let isSimulating = false;
 let simulationVideo = null;
 let disconnectedPollCount = 0; // consecutive disconnected polls before stopping preview
@@ -207,11 +201,9 @@ async function connect() {
         if (statusPollInterval) clearInterval(statusPollInterval);
         statusPollInterval = setInterval(updateStatus, 2000); // Every 2s
 
-        // Start telemetry polling (RA/Dec/Alt/Az strip)
-        startTelemetryPolling();
-
         updateConnectionUI();
         updateStatus();
+        startPositionSync();
         // Clear any preview backoff and start stream
         _previewLastError = 0;
         stopPreview();
@@ -262,9 +254,7 @@ async function disconnect() {
             statusPollInterval = null;
         }
 
-        // Stop telemetry strip
-        stopTelemetryPolling();
-
+        stopPositionSync();
         updateConnectionUI();
         stopPreview();
     }
@@ -356,17 +346,14 @@ async function updateStatus() {
             console.log('[Scope] Reconnected — mode:', result.viewing_mode);
             _previewLastError = 0;
             _lastConnectedStatus = null;
+            startPositionSync();
         }
-        // Always ensure telemetry polling runs while connected (covers auto-connect,
-        // missed justReconnected edge cases, and page load order).
-        if (isConnected) startTelemetryPolling();
         if (justDisconnected) {
             console.warn('[Scope] Disconnected — prior connected state:', JSON.stringify(_lastConnectedStatus || {}));
             if (result.error) console.warn('[Scope] Server error:', result.error);
-            // Immediately clear transit cards — nothing to capture with
             upcomingTransits = [];
             updateTransitList();
-            stopTelemetryPolling();
+            stopPositionSync();
         }
         // Cache last connected response for diagnostics
         if (isConnected) {
@@ -982,8 +969,6 @@ function updateTimelapseUI(data) {
 // ============================================================================
 
 function startPreview(forceRefresh = false) {
-    const runId = `preview_${Date.now()}`;
-    
     const previewImage = document.getElementById('previewImage');
     const previewPlaceholder = document.getElementById('previewPlaceholder');
     const previewStatusDot = document.getElementById('previewStatusDot');
@@ -992,9 +977,6 @@ function startPreview(forceRefresh = false) {
     
     if (!previewImage) {
         console.error('[Telescope] Preview image element not found');
-        // #region agent log
-        _agentDebugLog(runId,'H6','static/telescope.js:startPreview:noElement','previewImage missing',{});
-        // #endregion
         return;
     }
 
@@ -1034,45 +1016,26 @@ function startPreview(forceRefresh = false) {
     if (previewStatusText) previewStatusText.textContent = 'Connecting...';
     if (previewTitleIcon) previewTitleIcon.textContent = '🟡';
     
-    // Confirm stream is live by polling for a successful HEAD request to the MJPEG endpoint
-    // (MJPEG <img> streams don't fire onload, so we verify separately)
-    const checkStream = async () => {
-        try {
-            const r = await fetch(streamUrl, { method: 'HEAD', signal: AbortSignal.timeout(4000) });
-            if (r.ok) {
-                if (previewStatusDot) previewStatusDot.className = 'status-dot connected';
-                if (previewStatusText) previewStatusText.textContent = 'Live Stream Active';
-                if (previewTitleIcon) previewTitleIcon.textContent = '🟢';
-                currentZoom = 2.0;
-                applyZoom();
-            } else {
-                // Server responded but not OK — stream not ready
-                if (previewStatusDot) previewStatusDot.className = 'status-dot disconnected';
-                if (previewStatusText) previewStatusText.textContent = 'Stream unavailable';
-                if (previewTitleIcon) previewTitleIcon.textContent = '🔴';
-            }
-        } catch (_) {
-            // Fetch failed — retry once more after 3s before giving up
-            _previewCheckTimer = setTimeout(async () => {
-                try {
-                    const r2 = await fetch(streamUrl, { method: 'HEAD', signal: AbortSignal.timeout(4000) });
-                    if (r2.ok) {
-                        if (previewStatusDot) previewStatusDot.className = 'status-dot connected';
-                        if (previewStatusText) previewStatusText.textContent = 'Live Stream Active';
-                        if (previewTitleIcon) previewTitleIcon.textContent = '🟢';
-                        currentZoom = 2.0;
-                        applyZoom();
-                    } else {
-                        if (previewStatusDot) previewStatusDot.className = 'status-dot disconnected';
-                        if (previewStatusText) previewStatusText.textContent = 'Stream unavailable';
-                        if (previewTitleIcon) previewTitleIcon.textContent = '🔴';
-                    }
-                } catch (_2) {
-                    if (previewStatusDot) previewStatusDot.className = 'status-dot disconnected';
-                    if (previewStatusText) previewStatusText.textContent = 'Stream unavailable';
-                    if (previewTitleIcon) previewTitleIcon.textContent = '🔴';
-                }
-            }, 3000);
+    // Confirm stream is live by checking whether the <img> element has started
+    // rendering frames (naturalWidth > 0).  We cannot use HEAD on the MJPEG URL —
+    // MJPEG is a long-lived streaming response; HEAD either hangs or returns
+    // non-OK even when the stream is fully working.
+    const checkStream = (attempt = 1) => {
+        const img = document.getElementById('previewImage');
+        const live = img && img.naturalWidth > 0;
+        if (live) {
+            if (previewStatusDot) previewStatusDot.className = 'status-dot connected';
+            if (previewStatusText) previewStatusText.textContent = 'Live Stream Active';
+            if (previewTitleIcon) previewTitleIcon.textContent = '🟢';
+            currentZoom = 2.0;
+            applyZoom();
+        } else if (attempt < 6) {
+            // Frames may take a few seconds to arrive — keep polling
+            _previewCheckTimer = setTimeout(() => checkStream(attempt + 1), 2000);
+        } else {
+            if (previewStatusDot) previewStatusDot.className = 'status-dot disconnected';
+            if (previewStatusText) previewStatusText.textContent = 'Stream unavailable';
+            if (previewTitleIcon) previewTitleIcon.textContent = '🔴';
         }
     };
     setTimeout(checkStream, 2000);
@@ -1088,9 +1051,6 @@ function startPreview(forceRefresh = false) {
         if (previewStatusDot) previewStatusDot.className = 'status-dot disconnected';
         if (previewStatusText) previewStatusText.textContent = 'Stream unavailable';
         if (previewTitleIcon) previewTitleIcon.textContent = '🔴';
-        // #region agent log
-        _agentDebugLog(runId,'H6','static/telescope.js:startPreview:onerror','preview image error',{streamUrl,isConnected});
-        // #endregion
     };
 }
 
@@ -1349,12 +1309,6 @@ function _formatApiError(data, status) {
 }
 
 async function apiCall(endpoint, method = 'GET', body = null) {
-    const runId = `api_${Date.now()}`;
-    if (endpoint === '/telescope/goto') {
-        // #region agent log
-        _agentDebugLog(runId,'H9','static/telescope.js:apiCall:send','apiCall send /telescope/goto',{method,hasBody:!!body,body});
-        // #endregion
-    }
     try {
         const options = {
             method: method,
@@ -1375,27 +1329,12 @@ async function apiCall(endpoint, method = 'GET', body = null) {
         const data = await response.json();
 
         if (!response.ok) {
-            if (endpoint === '/telescope/goto') {
-                // #region agent log
-                _agentDebugLog(runId,'H9_H10','static/telescope.js:apiCall:response_error','apiCall /telescope/goto non-ok response',{status:response.status,data});
-                // #endregion
-            }
             throw new Error(_formatApiError(data, response.status));
-        }
-        if (endpoint === '/telescope/goto') {
-            // #region agent log
-            _agentDebugLog(runId,'H9_H10','static/telescope.js:apiCall:response_ok','apiCall /telescope/goto ok response',{status:response.status,data});
-            // #endregion
         }
 
         return data;
 
     } catch (error) {
-        if (endpoint === '/telescope/goto') {
-            // #region agent log
-            _agentDebugLog(runId,'H9_H10','static/telescope.js:apiCall:catch','apiCall /telescope/goto catch',{message:error?.message || String(error)});
-            // #endregion
-        }
         console.error(`[Telescope] API call failed: ${endpoint}`, error);
         showStatus(`Error: ${error.message}`, 'error');
         return null;
@@ -1406,141 +1345,61 @@ async function apiCall(endpoint, method = 'GET', body = null) {
 // CONTROL PANEL — GoTo, Park, Autofocus, Camera Settings, Named Locations
 // ============================================================================
 
-let _telemetryInterval = null;
-const _TELEMETRY_POLL_MS = 2000;
-let _telemetryPollInFlight = false;
-
 function initControlPanel() {
     loadSavedLocations();
 }
 
-// -- Telemetry polling --
+// -- Live position readout (scope_get_horiz_coord) --
 
-function startTelemetryPolling() {
-    const strip = document.getElementById('telemetryStrip');
-    if (!strip) return;
-    if (_telemetryInterval) return;
-    _telemetryInterval = setInterval(_pollTelemetry, _TELEMETRY_POLL_MS);
-    _pollTelemetry(); // immediate first fetch
-    strip.style.display = '';
+let _posInterval = null;
+let _posInFlight = false;
+
+function startPositionSync() {
+    if (_posInterval) return;
+    _pollPosition();
+    _posInterval = setInterval(_pollPosition, 3000);
 }
 
-function stopTelemetryPolling() {
-    if (_telemetryInterval) {
-        clearInterval(_telemetryInterval);
-        _telemetryInterval = null;
-    }
-    const strip = document.getElementById('telemetryStrip');
-    if (strip) strip.style.display = 'none';
+function stopPositionSync() {
+    clearInterval(_posInterval);
+    _posInterval = null;
+    document.getElementById('scopeAlt') && (document.getElementById('scopeAlt').textContent = '—');
+    document.getElementById('scopeAz')  && (document.getElementById('scopeAz').textContent  = '—');
 }
 
-function _setText(id, val) {
-    const el = document.getElementById(id);
-    if (el) el.textContent = val != null ? String(val) : '—';
-}
-
-async function _pollTelemetry() {
-    if (_telemetryPollInFlight) return;
-    _telemetryPollInFlight = true;
+async function _pollPosition() {
+    if (_posInFlight || !isConnected) return;
+    _posInFlight = true;
     try {
-        const controller = new AbortController();
-        const timer = setTimeout(() => controller.abort(), 6000);
-        const res = await fetch(`/telescope/telemetry?t=${Date.now()}`, {
-            signal: controller.signal,
-            cache: 'no-store',
+        const ctrl = new AbortController();
+        const t = setTimeout(() => ctrl.abort(), 4000);
+        const res = await fetch(`/telescope/position?t=${Date.now()}`, {
+            signal: ctrl.signal, cache: 'no-store',
         });
-        clearTimeout(timer);
-        if (!res.ok) {
-            if (res.status === 503) {
-                console.warn('[Telemetry] Scope not connected (503) — strip may stay empty until connect');
-            } else {
-                console.warn('[Telemetry] HTTP', res.status, res.statusText);
-            }
-            return;
-        }
+        clearTimeout(t);
         const d = await res.json();
-        if (d.error) {
-            console.warn('[Telemetry]', d.error);
+        const altEl = document.getElementById('scopeAlt');
+        const azEl  = document.getElementById('scopeAz');
+        if (!res.ok || d.error) {
+            // Scenery mode or other — no pointing source, show dash
+            if (altEl) altEl.textContent = '—';
+            if (azEl)  azEl.textContent  = '—';
             return;
         }
-        const fmt = (v, dp=2) => v != null ? (+v).toFixed(dp) : '—';
-        const runId = `telemetry_ui_${Date.now()}`;
 
-        // Pointing
-        _setText('telmRA',  fmt(d.ra,  4) + (d.ra  != null ? 'h' : ''));
-        _setText('telmDec', fmt(d.dec, 3) + (d.dec != null ? '°' : ''));
-        _setText('telmAlt', fmt(d.alt, 1) + (d.alt != null ? '°' : ''));
-        _setText('telmAz',  fmt(d.az,  1) + (d.az  != null ? '°' : ''));
+        // Update position readout
+        if (altEl) altEl.textContent = (+d.alt).toFixed(1);
+        if (azEl)  azEl.textContent  = (+d.az).toFixed(1);
 
-        // Bidirectional Alt/Az — update GoTo inputs unless user has edited them
+        // Pre-fill GoTo inputs if user hasn't typed in them
         const altIn = document.getElementById('gotoAlt');
         const azIn  = document.getElementById('gotoAz');
-        // #region agent log
-        _agentDebugLog(runId,'H7_H8','static/telescope.js:_pollTelemetry:inputs','telemetry before goto overwrite check',{alt:d.alt,az:d.az,altUserEdited:!!(altIn&&altIn.dataset.userEdited),azUserEdited:!!(azIn&&azIn.dataset.userEdited),altActive:document.activeElement===altIn,azActive:document.activeElement===azIn,shownAlt:document.getElementById('telmAlt')?.textContent,shownAz:document.getElementById('telmAz')?.textContent});
-        // #endregion
-        if (altIn && !altIn.dataset.userEdited && document.activeElement !== altIn && d.alt != null)
+        if (altIn && !altIn.dataset.userEdited && document.activeElement !== altIn)
             altIn.value = (+d.alt).toFixed(1);
-        if (azIn && !azIn.dataset.userEdited && document.activeElement !== azIn && d.az != null)
+        if (azIn && !azIn.dataset.userEdited && document.activeElement !== azIn)
             azIn.value = (+d.az).toFixed(1);
-
-        // View
-        _setText('telmViewMode',   d.view_mode);
-        _setText('telmViewTarget', d.view_target);
-        _setText('telmViewStage',  d.view_stage);
-        _setText('telmRtsp',       d.rtsp_state);
-        _setText('telmLpFilter',   d.lp_filter != null ? (d.lp_filter ? 'On' : 'Off') : null);
-        _setText('telmAutofocus',  d.autofocus_state);
-        _setText('telmManualExp',  d.manual_exp != null ? (d.manual_exp ? 'Manual' : 'Auto') : null);
-
-        // System
-        const batt = d.battery_capacity;
-        const battEl = document.getElementById('telmBatt');
-        if (battEl) {
-            battEl.textContent = batt != null ? batt + '%' : '—';
-            battEl.className = 'telm-val' + (batt != null ? (batt > 50 ? ' telm-batt-green' : batt > 20 ? ' telm-batt-yellow' : ' telm-batt-red') : '');
-        }
-        _setText('telmCharger',  d.charger_status);
-        _setText('telmCpuTemp',  d.cpu_temp != null ? (+d.cpu_temp).toFixed(1) + '°C' : null);
-        _setText('telmBattTemp', d.battery_temp != null ? d.battery_temp + '°C' : null);
-        // Overtemp warning
-        const otRow = document.getElementById('telmOvertempRow');
-        if (otRow) otRow.style.display = (d.is_overtemp || d.battery_overtemp) ? '' : 'none';
-
-        // Focuser
-        _setText('telmFocuserStep',  d.focuser_step);
-        _setText('telmFocuserState', d.focuser_state);
-        _setText('telmFocuserMax',   d.focuser_max_step);
-        // Also update Manual Focus panel position
-        const focusPosEl = document.getElementById('focusPos');
-        if (focusPosEl && d.focus_pos != null) focusPosEl.textContent = d.focus_pos;
-
-        // Mount
-        _setText('telmTracking', d.mount_tracking != null ? (d.mount_tracking ? 'Yes' : 'No') : null);
-        _setText('telmArm',      d.mount_closed != null ? (d.mount_closed ? 'Closed' : 'Open') : null);
-        _setText('telmMoveType', d.mount_move_type);
-        _setText('telmCompass',  d.compass_direction != null ? (+d.compass_direction).toFixed(0) + '°' : null);
-        _setText('telmTilt',     d.tilt_angle != null ? (+d.tilt_angle).toFixed(1) + '°' : null);
-
-        // Storage / WiFi
-        _setText('telmStorageFree', d.storage_free_mb != null ? (d.storage_free_mb > 1024 ? (d.storage_free_mb / 1024).toFixed(1) + ' GB' : d.storage_free_mb + ' MB') : null);
-        _setText('telmStorageUsed', d.storage_used_pct != null ? d.storage_used_pct + '%' : null);
-        _setText('telmWifiSsid',    d.wifi_ssid);
-        _setText('telmWifiSignal',  d.wifi_signal != null ? d.wifi_signal + ' dBm' : null);
-
-        // Device
-        _setText('telmFirmware', d.firmware_ver != null ? 'v' + d.firmware_ver : null);
-        _setText('telmHeater',   d.heater_enable != null ? (d.heater_enable ? 'On' : 'Off') : null);
-
-        // Update Auto Exp button style based on telemetry
-        try {
-            const aeBtn = document.getElementById('autoExpBtn');
-            if (aeBtn && d.manual_exp != null) {
-                aeBtn.className = d.manual_exp ? 'btn btn-warning btn-compact' : 'btn btn-secondary btn-compact';
-            }
-        } catch (_ae) { /* non-fatal */ }
-
-    } catch (_) { /* non-fatal */ }
-    finally { _telemetryPollInFlight = false; }
+    } catch (_) { /* silent — scope may not support this command */ }
+    finally { _posInFlight = false; }
 }
 
 // -- GoTo mode radio toggle --
@@ -1559,7 +1418,7 @@ let _nudgeInterval = null;
 
 function nudgeStart(angle) {
     nudgeStop(); // clear any existing
-    const speed = document.querySelector('input[name="nudgeSpeed"]:checked')?.value === 'fast' ? 80 : 20;
+    const speed = document.querySelector('input[name="nudgeSpeed"]:checked')?.value === 'fast' ? 8000 : 4000;
     // Send immediately, then repeat every 2s for held button
     const send = () => apiCall('/telescope/nudge', 'POST', { speed, angle, dur_sec: 2 });
     send();
@@ -1574,16 +1433,13 @@ function nudgeStop() {
     apiCall('/telescope/nudge/stop', 'POST', {});
 }
 
-// Mark GoTo inputs as user-edited so telemetry doesn't overwrite them.
+// Mark GoTo inputs as user-edited (prevents accidental resets).
 // Use delegated handler in case control-panel DOM is recreated.
 document.addEventListener('input', (ev) => {
     const el = ev.target;
     if (!el || !el.id) return;
     if (el.id === 'gotoAlt' || el.id === 'gotoAz' || el.id === 'gotoRa' || el.id === 'gotoDec') {
         el.dataset.userEdited = '1';
-        // #region agent log
-        _agentDebugLog(`input_${Date.now()}`,'H7','static/telescope.js:input:userEdited','marked goto input userEdited',{id:el.id,value:el.value});
-        // #endregion
     }
 });
 
@@ -1609,24 +1465,22 @@ async function gotoExecute(overrideAlt, overrideAz) {
         if (isNaN(ra) || isNaN(dec)) { showStatus('Enter RA and Dec values', 'error', 3000); return; }
         body = { mode: 'radec', ra, dec };
     }
-    showStatus('Slewing…', 'info', 10000);
+    showStatus('Sending GoTo…', 'info', 5000);
     const result = await apiCall('/telescope/goto', 'POST', body);
     if (result) {
-        if (result.manual_slew) {
-            const msg = result.message || 'Manual slewing — watch telemetry for progress';
+        if (result.success) {
+            const msg = result.message || 'GoTo command sent';
             if (result.resume_tracking) {
                 showStatus(
-                    `${msg} — will re-enable ${result.resume_tracking} tracking when aligned`,
+                    `${msg} — will re-enable ${result.resume_tracking} tracking after slew`,
                     'info',
                     15000,
                 );
             } else {
-                showStatus(msg, 'info', 15000);
+                showStatus(msg, 'success', 5000);
             }
-        } else {
-            showStatus('GoTo command sent', 'success', 3000);
         }
-        // Resume telemetry updates in GoTo fields
+        // Clear user-edited flag so GoTo fields can be updated again
         ['gotoAlt','gotoAz','gotoRa','gotoDec'].forEach(id => {
             const el = document.getElementById(id);
             if (el) {
@@ -1668,25 +1522,15 @@ async function saveCurrentLocation() {
     const name = nameInput ? nameInput.value.trim() : '';
     if (!name) { showStatus('Enter a name for this location', 'error', 3000); return; }
 
-    // Use current telemetry alt/az if available, else prompt for manual entry
-    const altEl = document.getElementById('telmAlt');
-    const azEl  = document.getElementById('telmAz');
-    const altText = altEl && altEl.textContent.replace('°','').trim();
-    const azText  = azEl  && azEl.textContent.replace('°','').trim();
-    const alt = parseFloat(altText);
-    const az  = parseFloat(azText);
-
-    if (isNaN(alt) || isNaN(az)) {
-        // Fall back to the GoTo inputs
-        const altInput = parseFloat(document.getElementById('gotoAlt').value);
-        const azInput  = parseFloat(document.getElementById('gotoAz').value);
-        if (isNaN(altInput) || isNaN(azInput)) {
-            showStatus('No telemetry available — enter Alt/Az in the GoTo fields first', 'error', 5000);
-            return;
-        }
+    // Use the GoTo inputs for alt/az
+    const altInput = parseFloat(document.getElementById('gotoAlt').value);
+    const azInput  = parseFloat(document.getElementById('gotoAz').value);
+    if (isNaN(altInput) || isNaN(azInput)) {
+        showStatus('Enter Alt/Az in the GoTo fields first', 'error', 5000);
+        return;
+    }
+    {
         await _doSaveLocation(name, altInput, azInput);
-    } else {
-        await _doSaveLocation(name, alt, az);
     }
     if (nameInput) nameInput.value = '';
 }
@@ -6288,11 +6132,17 @@ function _radarDrawFrame(ts) {
         ctx.save();
         ctx.translate(cx, cy);
         ctx.rotate(sweepAng);
+        // Radial gradient: bright at centre, fades to transparent at rim
+        const grad = ctx.createRadialGradient(0, 0, 0, 0, 0, R);
+        grad.addColorStop(0,   `rgba(0,255,80,${wedgeAlpha * 2.5})`);
+        grad.addColorStop(0.4, `rgba(0,255,80,${wedgeAlpha * 1.2})`);
+        grad.addColorStop(1,   `rgba(0,255,80,0)`);
         ctx.beginPath();
         ctx.moveTo(0, 0);
-        ctx.arc(0, 0, R, -Math.PI/2, -Math.PI/2 + Math.PI*0.45);
+        // arc goes counter-clockwise (anticlockwise=true) so glow trails behind the line
+        ctx.arc(0, 0, R, -Math.PI/2, -Math.PI/2 - Math.PI*0.55, true);
         ctx.closePath();
-        ctx.fillStyle = `rgba(0,255,80,${wedgeAlpha})`;
+        ctx.fillStyle = grad;
         ctx.fill();
         ctx.restore();
 
@@ -6473,6 +6323,13 @@ function _radarMarkTransitSeen() {
 // Call from outside when a transit is confirmed
 window.onTransitDetected = function() { _radarMarkTransitSeen(); };
 
+// Remove tracks for IDs no longer in the active set
+window.pruneRadarTracks = function(activeIds) {
+    for (const id of _radarTracks.keys()) {
+        if (!activeIds.has(id)) _radarTracks.delete(id);
+    }
+};
+
 // ── pushInterceptPoint (public API for app.js) ───────────────────────────────
 window.pushInterceptPoint = function(flight) {
     const id = String(flight.id || flight.name || '').trim().toUpperCase();
@@ -6500,8 +6357,17 @@ window.pushInterceptPoint = function(flight) {
         altD = isFinite(sep) ? sep : 0;
         azD  = 0;
     }
-    track.points.push({ altD, azD, t: Date.now() });
-    if (track.points.length > RADAR_HISTORY_MAX) track.points.shift();
+    const now = Date.now();
+    const last = track.points[track.points.length - 1];
+    // Minimum 2s between trail points — prevents jitter from near-simultaneous pushes
+    if (!last || now - last.t >= 2000) {
+        track.points.push({ altD, azD, t: now });
+        if (track.points.length > RADAR_HISTORY_MAX) track.points.shift();
+    } else {
+        // Update the last point in-place (smooth the position, don't add noise)
+        last.altD = altD;
+        last.azD  = azD;
+    }
 
     if (level >= 1) _radarMarkTransitSeen();
 };

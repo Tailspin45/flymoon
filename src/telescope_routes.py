@@ -119,7 +119,6 @@ class MockSeestarClient:
         self._recording = False
         self._recording_start_time: Optional[datetime] = None
         self._viewing_mode: Optional[str] = None  # sun | moon | scenery — mirrors SeestarClient
-        self._mock_telemetry_ts: float = 0.0
         logger.info(f"[Mock] Initialized mock Seestar client for {host}:{port}")
 
     def connect(self) -> bool:
@@ -346,34 +345,8 @@ class MockSeestarClient:
         logger.info(f"[Mock] set_manual_exp {enabled}")
         return {"result": "ok"}
 
-    def get_telemetry(self):
-        import time as _time
-
-        self._mock_telemetry_ts = _time.time()
-        vm = "none"
-        if self._viewing_mode == "sun":
-            vm = "solar_sys"
-        elif self._viewing_mode == "moon":
-            vm = "lunar"
-        elif self._viewing_mode == "scenery":
-            vm = "scenery"
-        return {
-            "ra": 5.5,
-            "dec": 22.0,
-            "alt": 45.0,
-            "az": 180.0,
-            "view_mode": vm,
-            "view_state": "idle",
-            "device": {"battery": 85},
-        }
-
-    def get_cached_telemetry(self) -> Dict[str, Any]:
-        """Mirror SeestarClient: cached snapshot + age_ms (mock has no heartbeat)."""
-        import time as _time
-
-        data = dict(self.get_telemetry())
-        data["age_ms"] = int((_time.time() - self._mock_telemetry_ts) * 1000)
-        return data
+    def _ping(self) -> None:
+        pass  # Mock: no-op, _viewing_mode is managed by start_*/stop_* methods
 
     def start_view_star(self, ra, dec, target_name="", lp_filter=False):
         logger.info(f"[Mock] start_view_star {target_name}")
@@ -600,47 +573,30 @@ def telescope_goto():
                 {"alt": alt, "az": az, "lat": lat, "lon": lon, "elev": elev},
             )
             # endregion
-            # Alt/Az GoTo always uses scenery mode + manual motor slew.
-            # Firmware star-GoTo (iscope_start_view mode=star) puts the scope
-            # into sidereal tracking which fights subsequent manual movement.
-            # Scenery mode has no tracking and allows persistent pointing.
-            try:
-                if client._viewing_mode not in (None, "scenery"):
-                    logger.info(
-                        f"[GoTo] Stopping {client._viewing_mode} tracking before manual slew"
-                    )
-                    client.stop_view_mode()
-                    time.sleep(0.5)
-                if client._viewing_mode != "scenery":
-                    client.start_scenery_mode()
-            except Exception as _m:
-                logger.warning(f"[GoTo] Could not switch to scenery mode: {_m}")
-
-            logger.info(f"[GoTo] Manual slewing to alt={alt:.1f}° az={az:.1f}°")
-            # After slew, solar/lunar tracking stays OFF until user re-enters sun/moon
-            # mode (Seestar app or Flymoon "Switch to Sun/Moon") unless resume_tracking
-            # is set — see _manual_goto_then_resume below.
+            # Alt/Az GoTo: convert to RA/Dec and use native firmware GoTo
+            # (iscope_start_view mode=star, fire-and-forget).  Firmware no
+            # longer responds to query commands so the old closed-loop
+            # manual_goto (which needed scope_get_horiz_coord) is unavailable.
+            logger.info(f"[GoTo] Alt/Az GoTo to alt={alt:.1f}° az={az:.1f}°")
             resume = (data.get("resume_tracking") or "").strip().lower()
             if resume not in ("", "sun", "moon"):
                 resume = ""
 
             def _manual_goto_then_resume():
-                result = client.manual_goto(alt, az)
-                if result.get("status") != "arrived":
-                    logger.info(
-                        f"[GoTo] No resume_tracking — slew finished with {result!r}"
-                    )
-                    return
+                result = client.goto_altaz(alt, az, lat, lon, elev)
+                logger.info(f"[GoTo] goto_altaz dispatched: {result!r}")
                 if resume == "sun":
                     try:
+                        time.sleep(3)  # brief settle before re-entering tracking
                         client.start_solar_mode()
-                        logger.info("[GoTo] Resumed solar tracking after Alt/Az slew")
+                        logger.info("[GoTo] Resumed solar tracking after Alt/Az GoTo")
                     except Exception as ex:
                         logger.warning(f"[GoTo] resume_tracking=sun failed: {ex}")
                 elif resume == "moon":
                     try:
+                        time.sleep(3)
                         client.start_lunar_mode()
-                        logger.info("[GoTo] Resumed lunar tracking after Alt/Az slew")
+                        logger.info("[GoTo] Resumed lunar tracking after Alt/Az GoTo")
                     except Exception as ex:
                         logger.warning(f"[GoTo] resume_tracking=moon failed: {ex}")
 
@@ -651,13 +607,10 @@ def telescope_goto():
             t.start()
             return jsonify({
                 "success": True,
-                "manual_slew": True,
-                "message": f"Slewing to alt={alt:.1f}° az={az:.1f}°",
+                "message": f"Slewing to alt={alt:.1f}° az={az:.1f}° (native GoTo)",
                 "tracking_note": (
-                    "Solar/lunar tracking is OFF during this slew (scenery mode). "
-                    "Use Switch to Sun/Moon in the UI or the Seestar app to turn tracking "
-                    "back on — or pass resume_tracking: 'sun' or 'moon' in this request "
-                    "to re-enable after the slew completes successfully."
+                    "Scope enters sidereal tracking after GoTo. "
+                    "Pass resume_tracking: 'sun' or 'moon' to switch mode after slew."
                 ),
                 "resume_tracking": resume or None,
             }), 200
@@ -712,7 +665,7 @@ def telescope_nudge():
 
     data = request.get_json(force=True, silent=True) or {}
     try:
-        speed = int(data.get("speed", 50))
+        speed = int(data.get("speed", 4000))
         angle = int(data.get("angle", 0))
         dur = int(data.get("dur_sec", 2))
         result = client.speed_move(speed, angle, dur)
@@ -790,6 +743,43 @@ def telescope_autofocus():
         return handle_error(e)
 
 
+def telescope_position():
+    """GET /telescope/position — current pointing Alt/Az.
+
+    In sun/moon tracking mode the scope is locked on the target, so Skyfield
+    gives the exact pointing without querying the scope (firmware blocks
+    scope_get_horiz_coord on current firmware).  In scenery/other mode
+    we have no pointing source and return a suitable error.
+    """
+    client = get_telescope_client()
+    if not client or not client.is_connected():
+        return jsonify({"error": "Telescope not connected"}), 503
+
+    mode = getattr(client, "_viewing_mode", None)
+    if mode not in ("sun", "moon"):
+        return jsonify({"error": "Pointing only available in Sun/Moon tracking mode", "alt": None, "az": None}), 200
+
+    try:
+        from datetime import datetime, timezone
+        from src.astro import CelestialObject
+        from src.constants import ASTRO_EPHEMERIS, EARTH_TIMESCALE
+        from skyfield.api import wgs84
+
+        lat, lon, elev = get_observer_coordinates()
+        observer = ASTRO_EPHEMERIS["earth"] + wgs84.latlon(lat, lon, elevation_m=elev)
+        body_name = "sun" if mode == "sun" else "moon"
+        obj = CelestialObject(body_name, observer)
+        obj.update_position(datetime.now(timezone.utc))
+        coords = obj.get_coordinates(precision=2)
+        return jsonify({
+            "alt": coords["altitude"],
+            "az": coords["azimuthal"],
+            "source": body_name,
+        }), 200
+    except Exception as e:
+        return handle_error(e)
+
+
 def telescope_focus_step():
     """POST /telescope/focus/step — move focuser by N steps."""
     client = get_telescope_client()
@@ -800,84 +790,6 @@ def telescope_focus_step():
         steps = int(body.get("steps", 0))
         result = client.move_step_focus(steps)
         return jsonify({"success": True, "result": result}), 200
-    except Exception as e:
-        return handle_error(e)
-
-
-def _telemetry_pointing_usable(payload: dict) -> bool:
-    """True if payload has at least one mount pointing field the UI can show."""
-    if not payload:
-        return False
-    for key in (
-        "alt",
-        "az",
-        "ra",
-        "dec",
-        "horiz_alt",
-        "horiz_az",
-        "scope_alt",
-        "scope_az",
-        "target_alt",
-        "target_az",
-    ):
-        if payload.get(key) is not None:
-            return True
-    return False
-
-
-def telescope_telemetry():
-    """GET /telescope/telemetry — cached RA/Dec/Alt/Az and device state.
-
-    Serves telemetry cached by the heartbeat loop (refreshed every ~3s)
-    to avoid socket contention between HTTP polls and the heartbeat.
-
-    If the cache is empty of pointing data (e.g. heartbeat not yet run, or
-    first cycle returned only view_state), forces a live ``get_telemetry()``
-    on a throttled basis so the panel populates promptly.
-    """
-    import time as _time
-
-    client = get_telescope_client()
-    if not client or not client.is_connected():
-        return jsonify({"error": "Telescope not connected"}), 503
-    try:
-        data = dict(client.get_cached_telemetry())
-        now = _time.time()
-        last_live = float(getattr(client, "_telemetry_http_live_ts", 0.0) or 0.0)
-        if not _telemetry_pointing_usable(data) and now - last_live >= 2.5:
-            setattr(client, "_telemetry_http_live_ts", now)
-            try:
-                fresh = client.get_telemetry()
-            except Exception as _tel_ex:
-                logger.debug("[Telescope] Live telemetry refresh failed: %s", _tel_ex)
-                fresh = None
-            if isinstance(fresh, dict) and fresh:
-                data = dict(fresh)
-                data["age_ms"] = 0
-                if hasattr(client, "_cached_telemetry"):
-                    client._cached_telemetry = fresh
-                if hasattr(client, "_cached_telemetry_ts"):
-                    client._cached_telemetry_ts = now
-        return jsonify(data), 200
-    except Exception as e:
-        return handle_error(e)
-
-
-def get_camera_settings():
-    """GET /telescope/settings/camera — current gain/exposure/filter settings."""
-    client = get_telescope_client()
-    if not client or not client.is_connected():
-        return jsonify({"error": "Telescope not connected"}), 503
-    try:
-        telemetry = client.get_cached_telemetry()
-        device = telemetry.get("device") or {}
-        return jsonify({
-            "gain": device.get("gain"),
-            "stack_ms": device.get("stack_ms"),
-            "preview_ms": device.get("preview_ms"),
-            "lp_filter": device.get("lp_filter"),
-            "dew_heater": device.get("dew_heater"),
-        }), 200
     except Exception as e:
         return handle_error(e)
 
@@ -1218,18 +1130,13 @@ def get_telescope_status():
                 200,
             )
 
-        # Use the heartbeat cache (updated every ~3 s) so this endpoint
-        # never blocks on live Seestar socket calls.  Calling get_status()
-        # directly triggered get_telemetry() which makes 4+ sequential
-        # network commands and caused the "Failed to fetch" toast.
-        cached = client.get_cached_telemetry() if hasattr(client, "get_cached_telemetry") else {}
         backend_recording = bool(getattr(client, "_recording", False))
         recording_active = _recording_state["active"] or backend_recording
 
         status = {
             "connected": client.is_connected(),
             "recording": recording_active,
-            "viewing_mode": getattr(client, "_viewing_mode", cached.get("view_mode")),
+            "viewing_mode": getattr(client, "_viewing_mode", None),
             "host": client.host,
             "port": client.port,
             "enabled": is_enabled(),
@@ -2787,6 +2694,27 @@ def get_user_settings():
     return jsonify({**_user_settings, **observer_snapshot_for_api()})
 
 
+def telescope_debug_cmd():
+    """POST /telescope/debug/cmd — send any raw command via the live socket and return the response.
+    Body: {"method": "scope_speed_move", "params": {...}, "expect_response": true, "timeout": 8}
+    """
+    client = get_telescope_client()
+    if not client or not client.is_connected():
+        return jsonify({"error": "not connected"}), 503
+    data = request.get_json(force=True, silent=True) or {}
+    method = data.get("method", "pi_is_verified")
+    params = data.get("params", None)
+    expect = data.get("expect_response", True)
+    timeout = data.get("timeout", 8)
+    import time as _t
+    t0 = _t.time()
+    try:
+        result = client._send_command(method, params=params, expect_response=expect, timeout_override=timeout)
+        return jsonify({"method": method, "result": result, "elapsed": round(_t.time()-t0, 2)}), 200
+    except Exception as e:
+        return jsonify({"method": method, "error": str(e), "elapsed": round(_t.time()-t0, 2)}), 200
+
+
 def register_routes(app):
     """
     Register all telescope routes with the Flask app.
@@ -3106,22 +3034,16 @@ def register_routes(app):
         methods=["POST"],
     )
     app.add_url_rule(
+        "/telescope/position",
+        "telescope_position",
+        telescope_position,
+        methods=["GET"],
+    )
+    app.add_url_rule(
         "/telescope/focus/step",
         "telescope_focus_step",
         telescope_focus_step,
         methods=["POST"],
-    )
-    app.add_url_rule(
-        "/telescope/telemetry",
-        "telescope_telemetry",
-        telescope_telemetry,
-        methods=["GET"],
-    )
-    app.add_url_rule(
-        "/telescope/settings/camera",
-        "get_camera_settings",
-        get_camera_settings,
-        methods=["GET"],
     )
     app.add_url_rule(
         "/telescope/settings/camera",
@@ -3154,6 +3076,13 @@ def register_routes(app):
         methods=["DELETE"],
     )
 
+    app.add_url_rule(
+        "/telescope/debug/cmd",
+        "telescope_debug_cmd",
+        telescope_debug_cmd,
+        methods=["POST"],
+    )
+
     logger.info("[Telescope] Routes registered")
 
     # Auto-connect if ENABLE_SEESTAR=true
@@ -3162,11 +3091,17 @@ def register_routes(app):
 
 
 def _auto_connect_background():
-    """Attempt to connect to Seestar once in a background thread on startup.
+    """Attempt to connect to Seestar at startup, retrying until the scope is
+    reachable (e.g. still booting).  Gives up after ~5 minutes.
 
-    Does not retry — if the scope isn't reachable, the user can connect
-    manually from the telescope page.
+    The _connect_lock inside SeestarClient serialises this thread against any
+    concurrent POST /telescope/connect requests so only one TCP handshake
+    happens at a time.
     """
+    import time as _time
+
+    _RETRY_DELAYS = [5, 10, 15, 30, 60]  # seconds between retries (capped at last value)
+    _MAX_ATTEMPTS = 10
 
     def _worker():
         client = get_telescope_client()
@@ -3176,36 +3111,50 @@ def _auto_connect_background():
             )
             return
 
-        if not client.is_connected():
+        if client.is_connected():
+            logger.info("[Telescope] Auto-connect: already connected")
+            _post_connect(client)
+            return
+
+        for attempt in range(1, _MAX_ATTEMPTS + 1):
             try:
                 client.connect()
                 logger.info(
                     f"[Telescope] Auto-connect: connected to {client.host}:{client.port}"
+                    f" (attempt {attempt})"
                 )
-            except Exception as e:
-                logger.info(
-                    f"[Telescope] Auto-connect: scope not reachable ({e}) — "
-                    "connect manually from the telescope page"
-                )
+                _post_connect(client)
                 return
-
-            # Always solar mode for RTSP (see telescope_connect)
-            if hasattr(client, "_viewing_mode") and client._viewing_mode is None:
-                import time as _time
-                client._viewing_mode = "sun"
-                logger.info("[Telescope] Auto-connect: starting solar view for RTSP")
-                try:
-                    client.start_solar_mode()
-                    _time.sleep(2)
-                except Exception as e:
-                    logger.warning(
-                        f"[Telescope] Auto-connect: could not start solar view: {e}"
+            except Exception as e:
+                delay = _RETRY_DELAYS[min(attempt - 1, len(_RETRY_DELAYS) - 1)]
+                if attempt < _MAX_ATTEMPTS:
+                    logger.info(
+                        f"[Telescope] Auto-connect attempt {attempt}: scope not reachable"
+                        f" ({e}) — retrying in {delay}s"
+                    )
+                    _time.sleep(delay)
+                else:
+                    logger.info(
+                        f"[Telescope] Auto-connect: gave up after {_MAX_ATTEMPTS} attempts"
+                        f" ({e}) — connect manually from the telescope page"
                     )
 
-        else:
-            logger.info("[Telescope] Auto-connect: already connected")
+    def _post_connect(client):
+        """Steps to run once connected: start solar mode and resume timelapse."""
+        # Always solar mode for RTSP (see telescope_connect)
+        if hasattr(client, "_viewing_mode") and client._viewing_mode is None:
+            client._viewing_mode = "sun"
+            logger.info("[Telescope] Auto-connect: starting solar view for RTSP")
+            try:
+                client.start_solar_mode()
+                import time as _t
+                _t.sleep(2)
+            except Exception as e:
+                logger.warning(
+                    f"[Telescope] Auto-connect: could not start solar view: {e}"
+                )
 
-        # Scope is connected — resume timelapse if it stopped (app restart, stream drop)
+        # Resume timelapse if it stopped (app restart, stream drop)
         auto_resume = os.getenv("SOLAR_TIMELAPSE_AUTO_RESUME", "true").strip().lower()
         if auto_resume in ("1", "true", "yes", "on"):
             tl = get_timelapse()

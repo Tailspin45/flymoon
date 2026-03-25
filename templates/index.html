@@ -606,75 +606,6 @@
             <!-- Fourth Column: Control Panel -->
             <div class="sidebar sidebar-alp">
 
-                <!-- Live Telemetry Panel -->
-                <div id="telemetryStrip" class="telemetry-panel" style="display:none;">
-                    <div class="telemetry-section">
-                        <h4>Pointing</h4>
-                        <div class="telemetry-grid">
-                            <span class="telm-item"><span class="telm-label">RA</span> <span id="telmRA" class="telm-val">—</span></span>
-                            <span class="telm-item"><span class="telm-label">Dec</span> <span id="telmDec" class="telm-val">—</span></span>
-                            <span class="telm-item"><span class="telm-label">Alt</span> <span id="telmAlt" class="telm-val">—</span></span>
-                            <span class="telm-item"><span class="telm-label">Az</span> <span id="telmAz" class="telm-val">—</span></span>
-                        </div>
-                    </div>
-                    <div class="telemetry-section">
-                        <h4>View</h4>
-                        <div class="telemetry-grid">
-                            <span class="telm-item"><span class="telm-label">Mode</span> <span id="telmViewMode" class="telm-val">—</span></span>
-                            <span class="telm-item"><span class="telm-label">Target</span> <span id="telmViewTarget" class="telm-val">—</span></span>
-                            <span class="telm-item"><span class="telm-label">Stage</span> <span id="telmViewStage" class="telm-val">—</span></span>
-                            <span class="telm-item"><span class="telm-label">RTSP</span> <span id="telmRtsp" class="telm-val">—</span></span>
-                            <span class="telm-item"><span class="telm-label">LP Filter</span> <span id="telmLpFilter" class="telm-val">—</span></span>
-                            <span class="telm-item"><span class="telm-label">AutoFocus</span> <span id="telmAutofocus" class="telm-val">—</span></span>
-                            <span class="telm-item"><span class="telm-label">Exposure</span> <span id="telmManualExp" class="telm-val">—</span></span>
-                        </div>
-                    </div>
-                    <div class="telemetry-section">
-                        <h4>System</h4>
-                        <div class="telemetry-grid">
-                            <span class="telm-item"><span class="telm-label">Battery</span> <span id="telmBatt" class="telm-val">—</span></span>
-                            <span class="telm-item"><span class="telm-label">Charger</span> <span id="telmCharger" class="telm-val">—</span></span>
-                            <span class="telm-item"><span class="telm-label">CPU</span> <span id="telmCpuTemp" class="telm-val">—</span></span>
-                            <span class="telm-item"><span class="telm-label">Batt Temp</span> <span id="telmBattTemp" class="telm-val">—</span></span>
-                            <span class="telm-item" id="telmOvertempRow" style="display:none;"><span class="telm-label">OVERTEMP</span> <span id="telmOvertemp" class="telm-val telm-warn">YES</span></span>
-                        </div>
-                    </div>
-                    <div class="telemetry-section">
-                        <h4>Focuser</h4>
-                        <div class="telemetry-grid">
-                            <span class="telm-item"><span class="telm-label">Position</span> <span id="telmFocuserStep" class="telm-val">—</span></span>
-                            <span class="telm-item"><span class="telm-label">State</span> <span id="telmFocuserState" class="telm-val">—</span></span>
-                            <span class="telm-item"><span class="telm-label">Max</span> <span id="telmFocuserMax" class="telm-val">—</span></span>
-                        </div>
-                    </div>
-                    <div class="telemetry-section">
-                        <h4>Mount</h4>
-                        <div class="telemetry-grid">
-                            <span class="telm-item"><span class="telm-label">Tracking</span> <span id="telmTracking" class="telm-val">—</span></span>
-                            <span class="telm-item"><span class="telm-label">Arm</span> <span id="telmArm" class="telm-val">—</span></span>
-                            <span class="telm-item"><span class="telm-label">Move</span> <span id="telmMoveType" class="telm-val">—</span></span>
-                            <span class="telm-item"><span class="telm-label">Compass</span> <span id="telmCompass" class="telm-val">—</span></span>
-                            <span class="telm-item"><span class="telm-label">Tilt</span> <span id="telmTilt" class="telm-val">—</span></span>
-                        </div>
-                    </div>
-                    <div class="telemetry-section">
-                        <h4>Storage / WiFi</h4>
-                        <div class="telemetry-grid">
-                            <span class="telm-item"><span class="telm-label">Free</span> <span id="telmStorageFree" class="telm-val">—</span></span>
-                            <span class="telm-item"><span class="telm-label">Used</span> <span id="telmStorageUsed" class="telm-val">—</span></span>
-                            <span class="telm-item"><span class="telm-label">WiFi</span> <span id="telmWifiSsid" class="telm-val">—</span></span>
-                            <span class="telm-item"><span class="telm-label">Signal</span> <span id="telmWifiSignal" class="telm-val">—</span></span>
-                        </div>
-                    </div>
-                    <div class="telemetry-section">
-                        <h4>Device</h4>
-                        <div class="telemetry-grid">
-                            <span class="telm-item"><span class="telm-label">Firmware</span> <span id="telmFirmware" class="telm-val">—</span></span>
-                            <span class="telm-item"><span class="telm-label">Heater</span> <span id="telmHeater" class="telm-val">—</span></span>
-                        </div>
-                    </div>
-                </div>
-
                 <!-- Telescope Controls -->
                 <div class="sidebar-panel">
                     <h3>Telescope</h3>
@@ -695,6 +626,10 @@
                 <!-- GoTo -->
                 <div class="sidebar-panel">
                     <h3>GoTo</h3>
+                    <div style="font-size:0.78em; color:#aaa; margin-bottom:6px;">
+                        Pointing: <span id="scopeAlt" style="color:#9cd9ff;">—</span>° alt &nbsp;
+                                  <span id="scopeAz"  style="color:#9cd9ff;">—</span>° az
+                    </div>
                     <div class="input-row" style="margin-bottom:6px;">
                         <label class="radio-label">
                             <input type="radio" name="gotoMode" id="gotoModeAltaz" value="altaz" checked onchange="gotoModeChanged()"> Alt/Az
