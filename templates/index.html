@@ -623,6 +623,30 @@
                     </div>
                 </div>
 
+                <!-- ALPACA Scope Telemetry -->
+                <div class="sidebar-panel" id="alpacaTelemetryPanel" style="display:none;">
+                    <h3 style="display:flex; align-items:center; gap:6px;">
+                        Scope Status
+                        <span id="alpacaStatusDot" style="width:8px; height:8px; border-radius:50%; background:#888; display:inline-block;" title="ALPACA disconnected"></span>
+                    </h3>
+                    <div style="font-size:0.78em; color:#bbb; line-height:1.7;">
+                        <div>RA: <span id="alpacaRA" style="color:#9cd9ff;">—</span>h &nbsp; Dec: <span id="alpacaDec" style="color:#9cd9ff;">—</span>°</div>
+                        <div>Alt: <span id="alpacaAlt" style="color:#9cd9ff;">—</span>° &nbsp; Az: <span id="alpacaAz" style="color:#9cd9ff;">—</span>°</div>
+                        <div>
+                            Tracking: <span id="alpacaTracking" style="color:#aaa;">—</span> &nbsp;
+                            Slewing: <span id="alpacaSlewing" style="color:#aaa;">—</span> &nbsp;
+                            Parked: <span id="alpacaParked" style="color:#aaa;">—</span>
+                        </div>
+                        <div style="margin-top:4px; font-size:0.85em; color:#666;">
+                            <span id="alpacaDeviceName"></span>
+                        </div>
+                    </div>
+                    <div class="button-group" style="margin-top:6px;">
+                        <button class="btn btn-secondary btn-compact" onclick="alpacaToggleTracking()" id="alpacaTrackingBtn">Tracking On</button>
+                        <button class="btn btn-danger btn-compact" onclick="alpacaAbortSlew()">Abort Slew</button>
+                    </div>
+                </div>
+
                 <!-- GoTo -->
                 <div class="sidebar-panel">
                     <h3>GoTo</h3>

@@ -1418,11 +1418,26 @@ let _nudgeInterval = null;
 
 function nudgeStart(angle) {
     nudgeStop(); // clear any existing
-    const speed = document.querySelector('input[name="nudgeSpeed"]:checked')?.value === 'fast' ? 8000 : 4000;
-    // Send immediately, then repeat every 2s for held button
-    const send = () => apiCall('/telescope/nudge', 'POST', { speed, angle, dur_sec: 2 });
-    send();
-    _nudgeInterval = setInterval(send, 2000);
+    if (_alpacaConnected) {
+        // ALPACA mode: convert angle to axis + rate
+        // angle: 0=left, 90=down, 180=right, 270=up (legacy convention)
+        const fast = document.querySelector('input[name="nudgeSpeed"]:checked')?.value === 'fast';
+        const rate = fast ? 3.0 : 1.0;
+        let axis, dir;
+        if (angle === 270)      { axis = 1; dir =  1; } // up = Dec/Alt +
+        else if (angle === 90)  { axis = 1; dir = -1; } // down = Dec/Alt -
+        else if (angle === 180) { axis = 0; dir =  1; } // right = RA/Az +
+        else                    { axis = 0; dir = -1; } // left = RA/Az -
+        const send = () => apiCall('/telescope/nudge', 'POST', { axis, rate: rate * dir });
+        send();
+        _nudgeInterval = setInterval(send, 2000);
+    } else {
+        // Legacy JSON-RPC mode
+        const speed = document.querySelector('input[name="nudgeSpeed"]:checked')?.value === 'fast' ? 8000 : 4000;
+        const send = () => apiCall('/telescope/nudge', 'POST', { speed, angle, dur_sec: 2 });
+        send();
+        _nudgeInterval = setInterval(send, 2000);
+    }
 }
 
 function nudgeStop() {
@@ -6532,4 +6547,127 @@ function ensureTransitRadar() {
 }
 
 
-console.log('[Telescope] Module loaded');
+// ============================================================================
+// ALPACA Telemetry Panel
+// ============================================================================
+
+let _alpacaConnected = false;
+let _alpacaPollTimer = null;
+let _alpacaTracking = false;
+
+async function pollAlpacaTelemetry() {
+    try {
+        const data = await apiCall('/telescope/alpaca/telemetry', 'GET');
+        if (!data || !data.connected) {
+            _alpacaConnected = false;
+            _updateAlpacaPanel(null);
+            return;
+        }
+        _alpacaConnected = true;
+        _updateAlpacaPanel(data);
+    } catch (e) {
+        _alpacaConnected = false;
+        _updateAlpacaPanel(null);
+    }
+}
+
+function _updateAlpacaPanel(data) {
+    const panel = document.getElementById('alpacaTelemetryPanel');
+    if (!panel) return;
+
+    if (!data || !data.connected) {
+        panel.style.display = 'none';
+        return;
+    }
+
+    panel.style.display = '';
+    const dot = document.getElementById('alpacaStatusDot');
+    if (dot) {
+        dot.style.background = '#44cc44';
+        dot.title = 'ALPACA connected';
+    }
+
+    const pos = data.position || {};
+    const state = data.state || {};
+    const info = data.device_info || {};
+
+    const fmt = (v, d) => v !== undefined && v !== null ? Number(v).toFixed(d) : '—';
+
+    const ra = document.getElementById('alpacaRA');
+    const dec = document.getElementById('alpacaDec');
+    const alt = document.getElementById('alpacaAlt');
+    const az = document.getElementById('alpacaAz');
+    if (ra) ra.textContent = fmt(pos.ra, 4);
+    if (dec) dec.textContent = fmt(pos.dec, 2);
+    if (alt) alt.textContent = fmt(pos.alt, 2);
+    if (az) az.textContent = fmt(pos.az, 2);
+
+    // Also update the GoTo pointing display with ALPACA data
+    const scopeAlt = document.getElementById('scopeAlt');
+    const scopeAz = document.getElementById('scopeAz');
+    if (scopeAlt && pos.alt != null) scopeAlt.textContent = fmt(pos.alt, 1);
+    if (scopeAz && pos.az != null) scopeAz.textContent = fmt(pos.az, 1);
+
+    _alpacaTracking = state.tracking || false;
+    const trackEl = document.getElementById('alpacaTracking');
+    const slewEl = document.getElementById('alpacaSlewing');
+    const parkEl = document.getElementById('alpacaParked');
+    if (trackEl) {
+        trackEl.textContent = state.tracking ? 'ON' : 'OFF';
+        trackEl.style.color = state.tracking ? '#44cc44' : '#ff6666';
+    }
+    if (slewEl) {
+        slewEl.textContent = state.slewing ? 'YES' : 'no';
+        slewEl.style.color = state.slewing ? '#ffaa00' : '#888';
+    }
+    if (parkEl) {
+        parkEl.textContent = state.parked ? 'YES' : 'no';
+        parkEl.style.color = state.parked ? '#ffaa00' : '#888';
+    }
+
+    const nameEl = document.getElementById('alpacaDeviceName');
+    if (nameEl && info.name) nameEl.textContent = info.name;
+
+    const btn = document.getElementById('alpacaTrackingBtn');
+    if (btn) btn.textContent = _alpacaTracking ? 'Tracking Off' : 'Tracking On';
+}
+
+function startAlpacaPolling() {
+    if (_alpacaPollTimer) return;
+    pollAlpacaTelemetry();
+    _alpacaPollTimer = setInterval(pollAlpacaTelemetry, 2500);
+}
+
+function stopAlpacaPolling() {
+    if (_alpacaPollTimer) {
+        clearInterval(_alpacaPollTimer);
+        _alpacaPollTimer = null;
+    }
+    _alpacaConnected = false;
+    _updateAlpacaPanel(null);
+}
+
+async function alpacaToggleTracking() {
+    const newState = !_alpacaTracking;
+    await apiCall('/telescope/alpaca/tracking', 'POST', { enabled: newState });
+    showStatus(newState ? 'Tracking enabled' : 'Tracking disabled', 'info', 2000);
+}
+
+async function alpacaAbortSlew() {
+    await apiCall('/telescope/alpaca/abort', 'POST', {});
+    showStatus('Slew aborted', 'warning', 2000);
+}
+
+// Start/stop ALPACA polling with telescope connection
+const _origUpdateStatus = updateStatus;
+updateStatus = async function() {
+    await _origUpdateStatus();
+    // Start/stop ALPACA polling based on connection state
+    if (isConnected && !_alpacaPollTimer) {
+        startAlpacaPolling();
+    } else if (!isConnected && _alpacaPollTimer) {
+        stopAlpacaPolling();
+    }
+};
+
+console.log('[Telescope] Module loaded (ALPACA support enabled)');
