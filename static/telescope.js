@@ -166,7 +166,10 @@ window.initTelescope = function() {
     // Load auto-capture preference
     const autoCapture = localStorage.getItem('autoCaptureTransits');
     if (autoCapture !== null) {
-        document.getElementById('autoCaptureToggle').checked = autoCapture === 'true';
+        const isOn = autoCapture === 'true';
+        document.getElementById('autoCaptureToggle').checked = isOn;
+        const autoCaptureBtn = document.getElementById('autoCaptureBtn');
+        if (autoCaptureBtn) autoCaptureBtn.classList.toggle('is-active', isOn);
     }
 
     // Mouse-wheel zoom on preview container
@@ -5384,7 +5387,7 @@ function updateDetectionUI() {
     const statsEl = document.getElementById('detectStats');
 
     if (btn) {
-        btn.textContent = isDetecting ? '⏹ Stop Detection' : '▶ Start Detection';
+        btn.textContent = isDetecting ? 'Stop' : 'Start';
         btn.className = isDetecting
             ? 'btn btn-danger btn-compact'
             : 'btn btn-primary btn-compact';
@@ -5521,55 +5524,55 @@ function _updateTuningLabel(id) {
 function ensureTuningUI() {
     const detectPanel = document.getElementById('detectPanel');
     if (!detectPanel) return;
-    if (document.getElementById('tuningCard')) return;
+    if (document.getElementById('tuningBody')) return;
 
     const saved = _loadTuning();
 
-    const card = document.createElement('div');
-    card.id = 'tuningCard';
-    card.style.cssText =
-        'background:#111122; border:1px solid rgba(255,255,255,0.08); border-radius:8px; ' +
-        'margin-bottom:8px; overflow:hidden;';
+    // Add compact TUNE keycap to the detect controls row
+    const controls = document.getElementById('detectControls');
+    if (controls) {
+        const tuneBtn = document.createElement('button');
+        tuneBtn.id = 'tuningToggleBtn';
+        tuneBtn.className = 'btn btn-compact btn-toggle';
+        tuneBtn.title = 'Detection tuning parameters';
+        tuneBtn.textContent = 'TUNE';
+        tuneBtn.onclick = _toggleTuningBody;
+        controls.appendChild(tuneBtn);
+    }
 
-    card.innerHTML = `
-        <button id="tuningToggleBtn" onclick="_toggleTuningBody()"
-            style="width:100%; background:transparent; border:none; padding:8px 12px;
-                   display:flex; justify-content:space-between; align-items:center;
-                   cursor:pointer; color:#888; font-size:0.82em; font-weight:600;
-                   letter-spacing:0.05em;">
-            <span>⚙️ DETECTION TUNING</span>
-            <span id="tuningChevron" style="opacity:0.5; transition:transform 0.2s;">▾</span>
-        </button>
-        <div id="tuningBody" style="display:none; padding:0 12px 10px 12px;">
-            <div style="font-size:0.79em; color:#666; margin-bottom:8px;">
-                Changes apply immediately to the live detector.
-            </div>
-            ${_tuningSliderRow('tunMargin',  'Edge Margin %', 5, 50, Math.round(saved.disk_margin_pct*100),
-                'Exclude the outermost N% of disk radius (limb zone). Higher = fewer false positives from limb jitter.')}
-            ${_tuningSliderRow('tunRatio',   'Centre Ratio', 0.5, 6, saved.centre_ratio_min, 0.1,
-                'Inner-disk signal must be N× the limb signal. Higher = stricter concentration requirement.')}
-            ${_tuningSliderRow('tunConsec',  'Consec Frames (fast gate)', 2, 20, saved.consec_frames, 1,
-                '<strong>Fast gate</strong> — fires when N consecutive frames all exceed the signal threshold. Runs <em>in parallel</em> with the matched-filter gate (D2); a transit only needs to pass <em>one</em> of the two gates. Lower this for very fast aircraft; raise it to suppress noise. The MF gate covers slow transits that would miss here.')}
-            ${_tuningSliderRow('tunMFThresh', 'MF Gate Threshold %', 50, 100, Math.round(saved.mf_threshold_frac * 100), 5,
-                '<strong>Matched-filter gate</strong> — fires when at least N% of frames inside a sliding window (4 / 7 / 12 / 18 / 30 frames) are triggered. Lower = more sensitive to intermittent or slow transits; higher = stricter pattern required. Default 70%. Runs alongside the fast Consec gate.')}
-            ${_tuningSliderRow('tunSensitivity', 'Sensitivity', 0.2, 3.0, saved.sensitivity_scale, 0.1,
-                'Multiplier applied to both adaptive thresholds — affects <em>both</em> the fast Consec gate and the MF gate. Below 1 = lower bar (more detections). Above 1 = higher bar (fewer detections). Adjust if you are getting too many or too few alerts.')}
-            ${_tuningSliderRow('tunTrackMag', 'Track Min Motion (px)', 0, 10, saved.track_min_mag, 0.1,
-                'A <em>spatial</em> gate — complements Consec Frames. Sets the minimum pixel displacement of the detected blob\'s centroid between frames to count as real directional motion. Atmospheric shimmer moves the centroid randomly by ≤2 px with no consistent direction; a real aircraft moves 3–8 px per frame in a straight line. Frames below this threshold abstain from the direction vote. Set to 0 to disable.')}
-            ${_tuningSliderRow('tunTrackAgree', 'Track Agreement %', 0, 100, Math.round(saved.track_min_agree_frac * 100), 5,
-                'What fraction of the streak frames (that cleared Track Min Motion) must agree on direction before the detection fires. 60% = default. Set to 0 to disable the direction gate entirely.')}
-            <button class="btn btn-secondary btn-compact" style="margin-top:6px; width:100%;" onclick="_resetTuning()">↩ Reset to defaults</button>
+    // Collapsible tuning sliders body — inserted directly into detectPanel
+    const body = document.createElement('div');
+    body.id = 'tuningBody';
+    body.style.cssText = 'display:none; margin-bottom:4px;';
+    body.innerHTML = `
+        <div style="font-size:0.74em;color:#6A7A85;padding:3px 0 5px;border-bottom:1px solid rgba(255,255,255,0.06);margin-bottom:6px;">
+            Tuning — changes apply to live detector immediately.
         </div>
+        ${_tuningSliderRow('tunMargin',  'Edge Margin %', 5, 50, Math.round(saved.disk_margin_pct*100), 1,
+            'Exclude the outermost N% of disk radius (limb zone). Higher = fewer false positives from limb jitter.')}
+        ${_tuningSliderRow('tunRatio',   'Centre Ratio', 0.5, 6, saved.centre_ratio_min, 0.1,
+            'Inner-disk signal must be N× the limb signal. Higher = stricter concentration requirement.')}
+        ${_tuningSliderRow('tunConsec',  'Consec Frames', 2, 20, saved.consec_frames, 1,
+            'Fast gate — fires when N consecutive frames all exceed the signal threshold.')}
+        ${_tuningSliderRow('tunMFThresh', 'MF Threshold %', 50, 100, Math.round(saved.mf_threshold_frac * 100), 5,
+            'Matched-filter gate — fires when at least N% of frames in a sliding window are triggered.')}
+        ${_tuningSliderRow('tunSensitivity', 'Sensitivity', 0.2, 3.0, saved.sensitivity_scale, 0.1,
+            'Multiplier on both adaptive thresholds. Below 1 = more detections; above 1 = fewer.')}
+        ${_tuningSliderRow('tunTrackMag', 'Track Min Motion (px)', 0, 10, saved.track_min_mag, 0.1,
+            'Minimum centroid displacement per frame to count as real directional motion. Set 0 to disable.')}
+        ${_tuningSliderRow('tunTrackAgree', 'Track Agreement %', 0, 100, Math.round(saved.track_min_agree_frac * 100), 5,
+            'Fraction of streak frames that must agree on direction before firing. Set 0 to disable.')}
+        <button class="btn btn-secondary btn-compact" style="margin-top:4px;width:100%;" onclick="_resetTuning()">Reset to defaults</button>
     `;
 
-    // Insert before the harness panel (or event log)
+    // Insert before harness panel (or event log)
     const harness = document.getElementById('harnessPanel');
     const eventLog = document.getElementById('detectEventLog');
     const ref = harness || eventLog;
     if (ref && ref.parentNode === detectPanel) {
-        detectPanel.insertBefore(card, ref);
+        detectPanel.insertBefore(body, ref);
     } else {
-        detectPanel.appendChild(card);
+        detectPanel.appendChild(body);
     }
 
     // Wire up sliders
@@ -5585,11 +5588,11 @@ function ensureTuningUI() {
 
 function _toggleTuningBody() {
     const body = document.getElementById('tuningBody');
-    const chevron = document.getElementById('tuningChevron');
+    const btn = document.getElementById('tuningToggleBtn');
     if (!body) return;
     const open = body.style.display !== 'none';
     body.style.display = open ? 'none' : '';
-    if (chevron) chevron.style.transform = open ? '' : 'rotate(180deg)';
+    if (btn) btn.classList.toggle('is-active', !open);
 }
 
 let _tuningDebounceTimer = null;

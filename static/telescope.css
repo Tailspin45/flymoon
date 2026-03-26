@@ -1748,14 +1748,30 @@ canvas.video-thumb-canvas {
 }
 
 /* Items beneath the radar get their horizontal padding back */
-#detectPanel > .detect-indicator,
+#detectControls,
 #detectPanel > #detectStats,
-#detectPanel > #detectToggleBtn,
+#detectPanel > #tuningBody,
 #detectPanel > .harness-card,
 #detectPanel > .detect-event-log,
 #detectPanel > button {
     margin-left: 8px;
     margin-right: 8px;
+}
+
+/* Status indicator + stop button + tune button — single compact row */
+.detect-controls-row {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    margin-bottom: 4px;
+}
+.detect-controls-row .detect-indicator {
+    flex: 1;
+    margin: 0;
+    min-width: 0;
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
 }
 
 /* Compact detect indicator */

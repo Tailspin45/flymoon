@@ -340,15 +340,11 @@
                 <!-- Transit Auto-Capture Settings -->
                 <div class="sidebar-panel">
                     <h3>Auto-Capture</h3>
-                    <div class="setting-item">
-                        <label class="toggle-label">
-                            <input type="checkbox" id="autoCaptureToggle" checked>
-                            <span class="toggle-slider"></span>
-                            <span class="toggle-text">Auto-Record Transits</span>
-                        </label>
-                    </div>
-                    <div class="setting-info">
-                        Auto-records on transit detection within 15 s.
+                    <div style="display:flex;align-items:center;gap:6px;">
+                        <input type="checkbox" id="autoCaptureToggle" checked style="display:none;">
+                        <button id="autoCaptureBtn" class="btn btn-compact btn-toggle is-active"
+                                onclick="var cb=document.getElementById('autoCaptureToggle');cb.checked=!cb.checked;this.classList.toggle('is-active',cb.checked);localStorage.setItem('autoCaptureTransits',cb.checked);cb.dispatchEvent(new Event('change'));">AUTO-REC</button>
+                        <span style="font-size:0.75em;color:#8A9298;font-family:'SF Mono','Menlo','Consolas',monospace;letter-spacing:0.05em;text-transform:uppercase;">Auto-Record Transits</span>
                     </div>
                 </div>
 
@@ -365,11 +361,14 @@
                 <!-- Real-time Transit Detection -->
                 <div class="sidebar-panel" id="detectPanel">
                     <h3>Live Detection</h3>
-                    <div id="detectIndicator" class="detect-indicator detect-idle">
-                        <span>Idle</span>
+                    <!-- Indicator + stop + tuning toggle all in one compact row -->
+                    <div id="detectControls" class="detect-controls-row">
+                        <div id="detectIndicator" class="detect-indicator detect-idle">
+                            <span>Idle</span>
+                        </div>
+                        <button id="detectToggleBtn" class="btn btn-danger btn-compact" onclick="toggleDetection()">Stop</button>
                     </div>
                     <div id="detectStats" class="detect-stats" style="display:none"></div>
-                    <button id="detectToggleBtn" class="btn btn-danger btn-compact" style="width:100%;margin-bottom:4px;" onclick="toggleDetection()">Stop Detection</button>
 
                     <!-- Detection Test Harness -->
                     <div id="harnessPanel" class="harness-card">
