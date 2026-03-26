@@ -3342,7 +3342,20 @@ def _auto_connect_background():
                     )
 
     def _post_connect(client):
-        """Steps to run once connected: start solar mode and resume timelapse."""
+        """Steps to run once connected: start solar mode, ALPACA, and resume timelapse."""
+        # Connect ALPACA for motor control
+        alpaca = get_alpaca_client()
+        if alpaca and not alpaca.is_connected():
+            if not alpaca.host and client.host:
+                alpaca.host = client.host
+            try:
+                if alpaca.connect():
+                    logger.info(f"[Telescope] Auto-connect: ALPACA connected to {alpaca.host}:{alpaca.port}")
+                else:
+                    logger.warning("[Telescope] Auto-connect: ALPACA connection failed")
+            except Exception as ae:
+                logger.warning(f"[Telescope] Auto-connect: ALPACA error: {ae}")
+
         # Always solar mode for RTSP (see telescope_connect)
         if hasattr(client, "_viewing_mode") and client._viewing_mode is None:
             client._viewing_mode = "sun"
