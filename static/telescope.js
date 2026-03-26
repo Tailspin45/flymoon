@@ -128,6 +128,9 @@ window.initTelescope = function() {
         if (r) updateTelegramMuteBtn(r.muted);
     });
 
+    // Initialise focus step keycap — mark the default size as active
+    setFocusStepSize(_focusStepSize);
+
     // Start polling for target visibility
     updateTargetVisibility();
     visibilityPollInterval = setInterval(updateTargetVisibility, 30000);
@@ -308,6 +311,23 @@ function updateButtonStates() {
     });
 }
 
+/**
+ * Sync Solar/Lunar/Scene mode button keycap state from currentViewingMode.
+ * Applies .is-active to the active mode button and removes it from the others.
+ * Called on every status poll and immediately after a mode switch.
+ */
+function updateModeButtons() {
+    const map = {
+        sun:  'modeSolarBtn',
+        moon: 'modeLunarBtn',
+        scenery: 'modeSceneBtn',
+    };
+    Object.entries(map).forEach(([mode, id]) => {
+        const btn = document.getElementById(id);
+        if (btn) btn.classList.toggle('is-active', currentViewingMode === mode);
+    });
+}
+
 async function updateStatus() {
     if (isSimulating) return; // sim owns connection state — don't let real status poll overwrite it
     const result = await apiCall('/telescope/status', 'GET');
@@ -337,6 +357,7 @@ async function updateStatus() {
 
         updateConnectionUI();
         updateRecordingUI();
+        updateModeButtons();    // sync Solar/Lunar/Scene mode keycap state
         checkTargetMismatch();
         
         // Auto-start preview if connected; stop stale stream if disconnected
@@ -456,12 +477,11 @@ async function switchToSun() {
     const result = await apiCall('/telescope/target/sun', 'POST');
     if (result && result.success) {
         showStatus('Switched to Solar mode', 'success', 5000);
-        // Force-restart the preview stream (mode change kills old RTSP)
+        currentViewingMode = 'sun';
+        updateModeButtons();    // immediately light Solar keycap
         stopPreview();
         _previewLastError = 0;
         setTimeout(startPreview, 3000);
-
-        // Show solar filter warning
         showWarning(
             '⚠️ SOLAR FILTER REQUIRED - Ensure solar filter is installed before viewing!',
             'warning',
@@ -473,16 +493,15 @@ async function switchToSun() {
 async function switchToMoon() {
     console.log('[Telescope] Switching to Moon');
     showStatus('Switching to Lunar mode...', 'info');
-    
+
     const result = await apiCall('/telescope/target/moon', 'POST');
     if (result && result.success) {
         showStatus('Switched to Lunar mode', 'success', 5000);
-        // Force-restart the preview stream (mode change kills old RTSP)
+        currentViewingMode = 'moon';
+        updateModeButtons();    // immediately light Lunar keycap
         stopPreview();
         _previewLastError = 0;
         setTimeout(startPreview, 3000);
-
-        // Show lunar filter reminder
         showWarning(
             '✓ Remove solar filter if installed - Lunar viewing safe without filter',
             'info',
@@ -498,6 +517,8 @@ async function switchToScenery() {
     const result = await apiCall('/telescope/mode/scenery', 'POST');
     if (result && result.success) {
         showStatus('Scenery mode active — no tracking, manual positioning enabled', 'success', 5000);
+        currentViewingMode = 'scenery';
+        updateModeButtons();    // immediately light Scene keycap
         stopPreview();
         _previewLastError = 0;
         setTimeout(startPreview, 3000);
@@ -1616,10 +1637,9 @@ let _focusStepSize = 10;
 
 function setFocusStepSize(size) {
     _focusStepSize = size;
+    // Use .is-active (locked-down keycap) instead of inline styles
     document.querySelectorAll('.focus-step-btn').forEach(btn => {
-        const active = parseInt(btn.dataset.steps) === size;
-        btn.style.borderColor = active ? '#888' : '';
-        btn.style.background  = active ? '#333338' : '';
+        btn.classList.toggle('is-active', parseInt(btn.dataset.steps) === size);
     });
 }
 
@@ -1654,8 +1674,15 @@ async function applyCameraSettings() {
 }
 
 async function toggleAutoExp() {
-    const result = await apiCall('/telescope/camera/auto-exp', 'POST', { enabled: true });
-    if (result && result.success) showStatus('Auto exposure enabled', 'success', 3000);
+    const btn = document.getElementById('autoExpBtn');
+    // Toggle state locally (server has no persistent on/off for auto-exp)
+    const willEnable = !(btn && btn.classList.contains('is-active'));
+    const result = await apiCall('/telescope/camera/auto-exp', 'POST', { enabled: willEnable });
+    if (result && result.success) {
+        // .is-active = locked-down keycap when auto-exp is on
+        if (btn) btn.classList.toggle('is-active', willEnable);
+        showStatus(willEnable ? 'Auto exposure on' : 'Auto exposure off', 'success', 3000);
+    }
 }
 
 // ============================================================================
@@ -2293,11 +2320,18 @@ async function toggleTelegramMute() {
 }
 
 function updateTelegramMuteBtn(muted) {
+    // Update header toolbar button (top bar) — no emojis
     const btn = document.getElementById('telegramMuteBtn');
-    if (!btn) return;
-    btn.textContent = muted ? '🔕' : '🔔';
-    btn.title = muted ? 'Telegram alerts muted — click to unmute' : 'Mute Telegram alerts';
-    btn.style.opacity = muted ? '0.5' : '1';
+    if (btn) {
+        btn.textContent = muted ? 'Muted' : 'Notif';
+        btn.title = muted ? 'Telegram alerts muted — click to unmute' : 'Mute Telegram alerts';
+    }
+    // Update sidebar panel button: .is-active = muted (locked-down keycap)
+    const btn2 = document.getElementById('telegramMuteBtn2');
+    if (btn2) {
+        btn2.classList.toggle('is-active', !!muted);
+        btn2.title = muted ? 'Telegram alerts muted — click to unmute' : 'Mute/unmute Telegram alerts';
+    }
 }
 
 function toggleFilesModal() {
@@ -4403,7 +4437,8 @@ function startSimulation() {
     const statusDot   = document.getElementById('statusDot');
     const statusText  = document.getElementById('connectionStatus');
 
-    if (simulateBtn)   { simulateBtn.textContent = 'Stop Sim'; simulateBtn.className = 'btn btn-warning'; }
+    // Toggle .is-active (locked-down keycap) to show simulation is running
+    if (simulateBtn)   { simulateBtn.textContent = 'Stop Sim'; simulateBtn.classList.add('is-active'); }
     if (connectBtn)    connectBtn.disabled = true;
     if (disconnectBtn) disconnectBtn.disabled = true;
     if (statusDot)     statusDot.className = 'status-dot connected';
@@ -4455,7 +4490,8 @@ function stopSimulation() {
     const statusDot     = document.getElementById('statusDot');
     const statusText    = document.getElementById('connectionStatus');
 
-    if (simulateBtn)   { simulateBtn.textContent = 'Simulate'; simulateBtn.className = 'btn btn-info'; }
+    // Remove .is-active to restore raised/unselected keycap
+    if (simulateBtn)   { simulateBtn.textContent = 'Sim'; simulateBtn.classList.remove('is-active'); }
     if (connectBtn)    connectBtn.disabled = false;
     if (disconnectBtn) disconnectBtn.disabled = true;
     if (statusDot)     statusDot.className = 'status-dot disconnected';
@@ -4961,9 +4997,9 @@ function startSimEclipse() {
     eclipseAlertLevel = null;  // let updateEclipseState compute it fresh
     eclipseBannerDismissed = false; // reset so banner can show if checkbox ticked
 
-    // Style the button as active
+    // Lock-down keycap (.is-active) to show eclipse sim is running
     const btn = document.getElementById('simEclipseBtn');
-    if (btn) { btn.textContent = `${preset.icon} Stop Eclipse`; btn.classList.add('active'); }
+    if (btn) { btn.textContent = 'Stop Ecl'; btn.classList.add('is-active'); }
 
     // Show the controls row
     const controls = document.getElementById('simEclipseControls');
@@ -4989,8 +5025,9 @@ function stopSimEclipse() {
     eclipseBannerDismissed = false;
     updateEclipseState();  // immediately clears card and banner
 
+    // Restore raised keycap on stop
     const btn = document.getElementById('simEclipseBtn');
-    if (btn) { btn.textContent = '🌑 Sim Eclipse'; btn.classList.remove('active'); }
+    if (btn) { btn.textContent = 'Eclipse'; btn.classList.remove('is-active'); }
 
     // Hide fire-transit button and controls
     const fireBtn = document.getElementById('simFireTransitBtn');
@@ -6628,9 +6665,12 @@ function _updateAlpacaPanel(data) {
     const nameEl = document.getElementById('alpacaDeviceName');
     if (nameEl && info.name) nameEl.textContent = info.name;
 
-    // Tracking button label
+    // Tracking button — label + .is-active.btn-mode keycap state
     const btn = document.getElementById('alpacaTrackingBtn');
-    if (btn) btn.textContent = _alpacaTracking ? 'Tracking Off' : 'Tracking On';
+    if (btn) {
+        btn.textContent = _alpacaTracking ? 'Trk Off' : 'Track';
+        btn.classList.toggle('is-active', !!_alpacaTracking);
+    }
 }
 
 function startAlpacaPolling() {
@@ -6651,6 +6691,9 @@ function stopAlpacaPolling() {
 async function alpacaToggleTracking() {
     const newState = !_alpacaTracking;
     await apiCall('/telescope/alpaca/tracking', 'POST', { enabled: newState });
+    // .is-active.btn-mode = lit teal indicator when tracking is on
+    const btn = document.getElementById('alpacaTrackingBtn');
+    if (btn) btn.classList.toggle('is-active', newState);
     showStatus(newState ? 'Tracking enabled' : 'Tracking disabled', 'info', 2000);
 }
 

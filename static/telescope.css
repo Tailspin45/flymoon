@@ -29,22 +29,32 @@
     scrollbar-color: rgba(3,156,156,0.3) transparent;
 }
 
+/* ── NASA console panel metal — medium anodized-aluminum gray ──────
+   Lighter panel face makes dark keycap buttons pop as recessed inserts,
+   matching the physical contrast seen on Apollo Mission Control consoles. */
 .sidebar-right {
     border-right: none;
-    border-left: 1px solid #1e1e24;
-    background: linear-gradient(180deg, #111114 0%, #0d0d10 100%);
+    border-left: 2px solid #30343A;
+    background: #50545C;
 }
 
 .sidebar-alp {
     border-right: none;
-    border-left: 1px solid #1e1e24;
-    background: linear-gradient(180deg, #111114 0%, #0d0d10 100%);
+    border-left: 2px solid #30343A;
+    background: #50545C;
 }
 
+/* ── Instrument section panels — slight tonal separation from rail ── */
 .sidebar-panel {
-    padding: 6px 10px;
-    border-bottom: 1px solid #1a1a20;
+    padding: 7px 10px;
+    border-bottom: 1px solid #40444C;
+    border-top: 1px solid #5A5E66;    /* top highlight = light from above */
     position: relative;
+    background: #4C5058;
+}
+
+.sidebar-panel:first-child {
+    border-top: none;
 }
 
 .sidebar-panel:last-child {
@@ -52,31 +62,30 @@
 }
 
 .sidebar-panel-compact {
-    padding: 5px 10px;
+    padding: 6px 10px;
 }
 
+/* ── Section label plates — engraved look on aluminum ──────────────
+   Light text on medium-gray panel = high contrast, reads like a
+   stamped/anodized label plate. No teal — teal reserved for live data. */
 .sidebar-panel h3 {
-    margin: 0 0 5px 0;
-    color: #0cb8b8;
-    font-size: 0.68em;
+    margin: 0 0 6px 0;
+    color: #D8DCE2;                 /* bright on aluminum = engraved + filled */
+    font-size: 0.63em;
     font-weight: 700;
     text-transform: uppercase;
-    letter-spacing: 1.8px;
-    padding-bottom: 4px;
-    border-bottom: 1px solid rgba(3,156,156,0.12);
+    letter-spacing: 2.2px;
+    padding-bottom: 5px;
+    border-bottom: 1px solid #40444C;
     display: flex;
     align-items: center;
     gap: 5px;
+    font-family: 'SF Mono', 'Menlo', 'Consolas', monospace;
 }
 
+/* Remove old teal pip */
 .sidebar-panel h3::before {
-    content: '';
-    display: inline-block;
-    width: 3px;
-    height: 10px;
-    background: #039c9c;
-    border-radius: 1px;
-    flex-shrink: 0;
+    display: none;
 }
 
 /* Center Preview Area */
@@ -446,9 +455,9 @@
     gap: 6px;
     margin-bottom: 6px;
     padding: 4px 8px;
-    background: rgba(0,0,0,0.35);
-    border: 1px solid #1a1a20;
-    border-radius: 3px;
+    background: #1C1E22;            /* dark display window inset into aluminum panel */
+    border: 1px solid #141618;
+    border-radius: 2px;
     font-size: 0.78em;
     font-weight: 600;
     color: #8a9ba8;
@@ -494,118 +503,238 @@
     gap: 3px;
 }
 
-/* Button grids — uniform Apollo-style tight spacing */
+/* Button grids — tight 2px gap, Apollo-console packed layout */
 .button-grid-2x2 {
     display: grid;
     grid-template-columns: 1fr 1fr;
-    gap: 3px;
+    gap: 2px;
 }
 
 .button-grid-3col {
     display: grid;
     grid-template-columns: 1fr 1fr 1fr;
-    gap: 3px;
+    gap: 2px;
 }
 
 .button-grid-4col {
     display: grid;
     grid-template-columns: 1fr 1fr 1fr 1fr;
-    gap: 3px;
+    gap: 2px;
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
-   Mission Control Buttons — uniform dark charcoal, Apollo console style
-   Only danger/warning get color; everything else is the same dark gray.
+   NASA MISSION CONTROL — Keycap Button System
+   Based on NASA Appendix F Console/Display Design guidelines.
+
+   Physical simulation:
+   ┌─────────────────────────────────────────────────────────────────────┐
+   │  Raised (resting)   →  border-top/left lighter, border-bottom thicker │
+   │  Momentary press    →  :active collapses borders, translateY(1px)    │
+   │  Toggle locked-down →  .is-active sustains pressed appearance +      │
+   │                         inverted/bright label (contrast ≥ 7:1)       │
+   │  Mode indicator     →  .is-active.btn-mode teal-lit label, very dark │
+   └─────────────────────────────────────────────────────────────────────┘
    ═══════════════════════════════════════════════════════════════════════════ */
 
 .btn {
     flex: 1;
-    padding: 6px 4px;
-    border: 1px solid #333338;
+    /* Keycap geometry */
+    padding: 5px 4px 4px;           /* 1px more top = visual lift */
     border-radius: 2px;
+    min-height: 26px;
+    text-align: center;
+    white-space: nowrap;
+    position: relative;
+    cursor: pointer;
+
+    /* Raised keycap borders — asymmetric = light from top-left */
+    border-top:    1px solid #363A40;   /* highlight edge */
+    border-left:   1px solid #363A40;   /* highlight edge */
+    border-right:  1px solid #18191C;   /* shadow edge */
+    border-bottom: 2px solid #0C0D0F;   /* shadow edge — thicker = more raised */
+
+    /* Keycap surface */
+    background: #252830;
+    color: #B8BCC2;
+
+    /* Label style — all-caps, tight, always legible */
     font-size: 0.72em;
     font-weight: 700;
-    cursor: pointer;
-    transition: filter 0.08s ease, transform 0.06s ease;
-    white-space: nowrap;
-    letter-spacing: 0.6px;
     text-transform: uppercase;
-    text-align: center;
-    position: relative;
-    min-height: 26px;
-    /* Uniform dark charcoal — same for all non-danger buttons */
-    background: #232328;
-    color: #c0c4c8;
-    box-shadow: 0 1px 2px rgba(0,0,0,0.5);
+    letter-spacing: 0.6px;
+
+    /* Snappy transitions only — no laggy animations per Appendix F */
+    transition: background 0.06s, color 0.06s, border-color 0.05s,
+                transform 0.04s, box-shadow 0.05s;
+
+    /* Eliminate default browser outline — custom focus ring below */
+    outline: none;
 }
 
+/* Accessibility: clear focus ring, visible in all states */
+.btn:focus-visible {
+    outline: 2px solid #5A9BCC;
+    outline-offset: 2px;
+}
+
+/* ── DISABLED — Appendix F: unavailable = dim, no shape/press change ── */
 .btn:disabled {
-    opacity: 0.28;
+    opacity: 0.25;
     cursor: not-allowed;
-    filter: none;
-    transform: none;
+    transform: none !important;
+    box-shadow: none !important;
 }
 
-.btn:hover:not(:disabled) {
-    background: #2e2e34;
-    color: #e0e2e4;
+/* ── HOVER — subtle surface brightening, label sharpens ── */
+.btn:hover:not(:disabled):not(.is-active) {
+    background: #2D3038;
+    color: #D0D4DA;
 }
 
+/* ══════════════════════════════════════════════════════════════════════
+   MOMENTARY PRESS — .btn:active
+   Key physically sinks: top highlight fades, bottom shadow collapses,
+   surface darkens, translateY(1px) reinforces downward movement.
+   ══════════════════════════════════════════════════════════════════════ */
 .btn:active:not(:disabled) {
+    background: #1C1E24;                /* darkened = physically pressed */
+    border-top:    1px solid #24262A;   /* highlight collapses */
+    border-left:   1px solid #24262A;
+    border-right:  1px solid #18191C;
+    border-bottom: 1px solid #0C0D0F;   /* shadow collapses = key sunk */
     transform: translateY(1px);
-    background: #1a1a1e;
-    box-shadow: 0 0 1px rgba(0,0,0,0.4);
+    box-shadow: inset 0 1px 3px rgba(0,0,0,0.5);
 }
 
-/* ── All standard variants are the same charcoal ── */
+/* ══════════════════════════════════════════════════════════════════════
+   TOGGLE SELECTED — .is-active
+   Button stays locked down: same pressed border profile held permanently,
+   dark surface, label inverted to white (≥ 7:1 contrast ratio).
+   Applied via JS to toggle/mode buttons; removed when deselected.
+   ══════════════════════════════════════════════════════════════════════ */
+.btn.is-active {
+    background: #101214;                /* darkest = deeply set into panel */
+    border-top:    1px solid #1A1C20;   /* no highlight = fully locked down */
+    border-left:   1px solid #1A1C20;
+    border-right:  1px solid #262830;
+    border-bottom: 1px solid #262830;
+    transform: translateY(1px);
+    box-shadow: inset 0 2px 4px rgba(0,0,0,0.65);
 
-.btn-primary {
-    background: #232328;
-    color: #c0c4c8;
-    border-color: #333338;
+    /* Inverted label — bright white on very dark bg = ≥ 7:1 contrast */
+    color: #FFFFFF;
+    text-shadow: 0 0 4px rgba(200,220,255,0.25);
 }
 
-.btn-secondary {
-    background: #232328;
-    color: #c0c4c8;
-    border-color: #333338;
+.btn.is-active:hover:not(:disabled) {
+    background: #141618;
+    color: #FFFFFF;
 }
 
-.btn-info {
-    background: #232328;
-    color: #c0c4c8;
-    border-color: #333338;
+/* ══════════════════════════════════════════════════════════════════════
+   MODE INDICATOR — .is-active.btn-mode
+   Like a lit indicator lamp above a locked key: teal-illuminated label
+   on near-black surface. Used for Solar/Lunar/Scene and Track toggle.
+   ══════════════════════════════════════════════════════════════════════ */
+.btn.is-active.btn-mode {
+    background: #0A1418;                /* near-black with slight teal tint */
+    border-top:    1px solid #0E2830;
+    border-left:   1px solid #0E2830;
+    border-right:  1px solid #1E3238;
+    border-bottom: 1px solid #1E3238;
+    box-shadow: inset 0 2px 4px rgba(0,0,0,0.7),
+                0 0 0 1px rgba(0,200,200,0.18);
+    color: #00E8E8;                     /* teal-lit indicator label */
+    text-shadow: 0 0 6px rgba(0,232,232,0.5);
 }
 
-/* ── Only warning & danger get color — draws the eye to critical actions ── */
+.btn.is-active.btn-mode:hover:not(:disabled) {
+    background: #0C1A20;
+    color: #20F0F0;
+}
+
+/* ── All standard non-danger variants share the same charcoal keycap ── */
+
+.btn-primary   { background: #252830; color: #B8BCC2; }
+.btn-secondary { background: #252830; color: #B8BCC2; }
+.btn-info      { background: #252830; color: #B8BCC2; }
+
+/* ── Warning & Danger: color-coded + same keycap press mechanics ──
+   Per Appendix F: red = high-alert/failure, amber = caution only.
+   Both retain the asymmetric raised-border and press behavior. */
 
 .btn-warning {
-    background: #5a3a08;
-    color: #f0dca0;
-    border-color: #6a4810;
+    background: #3A2508;
+    color: #E8C880;
+    border-top:    1px solid #4A3010;
+    border-left:   1px solid #4A3010;
+    border-right:  1px solid #1A1008;
+    border-bottom: 2px solid #0E0804;
+}
+
+.btn-warning:hover:not(:disabled):not(.is-active) {
+    background: #482C0A;
+    color: #F0D898;
 }
 
 .btn-danger {
-    background: #5a1414;
-    color: #f0c0c0;
-    border-color: #6e1c1c;
+    background: #3A0E0E;
+    color: #E8A8A8;
+    border-top:    1px solid #4E1414;
+    border-left:   1px solid #4E1414;
+    border-right:  1px solid #180808;
+    border-bottom: 2px solid #0C0404;
 }
 
+.btn-danger:hover:not(:disabled):not(.is-active) {
+    background: #4A1212;
+    color: #F0B8B8;
+}
+
+/* Compact variant */
 .btn-compact {
-    padding: 5px 4px;
+    padding: 4px 4px 3px;
     font-size: 0.68em;
     min-height: 24px;
 }
 
-/* Compact Target Display */
+/* ═══════════════════════════════════════════════════════════════════════════
+   FUNCTIONAL CLUSTER GROUPS — .btn-cluster
+   Groups related keys with a recessed border box — mirrors the physical
+   key clusters on the NASA console (each cluster = one functional unit).
+   ═══════════════════════════════════════════════════════════════════════════ */
+.btn-cluster {
+    border: 1px solid #383C44;      /* inset shadow on aluminum = machined recess */
+    border-radius: 3px;
+    padding: 4px;
+    margin-bottom: 4px;
+    background: rgba(0,0,0,0.18);   /* cluster sits in a slight recess in the panel */
+}
+
+.btn-cluster:last-child {
+    margin-bottom: 0;
+}
+
+/* Cluster sub-label — tiny ALL-CAPS tag, readable on aluminum */
+.btn-cluster-label {
+    font-size: 0.58em;
+    font-weight: 700;
+    color: #9AA0A8;
+    text-transform: uppercase;
+    letter-spacing: 1.8px;
+    margin-bottom: 3px;
+    font-family: 'SF Mono', 'Menlo', 'Consolas', monospace;
+}
+
+/* Compact Target Display — dark readout card inset into aluminum */
 .target-compact {
     display: flex;
     align-items: center;
     gap: 6px;
     padding: 5px 8px;
-    background: rgba(0, 0, 0, 0.35);
-    border: 1px solid #222228;
-    border-radius: 3px;
+    background: #1C1E22;
+    border: 1px solid #141618;
+    border-radius: 2px;
     margin-bottom: 4px;
     transition: all 0.15s ease;
 }
@@ -630,6 +759,18 @@
 
 .target-icon {
     font-size: 1.2em;
+}
+
+/* Text abbreviation replacing emoji target icons — monospace, all-caps, muted */
+.target-icon-text {
+    font-size: 0.6em;
+    font-weight: 700;
+    font-family: 'SF Mono', 'Menlo', 'Consolas', monospace;
+    letter-spacing: 1px;
+    color: #6A7880;
+    min-width: 26px;
+    text-align: center;
+    flex-shrink: 0;
 }
 
 .target-info {
@@ -693,7 +834,8 @@
 
 .input-mini {
     width: 48px;
-    padding: 3px 5px;
+    min-width: 0;        /* allow shrink inside grid */
+    padding: 3px 4px;
     border: 1px solid #222228;
     border-radius: 3px;
     background: #08080c;
@@ -701,6 +843,7 @@
     font-size: 0.72em;
     font-family: 'SF Mono', 'Menlo', 'Consolas', monospace;
     text-align: center;
+    box-sizing: border-box;
 }
 
 .input-mini:focus {
@@ -746,12 +889,7 @@
     padding: 4px 6px;
 }
 
-/* ── Eclipse simulation button — same charcoal as others ── */
-.btn-eclipse {
-    background: #232328;
-    color: #c0c4c8;
-    border-color: #333338;
-}
+/* .btn-eclipse is defined in the Eclipse simulator section below */
 
 /* Legacy capture-compact (kept for left sidebar) */
 .capture-compact {
@@ -817,13 +955,14 @@
     align-items: center;
     gap: 5px;
     padding: 3px 6px;
-    background: rgba(0, 0, 0, 0.35);
-    border: 1px solid #1a1a20;
-    border-radius: 3px;
+    background: #1C1E22;            /* dark display window on aluminum panel */
+    border: 1px solid #141618;
+    border-radius: 2px;
     font-size: 0.72em;
     font-variant-numeric: tabular-nums;
     margin-bottom: 4px;
     font-family: 'SF Mono', 'Menlo', 'Consolas', monospace;
+    color: #8a9ba8;
 }
 
 /* Warning Box */
@@ -1639,22 +1778,33 @@ canvas.video-thumb-canvas {
     line-height: 1.3;
 }
 
-/* ── Eclipse simulator controls ──────────────────────────────────── */
+/* ── Eclipse simulation button — purple keycap, inherits press mechanics ── */
 .btn-eclipse {
-    background: linear-gradient(135deg, #1a1a4e 0%, #2d1b6e 100%);
-    color: #c8a8ff;
-    border: 1px solid #5a3a9e;
+    background: #1C1840;
+    color: #B8A0E8;
+    border-top:    1px solid #2E2860;
+    border-left:   1px solid #2E2860;
+    border-right:  1px solid #0E0C20;
+    border-bottom: 2px solid #080610;
 }
-.btn-eclipse:hover { background: linear-gradient(135deg, #2a2a6e 0%, #3d2b8e 100%); }
-.btn-eclipse.active {
-    background: linear-gradient(135deg, #4a2a8e 0%, #7a3a9e 100%);
-    color: #fff;
-    border-color: #9a6aee;
-    animation: eclipseBtnPulse 2s ease-in-out infinite;
+
+.btn-eclipse:hover:not(:disabled):not(.is-active) {
+    background: #242060;
+    color: #CCB8F8;
 }
-@keyframes eclipseBtnPulse {
-    0%,100% { box-shadow: 0 0 0 0 rgba(154,106,238,0); }
-    50%      { box-shadow: 0 0 0 5px rgba(154,106,238,0.4); }
+
+/* When active (.is-active), the generic .btn.is-active locked-down styles
+   apply; we only need to ensure the label colour stays purple-tinted */
+.btn-eclipse.is-active {
+    color: #D0C0FF;
+    text-shadow: 0 0 6px rgba(160,120,255,0.5);
+    background: #0E0C24;
+    border-top:    1px solid #1A1838;
+    border-left:   1px solid #1A1838;
+    border-right:  1px solid #201E30;
+    border-bottom: 1px solid #201E30;
+    box-shadow: inset 0 2px 4px rgba(0,0,0,0.7),
+                0 0 0 1px rgba(140,100,220,0.2);
 }
 
 #simEclipseControls {
@@ -1682,14 +1832,21 @@ canvas.video-thumb-canvas {
     gap: 4px;
     white-space: nowrap;
 }
+/* Transit fire — green keycap variant */
 .btn-transit-fire {
-    background: #2a3a1a;
-    color: #8edd6a;
-    border: 1px solid #4a7a2a;
+    background: #1A2E10;
+    color: #80CC60;
+    border-top:    1px solid #285018;
+    border-left:   1px solid #285018;
+    border-right:  1px solid #0C1808;
+    border-bottom: 2px solid #080E04;
     font-size: 0.78em;
     padding: 3px 8px;
 }
-.btn-transit-fire:hover { background: #3a5a2a; }
+.btn-transit-fire:hover:not(:disabled) {
+    background: #22401A;
+    color: #96E070;
+}
 
 /* ============================================================================
    REAL-TIME TRANSIT DETECTION
@@ -1859,9 +2016,11 @@ canvas.video-thumb-canvas {
     flex-wrap: wrap;
     gap: 4px;
     padding: 6px 10px;
-    background: #0c0e12;
-    border-bottom: 1px solid #1a1a20;
+    background: #1C1E22;        /* dark readout bar on aluminum panel */
+    border-bottom: 1px solid #40444C;
+    border-top: 1px solid #40444C;
     font-size: 0.76em;
+    color: #8a9ba8;
 }
 
 
@@ -1904,13 +2063,14 @@ canvas.video-thumb-canvas {
    ═══════════════════════════════════════════════════════════════════════════ */
 
 .alpaca-telemetry {
+    /* Dark instrument module embedded in the aluminum console face */
     background:
         linear-gradient(180deg, rgba(3,156,156,0.05) 0%, transparent 40%),
         #0c0e12;
-    border-bottom: 1px solid #1e3a3a;
+    border-bottom: 1px solid #40444C;
+    border-top: 2px solid rgba(3,156,156,0.3);
     position: relative;
     overflow: hidden;
-    border-top: 2px solid rgba(3,156,156,0.2);
 }
 
 /* subtle crosshair grid overlay */
@@ -2098,27 +2258,31 @@ canvas.video-thumb-canvas {
     text-overflow: ellipsis;
 }
 
-/* ── Buttons ──────────────────────────────────────── */
-.alpaca-btn-track {
-    background: #232328;
-    color: #c0c4c8;
-    border-color: #333338;
-}
-
-.alpaca-btn-abort {
-    background: #5a1414;
-    color: #f0c0c0;
-    border-color: #6e1c1c;
-}
+/* ── ALPACA Buttons — inherit keycap system fully ──
+   .alpaca-btn-track receives .btn-mode + .is-active via JS for tracking state.
+   .alpaca-btn-abort already inherits .btn-danger styling. */
 
 /* ═══════════════════════════════════════════════════════════════════════════
    Right Sidebar Refinements — setting labels, camera, focus step buttons
    ═══════════════════════════════════════════════════════════════════════════ */
 
+/* ── Aluminum panel: override small label colors for legibility ────
+   Inline-styled labels use dark muted colors suited to a dark BG;
+   on the lighter aluminum panel they need to be lighter/darker. */
+.sidebar-right .capture-row-label,
+.sidebar-alp .capture-row-label {
+    color: #2A2E34;             /* dark label on aluminum = good contrast */
+}
+
+.sidebar-right .radio-label,
+.sidebar-alp .radio-label {
+    color: #2A2E34;
+}
+
 .setting-label {
     font-size: 0.72em;
     font-weight: 600;
-    color: #8a9ba8;
+    color: #2A2E34;             /* dark on aluminum */
     letter-spacing: 0.5px;
     text-transform: uppercase;
     margin-bottom: 4px;
@@ -2141,11 +2305,37 @@ canvas.video-thumb-canvas {
     font-variant-numeric: tabular-nums;
 }
 
-/* Camera checkbox labels */
+/* Camera checkbox labels — dark on aluminum */
 .sidebar-alp .setting-item label,
 .sidebar-right .setting-item label {
-    color: #99a0a8;
+    color: #2A2E34;
     font-size: 0.82em;
+}
+
+/* ── Aluminum panel: general small-text color overrides ─────────────
+   Many elements use inline style="color:#6a7a85" or similar muted-dark
+   colors appropriate for a dark background. On the aluminum panel these
+   need to read as dark-on-light instead. We scope broadly so we don't
+   miss individual inline styles. */
+.sidebar-right,
+.sidebar-alp {
+    color: #1E2228;             /* default text on aluminum = near-black */
+}
+
+/* Small inline label text (Smooth, sec, GoTo coords, etc.) */
+.sidebar-right span,
+.sidebar-alp span {
+    color: inherit;
+}
+
+/* Locations status line */
+#locationsStatus {
+    color: #3A4048 !important;
+}
+
+/* sim-eclipse-check label */
+.sim-eclipse-check {
+    color: #2A2E34;
 }
 
 /* Scope panel pointing readout — monospace values */

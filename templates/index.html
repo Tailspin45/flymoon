@@ -322,9 +322,9 @@
     <div class="header-row">
         <img src="{{ url_for('static', filename='images/logo.svg') }}" alt="Flymoon Transit Tracker" class="logo" />
         <div style="flex: 1; text-align: center;">
-            <div style="font-size: 1.2em;">🔭 Seestar Control</div>
-        </div>
-        <button id="telegramMuteBtn" class="btn-sm" onclick="toggleTelegramMute()" title="Mute/unmute Telegram alerts">🔔</button>
+                <div style="font-size: 1.2em; letter-spacing: 1px; font-weight: 600; color: #9aa4aa;">Seestar Control</div>
+            </div>
+        <button id="telegramMuteBtn" class="btn-sm" onclick="toggleTelegramMute()" title="Mute/unmute Telegram alerts">Notif</button>
         <button class="btn-sm" onclick="showPanel('map')">← Map</button>
     </div>
 
@@ -479,28 +479,38 @@
                         <span class="status-dot" id="statusDot"></span>
                         <span id="connectionStatus">Disconnected</span>
                     </div>
-                    <div class="button-grid-3col">
-                        <button id="connectBtn" class="btn btn-primary" onclick="connect()">Connect</button>
-                        <button id="disconnectBtn" class="btn btn-secondary" onclick="disconnect()" disabled>Discon</button>
-                        <button id="findSeestarBtn" class="btn btn-info" onclick="findSeestar()" title="Scan network for Seestar (useful if IP changed)">Find</button>
-                        <button id="simulateBtn" class="btn btn-info" onclick="toggleSimulation()">Sim</button>
-                        <button id="simEclipseBtn" class="btn btn-eclipse" onclick="toggleSimEclipse()" title="Simulate a full eclipse alert sequence (Watch → Warning → Active → Cleared)">Eclipse</button>
-                        <button id="telegramMuteBtn2" class="btn btn-secondary" onclick="toggleTelegramMute()" title="Mute/unmute Telegram alerts">Notif</button>
+                    <!-- LINK cluster: momentary connection commands -->
+                    <div class="btn-cluster">
+                        <div class="btn-cluster-label">Link</div>
+                        <div class="button-grid-3col">
+                            <button id="connectBtn" class="btn btn-primary btn-compact" onclick="connect()">Connect</button>
+                            <button id="disconnectBtn" class="btn btn-secondary btn-compact" onclick="disconnect()" disabled>Discon</button>
+                            <button id="findSeestarBtn" class="btn btn-info btn-compact" onclick="findSeestar()" title="Scan network for Seestar (useful if IP changed)">Find</button>
+                        </div>
+                    </div>
+                    <!-- SIM cluster: toggle buttons (persist on/off state) -->
+                    <div class="btn-cluster">
+                        <div class="btn-cluster-label">Sim</div>
+                        <div class="button-grid-3col">
+                            <button id="simulateBtn" class="btn btn-secondary btn-compact btn-toggle" onclick="toggleSimulation()" title="Toggle flight simulation mode">Sim</button>
+                            <button id="simEclipseBtn" class="btn btn-eclipse btn-compact btn-toggle" onclick="toggleSimEclipse()" title="Simulate a full eclipse alert sequence (Watch → Warning → Active → Cleared)">Eclipse</button>
+                            <button id="telegramMuteBtn2" class="btn btn-secondary btn-compact btn-toggle" onclick="toggleTelegramMute()" title="Mute/unmute Telegram alerts">Notif</button>
+                        </div>
                     </div>
                     <!-- Eclipse sim controls — shown only while sim eclipse is running -->
                     <div id="simEclipseControls" style="display:none; margin-top:6px">
                         <select id="simEclipseType" class="sim-eclipse-select">
-                            <option value="lunar_total">🌙 Total Lunar</option>
-                            <option value="lunar_partial">🌙 Partial Lunar</option>
-                            <option value="solar_partial">☀️ Partial Solar</option>
-                            <option value="solar_total">☀️ Total Solar</option>
-                            <option value="solar_annular">☀️ Annular Solar</option>
+                            <option value="lunar_total">Total Lunar</option>
+                            <option value="lunar_partial">Partial Lunar</option>
+                            <option value="solar_partial">Partial Solar</option>
+                            <option value="solar_total">Total Solar</option>
+                            <option value="solar_annular">Annular Solar</option>
                         </select>
                         <label class="sim-eclipse-check">
                             <input type="checkbox" id="simEclipseOutlook" onchange="toggleSimEclipseOutlook(this.checked)">
                             Show Outlook Banner
                         </label>
-                        <button id="simFireTransitBtn" class="btn btn-sm btn-transit-fire" onclick="fireSimTransitDuringEclipse()" style="display:none" title="Inject an aircraft transit during the eclipse to demo recording extension + ✈️ marker">✈️ Fire Transit</button>
+                        <button id="simFireTransitBtn" class="btn btn-sm btn-transit-fire" onclick="fireSimTransitDuringEclipse()" style="display:none" title="Inject an aircraft transit during the eclipse">Fire Transit</button>
                     </div>
                 </div>
 
@@ -508,7 +518,7 @@
                 <div class="sidebar-panel">
                     <h3>Target</h3>
                     <div class="target-compact target-button" id="sunStatus" onclick="switchToSun()">
-                        <span class="target-icon">☀️</span>
+                        <span class="target-icon-text">SUN</span>
                         <div class="target-info">
                             <div class="target-name">Sun</div>
                             <div class="target-coords" id="sunCoords">--</div>
@@ -516,7 +526,7 @@
                         <span class="visibility-badge" id="sunBadge">--</span>
                     </div>
                     <div class="target-compact target-button" id="moonStatus" onclick="switchToMoon()">
-                        <span class="target-icon">🌙</span>
+                        <span class="target-icon-text">MNS</span>
                         <div class="target-info">
                             <div class="target-name">Moon</div>
                             <div class="target-coords" id="moonCoords">--</div>
@@ -526,44 +536,49 @@
                     <div id="targetWarning" class="warning-box" style="display: none;"></div>
                 </div>
 
-                <!-- Capture Controls Panel — all capture types condensed -->
+                <!-- Capture Controls Panel -->
                 <div class="sidebar-panel">
                     <h3>Capture</h3>
 
-                    <!-- Photo — single row -->
-                    <div class="capture-row">
-                        <span class="capture-row-label">Photo</span>
-                        <button id="capturePhotoBtn" class="btn btn-primary btn-compact" onclick="capturePhoto()" disabled>Snap</button>
+                    <!-- PHOTO / VIDEO cluster: Snap + Rec side by side -->
+                    <div class="btn-cluster">
+                        <div class="btn-cluster-label">Photo / Video</div>
+                        <!-- Button row: Snap | Rec | Stop -->
+                        <div class="button-grid-3col" style="margin-bottom:3px;">
+                            <button id="capturePhotoBtn" class="btn btn-primary btn-compact" onclick="capturePhoto()" disabled>Snap</button>
+                            <button id="startRecordingBtn" class="btn btn-primary btn-compact" onclick="startRecording()" disabled>Rec</button>
+                            <button id="stopRecordingBtn" class="btn btn-danger btn-compact" onclick="stopRecording()" disabled style="display:none;">Stop</button>
+                        </div>
+                        <!-- Inputs row: spacer under Snap | duration | interval -->
+                        <div style="display:grid; grid-template-columns:1fr 1fr 1fr; gap:2px;">
+                            <span></span>
+                            <input type="number" id="videoDuration" value="10" min="1" max="3600" step="1" class="input-mini" style="width:100%;" placeholder="sec" title="Duration (seconds)">
+                            <input type="number" id="frameInterval" value="0" min="0" max="60" step="0.1" class="input-mini" style="width:100%;" placeholder="int" title="Interval: 0=video >0=timelapse">
+                        </div>
                     </div>
-
-                    <!-- Video — compact -->
-                    <div class="capture-row">
-                        <span class="capture-row-label">Video</span>
-                        <input type="number" id="videoDuration" value="10" min="1" max="3600" step="1" class="input-mini" placeholder="sec" title="Duration (seconds)">
-                        <input type="number" id="frameInterval" value="0" min="0" max="60" step="0.1" class="input-mini" placeholder="int" title="Interval: 0 = normal, >0 = timelapse">
-                        <button id="startRecordingBtn" class="btn btn-primary btn-compact" onclick="startRecording()" disabled>Rec</button>
-                        <button id="stopRecordingBtn" class="btn btn-danger btn-compact" onclick="stopRecording()" disabled style="display:none;">Stop</button>
-                    </div>
-                    <div class="recording-status-compact" id="recordingStatus" style="margin:3px 0;">
+                    <div class="recording-status-compact" id="recordingStatus" style="margin:3px 0 4px;">
                         <span class="status-dot" id="recordingDot"></span>
                         <span id="recordingText">Ready</span>
                         <span id="recordingTimer"></span>
                     </div>
 
-                    <!-- Solar Timelapse — compact -->
-                    <div class="capture-row">
-                        <span class="capture-row-label">Timelapse</span>
-                        <input type="number" id="timelapseInterval" value="120" min="10" max="600" step="10" class="input-mini" title="Seconds between frames">
-                        <span style="font-size:0.65em; color:#6a7a85;">sec</span>
-                        <button id="startTimelapseBtn" class="btn btn-primary btn-compact" onclick="startTimelapse()" disabled>Start</button>
-                        <button id="stopTimelapseBtn" class="btn btn-danger btn-compact" onclick="stopTimelapse()" disabled style="display:none;">Stop</button>
-                        <button id="previewTimelapseBtn" class="btn btn-compact btn-secondary" onclick="previewTimelapse()" disabled style="display:none;">View</button>
-                    </div>
-                    <div style="display:flex; align-items:center; gap:6px; margin-top:2px;">
-                        <span style="font-size:0.68em; color:#6a7a85; white-space:nowrap;">Smooth</span>
-                        <input type="range" id="timelapseSmoothing" min="0.0" max="0.95" step="0.05" value="0.50"
-                               style="flex:1; accent-color:#039c9c; height:3px;">
-                        <span id="timelapseSmoothingVal" style="font-size:0.7em; color:#8a9ba8; min-width:28px; text-align:right; font-family:'SF Mono',monospace;">0.50</span>
+                    <!-- TIMELAPSE cluster -->
+                    <div class="btn-cluster">
+                        <div class="btn-cluster-label">Timelapse</div>
+                        <!-- Button row: Start | Stop | View -->
+                        <div class="button-grid-3col" style="margin-bottom:3px;">
+                            <button id="startTimelapseBtn" class="btn btn-primary btn-compact" onclick="startTimelapse()" disabled>Start</button>
+                            <button id="stopTimelapseBtn" class="btn btn-danger btn-compact" onclick="stopTimelapse()" disabled style="display:none;">Stop</button>
+                            <button id="previewTimelapseBtn" class="btn btn-secondary btn-compact" onclick="previewTimelapse()" disabled style="display:none;">View</button>
+                        </div>
+                        <!-- Interval + Smoothing row -->
+                        <div style="display:flex; align-items:center; gap:4px;">
+                            <input type="number" id="timelapseInterval" value="120" min="10" max="600" step="10" class="input-mini" title="Seconds between frames" style="width:44px;">
+                            <span style="font-size:0.62em; color:#6a7a85; white-space:nowrap;">sec</span>
+                            <input type="range" id="timelapseSmoothing" min="0.0" max="0.95" step="0.05" value="0.50"
+                                   style="flex:1; accent-color:#039c9c; height:3px;">
+                            <span id="timelapseSmoothingVal" style="font-size:0.68em; color:#8a9ba8; min-width:26px; text-align:right; font-family:'SF Mono',monospace;">0.50</span>
+                        </div>
                     </div>
                     <div class="recording-status-compact" id="timelapseStatus" style="margin:3px 0;">
                         <span class="status-dot" id="timelapseDot"></span>
@@ -582,18 +597,28 @@
             <!-- Fourth Column: Control Panel -->
             <div class="sidebar sidebar-alp">
 
-                <!-- Telescope Commands — 2×4 grid -->
+                <!-- Telescope Commands — two clusters: CTRL and MODE -->
                 <div class="sidebar-panel">
                     <h3>Telescope</h3>
-                    <div class="button-grid-4col">
-                        <button class="btn btn-warning btn-compact" onclick="telescopeStopView()">Stop</button>
-                        <button class="btn btn-secondary btn-compact" onclick="telescopePark()">Park</button>
-                        <button class="btn btn-secondary btn-compact" onclick="telescopeOpenArm()">Arm</button>
-                        <button class="btn btn-secondary btn-compact" onclick="telescopeAutofocus()">AF</button>
-                        <button class="btn btn-primary btn-compact" onclick="switchToSun()">Solar</button>
-                        <button class="btn btn-primary btn-compact" onclick="switchToMoon()">Lunar</button>
-                        <button class="btn btn-primary btn-compact" onclick="switchToScenery()">Scene</button>
-                        <button class="btn btn-danger btn-compact" onclick="telescopeShutdown()">Off</button>
+                    <!-- CTRL cluster: momentary commands -->
+                    <div class="btn-cluster">
+                        <div class="btn-cluster-label">Ctrl</div>
+                        <div class="button-grid-4col">
+                            <button class="btn btn-warning btn-compact" onclick="telescopeStopView()">Stop</button>
+                            <button class="btn btn-secondary btn-compact" onclick="telescopePark()">Park</button>
+                            <button class="btn btn-secondary btn-compact" onclick="telescopeOpenArm()">Arm</button>
+                            <button class="btn btn-secondary btn-compact" onclick="telescopeAutofocus()">AF</button>
+                        </div>
+                    </div>
+                    <!-- MODE cluster: toggle selection (one active at a time via currentViewingMode) -->
+                    <div class="btn-cluster">
+                        <div class="btn-cluster-label">Mode</div>
+                        <div class="button-grid-4col">
+                            <button id="modeSolarBtn" class="btn btn-secondary btn-compact btn-mode" onclick="switchToSun()">Solar</button>
+                            <button id="modeLunarBtn" class="btn btn-secondary btn-compact btn-mode" onclick="switchToMoon()">Lunar</button>
+                            <button id="modeSceneBtn" class="btn btn-secondary btn-compact btn-mode" onclick="switchToScenery()">Scene</button>
+                            <button class="btn btn-danger btn-compact" onclick="telescopeShutdown()">Off</button>
+                        </div>
                     </div>
                 </div>
 
@@ -647,9 +672,9 @@
                         </div>
                     </div>
                     <div class="alpaca-device-name" id="alpacaDeviceName"></div>
-                    <div class="button-group" style="margin-top:4px;">
-                        <button class="btn btn-compact alpaca-btn-track" onclick="alpacaToggleTracking()" id="alpacaTrackingBtn">Track</button>
-                        <button class="btn btn-compact alpaca-btn-abort" onclick="alpacaAbortSlew()">Abort</button>
+                    <div class="button-grid-2x2" style="margin-top:4px;">
+                        <button class="btn btn-compact alpaca-btn-track btn-mode btn-toggle" onclick="alpacaToggleTracking()" id="alpacaTrackingBtn">Track</button>
+                        <button class="btn btn-compact btn-danger alpaca-btn-abort" onclick="alpacaAbortSlew()">Abort</button>
                     </div>
                 </div>
 
@@ -683,7 +708,7 @@
                                     <input type="number" id="gotoDec" class="input-compact" placeholder="Dec°" step="0.1" min="-90" max="90" style="flex:1;">
                                 </div>
                             </div>
-                            <button class="btn btn-primary btn-compact" style="width:100%;" onclick="gotoExecute()">Go</button>
+                            <button class="btn btn-primary btn-compact" style="width:100%; letter-spacing:1px;" onclick="gotoExecute()">Execute GoTo</button>
                         </div>
                         <!-- D-pad — right side -->
                         <div class="dpad-grid">
@@ -711,34 +736,35 @@
                 <!-- Locations — compact -->
                 <div class="sidebar-panel">
                     <h3>Locations</h3>
-                    <div class="input-row" style="gap:3px; margin-bottom:3px;">
-                        <select id="savedLocations" class="input-compact" style="flex:1;"></select>
+                    <select id="savedLocations" class="input-compact" style="width:100%; margin-bottom:3px;"></select>
+                    <!-- Go / Del / Save as equal-width 3-column cluster -->
+                    <div class="button-grid-3col" style="margin-bottom:3px;">
                         <button class="btn btn-primary btn-compact" onclick="gotoSavedLocation()" title="Go to selected location">Go</button>
                         <button class="btn btn-danger btn-compact" onclick="deleteSelectedLocation()" title="Delete selected location">Del</button>
+                        <button class="btn btn-secondary btn-compact" onclick="saveCurrentLocation()">Save</button>
                     </div>
-                    <div class="input-row" style="gap:3px;">
-                        <input type="text" id="saveLocationName" class="input-compact" placeholder="Name this position" style="flex:1;">
-                        <button class="btn btn-info btn-compact" onclick="saveCurrentLocation()">Save</button>
-                    </div>
+                    <input type="text" id="saveLocationName" class="input-compact" placeholder="Name to save" style="width:100%; box-sizing:border-box;">
                     <div id="locationsStatus" style="font-size:0.68em; color:#6a7a85; margin-top:2px; min-height:12px;"></div>
                 </div>
 
                 <!-- Focus + Camera — merged -->
                 <div class="sidebar-panel">
                     <h3>Focus &amp; Camera</h3>
-                    <!-- Focus row -->
-                    <div style="display:flex; align-items:center; gap:4px; margin-bottom:4px;">
-                        <button class="btn btn-secondary btn-compact" onclick="focusStep(-_focusStepSize)">◀ In</button>
-                        <div class="focus-step-group">
-                            <button class="btn btn-secondary btn-compact focus-step-btn" data-steps="10" onclick="setFocusStepSize(10)">10</button>
-                            <button class="btn btn-secondary btn-compact focus-step-btn" data-steps="50" onclick="setFocusStepSize(50)">50</button>
-                            <button class="btn btn-secondary btn-compact focus-step-btn" data-steps="100" onclick="setFocusStepSize(100)">100</button>
+                    <!-- FOCUS cluster: step-size toggles + momentary In/Out -->
+                    <div class="btn-cluster" style="margin-bottom:4px;">
+                        <div class="btn-cluster-label">Focus Step</div>
+                        <div style="display:flex; align-items:center; gap:3px;">
+                            <button class="btn btn-secondary btn-compact" style="flex:none; padding:4px 6px;" onclick="focusStep(-_focusStepSize)">◀ In</button>
+                            <div class="focus-step-group" style="flex:1;">
+                                <button class="btn btn-secondary btn-compact focus-step-btn btn-toggle" data-steps="10" onclick="setFocusStepSize(10)">10</button>
+                                <button class="btn btn-secondary btn-compact focus-step-btn btn-toggle" data-steps="50" onclick="setFocusStepSize(50)">50</button>
+                                <button class="btn btn-secondary btn-compact focus-step-btn btn-toggle" data-steps="100" onclick="setFocusStepSize(100)">100</button>
+                            </div>
+                            <button class="btn btn-secondary btn-compact" style="flex:none; padding:4px 6px;" onclick="focusStep(_focusStepSize)">Out ▶</button>
                         </div>
-                        <button class="btn btn-secondary btn-compact" onclick="focusStep(_focusStepSize)">Out ▶</button>
                     </div>
-                    <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:4px;">
-                        <span style="font-size:0.68em; color:#6a7a85; font-family:'SF Mono',monospace;">Pos: <span id="focusPos" style="color:#b8e8ff; font-weight:600;">—</span></span>
-                        <button class="btn btn-secondary btn-compact" onclick="telescopeAutofocus()">Autofocus</button>
+                    <div style="font-size:0.68em; color:#6a7a85; font-family:'SF Mono',monospace; margin-bottom:4px;">
+                        Pos: <span id="focusPos" style="color:#b8e8ff; font-weight:600;">—</span>
                     </div>
                     <!-- Camera controls -->
                     <div style="display:flex; align-items:center; gap:6px; margin-bottom:4px;">
@@ -761,9 +787,9 @@
                             <span id="dewPowerVal" style="font-size:0.75em; color:#b8e8ff; min-width:26px; font-family:'SF Mono',monospace;">50%</span>
                         </div>
                     </div>
-                    <div class="button-group">
-                        <button class="btn btn-primary btn-compact" style="flex:1;" onclick="applyCameraSettings()">Apply</button>
-                        <button id="autoExpBtn" class="btn btn-secondary btn-compact" style="flex:1;" onclick="toggleAutoExp()">Auto Exp</button>
+                    <div class="button-grid-2x2">
+                        <button class="btn btn-primary btn-compact" onclick="applyCameraSettings()">Apply</button>
+                        <button id="autoExpBtn" class="btn btn-secondary btn-compact btn-toggle" onclick="toggleAutoExp()">Auto Exp</button>
                     </div>
                 </div>
 
