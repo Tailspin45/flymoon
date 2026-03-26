@@ -373,6 +373,12 @@
                     </div>
                     <div id="detectStats" class="detect-stats" style="display:none"></div>
 
+                    <!-- Screw divider between radar/controls and detection tester -->
+                    <div class="screw-divider">
+                        <span class="screw"></span>
+                        <span class="screw"></span>
+                    </div>
+
                     <!-- Detection Test Harness -->
                     <div id="harnessPanel" class="harness-card">
                         <div class="harness-card-title">Detection Tester</div>
@@ -466,6 +472,7 @@
 
                 <!-- Connection Panel -->
                 <div class="sidebar-panel sidebar-panel-compact">
+                    <span class="screw screw-tl"></span><span class="screw screw-tr"></span><span class="screw screw-bl"></span><span class="screw screw-br"></span>
                     <h3>Connection</h3>
                     <div class="status-indicator">
                         <span class="status-dot" id="statusDot"></span>
@@ -508,6 +515,7 @@
 
                 <!-- Target Selection Panel -->
                 <div class="sidebar-panel">
+                    <span class="screw screw-tl"></span><span class="screw screw-tr"></span><span class="screw screw-bl"></span><span class="screw screw-br"></span>
                     <h3>Target</h3>
                     <div class="target-compact target-button" id="sunStatus" onclick="switchToSun()">
                         <span class="target-icon-text">SUN</span>
@@ -530,6 +538,7 @@
 
                 <!-- Capture Controls Panel -->
                 <div class="sidebar-panel">
+                    <span class="screw screw-tl"></span><span class="screw screw-tr"></span><span class="screw screw-bl"></span><span class="screw screw-br"></span>
                     <h3>Capture</h3>
 
                     <!-- PHOTO / VIDEO cluster: Snap + Rec side by side -->
@@ -591,6 +600,7 @@
 
                 <!-- Telescope Commands — two clusters: CTRL and MODE -->
                 <div class="sidebar-panel">
+                    <span class="screw screw-tl"></span><span class="screw screw-tr"></span><span class="screw screw-bl"></span><span class="screw screw-br"></span>
                     <h3>Telescope</h3>
                     <!-- CTRL cluster: momentary commands -->
                     <div class="btn-cluster">
@@ -672,6 +682,7 @@
 
                 <!-- GoTo + Slew combined -->
                 <div class="sidebar-panel">
+                    <span class="screw screw-tl"></span><span class="screw screw-tr"></span><span class="screw screw-bl"></span><span class="screw screw-br"></span>
                     <h3>GoTo / Slew</h3>
                     <div style="display:flex; gap:8px; align-items:flex-start;">
                         <!-- GoTo inputs — left side -->
@@ -727,6 +738,7 @@
 
                 <!-- Locations — compact -->
                 <div class="sidebar-panel">
+                    <span class="screw screw-tl"></span><span class="screw screw-tr"></span><span class="screw screw-bl"></span><span class="screw screw-br"></span>
                     <h3>Locations</h3>
                     <select id="savedLocations" class="input-compact" style="width:100%; margin-bottom:3px;"></select>
                     <!-- Go / Del / Save as equal-width 3-column cluster -->
@@ -741,6 +753,7 @@
 
                 <!-- Focus + Camera — merged -->
                 <div class="sidebar-panel">
+                    <span class="screw screw-tl"></span><span class="screw screw-tr"></span><span class="screw screw-bl"></span><span class="screw screw-br"></span>
                     <h3>Focus &amp; Camera</h3>
                     <!-- FOCUS cluster: step-size toggles + momentary In/Out -->
                     <div class="btn-cluster" style="margin-bottom:4px;">

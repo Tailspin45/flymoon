@@ -1741,9 +1741,20 @@ canvas.video-thumb-canvas {
 .screw-br { bottom: 5px; right: 5px; }
 
 /* Panels with screws need a little extra horizontal padding so content clears the heads */
-.sidebar-left .sidebar-panel {
+.sidebar-left .sidebar-panel,
+.sidebar-right .sidebar-panel,
+.sidebar-alp .sidebar-panel {
     padding-left: 18px;
     padding-right: 18px;
+}
+
+/* Two-screw horizontal divider (between radar and detection tester) */
+.screw-divider {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 3px 5px;
+    margin: 0 0 2px;
 }
 
 /* Compact auto-capture section */
