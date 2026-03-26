@@ -339,7 +339,7 @@
             <div class="sidebar sidebar-left">
                 <!-- Transit Auto-Capture Settings -->
                 <div class="sidebar-panel">
-                    <h3>🚨 Transit Auto-Capture</h3>
+                    <h3>Auto-Capture</h3>
                     <div class="setting-item">
                         <label class="toggle-label">
                             <input type="checkbox" id="autoCaptureToggle" checked>
@@ -348,7 +348,7 @@
                         </label>
                     </div>
                     <div class="setting-info">
-                        Automatically stop any recording and capture transits when detected within 15 seconds.
+                        Auto-records on transit detection within 15 s.
                     </div>
                 </div>
 
@@ -356,7 +356,7 @@
                 <div class="sidebar-panel" id="transitPanel">
                     <!-- Eclipse watch/warning/active card — shown when eclipse is imminent/active -->
                     <div id="eclipseCard" style="display:none"></div>
-                    <h3>✈️ Upcoming Transits <span class="panel-subtitle">(Prediction)</span></h3>
+                    <h3>Upcoming Transits <span class="panel-subtitle">(Prediction)</span></h3>
                     <div id="transitList" class="transit-list">
                         <p class="empty-state">No transits detected</p>
                     </div>
@@ -364,25 +364,21 @@
 
                 <!-- Real-time Transit Detection -->
                 <div class="sidebar-panel" id="detectPanel">
-                    <h3>🎯 Live Detection</h3>
+                    <h3>Live Detection</h3>
                     <div id="detectIndicator" class="detect-indicator detect-idle">
                         <span>Idle</span>
                     </div>
                     <div id="detectStats" class="detect-stats" style="display:none"></div>
-                    <button id="detectToggleBtn" class="btn btn-danger btn-compact" onclick="toggleDetection()">⏹ Stop Detection</button>
+                    <button id="detectToggleBtn" class="btn btn-danger btn-compact" style="width:100%;margin-bottom:4px;" onclick="toggleDetection()">Stop Detection</button>
 
                     <!-- Detection Test Harness -->
                     <div id="harnessPanel" class="harness-card">
-                        <div class="harness-card-title">🧪 Detection Tester</div>
+                        <div class="harness-card-title">Detection Tester</div>
                         <div class="harness-mode-row">
-                            <label for="harnessMode"
-                                   class="harness-mode-label"
-                                   title="Choose how strict the analyzer should be for tester runs">
-                                Mode
-                            </label>
-                            <select id="harnessMode"
-                                    class="harness-mode-select"
-                                    title="Default = production-like thresholds. Sensitive = lower speed/travel gates and no static filtering, better for slow birds/balloons."
+                            <label for="harnessMode" class="harness-mode-label"
+                                   title="Choose how strict the analyzer should be for tester runs">Mode</label>
+                            <select id="harnessMode" class="harness-mode-select"
+                                    title="Default = production-like thresholds. Sensitive = lower speed/travel gates, better for slow birds/balloons."
                                     aria-label="Detection tester mode: default or sensitive">
                                 <option value="default" selected>Default</option>
                                 <option value="sensitive">Sensitive</option>
@@ -390,23 +386,17 @@
                         </div>
                         <div class="harness-buttons">
                             <button class="btn btn-secondary btn-compact"
-                                    title="Inject a synthetic dark blob across a generated solar/lunar disc and check if the analyzer detects it"
-                                    aria-label="Inject a synthetic dark blob across a generated solar or lunar disc and check if the analyzer detects it"
-                                    onclick="runHarnessInject()">
-                                💉 Inject
-                            </button>
+                                    title="Inject a synthetic dark blob across a generated solar/lunar disc"
+                                    aria-label="Inject synthetic transit blob"
+                                    onclick="runHarnessInject()">Inject</button>
                             <button class="btn btn-secondary btn-compact"
-                                    title="Sweep blob size × speed combinations to map detection sensitivity boundaries (takes ~2 min)"
-                                    aria-label="Sweep blob size by speed combinations to map detection sensitivity boundaries"
-                                    onclick="runHarnessSweep()">
-                                📊 Sweep
-                            </button>
+                                    title="Sweep blob size x speed combinations (takes ~2 min)"
+                                    aria-label="Sweep sensitivity boundaries"
+                                    onclick="runHarnessSweep()">Sweep</button>
                             <button class="btn btn-secondary btn-compact"
-                                    title="Run the analyzer on all captured MP4s to check for missed transits"
-                                    aria-label="Run the analyzer on all captured MP4 files to check for missed transits"
-                                    onclick="runHarnessValidate()">
-                                ✅ Validate
-                            </button>
+                                    title="Run analyzer on all captured MP4s for missed transits"
+                                    aria-label="Validate captured files"
+                                    onclick="runHarnessValidate()">Validate</button>
                         </div>
                         <div id="harnessStatus" class="harness-status" style="display:none"></div>
                     </div>
@@ -415,12 +405,12 @@
                         <p class="empty-state">No detections yet</p>
                     </div>
 
-                    <!-- D4: Detection event history from CSV log -->
+                    <!-- Detection event history -->
                     <button class="btn btn-secondary btn-compact"
-                            style="width:100%;margin-top:4px;font-size:0.8em;"
+                            style="width:100%;margin-top:3px;"
                             onclick="toggleDetectionEventHistory()"
                             title="View historical detection events with confidence scores and prediction match status">
-                        📋 Event History (7 days)
+                        Event History (7 days)
                     </button>
                 </div>
             </div>

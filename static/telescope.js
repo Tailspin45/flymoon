@@ -6477,33 +6477,31 @@ function ensureTransitRadar() {
     if (!card) {
         card = document.createElement('div');
         card.id = 'transitRadarCard';
-        card.style.cssText =
-            'background:#060d15;border:1px solid rgba(0,255,80,0.15);border-radius:8px;' +
-            'padding:8px 10px 6px;margin-bottom:8px;';
+        // Styling applied via #transitRadarCard in telescope.css (edge-to-edge dark CRT inset)
 
+        // NASA console header row: engraved label plate + keycap mode buttons
         card.innerHTML = `
             <div style="display:flex;justify-content:space-between;align-items:center;
-                        margin-bottom:6px;">
-                <span style="font-size:0.72em;font-weight:600;color:#2a4a3a;
-                             letter-spacing:.07em;text-transform:uppercase;">
-                    ◎ Transit Radar
+                        padding:0 6px;margin-bottom:4px;">
+                <span style="font-size:0.63em;font-weight:700;color:#9AA0A8;
+                             letter-spacing:2.2px;text-transform:uppercase;
+                             font-family:'SF Mono','Menlo',monospace;">
+                    Transit Radar
                 </span>
-                <div style="display:flex;gap:4px;">
+                <div style="display:flex;gap:2px;">
                     <button id="radarModeDefault" title="Default mode: current position only"
-                        style="font-size:0.68em;padding:2px 8px;border-radius:4px;
-                               background:rgba(0,255,80,0.18);border:1px solid rgba(0,255,80,0.4);
-                               color:#7fffb0;cursor:pointer;">Default</button>
+                        class="btn btn-compact btn-toggle"
+                        style="min-height:18px;padding:2px 7px;font-size:0.62em;">Default</button>
                     <button id="radarModeEnhanced" title="Enhanced mode: projects trajectory forward ${RADAR_PREDICT_HORIZON_S}s"
-                        style="font-size:0.68em;padding:2px 8px;border-radius:4px;
-                               background:transparent;border:1px solid rgba(0,255,80,0.2);
-                               color:#3a5a4a;cursor:pointer;">Enhanced</button>
+                        class="btn btn-compact btn-toggle"
+                        style="min-height:18px;padding:2px 7px;font-size:0.62em;">Enhanced</button>
                 </div>
             </div>
             <div id="upcomingTransitsList"
-                 style="font-size:0.76em;color:#c8ffd0;margin-bottom:6px;min-height:18px;"></div>
+                 style="font-size:0.72em;color:#80C888;padding:0 6px;margin-bottom:3px;min-height:14px;"></div>
             <canvas id="radarCanvas"
-                    style="display:block;width:100%;aspect-ratio:1;border-radius:4px;
-                           border:1px solid rgba(0,255,80,0.08);"></canvas>
+                    style="display:block;width:100%;aspect-ratio:1;
+                           border-top:1px solid rgba(0,255,80,0.06);"></canvas>
         `;
 
         if (detectPanel.firstChild) {
@@ -6521,22 +6519,13 @@ function ensureTransitRadar() {
         new ResizeObserver(() => _resizeRadarCanvas()).observe(card);
     }
 
-    // mode buttons
+    // mode buttons — use .is-active keycap (locked-down = selected mode)
     const btnDef = card.querySelector('#radarModeDefault');
     const btnEnh = card.querySelector('#radarModeEnhanced');
     function _applyMode(m) {
         _radarMode = m;
-        if (m === 'default') {
-            btnDef.style.background = 'rgba(0,255,80,0.18)';
-            btnDef.style.color = '#7fffb0';
-            btnEnh.style.background = 'transparent';
-            btnEnh.style.color = '#3a5a4a';
-        } else {
-            btnEnh.style.background = 'rgba(0,255,80,0.18)';
-            btnEnh.style.color = '#7fffb0';
-            btnDef.style.background = 'transparent';
-            btnDef.style.color = '#3a5a4a';
-        }
+        btnDef.classList.toggle('is-active', m === 'default');
+        btnEnh.classList.toggle('is-active', m === 'enhanced');
     }
     btnDef.onclick = () => _applyMode('default');
     btnEnh.onclick = () => _applyMode('enhanced');
