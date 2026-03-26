@@ -339,6 +339,7 @@
             <div class="sidebar sidebar-left">
                 <!-- Transit Auto-Capture Settings -->
                 <div class="sidebar-panel">
+                    <span class="screw screw-tl"></span><span class="screw screw-tr"></span><span class="screw screw-bl"></span><span class="screw screw-br"></span>
                     <h3>Auto-Capture</h3>
                     <div style="display:flex;align-items:center;gap:6px;">
                         <input type="checkbox" id="autoCaptureToggle" checked style="display:none;">
@@ -350,6 +351,7 @@
 
                 <!-- Transit Notifications -->
                 <div class="sidebar-panel" id="transitPanel">
+                    <span class="screw screw-tl"></span><span class="screw screw-tr"></span><span class="screw screw-bl"></span><span class="screw screw-br"></span>
                     <!-- Eclipse watch/warning/active card — shown when eclipse is imminent/active -->
                     <div id="eclipseCard" style="display:none"></div>
                     <h3>Upcoming Transits <span class="panel-subtitle">(Prediction)</span></h3>
@@ -360,6 +362,7 @@
 
                 <!-- Real-time Transit Detection -->
                 <div class="sidebar-panel" id="detectPanel">
+                    <span class="screw screw-tl"></span><span class="screw screw-tr"></span><span class="screw screw-bl"></span><span class="screw screw-br"></span>
                     <h3>Live Detection</h3>
                     <!-- Indicator + stop + tuning toggle all in one compact row -->
                     <div id="detectControls" class="detect-controls-row">
@@ -406,7 +409,7 @@
 
                     <!-- Detection event history -->
                     <button class="btn btn-secondary btn-compact"
-                            style="width:100%;margin-top:3px;"
+                            style="width:100%;margin-top:3px;font-size:0.7em;padding:2px 6px;"
                             onclick="toggleDetectionEventHistory()"
                             title="View historical detection events with confidence scores and prediction match status">
                         Event History (7 days)
