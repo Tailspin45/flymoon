@@ -21,25 +21,30 @@
 
 /* Sidebar Common Styles */
 .sidebar {
-    background: #1a1a1a;
-    border-right: 1px solid #2a2a2a;
+    background: #111114;
+    border-right: 1px solid #1e1e24;
     overflow-y: auto;
     overflow-x: hidden;
+    scrollbar-width: thin;
+    scrollbar-color: rgba(3,156,156,0.3) transparent;
 }
 
 .sidebar-right {
     border-right: none;
-    border-left: 1px solid #2a2a2a;
+    border-left: 1px solid #1e1e24;
+    background: linear-gradient(180deg, #111114 0%, #0d0d10 100%);
 }
 
 .sidebar-alp {
     border-right: none;
-    border-left: 1px solid #2a2a2a;
+    border-left: 1px solid #1e1e24;
+    background: linear-gradient(180deg, #111114 0%, #0d0d10 100%);
 }
 
 .sidebar-panel {
-    padding: 10px 12px;
-    border-bottom: 1px solid #2a2a2a;
+    padding: 6px 10px;
+    border-bottom: 1px solid #1a1a20;
+    position: relative;
 }
 
 .sidebar-panel:last-child {
@@ -47,16 +52,31 @@
 }
 
 .sidebar-panel-compact {
-    padding: 8px 12px;
+    padding: 5px 10px;
 }
 
 .sidebar-panel h3 {
-    margin: 0 0 8px 0;
-    color: #039c9c;
-    font-size: 0.95em;
-    font-weight: 600;
+    margin: 0 0 5px 0;
+    color: #0cb8b8;
+    font-size: 0.68em;
+    font-weight: 700;
     text-transform: uppercase;
-    letter-spacing: 0.5px;
+    letter-spacing: 1.8px;
+    padding-bottom: 4px;
+    border-bottom: 1px solid rgba(3,156,156,0.12);
+    display: flex;
+    align-items: center;
+    gap: 5px;
+}
+
+.sidebar-panel h3::before {
+    content: '';
+    display: inline-block;
+    width: 3px;
+    height: 10px;
+    background: #039c9c;
+    border-radius: 1px;
+    flex-shrink: 0;
 }
 
 /* Center Preview Area */
@@ -294,7 +314,7 @@
 
 /* Transit Auto-Capture Settings */
 .setting-item {
-    margin-bottom: 12px;
+    margin-bottom: 6px;
 }
 
 .toggle-label {
@@ -340,14 +360,14 @@
 }
 
 .toggle-text {
-    color: #ccc;
-    font-size: 0.9em;
+    color: #b0b4b8;
+    font-size: 0.85em;
     font-weight: 500;
 }
 
 .setting-info {
-    font-size: 0.8em;
-    color: #888;
+    font-size: 0.78em;
+    color: #6a7a85;
     line-height: 1.5;
     margin-top: 8px;
 }
@@ -423,10 +443,16 @@
 .status-indicator {
     display: flex;
     align-items: center;
-    gap: 8px;
-    margin-bottom: 12px;
-    font-size: 0.9em;
-    font-weight: 500;
+    gap: 6px;
+    margin-bottom: 6px;
+    padding: 4px 8px;
+    background: rgba(0,0,0,0.35);
+    border: 1px solid #1a1a20;
+    border-radius: 3px;
+    font-size: 0.78em;
+    font-weight: 600;
+    color: #8a9ba8;
+    letter-spacing: 0.3px;
 }
 
 .status-dot {
@@ -465,100 +491,127 @@
 
 .button-group {
     display: flex;
-    gap: 6px;
+    gap: 3px;
 }
 
-/* 2×2 connection button grid */
+/* Button grids — uniform Apollo-style tight spacing */
 .button-grid-2x2 {
     display: grid;
     grid-template-columns: 1fr 1fr;
-    gap: 6px;
+    gap: 3px;
 }
+
+.button-grid-3col {
+    display: grid;
+    grid-template-columns: 1fr 1fr 1fr;
+    gap: 3px;
+}
+
+.button-grid-4col {
+    display: grid;
+    grid-template-columns: 1fr 1fr 1fr 1fr;
+    gap: 3px;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   Mission Control Buttons — uniform dark charcoal, Apollo console style
+   Only danger/warning get color; everything else is the same dark gray.
+   ═══════════════════════════════════════════════════════════════════════════ */
 
 .btn {
     flex: 1;
-    padding: 8px 12px;
-    border: none;
-    border-radius: 4px;
-    font-size: 0.85em;
-    font-weight: 600;
+    padding: 6px 4px;
+    border: 1px solid #333338;
+    border-radius: 2px;
+    font-size: 0.72em;
+    font-weight: 700;
     cursor: pointer;
-    transition: all 0.2s;
+    transition: filter 0.08s ease, transform 0.06s ease;
     white-space: nowrap;
+    letter-spacing: 0.6px;
+    text-transform: uppercase;
+    text-align: center;
+    position: relative;
+    min-height: 26px;
+    /* Uniform dark charcoal — same for all non-danger buttons */
+    background: #232328;
+    color: #c0c4c8;
+    box-shadow: 0 1px 2px rgba(0,0,0,0.5);
 }
 
 .btn:disabled {
-    opacity: 0.4;
+    opacity: 0.28;
     cursor: not-allowed;
+    filter: none;
+    transform: none;
 }
+
+.btn:hover:not(:disabled) {
+    background: #2e2e34;
+    color: #e0e2e4;
+}
+
+.btn:active:not(:disabled) {
+    transform: translateY(1px);
+    background: #1a1a1e;
+    box-shadow: 0 0 1px rgba(0,0,0,0.4);
+}
+
+/* ── All standard variants are the same charcoal ── */
 
 .btn-primary {
-    background: #039c9c;
-    color: white;
-}
-
-.btn-primary:hover:not(:disabled) {
-    background: #027a7a;
+    background: #232328;
+    color: #c0c4c8;
+    border-color: #333338;
 }
 
 .btn-secondary {
-    background: rgba(255, 255, 255, 0.08);
-    color: #aaa;
-    border: 1px solid #333;
-}
-
-.btn-secondary:hover:not(:disabled) {
-    background: rgba(255, 255, 255, 0.12);
-    border-color: #444;
+    background: #232328;
+    color: #c0c4c8;
+    border-color: #333338;
 }
 
 .btn-info {
-    background: #0066cc;
-    color: white;
+    background: #232328;
+    color: #c0c4c8;
+    border-color: #333338;
 }
 
-.btn-info:hover:not(:disabled) {
-    background: #0052a3;
-}
+/* ── Only warning & danger get color — draws the eye to critical actions ── */
 
 .btn-warning {
-    background: #ff9900;
-    color: white;
-}
-
-.btn-warning:hover:not(:disabled) {
-    background: #cc7a00;
+    background: #5a3a08;
+    color: #f0dca0;
+    border-color: #6a4810;
 }
 
 .btn-danger {
-    background: #cc0000;
-    color: white;
-}
-
-.btn-danger:hover:not(:disabled) {
-    background: #aa0000;
+    background: #5a1414;
+    color: #f0c0c0;
+    border-color: #6e1c1c;
 }
 
 .btn-compact {
-    padding: 6px 10px;
-    font-size: 0.8em;
+    padding: 5px 4px;
+    font-size: 0.68em;
+    min-height: 24px;
 }
 
 /* Compact Target Display */
 .target-compact {
     display: flex;
     align-items: center;
-    gap: 8px;
-    padding: 6px;
-    background: rgba(0, 0, 0, 0.3);
-    border: 1px solid #333;
-    border-radius: 4px;
-    margin-bottom: 5px;
-    transition: all 0.2s;
+    gap: 6px;
+    padding: 5px 8px;
+    background: rgba(0, 0, 0, 0.35);
+    border: 1px solid #222228;
+    border-radius: 3px;
+    margin-bottom: 4px;
+    transition: all 0.15s ease;
 }
 
 .target-compact:hover {
-    border-color: #444;
+    border-color: #333;
 }
 
 .target-button {
@@ -566,16 +619,17 @@
 }
 
 .target-button:hover {
-    background: rgba(3, 156, 156, 0.1);
-    border-color: #039c9c;
+    background: rgba(3, 156, 156, 0.08);
+    border-color: rgba(3,156,156,0.4);
+    box-shadow: 0 0 8px rgba(3,156,156,0.08);
 }
 
 .target-button:active {
-    background: rgba(3, 156, 156, 0.2);
+    background: rgba(3, 156, 156, 0.15);
 }
 
 .target-icon {
-    font-size: 1.5em;
+    font-size: 1.2em;
 }
 
 .target-info {
@@ -585,42 +639,125 @@
 
 .target-name {
     font-weight: 600;
-    font-size: 0.85em;
-    color: #ccc;
+    font-size: 0.82em;
+    color: #c8ccd0;
+    letter-spacing: 0.3px;
 }
 
 .target-coords {
-    font-size: 0.75em;
-    color: #666;
+    font-size: 0.72em;
+    color: #7a8a95;
     margin-top: 2px;
+    font-family: 'SF Mono', 'Menlo', 'Consolas', monospace;
+    font-variant-numeric: tabular-nums;
 }
 
 .visibility-badge {
     padding: 3px 8px;
-    border-radius: 10px;
-    font-size: 0.7em;
-    font-weight: 600;
+    border-radius: 3px;
+    font-size: 0.65em;
+    font-weight: 700;
     text-transform: uppercase;
     white-space: nowrap;
+    letter-spacing: 0.8px;
 }
 
 .visibility-badge.visible {
-    background: rgba(50, 205, 50, 0.2);
-    color: #32CD32;
-    border: 1px solid #32CD32;
+    background: rgba(50, 205, 50, 0.12);
+    color: #4de04d;
+    border: 1px solid rgba(50,205,50,0.3);
 }
 
 .visibility-badge.hidden {
-    background: rgba(100, 100, 100, 0.2);
+    background: rgba(100, 100, 100, 0.12);
     color: #666;
-    border: 1px solid #444;
+    border: 1px solid #333;
 }
 
-/* Compact Capture Controls */
+/* ── Capture row — single-line capture controls ──────── */
+.capture-row {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    margin-bottom: 4px;
+}
+
+.capture-row-label {
+    font-size: 0.68em;
+    font-weight: 700;
+    color: #8a9ba8;
+    letter-spacing: 0.8px;
+    text-transform: uppercase;
+    min-width: 50px;
+}
+
+.input-mini {
+    width: 48px;
+    padding: 3px 5px;
+    border: 1px solid #222228;
+    border-radius: 3px;
+    background: #08080c;
+    color: #d0d4d8;
+    font-size: 0.72em;
+    font-family: 'SF Mono', 'Menlo', 'Consolas', monospace;
+    text-align: center;
+}
+
+.input-mini:focus {
+    outline: none;
+    border-color: #039c9c;
+    box-shadow: 0 0 0 1px rgba(3,156,156,0.15);
+}
+
+/* ── D-pad — joystick grid ──────────────────────────── */
+.dpad-grid {
+    display: grid;
+    grid-template-columns: 26px 26px 26px;
+    gap: 3px;
+    flex-shrink: 0;
+}
+
+.btn-dpad {
+    width: 26px;
+    height: 26px;
+    min-height: 26px;
+    padding: 0;
+    font-size: 0.68em;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex: none;
+    border-radius: 2px;
+}
+
+.btn-dpad-stop {
+    font-size: 0.58em;
+}
+
+/* ── Focus step button group ─────────────────────────── */
+.focus-step-group {
+    display: flex;
+    gap: 2px;
+}
+
+.focus-step-group .btn {
+    flex: none;
+    min-width: 28px;
+    padding: 4px 6px;
+}
+
+/* ── Eclipse simulation button — same charcoal as others ── */
+.btn-eclipse {
+    background: #232328;
+    color: #c0c4c8;
+    border-color: #333338;
+}
+
+/* Legacy capture-compact (kept for left sidebar) */
 .capture-compact {
-    margin-bottom: 10px;
-    padding-bottom: 10px;
-    border-bottom: 1px solid #2a2a2a;
+    margin-bottom: 8px;
+    padding-bottom: 8px;
+    border-bottom: 1px solid rgba(255,255,255,0.04);
 }
 
 .capture-compact:last-child {
@@ -630,55 +767,63 @@
 }
 
 .capture-header-compact {
-    font-size: 0.85em;
-    font-weight: 600;
-    color: #aaa;
-    margin-bottom: 8px;
+    font-size: 0.72em;
+    font-weight: 700;
+    color: #8a9ba8;
+    margin-bottom: 6px;
+    letter-spacing: 0.8px;
+    text-transform: uppercase;
 }
 
 .input-row {
     display: flex;
-    gap: 6px;
-    margin-bottom: 8px;
+    gap: 4px;
+    margin-bottom: 4px;
 }
 
 .input-labels-row {
-    margin-top: -6px;
-    margin-bottom: 8px;
+    margin-top: -3px;
+    margin-bottom: 4px;
 }
 
 .input-label {
     flex: 1;
     text-align: center;
-    font-size: 0.7em;
-    color: #888;
+    font-size: 0.65em;
+    color: #6a7a85;
+    letter-spacing: 0.3px;
 }
 
 .input-compact {
     flex: 1;
-    padding: 6px 8px;
-    border: 1px solid #333;
-    border-radius: 4px;
-    background: #0a0a0a;
-    color: white;
-    font-size: 0.8em;
+    padding: 4px 6px;
+    border: 1px solid #222228;
+    border-radius: 3px;
+    background: #08080c;
+    color: #d0d4d8;
+    font-size: 0.75em;
+    font-family: 'SF Mono', 'Menlo', 'Consolas', monospace;
+    transition: border-color 0.15s ease;
 }
 
 .input-compact:focus {
     outline: none;
     border-color: #039c9c;
+    box-shadow: 0 0 0 1px rgba(3,156,156,0.15);
 }
 
 .recording-status-compact {
     display: flex;
     align-items: center;
-    gap: 6px;
-    padding: 6px 8px;
-    background: rgba(0, 0, 0, 0.3);
-    border-radius: 4px;
-    font-size: 0.8em;
+    gap: 5px;
+    padding: 3px 6px;
+    background: rgba(0, 0, 0, 0.35);
+    border: 1px solid #1a1a20;
+    border-radius: 3px;
+    font-size: 0.72em;
     font-variant-numeric: tabular-nums;
-    margin-bottom: 8px;
+    margin-bottom: 4px;
+    font-family: 'SF Mono', 'Menlo', 'Consolas', monospace;
 }
 
 /* Warning Box */
@@ -698,9 +843,9 @@
 
 /* Bottom Filmstrip */
 .filmstrip {
-    background: #1a1a1a;
-    border-top: 1px solid #2a2a2a;
-    height: 170px;
+    background: #111114;
+    border-top: 1px solid #1e1e24;
+    height: 140px;
     flex-shrink: 0;
     display: flex;
     flex-direction: column;
@@ -1714,15 +1859,15 @@ canvas.video-thumb-canvas {
     flex-wrap: wrap;
     gap: 4px;
     padding: 6px 10px;
-    background: #0d1117;
-    border-bottom: 1px solid #2a2a2a;
+    background: #0c0e12;
+    border-bottom: 1px solid #1a1a20;
     font-size: 0.76em;
 }
 
 
 .radio-label {
-    font-size: 0.85em;
-    color: #ccc;
+    font-size: 0.82em;
+    color: #99a0a8;
     cursor: pointer;
     display: flex;
     align-items: center;
@@ -1730,27 +1875,299 @@ canvas.video-thumb-canvas {
 }
 
 .radio-label input[type="radio"] {
-    accent-color: #4da6ff;
+    accent-color: #039c9c;
 }
 
 /* Named-location select */
 #savedLocations {
-    background: #1a1a1a;
-    color: #ddd;
-    border: 1px solid #3a3a3a;
-    border-radius: 4px;
-    padding: 3px 6px;
+    background: #08080c;
+    color: #c0c4c8;
+    border: 1px solid #222228;
+    border-radius: 3px;
+    padding: 4px 6px;
     font-size: 0.82em;
 }
 
 #savedLocations option {
-    background: #1a1a1a;
+    background: #111114;
 }
 
 /* Camera settings slider */
 .setting-slider {
     flex: 1;
-    accent-color: #4da6ff;
+    accent-color: #039c9c;
     height: 4px;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   ALPACA Telemetry Panel — instrument readout aesthetic
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+.alpaca-telemetry {
+    background:
+        linear-gradient(180deg, rgba(3,156,156,0.05) 0%, transparent 40%),
+        #0c0e12;
+    border-bottom: 1px solid #1e3a3a;
+    position: relative;
+    overflow: hidden;
+    border-top: 2px solid rgba(3,156,156,0.2);
+}
+
+/* subtle crosshair grid overlay */
+.alpaca-telemetry::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background:
+        repeating-linear-gradient(0deg,   transparent, transparent 23px, rgba(3,156,156,0.04) 23px, rgba(3,156,156,0.04) 24px),
+        repeating-linear-gradient(90deg,  transparent, transparent 23px, rgba(3,156,156,0.04) 23px, rgba(3,156,156,0.04) 24px);
+    pointer-events: none;
+    z-index: 0;
+}
+
+.alpaca-telemetry > * {
+    position: relative;
+    z-index: 1;
+}
+
+/* ── Header ────────────────────────────────────────── */
+.alpaca-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 8px;
+}
+
+.alpaca-header h3 {
+    margin: 0;
+    font-size: 0.82em;
+    font-weight: 700;
+    letter-spacing: 2px;
+    color: #0cb8b8;
+    text-transform: uppercase;
+    border-bottom: none;
+    padding-bottom: 0;
+}
+
+.alpaca-header h3::before {
+    display: none;
+}
+
+.alpaca-status-badge {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    background: rgba(3,156,156,0.08);
+    border: 1px solid rgba(3,156,156,0.2);
+    border-radius: 3px;
+    padding: 2px 8px 2px 6px;
+    font-size: 0.62em;
+    font-weight: 700;
+    letter-spacing: 1.5px;
+    color: #0cb8b8;
+    text-transform: uppercase;
+}
+
+.alpaca-pulse {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: #039c9c;
+    box-shadow: 0 0 6px #039c9c;
+    animation: alpacaPulse 2s ease-in-out infinite;
+}
+
+@keyframes alpacaPulse {
+    0%, 100% { opacity: 1; box-shadow: 0 0 4px #039c9c; }
+    50%      { opacity: 0.4; box-shadow: 0 0 1px #039c9c; }
+}
+
+/* ── Coordinate Grid ──────────────────────────────── */
+.alpaca-coords {
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+    background: rgba(3,156,156,0.06);
+    border: 1px solid rgba(3,156,156,0.15);
+    border-radius: 3px;
+    overflow: hidden;
+    margin-bottom: 8px;
+}
+
+.alpaca-coord-row {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 1px;
+}
+
+.alpaca-coord-cell {
+    display: flex;
+    align-items: baseline;
+    gap: 4px;
+    padding: 6px 8px;
+    background: rgba(0,0,0,0.55);
+}
+
+.alpaca-coord-label {
+    font-size: 0.6em;
+    font-weight: 700;
+    letter-spacing: 1.5px;
+    color: #8a9ba8;
+    min-width: 22px;
+    text-transform: uppercase;
+}
+
+.alpaca-coord-value {
+    font-size: 0.92em;
+    font-weight: 600;
+    color: #b8e8ff;
+    font-variant-numeric: tabular-nums;
+    font-family: 'SF Mono', 'Menlo', 'Consolas', monospace;
+    text-shadow: 0 0 8px rgba(184,232,255,0.15);
+}
+
+.alpaca-coord-unit {
+    font-size: 0.6em;
+    color: #7a8a95;
+    font-weight: 500;
+}
+
+/* ── State Chips ──────────────────────────────────── */
+.alpaca-state-row {
+    display: flex;
+    gap: 4px;
+    margin-bottom: 6px;
+}
+
+.alpaca-state-chip {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 3px;
+    padding: 4px 0;
+    border-radius: 3px;
+    font-size: 0.62em;
+    font-weight: 700;
+    letter-spacing: 1px;
+    text-transform: uppercase;
+    color: #556068;
+    background: rgba(255,255,255,0.03);
+    border: 1px solid rgba(255,255,255,0.06);
+    transition: all 0.3s ease;
+}
+
+.alpaca-state-chip.active {
+    color: #039c9c;
+    background: rgba(3,156,156,0.08);
+    border-color: rgba(3,156,156,0.25);
+}
+
+.alpaca-state-chip.warn {
+    color: #e8a020;
+    background: rgba(232,160,32,0.08);
+    border-color: rgba(232,160,32,0.2);
+}
+
+.alpaca-state-chip.alert {
+    color: #cc4444;
+    background: rgba(204,68,68,0.08);
+    border-color: rgba(204,68,68,0.2);
+    animation: chipFlash 1s ease-in-out infinite;
+}
+
+@keyframes chipFlash {
+    0%, 100% { opacity: 1; }
+    50%      { opacity: 0.6; }
+}
+
+.alpaca-state-icon {
+    font-size: 0.9em;
+    line-height: 1;
+}
+
+/* ── Device Name ──────────────────────────────────── */
+.alpaca-device-name {
+    font-size: 0.6em;
+    color: #6a7a85;
+    letter-spacing: 0.5px;
+    text-align: center;
+    padding: 2px 0 0;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+/* ── Buttons ──────────────────────────────────────── */
+.alpaca-btn-track {
+    background: #232328;
+    color: #c0c4c8;
+    border-color: #333338;
+}
+
+.alpaca-btn-abort {
+    background: #5a1414;
+    color: #f0c0c0;
+    border-color: #6e1c1c;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   Right Sidebar Refinements — setting labels, camera, focus step buttons
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+.setting-label {
+    font-size: 0.72em;
+    font-weight: 600;
+    color: #8a9ba8;
+    letter-spacing: 0.5px;
+    text-transform: uppercase;
+    margin-bottom: 4px;
+    display: block;
+}
+
+/* Camera / capture value readouts */
+.sidebar-right #gainVal,
+.sidebar-right #dewPowerVal,
+.sidebar-alp #gainVal,
+.sidebar-alp #dewPowerVal,
+.sidebar-alp #focusPos {
+    font-family: 'SF Mono', 'Menlo', 'Consolas', monospace;
+    font-variant-numeric: tabular-nums;
+}
+
+/* Focus step button active highlight */
+.focus-step-btn {
+    font-family: 'SF Mono', 'Menlo', 'Consolas', monospace;
+    font-variant-numeric: tabular-nums;
+}
+
+/* Camera checkbox labels */
+.sidebar-alp .setting-item label,
+.sidebar-right .setting-item label {
+    color: #99a0a8;
+    font-size: 0.82em;
+}
+
+/* Scope panel pointing readout — monospace values */
+.sidebar-alp .sidebar-panel [style*="color:#9cd9ff"],
+.sidebar-alp .sidebar-panel [style*="color:#b8e8ff"] {
+    font-family: 'SF Mono', 'Menlo', 'Consolas', monospace;
+    font-variant-numeric: tabular-nums;
+}
+
+/* Eclipse simulation select */
+.sim-eclipse-select {
+    background: #08080c;
+    color: #c0c4c8;
+    border: 1px solid #222228;
+    border-radius: 3px;
+    padding: 4px 6px;
+    font-size: 0.82em;
+    width: 100%;
+}
+
+.sim-eclipse-check {
+    font-size: 0.8em;
+    color: #8a9ba8;
 }
 

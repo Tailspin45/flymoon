@@ -1618,8 +1618,8 @@ function setFocusStepSize(size) {
     _focusStepSize = size;
     document.querySelectorAll('.focus-step-btn').forEach(btn => {
         const active = parseInt(btn.dataset.steps) === size;
-        btn.style.borderColor = active ? '#2dd4bf' : '';
-        btn.style.background  = active ? 'rgba(45,212,191,0.15)' : '';
+        btn.style.borderColor = active ? '#888' : '';
+        btn.style.background  = active ? '#333338' : '';
     });
 }
 
@@ -6581,11 +6581,6 @@ function _updateAlpacaPanel(data) {
     }
 
     panel.style.display = '';
-    const dot = document.getElementById('alpacaStatusDot');
-    if (dot) {
-        dot.style.background = '#44cc44';
-        dot.title = 'ALPACA connected';
-    }
 
     const pos = data.position || {};
     const state = data.state || {};
@@ -6593,6 +6588,7 @@ function _updateAlpacaPanel(data) {
 
     const fmt = (v, d) => v !== undefined && v !== null ? Number(v).toFixed(d) : '—';
 
+    // Coordinate values
     const ra = document.getElementById('alpacaRA');
     const dec = document.getElementById('alpacaDec');
     const alt = document.getElementById('alpacaAlt');
@@ -6608,26 +6604,31 @@ function _updateAlpacaPanel(data) {
     if (scopeAlt && pos.alt != null) scopeAlt.textContent = fmt(pos.alt, 1);
     if (scopeAz && pos.az != null) scopeAz.textContent = fmt(pos.az, 1);
 
+    // State chips — apply active/warn/alert classes
     _alpacaTracking = state.tracking || false;
-    const trackEl = document.getElementById('alpacaTracking');
-    const slewEl = document.getElementById('alpacaSlewing');
-    const parkEl = document.getElementById('alpacaParked');
-    if (trackEl) {
-        trackEl.textContent = state.tracking ? 'ON' : 'OFF';
-        trackEl.style.color = state.tracking ? '#44cc44' : '#ff6666';
+
+    const trackChip = document.getElementById('alpacaTrackingChip');
+    const slewChip = document.getElementById('alpacaSlewingChip');
+    const parkChip = document.getElementById('alpacaParkedChip');
+
+    if (trackChip) {
+        trackChip.classList.toggle('active', !!state.tracking);
+        trackChip.classList.remove('warn', 'alert');
     }
-    if (slewEl) {
-        slewEl.textContent = state.slewing ? 'YES' : 'no';
-        slewEl.style.color = state.slewing ? '#ffaa00' : '#888';
+    if (slewChip) {
+        slewChip.classList.remove('active', 'warn', 'alert');
+        if (state.slewing) slewChip.classList.add('warn');
     }
-    if (parkEl) {
-        parkEl.textContent = state.parked ? 'YES' : 'no';
-        parkEl.style.color = state.parked ? '#ffaa00' : '#888';
+    if (parkChip) {
+        parkChip.classList.remove('active', 'warn', 'alert');
+        if (state.parked) parkChip.classList.add('alert');
     }
 
+    // Device name
     const nameEl = document.getElementById('alpacaDeviceName');
     if (nameEl && info.name) nameEl.textContent = info.name;
 
+    // Tracking button label
     const btn = document.getElementById('alpacaTrackingBtn');
     if (btn) btn.textContent = _alpacaTracking ? 'Tracking Off' : 'Tracking On';
 }
