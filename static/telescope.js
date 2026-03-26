@@ -169,7 +169,9 @@ window.initTelescope = function() {
         const isOn = autoCapture === 'true';
         document.getElementById('autoCaptureToggle').checked = isOn;
         const autoCaptureBtn = document.getElementById('autoCaptureBtn');
-        if (autoCaptureBtn) autoCaptureBtn.classList.toggle('is-active', isOn);
+        if (autoCaptureBtn) {
+            autoCaptureBtn.classList.toggle('is-active', isOn);
+        }
     }
 
     // Mouse-wheel zoom on preview container

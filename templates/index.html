@@ -342,7 +342,7 @@
                     <h3>Auto-Capture</h3>
                     <div style="display:flex;align-items:center;gap:6px;">
                         <input type="checkbox" id="autoCaptureToggle" checked style="display:none;">
-                        <button id="autoCaptureBtn" class="btn btn-compact btn-toggle is-active"
+                        <button id="autoCaptureBtn" class="btn btn-compact btn-mode btn-toggle is-active"
                                 onclick="var cb=document.getElementById('autoCaptureToggle');cb.checked=!cb.checked;this.classList.toggle('is-active',cb.checked);localStorage.setItem('autoCaptureTransits',cb.checked);cb.dispatchEvent(new Event('change'));">AUTO-REC</button>
                         <span style="font-size:0.75em;color:#8A9298;font-family:'SF Mono','Menlo','Consolas',monospace;letter-spacing:0.05em;text-transform:uppercase;">Auto-Record Transits</span>
                     </div>
