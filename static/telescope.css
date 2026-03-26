@@ -1756,6 +1756,10 @@ canvas.video-thumb-canvas {
     padding: 3px 5px;
     margin: 0 0 2px;
 }
+/* Divider screws sit in normal flow so flexbox can space them */
+.screw-divider .screw {
+    position: static;
+}
 
 /* Compact auto-capture section */
 .sidebar-left .setting-item  { margin-bottom: 4px; }
