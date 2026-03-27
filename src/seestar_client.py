@@ -220,7 +220,7 @@ class SeestarClient:
             with self._socket_lock:
                 data = json.dumps(message) + "\r\n"
                 self.socket.sendall(data.encode())
-                logger.warning(f"[Wire] >> {data.strip()}")
+                logger.debug(f"[Wire] >> {data.strip()}")
         except socket.error as e:
             # Clean up waiter on send failure
             if waiter:
@@ -306,7 +306,7 @@ class SeestarClient:
         # Device telemetry events (pushed by firmware, not polled)
         elif name == "PiStatus":
             if not hasattr(self, "_pi_status_logged"):
-                logger.warning(f"[Event] First PiStatus: {event}")
+                logger.debug(f"[Event] First PiStatus: {event}")
                 self._pi_status_logged = True
             pi = event
             self._event_device_state["cpu_temp"] = pi.get("temp")
@@ -1614,7 +1614,7 @@ class SeestarClient:
         push events, and logs Client/master status so we know if we're ignored.
         """
         import select as _select
-        logger.warning("[Reader] Thread started — draining socket")
+        logger.info("[Reader] Thread started — draining socket")
         buf = ""
         while self._reader_running:
             if not self._connected or self.socket is None:
@@ -1630,7 +1630,7 @@ class SeestarClient:
                     continue  # nothing to read — loop back
                 chunk = self.socket.recv(4096)
                 if chunk:
-                    logger.warning(f"[Reader] << {len(chunk)} bytes: {chunk[:200]}")
+                    logger.debug(f"[Reader] << {len(chunk)} bytes: {chunk[:200]}")
                 if not chunk:
                     logger.warning("[Reader] Socket closed by scope")
                     self._connected = False
@@ -1645,7 +1645,7 @@ class SeestarClient:
                         msg = json.loads(line)
                         if "Event" in msg:
                             event_name = msg["Event"]
-                            logger.warning(f"[Reader] Event: {event_name} {str(msg)[:200]}")
+                            logger.debug(f"[Reader] Event: {event_name} {str(msg)[:200]}")
                             # Client event tells us if we have master control
                             if event_name == "Client":
                                 was_master = self._is_master
@@ -1662,11 +1662,11 @@ class SeestarClient:
                                         logger.warning("[Reader] Master control regained!")
                                         self._master_reclaim_attempts = 0
                                     else:
-                                        logger.warning("[Reader] We are master client")
+                                        logger.debug("[Reader] We are master client")
                             self._handle_event(msg)
                         elif "id" in msg:
                             resp_id = msg.get("id")
-                            logger.warning(f"[Reader] Response id={resp_id}: {str(msg)[:300]}")
+                            logger.debug(f"[Reader] Response id={resp_id}: {str(msg)[:300]}")
                             # Deposit into pending waiter if someone is waiting
                             with self._pending_lock:
                                 waiter = self._pending_responses.get(resp_id)

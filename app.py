@@ -1156,26 +1156,66 @@ if __name__ == "__main__":
     # Use PORT env var if set (e.g. by Electron), otherwise find a free port
     import socket
 
+    def _port_is_free(p: int) -> bool:
+        """Return True if *p* can be bound right now."""
+        try:
+            s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            s.bind(("0.0.0.0", p))
+            s.close()
+            return True
+        except OSError:
+            return False
+
+    def _kill_stale_on_port(p: int) -> bool:
+        """Kill any process holding *p* and wait until the port is actually free.
+        Returns True if port is confirmed free within ~3 s."""
+        import subprocess as _sp, signal as _sig, time as _t
+        try:
+            out = _sp.check_output(
+                ["lsof", "-ti", f"TCP:{p}", "-sTCP:LISTEN"],
+                stderr=_sp.DEVNULL,
+            ).decode().split()
+        except (_sp.CalledProcessError, FileNotFoundError):
+            return False  # lsof not available or no process found
+        killed = False
+        for pid_str in out:
+            try:
+                pid = int(pid_str)
+                if pid == os.getpid():
+                    continue
+                # SIGKILL for immediate release (no graceful-shutdown delay)
+                os.kill(pid, _sig.SIGKILL)
+                killed = True
+                print(f"🔄  Stopped stale process (PID {pid}) on port {p}")
+            except (ValueError, ProcessLookupError, PermissionError):
+                pass
+        if not killed:
+            return False
+        # Poll until the OS actually releases the port (up to 3 s)
+        for _ in range(12):
+            _t.sleep(0.25)
+            if _port_is_free(p):
+                return True
+        return False  # gave up — port still occupied
+
     port = None
     env_port = os.getenv("PORT")
     if env_port:
         port = int(env_port)
     else:
-        for p in range(8000, 8101):
-            try:
-                sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-                sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-                sock.bind(("0.0.0.0", p))
-                sock.close()
-                if p != 8000:
-                    print(
-                        f"⚠️  Port 8000 in use — starting on {p}. "
-                        "A stale app.py may be running; check: lsof -iTCP:8000 -sTCP:LISTEN"
-                    )
-                port = p
-                break
-            except OSError:
-                continue
+        preferred = 8000
+        if _port_is_free(preferred):
+            port = preferred
+        elif _kill_stale_on_port(preferred):
+            port = preferred  # confirmed free after kill
+        else:
+            # Owned by something we can't kill (e.g. system service) — bump
+            for p in range(preferred + 1, 8101):
+                if _port_is_free(p):
+                    print(f"⚠️  Port {preferred} is in use by a non-app process — starting on {p}")
+                    port = p
+                    break
 
     if port is None:
         logger.error("❌ No available ports in range 8000-8100")

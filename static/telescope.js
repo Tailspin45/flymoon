@@ -6119,8 +6119,14 @@ function _resizeRadarCanvas() {
 }
 
 // ── draw frame ──────────────────────────────────────────────────────────────
+let _radarLastEtaRender = 0;
 function _radarDrawFrame(ts) {
     _radarAnimFrame = requestAnimationFrame(_radarDrawFrame);
+    // Tick the upcoming-transit ETA countdown once per second
+    if (ts - _radarLastEtaRender > 1000) {
+        _radarLastEtaRender = ts;
+        _renderUpcomingTransits();
+    }
 
     const canvas = _radarCanvas;
     if (!canvas || !canvas.isConnected) return;
@@ -6227,40 +6233,34 @@ function _radarDrawFrame(ts) {
         const id   = track.id;
         const color= track.color;
 
-        let drawPts = track.points;
-        if (_radarMode === 'enhanced') {
-            const vel = _radarVelocity(track.points);
-            if (vel) {
-                const pred = [];
-                for (let dt = 1; dt <= RADAR_PREDICT_HORIZON_S; dt++) {
-                    pred.push({
-                        altD: last.altD + vel.dAlt * dt,
-                        azD:  last.azD  + vel.dAz  * dt,
-                        t:    last.t + dt*1000
-                    });
-                }
-                // draw cone
-                if (pred.length >= 2) {
-                    const pA = _radarBlipXY(pred[0], cx, cy, R);
-                    const pB = _radarBlipXY(pred[pred.length-1], cx, cy, R);
-                    ctx.beginPath();
-                    ctx.moveTo(pA.x, pA.y);
-                    ctx.lineTo(pB.x, pB.y);
-                    ctx.strokeStyle = _hexToRgba(color, 0.35);
-                    ctx.lineWidth = 2;
-                    ctx.setLineDash([3,3]);
-                    ctx.stroke();
-                    ctx.setLineDash([]);
-                    // arrowhead
-                    const ang2 = Math.atan2(pB.y-pA.y, pB.x-pA.x);
-                    const al = 7;
-                    ctx.fillStyle = _hexToRgba(color, 0.5);
-                    ctx.beginPath();
-                    ctx.moveTo(pB.x, pB.y);
-                    ctx.lineTo(pB.x - al*Math.cos(ang2-0.4), pB.y - al*Math.sin(ang2-0.4));
-                    ctx.lineTo(pB.x - al*Math.cos(ang2+0.4), pB.y - al*Math.sin(ang2+0.4));
-                    ctx.closePath(); ctx.fill();
-                }
+        const drawPts = track.points;
+        if (_radarMode === 'enhanced' && track.sAltD !== null) {
+            const speed2d = Math.hypot(track.svAltD, track.svAzD);
+            if (speed2d > 0.0005) {
+                // Use α-β smoothed velocity for the dashed prediction cone
+                const pA = _radarBlipXY(
+                    { altD: track.sAltD + track.svAltD * 5,  azD: track.sAzD + track.svAzD * 5  }, cx, cy, R);
+                const pB = _radarBlipXY(
+                    { altD: track.sAltD + track.svAltD * RADAR_PREDICT_HORIZON_S,
+                      azD:  track.sAzD  + track.svAzD  * RADAR_PREDICT_HORIZON_S }, cx, cy, R);
+                ctx.beginPath();
+                ctx.moveTo(pA.x, pA.y);
+                ctx.lineTo(pB.x, pB.y);
+                ctx.strokeStyle = _hexToRgba(color, 0.35);
+                ctx.lineWidth = 2;
+                ctx.setLineDash([3, 3]);
+                ctx.stroke();
+                ctx.setLineDash([]);
+                // arrowhead
+                const ang2 = Math.atan2(pB.y - pA.y, pB.x - pA.x);
+                const al = 7;
+                ctx.fillStyle = _hexToRgba(color, 0.5);
+                ctx.beginPath();
+                ctx.moveTo(pB.x, pB.y);
+                ctx.lineTo(pB.x - al * Math.cos(ang2 - 0.4), pB.y - al * Math.sin(ang2 - 0.4));
+                ctx.lineTo(pB.x - al * Math.cos(ang2 + 0.4), pB.y - al * Math.sin(ang2 + 0.4));
+                ctx.closePath();
+                ctx.fill();
             }
         }
 
@@ -6281,34 +6281,85 @@ function _radarDrawFrame(ts) {
         const dAng = _radarSweepActive
             ? ((sweepAng - _radarPolar(last.altD, last.azD, R).ang) % (Math.PI*2) + Math.PI*2) % (Math.PI*2)
             : 0;
-        const lit = !_radarSweepActive || dAng < beamHalf + 0.15;
-        const alpha = lit ? 1.0 : 0.55;
-        const blipR = track.level >= 2 ? 5 : 4;
+        const lit   = !_radarSweepActive || dAng < beamHalf + 0.15;
+        const alpha = lit ? 1.0 : 0.82; // keep blips clearly visible between sweep passes
+        const blipR = track.level >= 3 ? 6 : track.level === 2 ? 5 : 4;
 
+        // ── velocity / heading line (tadpole tail) ───────────────────────
+        // Direction comes from a short angular-space forward step (avoids
+        // the projection growing as the blip moves across the disc).
+        // Length is a fixed base + a tiny increment per 100 kts of true airspeed,
+        // so it only changes when the reported speed changes.
+        if (track.sAltD !== null && track.abBooted) {
+            const speed2d = Math.hypot(track.svAltD, track.svAzD); // deg/s
+            if (speed2d > 0.0001) {
+                const DIR_DT = 5; // seconds — enough for a clean heading sample
+                const futPt  = {
+                    altD: track.sAltD + track.svAltD * DIR_DT,
+                    azD:  track.sAzD  + track.svAzD  * DIR_DT
+                };
+                const futXY  = _radarBlipXY(futPt, cx, cy, R);
+                const ang    = Math.atan2(futXY.y - y, futXY.x - x);
+                // Length: 6 px base + 3 px per 100 kts
+                const speedKts = track.speedKmh != null
+                    ? track.speedKmh / 1.852
+                    : speed2d * 200; // rough fallback
+                const len = 6 + (speedKts / 100) * 3;
+                ctx.save();
+                ctx.strokeStyle = _hexToRgba(color, alpha * 0.9);
+                ctx.lineWidth   = 1.5;
+                ctx.beginPath();
+                ctx.moveTo(x, y);
+                ctx.lineTo(x + len * Math.cos(ang), y + len * Math.sin(ang));
+                ctx.stroke();
+                ctx.restore();
+            }
+        }
+
+        // ── diamond blip ──────────────────────────────────────────────────
         if (lit && _radarSweepActive) {
             ctx.save();
-            ctx.shadowBlur  = 12; ctx.shadowColor = color;
+            ctx.shadowBlur  = 14;
+            ctx.shadowColor = color;
             ctx.fillStyle   = '#fff';
-            ctx.beginPath(); ctx.arc(x, y, blipR+1, 0, Math.PI*2); ctx.fill();
+            ctx.beginPath();
+            ctx.moveTo(x,          y - (blipR + 2));
+            ctx.lineTo(x + blipR + 2, y);
+            ctx.lineTo(x,          y + (blipR + 2));
+            ctx.lineTo(x - blipR - 2, y);
+            ctx.closePath();
+            ctx.fill();
             ctx.restore();
         }
         ctx.fillStyle = _hexToRgba(color, alpha);
-        ctx.beginPath(); ctx.arc(x, y, blipR, 0, Math.PI*2); ctx.fill();
+        ctx.beginPath();
+        ctx.moveTo(x,       y - blipR);
+        ctx.lineTo(x + blipR, y);
+        ctx.lineTo(x,       y + blipR);
+        ctx.lineTo(x - blipR, y);
+        ctx.closePath();
+        ctx.fill();
 
         // ring for hovered/pinned
         if (id === _radarHoveredId || id === _radarPinnedId) {
             ctx.strokeStyle = _hexToRgba(color, 0.9);
             ctx.lineWidth = 1.5;
-            ctx.beginPath(); ctx.arc(x, y, blipR+4, 0, Math.PI*2); ctx.stroke();
+            ctx.beginPath();
+            ctx.moveTo(x,           y - (blipR + 5));
+            ctx.lineTo(x + blipR + 5, y);
+            ctx.lineTo(x,           y + (blipR + 5));
+            ctx.lineTo(x - blipR - 5, y);
+            ctx.closePath();
+            ctx.stroke();
         }
 
         // label
         ctx.fillStyle = _hexToRgba(color, 0.85);
         ctx.font = '9px monospace';
         ctx.textAlign = 'left';
-        ctx.fillText(track.label, x+7, y+3);
+        ctx.fillText(track.label, x + blipR + 3, y + 3);
 
-        _radarHitTest.push({id, x, y, r: blipR+5});
+        _radarHitTest.push({id, x, y, r: blipR + 6});
     });
 
     // centre dot (target body)
@@ -6348,7 +6399,7 @@ function _radarShowTooltip(id, x, y) {
     const t = _radarTracks.get(id);
     if (!t) return;
     const lvlStr = t.level >= 3 ? 'HIGH' : t.level === 2 ? 'MEDIUM' : 'LOW';
-    const lvlCol = t.level >= 3 ? '#4caf50' : t.level === 2 ? '#ff9800' : '#FFD700';
+    const lvlCol = t.level >= 3 ? '#00FF00' : t.level === 2 ? '#FFFF00' : '#808080';
     const last   = t.points[t.points.length-1];
     const sep    = last ? Math.hypot(last.altD, last.azD).toFixed(2) : '—';
     tt.innerHTML = `
@@ -6382,10 +6433,17 @@ window.onTransitDetected = function() { _radarMarkTransitSeen(); };
 
 // Remove tracks for IDs no longer in the active set
 window.pruneRadarTracks = function(activeIds) {
+    const testIds = new Set(_TEST_AIRCRAFT.map(a => a.id));
     for (const id of _radarTracks.keys()) {
+        if (testIds.has(id)) continue; // never prune synthetic test tracks
         if (!activeIds.has(id)) _radarTracks.delete(id);
     }
 };
+
+// ── α-β filter constants ─────────────────────────────────────────────────────
+const AB_ALPHA         = 0.20;  // position gain (0..1)
+const AB_BETA          = 0.05;  // velocity gain (0..1)
+const AB_VELLINE_S     = 60;    // seconds of smoothed velocity to project for the heading line
 
 // ── pushInterceptPoint (public API for app.js) ───────────────────────────────
 window.pushInterceptPoint = function(flight) {
@@ -6394,36 +6452,72 @@ window.pushInterceptPoint = function(flight) {
     const level = parseInt(flight.possibility_level ?? 0);
     if (level < 1 || level > 3) return;
 
-    const color = level >= 3 ? '#4caf50' : level === 2 ? '#ff9800' : '#FFD700';
+    // Confidence colours per spec: green=HIGH, yellow=MEDIUM, grey=LOW
+    const color = level >= 3 ? '#00FF00' : level === 2 ? '#FFFF00' : '#808080';
+
     if (!_radarTracks.has(id)) {
-        _radarTracks.set(id, {id, points:[], color, level, label:id, altFt:null, speedKmh:null, heading:null});
+        _radarTracks.set(id, {
+            id, points:[], color, level, label:id,
+            altFt:null, speedKmh:null, heading:null,
+            // α-β state (null = not yet initialised)
+            sAltD:null, sAzD:null, svAltD:0, svAzD:0,
+            lastUpdateT:null, misses:0, abBooted:false
+        });
     }
     const track = _radarTracks.get(id);
-    track.color  = color;
-    track.level  = level;
-    track.label  = id;
-    track.altFt  = flight.altitude != null ? parseFloat(flight.altitude) : null;
-    track.speedKmh = flight.speed != null ? parseFloat(flight.speed) : null;
-    track.heading  = flight.heading != null ? parseFloat(flight.heading) : null;
+    track.color    = color;
+    track.level    = level;
+    track.label    = id;
+    track.altFt    = flight.altitude  != null ? parseFloat(flight.altitude)  : null;
+    track.speedKmh = flight.speed     != null ? parseFloat(flight.speed)     : null;
+    track.heading  = flight.heading   != null ? parseFloat(flight.heading)   : null;
+    track.misses   = 0;
 
-    let altD = parseFloat(flight.alt_diff  ?? 'NaN');
-    let azD  = parseFloat(flight.az_diff   ?? 'NaN');
-    if (!isFinite(altD) || !isFinite(azD)) {
-        // fallback: place blip along altitude axis using angular_separation
+    let measAltD = parseFloat(flight.alt_diff ?? 'NaN');
+    let measAzD  = parseFloat(flight.az_diff  ?? 'NaN');
+    if (!isFinite(measAltD) || !isFinite(measAzD)) {
         const sep = parseFloat(flight.angular_separation);
-        altD = isFinite(sep) ? sep : 0;
-        azD  = 0;
+        measAltD = isFinite(sep) ? sep : 0;
+        measAzD  = 0;
     }
+
     const now = Date.now();
+    const DT  = track.lastUpdateT ? Math.max(0.5, (now - track.lastUpdateT) / 1000) : 3.0;
+    track.lastUpdateT = now;
+
+    if (track.sAltD === null) {
+        // First detection — store position; velocity unknown yet
+        track.sAltD  = measAltD;
+        track.sAzD   = measAzD;
+    } else if (!track.abBooted) {
+        // Second detection — bootstrap velocity directly from displacement so the
+        // heading line appears at the correct length immediately (no slow ramp-up)
+        track.svAltD   = (measAltD - track.sAltD) / DT;
+        track.svAzD    = (measAzD  - track.sAzD)  / DT;
+        track.sAltD    = measAltD;
+        track.sAzD     = measAzD;
+        track.abBooted = true;
+    } else {
+        // Predict
+        const predAltD = track.sAltD + track.svAltD * DT;
+        const predAzD  = track.sAzD  + track.svAzD  * DT;
+        // Correct (α-β)
+        const resAltD  = measAltD - predAltD;
+        const resAzD   = measAzD  - predAzD;
+        track.sAltD    = predAltD + AB_ALPHA * resAltD;
+        track.sAzD     = predAzD  + AB_ALPHA * resAzD;
+        track.svAltD   = track.svAltD + (AB_BETA / DT) * resAltD;
+        track.svAzD    = track.svAzD  + (AB_BETA / DT) * resAzD;
+    }
+
+    // Store smoothed position in trail (min 2 s gap to avoid duplicate points)
     const last = track.points[track.points.length - 1];
-    // Minimum 2s between trail points — prevents jitter from near-simultaneous pushes
     if (!last || now - last.t >= 2000) {
-        track.points.push({ altD, azD, t: now });
+        track.points.push({ altD: track.sAltD, azD: track.sAzD, t: now });
         if (track.points.length > RADAR_HISTORY_MAX) track.points.shift();
     } else {
-        // Update the last point in-place (smooth the position, don't add noise)
-        last.altD = altD;
-        last.azD  = azD;
+        last.altD = track.sAltD;
+        last.azD  = track.sAzD;
     }
 
     if (level >= 1) _radarMarkTransitSeen();
@@ -6437,9 +6531,14 @@ window.injectMapTransits = function(flights) {
     flights.forEach(f => {
         const level = parseInt(f.possibility_level ?? 0);
         if (level < 1) return;
+        // transit_eta_seconds is not always set; fall back to time (minutes) × 60
+        const etaSec = f.transit_eta_seconds != null
+            ? parseFloat(f.transit_eta_seconds)
+            : (f.time != null ? parseFloat(f.time) * 60 : null);
         _upcomingTransits.push({
-            id:   String(f.id || f.name || '').trim().toUpperCase(),
-            eta:  f.transit_eta_seconds != null ? parseFloat(f.transit_eta_seconds) : null,
+            id:    String(f.id || f.name || '').trim().toUpperCase(),
+            eta:   etaSec,
+            ts:    Date.now(),   // wall-clock when this entry was received
             level,
             target: f.target || 'sun',
         });
@@ -6456,14 +6555,36 @@ window.injectMapTransits = function(flights) {
 function _renderUpcomingTransits() {
     const el = document.getElementById('upcomingTransitsList');
     if (!el) return;
-    if (!_upcomingTransits.length) {
+    const now = Date.now();
+    // Age-out the stored ETA by elapsed wall-clock time since it was received
+    const live = _upcomingTransits
+        .map(tr => {
+            const ageS = (now - (tr.ts || now)) / 1000;
+            return {...tr, liveEta: tr.eta != null ? tr.eta - ageS : null};
+        })
+        .filter(tr => tr.liveEta == null || tr.liveEta > -30); // keep for 30s past T-0
+    if (!live.length) {
         el.innerHTML = '<div style="color:#334;font-size:0.8em;padding:4px 0">No upcoming transits</div>';
         return;
     }
-    el.innerHTML = _upcomingTransits.slice(0, 5).map(tr => {
-        const lvlCol = tr.level >= 3 ? '#4caf50' : tr.level === 2 ? '#ff9800' : '#FFD700';
+    live.sort((a, b) => {
+        if (a.liveEta == null && b.liveEta == null) return 0;
+        if (a.liveEta == null) return 1;
+        if (b.liveEta == null) return -1;
+        return a.liveEta - b.liveEta;
+    });
+    el.innerHTML = live.slice(0, 5).map(tr => {
+        const lvlCol = tr.level >= 3 ? '#00FF00' : tr.level === 2 ? '#FFFF00' : '#808080';
         const lvlStr = tr.level >= 3 ? 'HIGH' : tr.level === 2 ? 'MED' : 'LOW';
-        const etaStr = tr.eta != null ? `T−${Math.round(tr.eta)}s` : '—';
+        let etaStr;
+        if (tr.liveEta == null) {
+            etaStr = '—';
+        } else if (tr.liveEta <= 0) {
+            etaStr = '<span style="color:#f44">NOW</span>';
+        } else {
+            const m = Math.floor(tr.liveEta / 60), s = Math.floor(tr.liveEta % 60);
+            etaStr = m > 0 ? `T−${m}m${String(s).padStart(2,'0')}s` : `T−${s}s`;
+        }
         return `<div style="display:flex;justify-content:space-between;align-items:center;
                     padding:2px 0;border-bottom:1px solid rgba(255,255,255,0.05)">
             <span style="font-weight:600;letter-spacing:.04em">${tr.id}</span>
@@ -6471,6 +6592,86 @@ function _renderUpcomingTransits() {
             <span style="color:#778;font-size:0.75em">${etaStr}</span>
         </div>`;
     }).join('');
+}
+
+// ── synthetic test-mode aircraft ─────────────────────────────────────────────
+let _radarTestInterval = null;
+let _radarTestT        = 0;      // elapsed ticks
+const _RADAR_TEST_DT   = 2000;   // ms between ticks
+
+// Three synthetic aircraft: each has a starting position in (altD, azD) space
+// and a velocity (deg per tick = deg per _RADAR_TEST_DT seconds).
+// Closest-approach distances (d_min) are set by the cross-product formula:
+//   d_min = |altD*vAz - azD*vAlt| / hypot(vAlt, vAz)
+const _TEST_AIRCRAFT = [
+    {
+        id: 'TEST-H', level: 3,   // HIGH  — transits the disc centre  (d_min ≈ 0°)
+        altD:  9.0, azD: -4.5,
+        vAlt: -0.50, vAz:  0.25, // ratio matches start → passes through (0,0) at t≈18
+        altitude: 35000, speed: 860,
+    },
+    {
+        id: 'TEST-M', level: 2,   // MEDIUM — passes ~2° from centre
+        altD: -8.0, azD:  3.0,
+        vAlt:  0.45, vAz: -0.05, // d_min = |(-8)(-0.05)-(3)(0.45)| / hypot ≈ 2.1°
+        altitude: 39000, speed: 920,
+    },
+    {
+        id: 'TEST-L', level: 1,   // LOW    — passes ~6° from centre
+        altD:  7.0, azD: -9.0,
+        vAlt: -0.05, vAz:  0.45, // d_min = |(7)(0.45)-(-9)(-0.05)| / hypot ≈ 5.9°
+        altitude: 28000, speed: 590,
+    },
+];
+
+function _startRadarTest(btn) {
+    // Reset per-aircraft mutable state
+    _TEST_AIRCRAFT.forEach(a => { a._altD = a.altD; a._azD = a.azD; });
+    _radarMarkTransitSeen();
+    if (btn) { btn.classList.add('is-active'); btn.textContent = 'Stop'; }
+
+    function _tick() {
+        _TEST_AIRCRAFT.forEach(a => {
+            a._altD += a.vAlt;
+            a._azD  += a.vAz;
+
+            // Wrap back to starting position when blip exits the disc
+            if (Math.hypot(a._altD, a._azD) > RADAR_MAX_SEP_DEG * 1.1) {
+                a._altD = a.altD;
+                a._azD  = a.azD;
+                // Clear the filter state so velocity re-bootstraps cleanly
+                const tr = _radarTracks.get(a.id);
+                if (tr) { tr.sAltD = null; tr.abBooted = false; tr.svAltD = 0; tr.svAzD = 0; tr.points = []; }
+            }
+
+            window.pushInterceptPoint({
+                id:                  a.id,
+                name:                a.id,
+                possibility_level:   String(a.level),
+                angular_separation:  String(Math.hypot(a._altD, a._azD).toFixed(3)),
+                alt_diff:            String(a._altD.toFixed(3)),
+                az_diff:             String(a._azD.toFixed(3)),
+                altitude:            String(a.altitude),
+                speed:               String(a.speed),
+                heading:             String(Math.atan2(a.vAz, a.vAlt) * 180 / Math.PI),
+                is_possible_transit: 1,
+            });
+        });
+        _radarMarkTransitSeen();
+    }
+
+    _tick();  // immediate first frame
+    _radarTestInterval = setInterval(_tick, _RADAR_TEST_DT);
+}
+
+function _stopRadarTest() {
+    if (!_radarTestInterval) return;
+    clearInterval(_radarTestInterval);
+    _radarTestInterval = null;
+    // Remove synthetic tracks
+    _TEST_AIRCRAFT.forEach(a => _radarTracks.delete(a.id));
+    const btn = document.getElementById('radarModeTest');
+    if (btn) { btn.classList.remove('is-active'); btn.textContent = 'Test'; }
 }
 
 // ── ensureTransitRadar ────────────────────────────────────────────────────────
@@ -6500,6 +6701,9 @@ function ensureTransitRadar() {
                     <button id="radarModeEnhanced" title="Enhanced mode: projects trajectory forward ${RADAR_PREDICT_HORIZON_S}s"
                         class="btn btn-compact btn-toggle"
                         style="min-height:18px;padding:2px 7px;font-size:0.62em;">Enhanced</button>
+                    <button id="radarModeTest" title="Inject synthetic aircraft to preview blip rendering"
+                        class="btn btn-compact btn-toggle"
+                        style="min-height:18px;padding:2px 7px;font-size:0.62em;">Test</button>
                 </div>
             </div>
             <div id="upcomingTransitsList"
@@ -6525,15 +6729,20 @@ function ensureTransitRadar() {
     }
 
     // mode buttons — use .is-active keycap (locked-down = selected mode)
-    const btnDef = card.querySelector('#radarModeDefault');
-    const btnEnh = card.querySelector('#radarModeEnhanced');
+    const btnDef  = card.querySelector('#radarModeDefault');
+    const btnEnh  = card.querySelector('#radarModeEnhanced');
+    const btnTest = card.querySelector('#radarModeTest');
     function _applyMode(m) {
         _radarMode = m;
         btnDef.classList.toggle('is-active', m === 'default');
         btnEnh.classList.toggle('is-active', m === 'enhanced');
     }
-    btnDef.onclick = () => _applyMode('default');
-    btnEnh.onclick = () => _applyMode('enhanced');
+    btnDef.onclick = () => { _stopRadarTest(); _applyMode('default'); };
+    btnEnh.onclick = () => { _stopRadarTest(); _applyMode('enhanced'); };
+    btnTest.onclick = () => {
+        if (_radarTestInterval) { _stopRadarTest(); }
+        else { _startRadarTest(btnTest); }
+    };
     _applyMode(_radarMode);
 
     // mouse events

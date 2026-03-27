@@ -60,6 +60,13 @@ _adsbx_backoff_until: float = 0.0
 _local_backoff_until: float = 0.0
 BACKOFF_SECONDS: int = 60
 
+# Short-lived cache for fetch_multi_source_positions — avoids a double fetch
+# when the /flights endpoint calls get_transits() for both sun and moon within
+# the same request cycle.  TTL is intentionally short (20 s).
+_multi_source_cache: Dict[tuple, dict] = {}
+_multi_source_cache_ts: Dict[tuple, float] = {}
+MULTI_SOURCE_CACHE_TTL: int = 20  # seconds
+
 
 # ---------------------------------------------------------------------------
 # Coordinate helpers
@@ -98,6 +105,10 @@ def _parse_readsb_aircraft(ac: dict, now_ts: float) -> Optional[dict]:
     """
     hex_id = (ac.get("hex") or "").strip().lower()
     callsign = (ac.get("flight") or "").strip()
+    # Reject callsigns that are clearly corrupted (leading '-', pure hex that looks
+    # like a negated ICAO address, or non-printable characters).
+    if callsign and (callsign.startswith("-") or not callsign.isprintable()):
+        callsign = ""
     if not callsign:
         callsign = hex_id.upper() if hex_id else None
     if not callsign:
@@ -455,6 +466,15 @@ def fetch_multi_source_positions(
     Returns a dict of {callsign: position_dict} in the same format as
     ``src.opensky.fetch_opensky_positions()``.
     """
+    # When /flights calls get_transits() for both sun and moon in the same
+    # request cycle they use the same bbox; serve the second call from cache.
+    cache_key = (round(lat_ll, 4), round(lon_ll, 4), round(lat_ur, 4), round(lon_ur, 4))
+    now_ts = time.time()
+    cached_ts = _multi_source_cache_ts.get(cache_key, 0.0)
+    if now_ts - cached_ts < MULTI_SOURCE_CACHE_TTL and cache_key in _multi_source_cache:
+        logger.debug(f"[MultiSource] Returning cached result ({now_ts - cached_ts:.1f}s old)")
+        return _multi_source_cache[cache_key]
+
     from src.opensky import fetch_opensky_positions
 
     # Each source is a no-arg lambda so failures in one don't block others
@@ -512,4 +532,6 @@ def fetch_multi_source_positions(
         f"[MultiSource] {len(merged)} unique aircraft — "
         + (", ".join(active) if active else "no data from any source")
     )
+    _multi_source_cache[cache_key] = merged
+    _multi_source_cache_ts[cache_key] = time.time()
     return merged

@@ -260,11 +260,19 @@ async function _radarFastUpdate() {
                 activeIds.add(String(f.id || f.name || '').trim().toUpperCase());
             }
         });
-        // Remove tracks for aircraft that have left the zone
-        if (typeof window.pruneRadarTracks === 'function') window.pruneRadarTracks(activeIds);
+        // Only prune when the recalculation actually found some candidates to
+        // compare against — avoids wiping blips after a quiet/empty response
+        // caused by stale dead-reckoning or a rate-limited data source.
+        if (typeof window.pruneRadarTracks === 'function' && candidates.length > 0) {
+            window.pruneRadarTracks(activeIds);
+        }
 
-        if (typeof window.injectMapTransits === 'function') {
-            window.injectMapTransits(data.flights.filter(f => parseInt(f.possibility_level ?? 0) >= 1));
+        // Only update the scope's transit list when recalculation actively confirms
+        // transits.  An empty result (dead-reckoning drift / quiet response) must NOT
+        // clear a transit that was confirmed by the last full fetch or soft refresh.
+        const transitHits = data.flights.filter(f => parseInt(f.possibility_level ?? 0) >= 1);
+        if (typeof window.injectMapTransits === 'function' && transitHits.length > 0) {
+            window.injectMapTransits(transitHits);
         }
     } catch(e) { console.warn('[RadarFast] update failed:', e && e.message ? e.message : e); }
     finally { _radarFastInFlight = false; }
@@ -750,7 +758,7 @@ async function softRefresh() {
     const secondsElapsed = (Date.now() - window.lastFlightUpdateTime) / 1000;
     
     // Don't soft refresh if too much time has passed (data too stale)
-    if (secondsElapsed > 300) {  // 5 minutes
+    if (secondsElapsed > 600) {  // 10 minutes — gives resilience during source outages
         console.log('Data too stale for soft refresh, waiting for full refresh');
         return;
     }
@@ -841,8 +849,20 @@ async function softRefresh() {
             const mergedFlights = updatedFlights.map(f => recalcById[String(f.id).trim().toUpperCase()] || f);
 
             // Update radar dead-reckoning base so fast updates continue from here.
-            // Do NOT call pushInterceptPoint here — _radarFastUpdate is the sole pusher.
             _radarUpdateBase(mergedFlights);
+
+            // Also push any confirmed transit candidates directly to the radar.
+            // This keeps blips alive during full-fetch outages (rate-limited sources)
+            // when _radarFastUpdate may not have run recently.
+            if (typeof window.pushInterceptPoint === 'function') {
+                recalcData.flights.forEach(f => {
+                    const lvl = parseInt(f.possibility_level ?? 0);
+                    const sep = parseFloat(f.angular_separation ?? 999);
+                    if ((lvl >= 1 || f.is_possible_transit === 1) && sep <= 12) {
+                        window.pushInterceptPoint(f);
+                    }
+                });
+            }
 
             // Update map markers (full set including non-transit for display)
             if (mapVisible && typeof updateAircraftMarkers === 'function') {

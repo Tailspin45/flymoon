@@ -311,6 +311,11 @@ class SolarTimelapse:
             )
             return self.status()
 
+    def has_frames_today(self) -> bool:
+        """Return True if today's frames directory has at least one captured frame."""
+        frames_dir, _ = self._today_paths(datetime.now())
+        return self._existing_frame_count(frames_dir) > 0
+
     def resume_today(self, host: str, interval: float = 120.0) -> dict:
         """Resume today's timelapse from existing frames after restart/crash."""
         with self._lock:

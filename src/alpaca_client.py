@@ -94,10 +94,10 @@ class AlpacaClient:
                     )
                 return data
         except urllib.error.URLError as e:
-            logger.error(f"ALPACA GET {endpoint} failed: {e}")
+            logger.warning(f"ALPACA GET {endpoint} failed: {e}")
             return {"error": str(e)}
         except Exception as e:
-            logger.error(f"ALPACA GET {endpoint} unexpected: {e}")
+            logger.warning(f"ALPACA GET {endpoint} unexpected: {e}")
             return {"error": str(e)}
 
     def _put(self, endpoint: str, params: Optional[Dict] = None) -> Dict:
@@ -240,13 +240,16 @@ class AlpacaClient:
     # ── Capabilities & device info ─────────────────────────────────────
 
     def _load_capabilities(self):
-        props = [
+        # canmoveaxis requires an Axis parameter; query axis 0 (RA/Az)
+        props_plain = [
             "canslew", "canslewasync", "canslewaltaz", "canslewaltazasync",
-            "canmoveaxis", "canpark", "canpulseguide", "cansettracking",
+            "canpark", "canpulseguide", "cansettracking",
         ]
-        for prop in props:
+        for prop in props_plain:
             r = self._get(prop)
             self._capabilities[prop] = r.get("Value", False)
+        r = self._get("canmoveaxis", {"Axis": "0"})
+        self._capabilities["canmoveaxis"] = r.get("Value", False)
         logger.info(f"ALPACA capabilities: {self._capabilities}")
 
     def _load_device_info(self):

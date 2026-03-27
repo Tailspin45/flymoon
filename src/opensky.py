@@ -205,7 +205,7 @@ def fetch_opensky_positions(
             continue
 
         callsign = (s[1] or "").strip()
-        if not callsign:
+        if not callsign or callsign.startswith("-") or not callsign.isprintable():
             continue
 
         last_contact = s[4]

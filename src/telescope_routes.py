@@ -3369,11 +3369,12 @@ def _auto_connect_background():
                     f"[Telescope] Auto-connect: could not start solar view: {e}"
                 )
 
-        # Resume timelapse if it stopped (app restart, stream drop)
+        # Resume timelapse only if today already has frames (genuine crash-resume).
+        # Don't auto-start on a fresh boot — the scope may be idle with no RTSP stream.
         auto_resume = os.getenv("SOLAR_TIMELAPSE_AUTO_RESUME", "true").strip().lower()
         if auto_resume in ("1", "true", "yes", "on"):
             tl = get_timelapse()
-            if not tl.is_running:
+            if not tl.is_running and tl.has_frames_today():
                 try:
                     interval = float(os.getenv("SOLAR_TIMELAPSE_INTERVAL", "120"))
                 except ValueError:
