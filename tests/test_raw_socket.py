@@ -3,7 +3,6 @@
 import json
 import select
 import socket
-import time
 
 HOST = "192.168.4.139"
 # NOTE: Force-quit the Seestar iPhone app before running this test!
@@ -61,7 +60,16 @@ for i in range(10):
 
 # 5. Send scope_speed_move and wait
 print("\n[5] Sending scope_speed_move (speed=4000, angle=270, dur=3)...")
-cmd = json.dumps({"method": "scope_speed_move", "id": 20, "params": {"speed": 4000, "angle": 270, "dur_sec": 3}}) + "\r\n"
+cmd = (
+    json.dumps(
+        {
+            "method": "scope_speed_move",
+            "id": 20,
+            "params": {"speed": 4000, "angle": 270, "dur_sec": 3},
+        }
+    )
+    + "\r\n"
+)
 sock.sendall(cmd.encode())
 print(f"    >> {cmd.strip()}")
 
@@ -76,7 +84,10 @@ for i in range(10):
 
 # 6. Send set_setting master_cli and wait
 print("\n[6] Sending set_setting master_cli=true...")
-cmd = json.dumps({"method": "set_setting", "id": 30, "params": {"master_cli": True}}) + "\r\n"
+cmd = (
+    json.dumps({"method": "set_setting", "id": 30, "params": {"master_cli": True}})
+    + "\r\n"
+)
 sock.sendall(cmd.encode())
 print(f"    >> {cmd.strip()}")
 

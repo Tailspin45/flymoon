@@ -85,8 +85,15 @@ class StreamMonitor:
                 pass
 
     def _run(self):
-        cmd = [FFMPEG, "-rtsp_transport", "tcp", "-timeout", "10000000",
-               "-i", self.rtsp_url] + self.ffmpeg_args
+        cmd = [
+            FFMPEG,
+            "-rtsp_transport",
+            "tcp",
+            "-timeout",
+            "10000000",
+            "-i",
+            self.rtsp_url,
+        ] + self.ffmpeg_args
         log(f"[{self.name}] Launching: {' '.join(cmd)}")
 
         try:
@@ -120,7 +127,7 @@ class StreamMonitor:
         is_rawvideo = "-f" in self.ffmpeg_args and "rawvideo" in self.ffmpeg_args
         if is_rawvideo:
             # Fixed-size frame reads (like detection reader)
-            idx = self.ffmpeg_args.index("rawvideo")
+            self.ffmpeg_args.index("rawvideo")
             # Parse dimensions from -vf scale=WxH
             w, h = 160, 90  # defaults
             for i, a in enumerate(self.ffmpeg_args):
@@ -140,8 +147,10 @@ class StreamMonitor:
         if not self.death_reason:
             self.death_reason = "stream_ended"
         self.death_time = time.time()
-        log(f"[{self.name}] DIED after {elapsed:.1f}s — reason={self.death_reason} "
-            f"exit_code={self.exit_code} frames={self.total_frames}")
+        log(
+            f"[{self.name}] DIED after {elapsed:.1f}s — reason={self.death_reason} "
+            f"exit_code={self.exit_code} frames={self.total_frames}"
+        )
         if self.stderr_tail:
             log(f"[{self.name}] Last stderr:\n{self.stderr_tail}")
 
@@ -185,7 +194,7 @@ class StreamMonitor:
                 if eoi < 0:
                     buf = buf[soi:]
                     break
-                buf = buf[eoi + 2:]
+                buf = buf[eoi + 2 :]
                 self.total_frames += 1
                 self._last_frame_time = time.time()
                 self._fps_history.append((self._last_frame_time, self.total_frames))
@@ -267,8 +276,12 @@ class Heartbeat:
 
     def _send_ping(self) -> bool:
         self._seq += 1
-        msg = json.dumps({"jsonrpc": "2.0", "method": "scope_get_equ_coord",
-                          "id": self._seq}) + "\r\n"
+        msg = (
+            json.dumps(
+                {"jsonrpc": "2.0", "method": "scope_get_equ_coord", "id": self._seq}
+            )
+            + "\r\n"
+        )
         try:
             self._sock.sendall(msg.encode())
             # Read response (non-critical, just drain)
@@ -301,8 +314,12 @@ class Heartbeat:
             time.sleep(3)
 
 
-def run_test(test_name: str, streams: list[StreamMonitor], duration: int,
-             heartbeat: Heartbeat | None = None) -> list[dict]:
+def run_test(
+    test_name: str,
+    streams: list[StreamMonitor],
+    duration: int,
+    heartbeat: Heartbeat | None = None,
+) -> list[dict]:
     """Run a set of streams for `duration` seconds, logging stats every 10s."""
     log(f"\n{'='*60}")
     log(f"TEST: {test_name}")
@@ -365,39 +382,74 @@ def make_streams(rtsp_url: str, which: list[str]) -> list[StreamMonitor]:
     """Create stream monitors by name."""
     streams = []
     if "lowres" in which:
-        streams.append(StreamMonitor(
-            "lowres-detect",
-            rtsp_url,
-            ["-vf", "scale=160:90", "-r", "15",
-             "-f", "rawvideo", "-pix_fmt", "rgb24", "-an", "pipe:1"],
-        ))
+        streams.append(
+            StreamMonitor(
+                "lowres-detect",
+                rtsp_url,
+                [
+                    "-vf",
+                    "scale=160:90",
+                    "-r",
+                    "15",
+                    "-f",
+                    "rawvideo",
+                    "-pix_fmt",
+                    "rgb24",
+                    "-an",
+                    "pipe:1",
+                ],
+            )
+        )
     if "hires" in which:
-        streams.append(StreamMonitor(
-            "hires-buffer",
-            rtsp_url,
-            ["-f", "mjpeg", "-q:v", "3", "-r", "30", "-an", "pipe:1"],
-        ))
+        streams.append(
+            StreamMonitor(
+                "hires-buffer",
+                rtsp_url,
+                ["-f", "mjpeg", "-q:v", "3", "-r", "30", "-an", "pipe:1"],
+            )
+        )
     if "preview" in which:
-        streams.append(StreamMonitor(
-            "preview",
-            rtsp_url,
-            ["-f", "image2pipe", "-vcodec", "mjpeg", "-q:v", "5",
-             "-r", "10", "-an", "pipe:1"],
-        ))
+        streams.append(
+            StreamMonitor(
+                "preview",
+                rtsp_url,
+                [
+                    "-f",
+                    "image2pipe",
+                    "-vcodec",
+                    "mjpeg",
+                    "-q:v",
+                    "5",
+                    "-r",
+                    "10",
+                    "-an",
+                    "pipe:1",
+                ],
+            )
+        )
     return streams
 
 
 def main():
     parser = argparse.ArgumentParser(description="Phase 1 RTSP Stability Diagnostic")
     parser.add_argument("--host", default=os.getenv("SEESTAR_HOST", "192.168.110.1"))
-    parser.add_argument("--port", type=int,
-                        default=int(os.getenv("SEESTAR_RTSP_PORT", "4554")))
-    parser.add_argument("--duration", type=int, default=600,
-                        help="Duration per test in seconds (default: 600 = 10 min)")
-    parser.add_argument("--test", type=int, default=0,
-                        help="Run only test N (1-4), 0 = all")
-    parser.add_argument("--quick", action="store_true",
-                        help="Quick mode: 60s per test instead of full duration")
+    parser.add_argument(
+        "--port", type=int, default=int(os.getenv("SEESTAR_RTSP_PORT", "4554"))
+    )
+    parser.add_argument(
+        "--duration",
+        type=int,
+        default=600,
+        help="Duration per test in seconds (default: 600 = 10 min)",
+    )
+    parser.add_argument(
+        "--test", type=int, default=0, help="Run only test N (1-4), 0 = all"
+    )
+    parser.add_argument(
+        "--quick",
+        action="store_true",
+        help="Quick mode: 60s per test instead of full duration",
+    )
     args = parser.parse_args()
 
     rtsp_url = f"rtsp://{args.host}:{args.port}/stream"
@@ -419,7 +471,10 @@ def main():
     tests = {
         1: ("Single stream (low-res only)", ["lowres"]),
         2: ("Dual stream (low-res + hi-res)", ["lowres", "hires"]),
-        3: ("Triple stream (low-res + hi-res + preview)", ["lowres", "hires", "preview"]),
+        3: (
+            "Triple stream (low-res + hi-res + preview)",
+            ["lowres", "hires", "preview"],
+        ),
     }
 
     for test_num, (name, stream_names) in tests.items():
@@ -444,12 +499,22 @@ def main():
     for test_key, results in all_results.items():
         for r in results:
             died = r["death_reason"] not in ("", "stream_ended")
-            status = "DIED" if died else ("SURVIVED" if r["alive"] or r["elapsed_s"] >= duration - 5 else "DIED")
+            status = (
+                "DIED"
+                if died
+                else (
+                    "SURVIVED"
+                    if r["alive"] or r["elapsed_s"] >= duration - 5
+                    else "DIED"
+                )
+            )
             if died:
                 any_died = True
-            log(f"  {test_key}/{r['name']}: {status} — "
+            log(
+                f"  {test_key}/{r['name']}: {status} — "
                 f"avg {r['avg_fps']}fps, {r['total_frames']} frames, "
-                f"{r['total_MB']}MB")
+                f"{r['total_MB']}MB"
+            )
             if r["death_reason"] and r["death_reason"] != "stream_ended":
                 log(f"    Death: {r['death_reason']} (exit={r['exit_code']})")
 

@@ -2,7 +2,6 @@
 """Test ALPACA motor control on the Seestar S50.
 Connects, syncs UTC, reads position, tries moveaxis and GoTo."""
 import json
-import socket
 import time
 import urllib.request
 from datetime import datetime, timezone
@@ -11,6 +10,7 @@ SCOPE_IP = "192.168.4.139"
 PORT = 32323
 BASE = f"http://{SCOPE_IP}:{PORT}/api/v1/telescope/0"
 TXN = 0
+
 
 def get(path):
     global TXN
@@ -21,6 +21,7 @@ def get(path):
             return json.loads(resp.read().decode())
     except Exception as e:
         return {"error": str(e)}
+
 
 def put(path, params=None):
     global TXN
@@ -38,12 +39,14 @@ def put(path, params=None):
     except Exception as e:
         return {"error": str(e)}
 
+
 def pos():
     ra = get("rightascension").get("Value", "?")
     dec = get("declination").get("Value", "?")
     alt = get("altitude").get("Value", "?")
     az = get("azimuth").get("Value", "?")
     return f"RA={ra} Dec={dec} Alt={alt} Az={az}"
+
 
 # 1. Connect
 print("[1] Connecting...")
@@ -125,10 +128,10 @@ cur_dec = get("declination").get("Value", 0)
 target_ra = (cur_ra + 0.1) % 24
 print(f"  Slewing from RA={cur_ra:.4f} to RA={target_ra:.4f}, Dec={cur_dec:.4f}")
 print("  >>> WATCH THE SCOPE <<<")
-result = put("slewtocoordinatesasync", {
-    "RightAscension": str(target_ra),
-    "Declination": str(cur_dec)
-})
+result = put(
+    "slewtocoordinatesasync",
+    {"RightAscension": str(target_ra), "Declination": str(cur_dec)},
+)
 print(f"  slewtocoordinatesasync result: {result}")
 
 # Wait and poll

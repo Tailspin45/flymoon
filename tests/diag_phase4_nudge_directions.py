@@ -34,6 +34,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 from dotenv import load_dotenv
+
 load_dotenv()
 
 HOST = os.getenv("SEESTAR_HOST", "192.168.4.112")
@@ -43,10 +44,22 @@ PORT = int(os.getenv("SEESTAR_PORT", "4700"))
 NUDGE_ANGLES = {"up": 90, "down": 270, "left": 0, "right": 180}
 # Which sensor should change for each direction
 EXPECTED_CHANGES = {
-    "up":    {"sensor": "tilt",    "direction": "+", "label": "tilt increases (arm raises)"},
-    "down":  {"sensor": "tilt",    "direction": "-", "label": "tilt decreases (arm lowers)"},
-    "left":  {"sensor": "compass", "direction": "?", "label": "compass changes (az rotation)"},
-    "right": {"sensor": "compass", "direction": "?", "label": "compass changes (az rotation)"},
+    "up": {"sensor": "tilt", "direction": "+", "label": "tilt increases (arm raises)"},
+    "down": {
+        "sensor": "tilt",
+        "direction": "-",
+        "label": "tilt decreases (arm lowers)",
+    },
+    "left": {
+        "sensor": "compass",
+        "direction": "?",
+        "label": "compass changes (az rotation)",
+    },
+    "right": {
+        "sensor": "compass",
+        "direction": "?",
+        "label": "compass changes (az rotation)",
+    },
 }
 
 
@@ -54,13 +67,16 @@ def _pass(name, detail=""):
     print(f"  PASS  {name}" + (f" — {detail}" if detail else ""))
     return {"test": name, "status": "PASS", "detail": detail}
 
+
 def _fail(name, detail=""):
     print(f"  FAIL  {name}" + (f" — {detail}" if detail else ""))
     return {"test": name, "status": "FAIL", "detail": detail}
 
+
 def _warn(name, detail=""):
     print(f"  WARN  {name}" + (f" — {detail}" if detail else ""))
     return {"test": name, "status": "WARN", "detail": detail}
+
 
 def _info(msg):
     print(f"        {msg}")
@@ -93,7 +109,9 @@ def test_nudge(client, direction, nudge_sec, delay_before):
     # Before snapshot
     tilt_before, compass_before = get_sensors(client)
     ra_before, dec_before = get_equ(client)
-    _info(f"Before: tilt={tilt_before}° compass={compass_before}° RA={ra_before}h Dec={dec_before}°")
+    _info(
+        f"Before: tilt={tilt_before}° compass={compass_before}° RA={ra_before}h Dec={dec_before}°"
+    )
 
     # Send nudge via raw command (already in scenery mode)
     api_angle = NUDGE_ANGLES[direction]
@@ -103,14 +121,18 @@ def test_nudge(client, direction, nudge_sec, delay_before):
         params={"speed": 50, "angle": fw_angle, "dur_sec": nudge_sec},
         expect_response=False,
     )
-    _info(f"Nudge sent: direction={direction} api_angle={api_angle}° fw_angle={fw_angle}° dur={nudge_sec}s")
+    _info(
+        f"Nudge sent: direction={direction} api_angle={api_angle}° fw_angle={fw_angle}° dur={nudge_sec}s"
+    )
 
     time.sleep(nudge_sec + 1.0)
 
     # After snapshot
     tilt_after, compass_after = get_sensors(client)
     ra_after, dec_after = get_equ(client)
-    _info(f"After:  tilt={tilt_after}° compass={compass_after}° RA={ra_after}h Dec={dec_after}°")
+    _info(
+        f"After:  tilt={tilt_after}° compass={compass_after}° RA={ra_after}h Dec={dec_after}°"
+    )
 
     delta_tilt = None
     delta_compass = None
@@ -160,17 +182,38 @@ def test_nudge(client, direction, nudge_sec, delay_before):
         if moved and correct_dir:
             return _pass(f"nudge_{direction}", f"Δtilt={delta_tilt:+.3f}°"), result
         elif moved and not correct_dir:
-            return _fail(f"nudge_{direction}", f"Δtilt={delta_tilt:+.3f}° — WRONG DIRECTION (expected {label})"), result
+            return (
+                _fail(
+                    f"nudge_{direction}",
+                    f"Δtilt={delta_tilt:+.3f}° — WRONG DIRECTION (expected {label})",
+                ),
+                result,
+            )
         else:
-            return _warn(f"nudge_{direction}", f"Δtilt={delta_tilt:+.3f}° — no measurable movement"), result
+            return (
+                _warn(
+                    f"nudge_{direction}",
+                    f"Δtilt={delta_tilt:+.3f}° — no measurable movement",
+                ),
+                result,
+            )
 
     elif sensor == "compass" and delta_compass is not None:
         moved = abs(delta_compass) > 0.3
         _info(f"Δcompass={delta_compass:+.3f}° (expected {label})")
         if moved:
-            return _pass(f"nudge_{direction}", f"Δcompass={delta_compass:+.3f}°"), result
+            return (
+                _pass(f"nudge_{direction}", f"Δcompass={delta_compass:+.3f}°"),
+                result,
+            )
         else:
-            return _warn(f"nudge_{direction}", f"Δcompass={delta_compass:+.3f}° — no measurable movement"), result
+            return (
+                _warn(
+                    f"nudge_{direction}",
+                    f"Δcompass={delta_compass:+.3f}° — no measurable movement",
+                ),
+                result,
+            )
 
     else:
         return _warn(f"nudge_{direction}", "sensor data unavailable"), result
@@ -212,8 +255,10 @@ def run(host, port, directions, nudge_sec, restore_solar, delay_between, output_
         _info("In scenery mode — solar tracking stopped")
     except Exception as e:
         results.append(_fail("switch_to_scenery", str(e)))
-        try: client.disconnect()
-        except: pass
+        try:
+            client.disconnect()
+        except:
+            pass
         return results, raw
 
     print()
@@ -245,8 +290,10 @@ def run(host, port, directions, nudge_sec, restore_solar, delay_between, output_
         except Exception as e:
             results.append(_fail("restore_solar", str(e)))
 
-    try: client.disconnect()
-    except: pass
+    try:
+        client.disconnect()
+    except:
+        pass
 
     passed = sum(1 for r in results if r["status"] == "PASS")
     warned = sum(1 for r in results if r["status"] == "WARN")
@@ -258,7 +305,8 @@ def run(host, port, directions, nudge_sec, restore_solar, delay_between, output_
 
     output = {
         "phase": "phase4_nudge_directions",
-        "host": host, "port": port,
+        "host": host,
+        "port": port,
         "directions_tested": directions,
         "nudge_sec": nudge_sec,
         "tests": results,
@@ -277,16 +325,33 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--host", default=HOST)
     parser.add_argument("--port", type=int, default=PORT)
-    parser.add_argument("--directions", nargs="+", default=["up", "down", "left", "right"],
-                        choices=["up", "down", "left", "right"])
+    parser.add_argument(
+        "--directions",
+        nargs="+",
+        default=["up", "down", "left", "right"],
+        choices=["up", "down", "left", "right"],
+    )
     parser.add_argument("--nudge-sec", type=int, default=2)
     parser.add_argument("--restore-solar", action="store_true")
-    parser.add_argument("--delay-between", type=float, default=2.0,
-                        help="Seconds to wait between nudges (lets you observe movement)")
-    parser.add_argument("--output", default="docs/diag_logs/phase4_nudge_directions.json")
+    parser.add_argument(
+        "--delay-between",
+        type=float,
+        default=2.0,
+        help="Seconds to wait between nudges (lets you observe movement)",
+    )
+    parser.add_argument(
+        "--output", default="docs/diag_logs/phase4_nudge_directions.json"
+    )
     args = parser.parse_args()
-    run(args.host, args.port, args.directions, args.nudge_sec,
-        args.restore_solar, args.delay_between, args.output)
+    run(
+        args.host,
+        args.port,
+        args.directions,
+        args.nudge_sec,
+        args.restore_solar,
+        args.delay_between,
+        args.output,
+    )
 
 
 if __name__ == "__main__":

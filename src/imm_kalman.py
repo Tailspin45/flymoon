@@ -42,7 +42,7 @@ cleanup_stale_filters()  → int
 """
 
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from math import atan2, cos, degrees, radians, sin, sqrt
 from typing import Dict, Optional, Tuple
 
@@ -59,8 +59,10 @@ FILTER_TTL_S: int = 1200  # 20 min — discard states not updated within this wi
 # IMM mode-to-mode transition probabilities  M[i→j]
 # Row i = from-model, col j = to-model.  Rows must sum to 1.
 _M = np.array(
-    [[0.92, 0.08],   # CV → CV=92%, CA=8%
-     [0.20, 0.80]],  # CA → CV=20%, CA=80%  (CA is transient)
+    [
+        [0.92, 0.08],  # CV → CV=92%, CA=8%
+        [0.20, 0.80],
+    ],  # CA → CV=20%, CA=80%  (CA is transient)
     dtype=float,
 )
 
@@ -70,13 +72,13 @@ _MU_INIT = np.array([0.90, 0.10], dtype=float)
 # Process noise spectral density (m/s²)²  — higher = model trusts measurements more
 # Cruise aircraft maintain very stable speed/heading: CV noise is tiny.
 # CA model gets ~10× more noise to capture turns and climbs.
-_Q_CV: float = 0.005   # CV model: ≈0.07 m/s² per step  (±~5 km/h drift / 15 min)
-_Q_CA: float = 0.05    # CA model: ≈0.22 m/s² per step  (allows gentle turns)
+_Q_CV: float = 0.005  # CV model: ≈0.07 m/s² per step  (±~5 km/h drift / 15 min)
+_Q_CA: float = 0.05  # CA model: ≈0.22 m/s² per step  (allows gentle turns)
 
 # Measurement noise variance (m²)
-_R_ADSB: float = 50.0 ** 2      # direct ADS-B:  ~50 m CEP
-_R_OPENSKY: float = 500.0 ** 2  # OpenSky:       ~500 m CEP (network-aggregated)
-_R_OTHER: float = 1000.0 ** 2   # MLAT / other:  ~1 km
+_R_ADSB: float = 50.0**2  # direct ADS-B:  ~50 m CEP
+_R_OPENSKY: float = 500.0**2  # OpenSky:       ~500 m CEP (network-aggregated)
+_R_OTHER: float = 1000.0**2  # MLAT / other:  ~1 km
 
 # Minimum variance floor (numerical stability)
 _P_FLOOR: float = 1.0
@@ -88,14 +90,18 @@ _P_FLOOR: float = 1.0
 _M_PER_DEG_LAT: float = 111_320.0
 
 
-def _to_enu(lat: float, lon: float, obs_lat: float, obs_lon: float) -> Tuple[float, float]:
+def _to_enu(
+    lat: float, lon: float, obs_lat: float, obs_lon: float
+) -> Tuple[float, float]:
     """Convert (lat, lon) to ENU (north_m, east_m) relative to observer."""
     north_m = (lat - obs_lat) * _M_PER_DEG_LAT
     east_m = (lon - obs_lon) * _M_PER_DEG_LAT * cos(radians(obs_lat))
     return north_m, east_m
 
 
-def _from_enu(north_m: float, east_m: float, obs_lat: float, obs_lon: float) -> Tuple[float, float]:
+def _from_enu(
+    north_m: float, east_m: float, obs_lat: float, obs_lon: float
+) -> Tuple[float, float]:
     """Convert ENU (north_m, east_m) back to (lat, lon)."""
     lat = obs_lat + north_m / _M_PER_DEG_LAT
     lon = obs_lon + east_m / (_M_PER_DEG_LAT * cos(radians(obs_lat)) + 1e-12)
@@ -106,13 +112,14 @@ def _from_enu(north_m: float, east_m: float, obs_lat: float, obs_lon: float) -> 
 # State dataclass
 # ---------------------------------------------------------------------------
 
+
 @dataclass
 class _IMMState:
-    x_cv: np.ndarray   # CV state  [n, e, vn, ve]  (4,)
-    P_cv: np.ndarray   # CV covariance  (4,4)
-    x_ca: np.ndarray   # CA state  [n, e, vn, ve, an, ae]  (6,)
-    P_ca: np.ndarray   # CA covariance  (6,6)
-    mu: np.ndarray     # mode probabilities  [μ_cv, μ_ca]  (2,)
+    x_cv: np.ndarray  # CV state  [n, e, vn, ve]  (4,)
+    P_cv: np.ndarray  # CV covariance  (4,4)
+    x_ca: np.ndarray  # CA state  [n, e, vn, ve, an, ae]  (6,)
+    P_ca: np.ndarray  # CA covariance  (6,6)
+    mu: np.ndarray  # mode probabilities  [μ_cv, μ_ca]  (2,)
     obs_lat: float
     obs_lon: float
     last_update: float
@@ -129,59 +136,67 @@ _filters: Dict[str, _IMMState] = {}
 # Transition matrices and process-noise matrices
 # ---------------------------------------------------------------------------
 
+
 def _F_cv(dt: float) -> np.ndarray:
     return np.array(
-        [[1, 0, dt, 0],
-         [0, 1, 0, dt],
-         [0, 0, 1,  0],
-         [0, 0, 0,  1]], dtype=float
+        [[1, 0, dt, 0], [0, 1, 0, dt], [0, 0, 1, 0], [0, 0, 0, 1]], dtype=float
     )
 
 
 def _Q_cv_mat(dt: float, q: float) -> np.ndarray:
     """Discrete-time process-noise for constant-velocity model (Singer form)."""
-    t2, t3, t4 = dt * dt, dt ** 3, dt ** 4
+    t2, t3, t4 = dt * dt, dt**3, dt**4
     return q * np.array(
-        [[t4 / 4, 0,      t3 / 2, 0     ],
-         [0,      t4 / 4, 0,      t3 / 2],
-         [t3 / 2, 0,      t2,     0     ],
-         [0,      t3 / 2, 0,      t2    ]], dtype=float
+        [
+            [t4 / 4, 0, t3 / 2, 0],
+            [0, t4 / 4, 0, t3 / 2],
+            [t3 / 2, 0, t2, 0],
+            [0, t3 / 2, 0, t2],
+        ],
+        dtype=float,
     )
 
 
 def _F_ca(dt: float) -> np.ndarray:
     h = dt * dt / 2
     return np.array(
-        [[1, 0, dt, 0,  h,  0],
-         [0, 1, 0,  dt, 0,  h],
-         [0, 0, 1,  0,  dt, 0],
-         [0, 0, 0,  1,  0,  dt],
-         [0, 0, 0,  0,  1,  0],
-         [0, 0, 0,  0,  0,  1]], dtype=float
+        [
+            [1, 0, dt, 0, h, 0],
+            [0, 1, 0, dt, 0, h],
+            [0, 0, 1, 0, dt, 0],
+            [0, 0, 0, 1, 0, dt],
+            [0, 0, 0, 0, 1, 0],
+            [0, 0, 0, 0, 0, 1],
+        ],
+        dtype=float,
     )
 
 
 def _Q_ca_mat(dt: float, q: float) -> np.ndarray:
     """Discrete-time process-noise for constant-acceleration model."""
-    t2, t3, t4, t5 = dt ** 2, dt ** 3, dt ** 4, dt ** 5
+    t2, t3, t4, t5 = dt**2, dt**3, dt**4, dt**5
     return q * np.array(
-        [[t5 / 20, 0,       t4 / 8, 0,       t3 / 6, 0     ],
-         [0,       t5 / 20, 0,      t4 / 8,  0,      t3 / 6],
-         [t4 / 8,  0,       t3 / 3, 0,       t2 / 2, 0     ],
-         [0,       t4 / 8,  0,      t3 / 3,  0,      t2 / 2],
-         [t3 / 6,  0,       t2 / 2, 0,       dt,     0     ],
-         [0,       t3 / 6,  0,      t2 / 2,  0,      dt    ]], dtype=float
+        [
+            [t5 / 20, 0, t4 / 8, 0, t3 / 6, 0],
+            [0, t5 / 20, 0, t4 / 8, 0, t3 / 6],
+            [t4 / 8, 0, t3 / 3, 0, t2 / 2, 0],
+            [0, t4 / 8, 0, t3 / 3, 0, t2 / 2],
+            [t3 / 6, 0, t2 / 2, 0, dt, 0],
+            [0, t3 / 6, 0, t2 / 2, 0, dt],
+        ],
+        dtype=float,
     )
 
 
 # Observation matrices: extract [north, east] from state
-_H_CV: np.ndarray = np.array([[1, 0, 0, 0],       [0, 1, 0, 0]],       dtype=float)
+_H_CV: np.ndarray = np.array([[1, 0, 0, 0], [0, 1, 0, 0]], dtype=float)
 _H_CA: np.ndarray = np.array([[1, 0, 0, 0, 0, 0], [0, 1, 0, 0, 0, 0]], dtype=float)
 
 
 # ---------------------------------------------------------------------------
 # Core Kalman step
 # ---------------------------------------------------------------------------
+
 
 def _kalman_update(
     x: np.ndarray,
@@ -218,6 +233,7 @@ def _kalman_update(
 # Full IMM cycle  (mix → predict → update → combine)
 # ---------------------------------------------------------------------------
 
+
 def _imm_step(
     state: _IMMState,
     z: np.ndarray,
@@ -229,7 +245,7 @@ def _imm_step(
     M = _M
 
     # 1 ─ Mixing probabilities
-    c = M.T @ mu                                     # (2,)  normalisers
+    c = M.T @ mu  # (2,)  normalisers
     mu_mix = M * mu[:, None] / np.maximum(c[None, :], 1e-300)  # (2,2)
     # mu_mix[i, j] = weight of model-i contribution to model-j mixed input
 
@@ -240,9 +256,8 @@ def _imm_step(
     x0_cv = mu_mix[0, 0] * x_cv_4 + mu_mix[1, 0] * x_ca_4
     d0_cv = x_cv_4 - x0_cv
     d1_cv = x_ca_4 - x0_cv
-    P0_cv = (
-        mu_mix[0, 0] * (state.P_cv + np.outer(d0_cv, d0_cv))
-        + mu_mix[1, 0] * (state.P_ca[:4, :4] + np.outer(d1_cv, d1_cv))
+    P0_cv = mu_mix[0, 0] * (state.P_cv + np.outer(d0_cv, d0_cv)) + mu_mix[1, 0] * (
+        state.P_ca[:4, :4] + np.outer(d1_cv, d1_cv)
     )
 
     # CA mixed input (6-D): blend from CV-6 (zero-padded) and CA-6
@@ -252,9 +267,8 @@ def _imm_step(
     x0_ca = mu_mix[0, 1] * x_cv_6 + mu_mix[1, 1] * state.x_ca
     d0_ca = x_cv_6 - x0_ca
     d1_ca = state.x_ca - x0_ca
-    P0_ca = (
-        mu_mix[0, 1] * (P_cv_6 + np.outer(d0_ca, d0_ca))
-        + mu_mix[1, 1] * (state.P_ca + np.outer(d1_ca, d1_ca))
+    P0_ca = mu_mix[0, 1] * (P_cv_6 + np.outer(d0_ca, d0_ca)) + mu_mix[1, 1] * (
+        state.P_ca + np.outer(d1_ca, d1_ca)
     )
 
     # 3 ─ Predict each model forward
@@ -293,6 +307,7 @@ def _imm_step(
 # Prediction-only propagation (no measurement)
 # ---------------------------------------------------------------------------
 
+
 def advance_state(state: _IMMState, dt: float) -> _IMMState:
     """Propagate the filter state forward *dt* seconds without a measurement.
 
@@ -316,8 +331,10 @@ def advance_state(state: _IMMState, dt: float) -> _IMMState:
     P_ca_p = F_ca @ state.P_ca @ F_ca.T + Q_ca
 
     return _IMMState(
-        x_cv=x_cv_p, P_cv=P_cv_p,
-        x_ca=x_ca_p, P_ca=P_ca_p,
+        x_cv=x_cv_p,
+        P_cv=P_cv_p,
+        x_ca=x_ca_p,
+        P_ca=P_ca_p,
         mu=state.mu.copy(),
         obs_lat=state.obs_lat,
         obs_lon=state.obs_lon,
@@ -356,14 +373,18 @@ def state_position(state: _IMMState) -> Tuple[float, float, float]:
     else:
         # Maneuvering: use full IMM mixture
         north_m = mu[0] * n_cv + mu[1] * n_ca
-        east_m  = mu[0] * e_cv + mu[1] * e_ca
+        east_m = mu[0] * e_cv + mu[1] * e_ca
         sigma2_cv = (
-            state.P_cv[0, 0] + state.P_cv[1, 1]
-            + (n_cv - north_m) ** 2 + (e_cv - east_m) ** 2
+            state.P_cv[0, 0]
+            + state.P_cv[1, 1]
+            + (n_cv - north_m) ** 2
+            + (e_cv - east_m) ** 2
         )
         sigma2_ca = (
-            state.P_ca[0, 0] + state.P_ca[1, 1]
-            + (n_ca - north_m) ** 2 + (e_ca - east_m) ** 2
+            state.P_ca[0, 0]
+            + state.P_ca[1, 1]
+            + (n_ca - north_m) ** 2
+            + (e_ca - east_m) ** 2
         )
         sigma_m = sqrt(max(mu[0] * sigma2_cv + mu[1] * sigma2_ca, _P_FLOOR))
 
@@ -373,6 +394,7 @@ def state_position(state: _IMMState) -> Tuple[float, float, float]:
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
+
 
 def update_filter(
     icao24: str,
@@ -418,13 +440,13 @@ def update_filter(
 
     if existing is None or (now - existing.last_update) > FILTER_TTL_S:
         # ── Cold start: initialise from reported speed + heading ─────────
-        speed_ms = float(flight.get("speed") or 0) / 3.6   # km/h → m/s
+        speed_ms = float(flight.get("speed") or 0) / 3.6  # km/h → m/s
         hdg_rad = radians(float(flight.get("direction") or 0))
         vn = speed_ms * cos(hdg_rad)
         ve = speed_ms * sin(hdg_rad)
 
-        vel_var = (5.0) ** 2    # initial velocity uncertainty ±5 m/s ≈ ±18 km/h
-        acc_var = (0.5) ** 2    # initial acceleration uncertainty ±0.5 m/s²
+        vel_var = (5.0) ** 2  # initial velocity uncertainty ±5 m/s ≈ ±18 km/h
+        acc_var = (0.5) ** 2  # initial acceleration uncertainty ±0.5 m/s²
 
         x_cv = np.array([north_m, east_m, vn, ve], dtype=float)
         P_cv = np.diag([r_var, r_var, vel_var, vel_var])
@@ -433,10 +455,13 @@ def update_filter(
         P_ca = np.diag([r_var, r_var, vel_var, vel_var, acc_var, acc_var])
 
         state = _IMMState(
-            x_cv=x_cv, P_cv=P_cv,
-            x_ca=x_ca, P_ca=P_ca,
+            x_cv=x_cv,
+            P_cv=P_cv,
+            x_ca=x_ca,
+            P_ca=P_ca,
             mu=_MU_INIT.copy(),
-            obs_lat=obs_lat, obs_lon=obs_lon,
+            obs_lat=obs_lat,
+            obs_lon=obs_lon,
             last_update=now,
         )
         _filters[icao24] = state

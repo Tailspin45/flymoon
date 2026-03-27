@@ -21,7 +21,6 @@ from src import logger
 from src.site_context import get_observer_coordinates
 
 
-
 class SeestarClient:
     """Direct TCP client for Seestar telescope using JSON-RPC 2.0 protocol."""
 
@@ -79,8 +78,12 @@ class SeestarClient:
         self._heartbeat_thread: Optional[threading.Thread] = None
         self._heartbeat_running = False
         self._socket_lock = threading.Lock()  # Prevent concurrent socket writes
-        self._connect_lock = threading.Lock()  # Serialize connect() calls across threads
-        self._cmd_seq_lock = threading.RLock()  # Prevent heartbeat interleaving multi-step commands
+        self._connect_lock = (
+            threading.Lock()
+        )  # Serialize connect() calls across threads
+        self._cmd_seq_lock = (
+            threading.RLock()
+        )  # Prevent heartbeat interleaving multi-step commands
         self._above_horizon_check = (
             None  # Optional[Callable[[], bool]] — set by app startup
         )
@@ -91,7 +94,9 @@ class SeestarClient:
         # and waits for the reader to deposit the answer.
         self._reader_thread: Optional[threading.Thread] = None
         self._reader_running = False
-        self._pending_responses: Dict[int, dict] = {}  # id → {"event": Event, "result": ...}
+        self._pending_responses: Dict[int, dict] = (
+            {}
+        )  # id → {"event": Event, "result": ...}
         self._pending_lock = threading.Lock()
 
         # Track master status from Client events
@@ -254,7 +259,11 @@ class SeestarClient:
         result = entry.get("result")
         if result and "error" in result:
             error = result["error"]
-            msg = error.get("message", "Unknown error") if isinstance(error, dict) else str(error)
+            msg = (
+                error.get("message", "Unknown error")
+                if isinstance(error, dict)
+                else str(error)
+            )
             raise RuntimeError(f"Seestar error: {msg}")
 
         return result.get("result") if result else None
@@ -262,8 +271,18 @@ class SeestarClient:
     # ── Known event names from the Seestar firmware ──────────────────────────
     # Discovered via live traffic capture. New events are logged at DEBUG level
     # so they appear in logs when --debug is active, making future discovery easy.
-    _VIEW_START_EVENTS = {"ImagingViewStart", "SolarViewStart", "LunarViewStart", "SceneryViewStart"}
-    _VIEW_STOP_EVENTS = {"ImagingViewStop", "SolarViewStop", "LunarViewStop", "SceneryViewStop"}
+    _VIEW_START_EVENTS = {
+        "ImagingViewStart",
+        "SolarViewStart",
+        "LunarViewStart",
+        "SceneryViewStart",
+    }
+    _VIEW_STOP_EVENTS = {
+        "ImagingViewStop",
+        "SolarViewStop",
+        "LunarViewStop",
+        "SceneryViewStop",
+    }
 
     def _handle_event(self, event: dict) -> None:
         """Parse unsolicited Event messages from the Seestar firmware.
@@ -329,7 +348,7 @@ class SeestarClient:
             code = event.get("code", 0)
             manual = event.get("manual", False)
             self._scope_tracking = tracking
-            self._scope_moving = (code == 203)  # "equipment is moving"
+            self._scope_moving = code == 203  # "equipment is moving"
             self._event_device_state["scope_tracking"] = tracking
             self._event_device_state["scope_manual"] = manual
             self._event_device_state["scope_state"] = event.get("state", "unknown")
@@ -344,13 +363,15 @@ class SeestarClient:
                 )
         else:
             # Temporarily at WARNING to discover new firmware event names
-            logger.warning(f"[Event-diag] unknown event: {name} keys={list(event.keys())} payload={str(event)[:300]}")
-
+            logger.warning(
+                f"[Event-diag] unknown event: {name} keys={list(event.keys())} payload={str(event)[:300]}"
+            )
 
     def _reconnect(self) -> bool:
         """Attempt to re-establish the TCP connection without starting a new heartbeat thread.
         Called from within the heartbeat thread after a drop is detected.
-        Runs auto-discovery when the configured host fails (e.g. scope got new DHCP lease)."""
+        Runs auto-discovery when the configured host fails (e.g. scope got new DHCP lease).
+        """
         if self.socket:
             try:
                 self.socket.close()
@@ -371,7 +392,9 @@ class SeestarClient:
                     time.sleep(0.4)  # let initial event burst clear
                     self._send_init_sequence()
                 except Exception as _ie:
-                    logger.warning(f"[Reconnect] Init sequence failed (non-fatal): {_ie}")
+                    logger.warning(
+                        f"[Reconnect] Init sequence failed (non-fatal): {_ie}"
+                    )
 
                 # Restart reader thread if not running
                 if not self._reader_running or (
@@ -576,22 +599,32 @@ class SeestarClient:
             )
             logger.warning(f"[Init] set_user_location sent (lat={lat} lon={lon})")
         except Exception as e:
-            logger.warning(f"[Init] set_user_location FAILED (lat={lat} lon={lon}): {e}")
+            logger.warning(
+                f"[Init] set_user_location FAILED (lat={lat} lon={lon}): {e}"
+            )
 
         # 2. Clock sync — fire-and-forget
         try:
             now = datetime.now(timezone.utc)
             self._send_command(
                 "pi_set_time",
-                params=[{
-                    "year": now.year, "mon": now.month, "day": now.day,
-                    "hour": now.hour, "min": now.minute, "sec": now.second,
-                    "time_zone": "UTC",
-                }],
+                params=[
+                    {
+                        "year": now.year,
+                        "mon": now.month,
+                        "day": now.day,
+                        "hour": now.hour,
+                        "min": now.minute,
+                        "sec": now.second,
+                        "time_zone": "UTC",
+                    }
+                ],
                 expect_response=False,
                 quiet=True,
             )
-            logger.warning(f"[Init] pi_set_time sent ({now.strftime('%Y-%m-%dT%H:%M:%SZ')})")
+            logger.warning(
+                f"[Init] pi_set_time sent ({now.strftime('%Y-%m-%dT%H:%M:%SZ')})"
+            )
         except Exception as e:
             logger.warning(f"[Init] pi_set_time FAILED: {e}")
 
@@ -657,7 +690,9 @@ class SeestarClient:
         # another thread just finished connecting while we waited.
         with self._connect_lock:
             if self._connected:
-                logger.info("[Seestar] connect(): already connected (won by peer thread)")
+                logger.info(
+                    "[Seestar] connect(): already connected (won by peer thread)"
+                )
                 return True
 
             return self._do_connect()
@@ -708,15 +743,22 @@ class SeestarClient:
                     _usock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
                     _usock.settimeout(2.0)
                     _usock.bind(("", 0))
-                    _udp_msg = json.dumps({"id": 1, "method": "scan_iscope", "params": ""}) + "\r\n"
+                    _udp_msg = (
+                        json.dumps({"id": 1, "method": "scan_iscope", "params": ""})
+                        + "\r\n"
+                    )
                     _usock.sendto(_udp_msg.encode(), ("255.255.255.255", 4720))
                     logger.warning("[Init] UDP scan_iscope broadcast sent on port 4720")
                     # Wait for scope to reply — this is the handshake
                     try:
                         data, addr = _usock.recvfrom(1024)
-                        logger.warning(f"[Init] UDP scan_iscope reply from {addr[0]}: {data[:200]}")
+                        logger.warning(
+                            f"[Init] UDP scan_iscope reply from {addr[0]}: {data[:200]}"
+                        )
                     except socket.timeout:
-                        logger.warning("[Init] UDP scan_iscope: no reply (2s timeout) — TCP may be ghost connection")
+                        logger.warning(
+                            "[Init] UDP scan_iscope: no reply (2s timeout) — TCP may be ghost connection"
+                        )
                     _usock.close()
                 except Exception as _ue:
                     logger.warning(f"[Init] UDP handshake failed: {_ue}")
@@ -836,7 +878,9 @@ class SeestarClient:
                     responder_ip = addr[0]
                     # Ignore our own loopback
                     if not responder_ip.startswith("127."):
-                        logger.info(f"[Seestar] UDP discovery: scope replied from {responder_ip}")
+                        logger.info(
+                            f"[Seestar] UDP discovery: scope replied from {responder_ip}"
+                        )
                         return responder_ip
                 except _socket.timeout:
                     break
@@ -868,7 +912,9 @@ class SeestarClient:
         if udp_ip:
             return udp_ip
 
-        logger.info("[Seestar] UDP discovery found nothing; falling back to TCP subnet scan…")
+        logger.info(
+            "[Seestar] UDP discovery found nothing; falling back to TCP subnet scan…"
+        )
 
         # --- Pass 2: TCP /24 port scan on all local interface subnets ---
         # Collect all unique /24 prefixes from local interfaces.
@@ -1021,7 +1067,11 @@ class SeestarClient:
 
         # Refuse to record if scope is known to be in a non-solar/lunar mode.
         # If mode is None (unknown, e.g. after reconnect), allow with a warning.
-        if self._viewing_mode is not None and self._viewing_mode not in ("sun", "moon", "scenery"):
+        if self._viewing_mode is not None and self._viewing_mode not in (
+            "sun",
+            "moon",
+            "scenery",
+        ):
             raise RuntimeError(
                 f"Cannot record: scope is in mode '{self._viewing_mode}' "
                 "(must be 'sun' or 'moon'). Point the scope at the target first."
@@ -1180,13 +1230,16 @@ class SeestarClient:
     def stop_view_mode(self) -> bool:
         """Stop current viewing mode (live view, stack, or slew)."""
         import time as _time
+
         try:
             self._send_command("iscope_stop_view", expect_response=False)
             _time.sleep(0.3)
         except Exception:
             pass
         try:
-            self._send_command("iscope_stop_view", params={"stage": "Stack"}, expect_response=False)
+            self._send_command(
+                "iscope_stop_view", params={"stage": "Stack"}, expect_response=False
+            )
             _time.sleep(1.0)
             self._viewing_mode = None
             logger.info("Stopped viewing mode")
@@ -1234,16 +1287,18 @@ class SeestarClient:
         observer_elev : float
             Observer elevation in metres.
         """
-        from src.constants import EARTH_TIMESCALE
         import math
+
+        from src.constants import EARTH_TIMESCALE
 
         t = EARTH_TIMESCALE.now()
         lat_r = math.radians(observer_lat)
         alt_r = math.radians(alt)
         az_r = math.radians(az)
 
-        sin_dec = (math.sin(alt_r) * math.sin(lat_r) +
-                   math.cos(alt_r) * math.cos(lat_r) * math.cos(az_r))
+        sin_dec = math.sin(alt_r) * math.sin(lat_r) + math.cos(alt_r) * math.cos(
+            lat_r
+        ) * math.cos(az_r)
         dec_r = math.asin(max(-1.0, min(1.0, sin_dec)))
 
         cos_ha = (math.sin(alt_r) - math.sin(lat_r) * sin_dec) / (
@@ -1271,10 +1326,10 @@ class SeestarClient:
     # Speed thresholds (ALP firmware scale — 4000 is normal, 8000 is fast)
     _SLEW_FAST_SPEED = 4000
     _SLEW_SLOW_SPEED = 1000
-    _SLEW_SLOW_THRESHOLD = 5.0   # switch to slow within this many degrees
-    _SLEW_TOLERANCE = 0.5        # stop when within this many degrees
-    _SLEW_MAX_DURATION = 120     # hard timeout (seconds)
-    _SLEW_POLL_INTERVAL = 1.0    # telemetry poll interval during slew
+    _SLEW_SLOW_THRESHOLD = 5.0  # switch to slow within this many degrees
+    _SLEW_TOLERANCE = 0.5  # stop when within this many degrees
+    _SLEW_MAX_DURATION = 120  # hard timeout (seconds)
+    _SLEW_POLL_INTERVAL = 1.0  # telemetry poll interval during slew
 
     def speed_move(self, speed: int, angle: int, dur_sec: int = 3) -> dict:
         """Raw motor move — no horizon check.
@@ -1330,8 +1385,6 @@ class SeestarClient:
 
         Returns dict with status info.
         """
-        import math
-        import time as _time
 
         with self._cmd_seq_lock:
             return self._manual_goto_inner(target_alt, target_az)
@@ -1351,7 +1404,9 @@ class SeestarClient:
         prev_distance = None
         loop_count = 0
 
-        logger.info(f"[ManualGoTo] Starting: target alt={target_alt:.1f}° az={target_az:.1f}°")
+        logger.info(
+            f"[ManualGoTo] Starting: target alt={target_alt:.1f}° az={target_az:.1f}°"
+        )
 
         while _time.time() - start < self._SLEW_MAX_DURATION:
             loop_count += 1
@@ -1377,7 +1432,7 @@ class SeestarClient:
             # Shortest azimuth path (handle 360° wrap)
             d_az = (target_az - cur_az + 180) % 360 - 180
 
-            distance = math.sqrt(d_alt ** 2 + d_az ** 2)
+            distance = math.sqrt(d_alt**2 + d_az**2)
             logger.debug(
                 f"[ManualGoTo] cur=({cur_alt:.1f}°, {cur_az:.1f}°) "
                 f"delta=({d_alt:.1f}°, {d_az:.1f}°) dist={distance:.1f}°"
@@ -1422,7 +1477,11 @@ class SeestarClient:
             prev_distance = distance
 
             # Choose speed
-            speed = self._SLEW_SLOW_SPEED if distance < self._SLEW_SLOW_THRESHOLD else self._SLEW_FAST_SPEED
+            speed = (
+                self._SLEW_SLOW_SPEED
+                if distance < self._SLEW_SLOW_THRESHOLD
+                else self._SLEW_FAST_SPEED
+            )
 
             # Compute angle for scope_speed_move.
             # Empirically confirmed firmware convention (Phase 4 diag):
@@ -1489,9 +1548,7 @@ class SeestarClient:
 
     def set_manual_exp(self, enabled: bool) -> dict:
         """Enable or disable manual exposure mode."""
-        result = self._send_command(
-            "set_setting", params={"manual_exp": bool(enabled)}
-        )
+        result = self._send_command("set_setting", params={"manual_exp": bool(enabled)})
         logger.info(f"Manual exposure {'on' if enabled else 'off'}")
         return result or {}
 
@@ -1580,7 +1637,9 @@ class SeestarClient:
         silently sending commands the firmware will drop.
         """
         if not self._is_master:
-            logger.warning("[Master] Not master — attempting reclaim before motor command")
+            logger.warning(
+                "[Master] Not master — attempting reclaim before motor command"
+            )
             self._master_reclaim_attempts = 0  # reset for fresh attempt
             self._reclaim_master()
             time.sleep(0.5)
@@ -1597,14 +1656,18 @@ class SeestarClient:
         """
         if not self._scope_moving:
             return True
-        logger.warning("[Motor] Scope is mid-motion (code 203) — waiting for it to settle...")
+        logger.warning(
+            "[Motor] Scope is mid-motion (code 203) — waiting for it to settle..."
+        )
         deadline = time.time() + timeout
         while time.time() < deadline:
             if not self._scope_moving:
                 logger.warning("[Motor] Scope settled — proceeding with command")
                 return True
             time.sleep(0.3)
-        logger.warning(f"[Motor] Scope still moving after {timeout}s — proceeding anyway")
+        logger.warning(
+            f"[Motor] Scope still moving after {timeout}s — proceeding anyway"
+        )
         return False
 
     def _reader_loop(self) -> None:
@@ -1614,6 +1677,7 @@ class SeestarClient:
         push events, and logs Client/master status so we know if we're ignored.
         """
         import select as _select
+
         logger.info("[Reader] Thread started — draining socket")
         buf = ""
         while self._reader_running:
@@ -1645,7 +1709,9 @@ class SeestarClient:
                         msg = json.loads(line)
                         if "Event" in msg:
                             event_name = msg["Event"]
-                            logger.debug(f"[Reader] Event: {event_name} {str(msg)[:200]}")
+                            logger.debug(
+                                f"[Reader] Event: {event_name} {str(msg)[:200]}"
+                            )
                             # Client event tells us if we have master control
                             if event_name == "Client":
                                 was_master = self._is_master
@@ -1659,14 +1725,18 @@ class SeestarClient:
                                     self._reclaim_master()
                                 else:
                                     if not was_master:
-                                        logger.warning("[Reader] Master control regained!")
+                                        logger.warning(
+                                            "[Reader] Master control regained!"
+                                        )
                                         self._master_reclaim_attempts = 0
                                     else:
                                         logger.debug("[Reader] We are master client")
                             self._handle_event(msg)
                         elif "id" in msg:
                             resp_id = msg.get("id")
-                            logger.debug(f"[Reader] Response id={resp_id}: {str(msg)[:300]}")
+                            logger.debug(
+                                f"[Reader] Response id={resp_id}: {str(msg)[:300]}"
+                            )
                             # Deposit into pending waiter if someone is waiting
                             with self._pending_lock:
                                 waiter = self._pending_responses.get(resp_id)
@@ -1674,7 +1744,9 @@ class SeestarClient:
                                     waiter["result"] = msg
                                     waiter["event"].set()
                     except json.JSONDecodeError as jde:
-                        logger.warning(f"[Reader] JSON parse error: {jde} — raw: {line[:200]}")
+                        logger.warning(
+                            f"[Reader] JSON parse error: {jde} — raw: {line[:200]}"
+                        )
             except socket.timeout:
                 pass
             except socket.error as e:
@@ -2112,7 +2184,9 @@ def create_client_from_env() -> Optional[SeestarClient]:
 
     host = os.getenv("SEESTAR_HOST", "")
     if not host:
-        logger.info("SEESTAR_HOST not configured — auto-discovery will locate the scope at connect time")
+        logger.info(
+            "SEESTAR_HOST not configured — auto-discovery will locate the scope at connect time"
+        )
 
     try:
         port = int(os.getenv("SEESTAR_PORT", str(SeestarClient.DEFAULT_PORT)))

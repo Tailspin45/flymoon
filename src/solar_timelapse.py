@@ -627,7 +627,9 @@ class SolarTimelapse:
                         self._consecutive_failures = 0
                         self._last_error = None
                         self._retry_delay = self._interval
-                        self._last_frame_grab_warn = 0  # Reset so next failure logs WARNING
+                        self._last_frame_grab_warn = (
+                            0  # Reset so next failure logs WARNING
+                        )
                     else:
                         self._consecutive_failures += 1
                         self._retry_delay = 10.0
@@ -699,12 +701,18 @@ class SolarTimelapse:
             try:
                 with open(filepath, "wb") as fh:
                     fh.write(jpeg_bytes)
-                logger.debug("[Timelapse] Frame grabbed from detector hi-res buffer (no new RTSP)")
+                logger.debug(
+                    "[Timelapse] Frame grabbed from detector hi-res buffer (no new RTSP)"
+                )
             except Exception as exc:
                 logger.warning(f"[Timelapse] Failed to write buffer frame: {exc}")
                 jpeg_bytes = None  # fall through to ffmpeg below
 
-        if not jpeg_bytes or not os.path.exists(filepath) or os.path.getsize(filepath) < 100:
+        if (
+            not jpeg_bytes
+            or not os.path.exists(filepath)
+            or os.path.getsize(filepath) < 100
+        ):
             # Fall back: spawn ffmpeg to grab a single frame from RTSP
             rtsp_url = f"rtsp://{self._host}:{self._rtsp_port}/stream"
             cmd = [

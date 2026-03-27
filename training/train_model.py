@@ -27,7 +27,6 @@ from __future__ import annotations
 import argparse
 import glob
 import json
-import os
 import random
 import sys
 from pathlib import Path
@@ -45,13 +44,16 @@ META_OUT = Path("models/transit_classifier.json")
 
 # ── Model ─────────────────────────────────────────────────────────────────────
 
+
 def build_model():
     """Return a TransitCNN instance (~48 K params)."""
     try:
-        import torch
         import torch.nn as nn
     except ImportError:
-        print("PyTorch is required for training. Install with: pip install torch", file=sys.stderr)
+        print(
+            "PyTorch is required for training. Install with: pip install torch",
+            file=sys.stderr,
+        )
         sys.exit(1)
 
     class TransitCNN(nn.Module):
@@ -59,25 +61,26 @@ def build_model():
             super().__init__()
             # Block 1 — (B,1,15,160,90) → (B,8,15,80,45) after pool
             self.conv1 = nn.Conv3d(1, 8, kernel_size=3, padding=1, bias=False)
-            self.bn1   = nn.BatchNorm3d(8)
+            self.bn1 = nn.BatchNorm3d(8)
             self.pool1 = nn.MaxPool3d(kernel_size=(1, 2, 2))
 
             # Block 2 — → (B,16,7,40,22) after pool
             self.conv2 = nn.Conv3d(8, 16, kernel_size=3, padding=1, bias=False)
-            self.bn2   = nn.BatchNorm3d(16)
+            self.bn2 = nn.BatchNorm3d(16)
             self.pool2 = nn.MaxPool3d(kernel_size=(2, 2, 2))
 
             # Block 3 — → (B,32,1,5,3) after adaptive pool (= 480 features)
             self.conv3 = nn.Conv3d(16, 32, kernel_size=3, padding=1, bias=False)
-            self.bn3   = nn.BatchNorm3d(32)
+            self.bn3 = nn.BatchNorm3d(32)
             self.pool3 = nn.AdaptiveAvgPool3d((1, 5, 3))
 
-            self.drop  = nn.Dropout(p=0.4)
-            self.fc1   = nn.Linear(32 * 1 * 5 * 3, 64)
-            self.fc2   = nn.Linear(64, 2)
+            self.drop = nn.Dropout(p=0.4)
+            self.fc1 = nn.Linear(32 * 1 * 5 * 3, 64)
+            self.fc2 = nn.Linear(64, 2)
 
         def forward(self, x):
             import torch.nn.functional as F
+
             x = self.pool1(F.relu(self.bn1(self.conv1(x))))
             x = self.pool2(F.relu(self.bn2(self.conv2(x))))
             x = self.pool3(F.relu(self.bn3(self.conv3(x))))
@@ -92,6 +95,7 @@ def build_model():
 
 
 # ── Dataset ───────────────────────────────────────────────────────────────────
+
 
 class ClipDataset:
     """Simple in-memory dataset of .npz clip files."""
@@ -136,9 +140,9 @@ class ClipDataset:
     def _augment(self, clip: np.ndarray) -> np.ndarray:
         """Light augmentation: horizontal flip, time-reverse, brightness jitter."""
         if random.random() < 0.5:
-            clip = clip[:, :, ::-1].copy()   # horizontal flip (W axis)
+            clip = clip[:, :, ::-1].copy()  # horizontal flip (W axis)
         if random.random() < 0.5:
-            clip = clip[::-1, :, :].copy()   # time reversal
+            clip = clip[::-1, :, :].copy()  # time reversal
         clip += np.random.normal(0, 0.02, clip.shape).astype(np.float32)
         return clip
 
@@ -157,6 +161,7 @@ class ClipDataset:
 
 
 # ── Training loop ─────────────────────────────────────────────────────────────
+
 
 def train(
     data_dir: Path = DATA_DIR,
@@ -178,9 +183,11 @@ def train(
         sys.exit(1)
 
     if device_str == "auto":
-        device = torch.device("mps" if torch.backends.mps.is_available()
-                              else "cuda" if torch.cuda.is_available()
-                              else "cpu")
+        device = torch.device(
+            "mps"
+            if torch.backends.mps.is_available()
+            else "cuda" if torch.cuda.is_available() else "cpu"
+        )
     else:
         device = torch.device(device_str)
     print(f"Device: {device}")
@@ -198,7 +205,9 @@ def train(
     n_pos = sum(1 for i in train_idx if dataset.samples[i][1] == 1)
     n_neg = n_train - n_pos
     if n_pos > 0 and n_neg > 0:
-        w = torch.tensor([n_pos / n_train, n_neg / n_train], dtype=torch.float32).to(device)
+        w = torch.tensor([n_pos / n_train, n_neg / n_train], dtype=torch.float32).to(
+            device
+        )
     else:
         w = None
 
@@ -219,7 +228,7 @@ def train(
         random.shuffle(train_idx)
         train_loss = train_correct = 0
         for b_start in range(0, n_train, batch_size):
-            batch_ids = train_idx[b_start: b_start + batch_size]
+            batch_ids = train_idx[b_start : b_start + batch_size]
             x_np, y_np = dataset.get_batch(batch_ids)
             x = torch.from_numpy(x_np).to(device)
             y = torch.from_numpy(y_np).to(device)
@@ -237,7 +246,7 @@ def train(
         val_loss = val_correct = 0
         with torch.no_grad():
             for b_start in range(0, n_val, batch_size):
-                batch_ids = val_idx[b_start: b_start + batch_size]
+                batch_ids = val_idx[b_start : b_start + batch_size]
                 x_np, y_np = dataset.get_batch(batch_ids)
                 x = torch.from_numpy(x_np).to(device)
                 y = torch.from_numpy(y_np).to(device)
@@ -250,8 +259,10 @@ def train(
         ta = train_correct / n_train * 100
         va = val_correct / n_val * 100
         marker = " *" if vl < best_val_loss else ""
-        print(f"  Epoch {epoch:02d}/{epochs}  train {tl:.4f} ({ta:.1f}%)  "
-              f"val {vl:.4f} ({va:.1f}%){marker}")
+        print(
+            f"  Epoch {epoch:02d}/{epochs}  train {tl:.4f} ({ta:.1f}%)  "
+            f"val {vl:.4f} ({va:.1f}%){marker}"
+        )
 
         if vl < best_val_loss:
             best_val_loss = vl
@@ -300,8 +311,11 @@ def train(
 
 # ── Entry point ───────────────────────────────────────────────────────────────
 
+
 def main():
-    ap = argparse.ArgumentParser(description="Train transit classifier and export to ONNX")
+    ap = argparse.ArgumentParser(
+        description="Train transit classifier and export to ONNX"
+    )
     ap.add_argument("--data", default=str(DATA_DIR), help="Training data directory")
     ap.add_argument("--out", default=str(MODEL_OUT), help="Output ONNX model path")
     ap.add_argument("--epochs", type=int, default=40)

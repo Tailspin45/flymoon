@@ -34,11 +34,11 @@ import numpy as np
 # ── Match TransitDetector analysis resolution ────────────────────────────────
 CLIP_W = 90
 CLIP_H = 160
-CLIP_T = 15           # frames per clip (~1 s at 15 fps)
-SRC_FPS_TARGET = 15   # target fps; every 2nd frame if source is 30fps
-PRE_PAD_S = 0.3       # seconds before transit start for the clip window
-HARD_NEG_OFFSET_S = 3 # offset from transit for "near-miss" hard negatives
-NEG_PER_POS = 3       # background clips extracted per positive
+CLIP_T = 15  # frames per clip (~1 s at 15 fps)
+SRC_FPS_TARGET = 15  # target fps; every 2nd frame if source is 30fps
+PRE_PAD_S = 0.3  # seconds before transit start for the clip window
+HARD_NEG_OFFSET_S = 3  # offset from transit for "near-miss" hard negatives
+NEG_PER_POS = 3  # background clips extracted per positive
 
 OUT_DIR = Path("data/training")
 POS_DIR = OUT_DIR / "positives"
@@ -47,6 +47,7 @@ LABELS_CSV = OUT_DIR / "labels.csv"
 
 
 # ── Frame extraction helpers ─────────────────────────────────────────────────
+
 
 def _open_video(path: str) -> Optional[cv2.VideoCapture]:
     cap = cv2.VideoCapture(path)
@@ -96,15 +97,18 @@ def _extract_clip(
     return arr
 
 
-def _random_centers(duration_s: float, n: int, exclude: List[Tuple[float, float]]) -> List[float]:
+def _random_centers(
+    duration_s: float, n: int, exclude: List[Tuple[float, float]]
+) -> List[float]:
     """Pick n random seconds in the video that are far from any transit."""
     margin = (CLIP_T / SRC_FPS_TARGET) / 2 + 0.5
     candidates: List[float] = []
     attempts = 0
     while len(candidates) < n and attempts < 2000:
         t = random.uniform(margin, max(margin + 0.1, duration_s - margin))
-        ok = all(abs(t - ex_c) > ex_dur / 2 + HARD_NEG_OFFSET_S
-                 for ex_c, ex_dur in exclude)
+        ok = all(
+            abs(t - ex_c) > ex_dur / 2 + HARD_NEG_OFFSET_S for ex_c, ex_dur in exclude
+        )
         if ok:
             candidates.append(t)
         attempts += 1
@@ -112,6 +116,7 @@ def _random_centers(duration_s: float, n: int, exclude: List[Tuple[float, float]
 
 
 # ── Per-video processing ─────────────────────────────────────────────────────
+
 
 def process_video(mp4_path: str, json_path: str) -> Tuple[int, int]:
     """Return (n_positives, n_negatives) extracted from this video."""
@@ -163,7 +168,9 @@ def process_video(mp4_path: str, json_path: str) -> Tuple[int, int]:
                     n_neg += 1
 
     # ── Random background negatives ───────────────────────────────────────────
-    centers = _random_centers(duration_s, NEG_PER_POS * max(1, len(transit_events)), event_spans)
+    centers = _random_centers(
+        duration_s, NEG_PER_POS * max(1, len(transit_events)), event_spans
+    )
     for t in centers:
         clip = _extract_clip(cap, src_fps, t)
         if clip is None:
@@ -182,13 +189,16 @@ def process_video(mp4_path: str, json_path: str) -> Tuple[int, int]:
 _csv_handle = None
 _csv_writer = None
 
+
 def _open_labels():
     global _csv_handle, _csv_writer
     first_write = not LABELS_CSV.exists()
     _csv_handle = open(LABELS_CSV, "a", newline="")
     _csv_writer = csv.writer(_csv_handle)
     if first_write:
-        _csv_writer.writerow(["filename", "label", "source_video", "center_s", "duration_s"])
+        _csv_writer.writerow(
+            ["filename", "label", "source_video", "center_s", "duration_s"]
+        )
 
 
 def _write_label(filename: str, label: str, source: str, center: float, dur: float):
@@ -204,10 +214,19 @@ def _close_labels():
 
 # ── Main ──────────────────────────────────────────────────────────────────────
 
+
 def main():
-    ap = argparse.ArgumentParser(description="Extract training clips from solar transit videos")
-    ap.add_argument("--gallery", default="transits from David", help="Directory containing MP4 + analysis JSON files")
-    ap.add_argument("--out", default=str(OUT_DIR), help="Output directory (default: data/training)")
+    ap = argparse.ArgumentParser(
+        description="Extract training clips from solar transit videos"
+    )
+    ap.add_argument(
+        "--gallery",
+        default="transits from David",
+        help="Directory containing MP4 + analysis JSON files",
+    )
+    ap.add_argument(
+        "--out", default=str(OUT_DIR), help="Output directory (default: data/training)"
+    )
     ap.add_argument("--seed", type=int, default=42)
     args = ap.parse_args()
 

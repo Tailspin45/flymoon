@@ -26,11 +26,11 @@ import math
 import os
 import sys
 import time
-from datetime import datetime, timezone
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 from dotenv import load_dotenv
+
 load_dotenv()
 
 HOST = os.getenv("SEESTAR_HOST", "192.168.4.112")
@@ -44,22 +44,29 @@ def _pass(name, detail=""):
     print(f"  PASS  {name}" + (f" — {detail}" if detail else ""))
     return {"test": name, "status": "PASS", "detail": detail}
 
+
 def _fail(name, detail=""):
     print(f"  FAIL  {name}" + (f" — {detail}" if detail else ""))
     return {"test": name, "status": "FAIL", "detail": detail}
 
+
 def _warn(name, detail=""):
     print(f"  WARN  {name}" + (f" — {detail}" if detail else ""))
     return {"test": name, "status": "WARN", "detail": detail}
+
 
 def _info(msg):
     print(f"        {msg}")
 
 
 def get_sun_altaz():
-    from src.constants import ASTRO_EPHEMERIS, EARTH_TIMESCALE
     from skyfield.api import wgs84
-    observer = ASTRO_EPHEMERIS["earth"] + wgs84.latlon(OBS_LAT, OBS_LON, elevation_m=OBS_ELEV)
+
+    from src.constants import ASTRO_EPHEMERIS, EARTH_TIMESCALE
+
+    observer = ASTRO_EPHEMERIS["earth"] + wgs84.latlon(
+        OBS_LAT, OBS_LON, elevation_m=OBS_ELEV
+    )
     t = EARTH_TIMESCALE.now()
     sun = ASTRO_EPHEMERIS["sun"]
     alt, az, _ = observer.at(t).observe(sun).apparent().altaz()
@@ -99,7 +106,7 @@ def patched_goto_with_logging(client, target_alt, target_az, max_duration=60):
 
         d_alt = target_alt - cur_alt
         d_az = (target_az - cur_az + 180) % 360 - 180
-        distance = math.sqrt(d_alt ** 2 + d_az ** 2)
+        distance = math.sqrt(d_alt**2 + d_az**2)
         # Fixed formula (Phase 4): negate d_alt so angle drives scope toward target.
         # atan2(d_az, -d_alt) + 90 → api angle; speed_move adds +180 → fw angle.
         angle = (math.degrees(math.atan2(d_az, -d_alt)) + 90) % 360
@@ -195,11 +202,15 @@ def run(host, port, target_alt, target_az, restore_solar, output_path):
             sun_alt, sun_az = get_sun_altaz()
             target_alt = min(sun_alt + 5.0, 85.0)
             target_az = sun_az
-            _info(f"Sun at alt={sun_alt:.2f}° az={sun_az:.2f}° → target alt={target_alt:.2f}° az={target_az:.2f}°")
+            _info(
+                f"Sun at alt={sun_alt:.2f}° az={sun_az:.2f}° → target alt={target_alt:.2f}° az={target_az:.2f}°"
+            )
         except Exception as e:
             results.append(_fail("get_sun_target", str(e)))
-            try: client.disconnect()
-            except: pass
+            try:
+                client.disconnect()
+            except:
+                pass
             return results, raw
 
     raw["target_alt"] = target_alt
@@ -217,8 +228,10 @@ def run(host, port, target_alt, target_az, restore_solar, output_path):
         results.append(_pass("switch_to_scenery"))
     except Exception as e:
         results.append(_fail("switch_to_scenery", str(e)))
-        try: client.disconnect()
-        except: pass
+        try:
+            client.disconnect()
+        except:
+            pass
         return results, raw
 
     # Baseline position
@@ -231,7 +244,9 @@ def run(host, port, target_alt, target_az, restore_solar, output_path):
     # Run patched servo loop
     print("--- GoTo servo loop (verbose) ---")
     try:
-        goto_result = patched_goto_with_logging(client, target_alt, target_az, max_duration=90)
+        goto_result = patched_goto_with_logging(
+            client, target_alt, target_az, max_duration=90
+        )
         raw["goto_result"] = goto_result
 
         status = goto_result["final_status"]
@@ -239,10 +254,16 @@ def run(host, port, target_alt, target_az, restore_solar, output_path):
         iters = len(goto_result["iterations"])
 
         if status == "arrived":
-            results.append(_pass("goto_arrived", f"in {elapsed}s after {iters} iterations"))
+            results.append(
+                _pass("goto_arrived", f"in {elapsed}s after {iters} iterations")
+            )
         elif status == "stalled":
-            results.append(_fail("goto_stalled",
-                f"stalled after {iters} iterations — position feedback likely frozen"))
+            results.append(
+                _fail(
+                    "goto_stalled",
+                    f"stalled after {iters} iterations — position feedback likely frozen",
+                )
+            )
         else:
             results.append(_fail("goto_timeout", f"timed out after {elapsed}s"))
 
@@ -255,9 +276,16 @@ def run(host, port, target_alt, target_az, restore_solar, output_path):
             _info(f"Distance trend: {first_d:.2f}° → {last_d:.2f}° ({trend})")
             raw["distance_trend"] = trend
             if trend == "converging":
-                results.append(_pass("servo_converging", f"{first_d:.2f}° → {last_d:.2f}°"))
+                results.append(
+                    _pass("servo_converging", f"{first_d:.2f}° → {last_d:.2f}°")
+                )
             else:
-                results.append(_fail("servo_converging", f"{first_d:.2f}° → {last_d:.2f}° — servo is diverging!"))
+                results.append(
+                    _fail(
+                        "servo_converging",
+                        f"{first_d:.2f}° → {last_d:.2f}° — servo is diverging!",
+                    )
+                )
 
     except Exception as e:
         results.append(_fail("goto_loop", str(e)))
@@ -274,8 +302,10 @@ def run(host, port, target_alt, target_az, restore_solar, output_path):
         except Exception as e:
             results.append(_fail("restore_solar", str(e)))
 
-    try: client.disconnect()
-    except: pass
+    try:
+        client.disconnect()
+    except:
+        pass
 
     passed = sum(1 for r in results if r["status"] == "PASS")
     warned = sum(1 for r in results if r["status"] == "WARN")
@@ -287,7 +317,8 @@ def run(host, port, target_alt, target_az, restore_solar, output_path):
 
     output = {
         "phase": "phase4_goto_test",
-        "host": host, "port": port,
+        "host": host,
+        "port": port,
         "tests": results,
         "raw": raw,
         "summary": {"passed": passed, "warned": warned, "failed": failed},
@@ -309,7 +340,14 @@ def main():
     parser.add_argument("--restore-solar", action="store_true")
     parser.add_argument("--output", default="docs/diag_logs/phase4_goto_test.json")
     args = parser.parse_args()
-    run(args.host, args.port, args.target_alt, args.target_az, args.restore_solar, args.output)
+    run(
+        args.host,
+        args.port,
+        args.target_alt,
+        args.target_az,
+        args.restore_solar,
+        args.output,
+    )
 
 
 if __name__ == "__main__":

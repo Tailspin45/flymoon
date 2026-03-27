@@ -137,7 +137,8 @@ app.config["TEMPLATES_AUTO_RELOAD"] = True
 app.secret_key = os.environ.get("SECRET_KEY", os.urandom(24).hex())
 
 # Compute a stable app version from git commit hash for cache-busting static assets.
-import os as _os, time as _time
+import os as _os
+import time as _time
 
 # Use the most recent mtime of any static asset so the cache busts on every
 # file save during development, even without a new commit.
@@ -1016,7 +1017,9 @@ def api_label_transit_event():
         writer = _csv.writer(fh)
         if first_write:
             writer.writerow(["timestamp", "label", "notes", "labeled_at"])
-        from datetime import datetime as _dt, timezone as _tz
+        from datetime import datetime as _dt
+        from datetime import timezone as _tz
+
         writer.writerow([ts, label, notes, _dt.now(_tz.utc).isoformat()])
 
     # Invalidate cached labels
@@ -1028,6 +1031,7 @@ def api_label_transit_event():
 def _load_transit_labels() -> dict:
     """Return {timestamp → label} from data/transit_labels.csv (last label wins)."""
     import csv as _csv
+
     cache = getattr(_load_transit_labels, "cache", None)
     if cache is not None:
         return cache
@@ -1170,12 +1174,19 @@ if __name__ == "__main__":
     def _kill_stale_on_port(p: int) -> bool:
         """Kill any process holding *p* and wait until the port is actually free.
         Returns True if port is confirmed free within ~3 s."""
-        import subprocess as _sp, signal as _sig, time as _t
+        import signal as _sig
+        import subprocess as _sp
+        import time as _t
+
         try:
-            out = _sp.check_output(
-                ["lsof", "-ti", f"TCP:{p}", "-sTCP:LISTEN"],
-                stderr=_sp.DEVNULL,
-            ).decode().split()
+            out = (
+                _sp.check_output(
+                    ["lsof", "-ti", f"TCP:{p}", "-sTCP:LISTEN"],
+                    stderr=_sp.DEVNULL,
+                )
+                .decode()
+                .split()
+            )
         except (_sp.CalledProcessError, FileNotFoundError):
             return False  # lsof not available or no process found
         killed = False
@@ -1213,7 +1224,9 @@ if __name__ == "__main__":
             # Owned by something we can't kill (e.g. system service) — bump
             for p in range(preferred + 1, 8101):
                 if _port_is_free(p):
-                    print(f"⚠️  Port {preferred} is in use by a non-app process — starting on {p}")
+                    print(
+                        f"⚠️  Port {preferred} is in use by a non-app process — starting on {p}"
+                    )
                     port = p
                     break
 

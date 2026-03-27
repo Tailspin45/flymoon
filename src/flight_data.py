@@ -128,12 +128,15 @@ def log_transit_event(event_dict: dict, dest_path: str) -> None:
             existing_header = f.readline().strip().split(",")
         if existing_header != TRANSIT_EVENTS_FIELDS:
             import shutil
+
             shutil.move(dest_path, dest_path.replace(".csv", "_old_schema.csv"))
             needs_header = True
 
     row = {f: event_dict.get(f, "") for f in TRANSIT_EVENTS_FIELDS}
     with open(dest_path, "a", newline="") as f:
-        writer = csv.DictWriter(f, fieldnames=TRANSIT_EVENTS_FIELDS, extrasaction="ignore")
+        writer = csv.DictWriter(
+            f, fieldnames=TRANSIT_EVENTS_FIELDS, extrasaction="ignore"
+        )
         if needs_header:
             writer.writeheader()
         writer.writerow(row)

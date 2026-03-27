@@ -23,7 +23,9 @@ ADSB_LOCAL_ENABLED   "true" / "false"  (default true if ADSB_LOCAL_URL is set)
 
 import os
 import time
-from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError, as_completed
+from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import TimeoutError as FuturesTimeoutError
+from concurrent.futures import as_completed
 from math import atan2, cos, radians, sin, sqrt
 from typing import Dict, Optional
 
@@ -34,7 +36,7 @@ from src import logger
 # ---------------------------------------------------------------------------
 # Request configuration
 # ---------------------------------------------------------------------------
-REQUEST_TIMEOUT: int = 5        # seconds per individual HTTP request
+REQUEST_TIMEOUT: int = 5  # seconds per individual HTTP request
 MULTI_SOURCE_WALL_TIMEOUT = 12  # max wall-clock seconds for the whole parallel fetch
 
 # ADSB-One (airplanes.live) free public API
@@ -72,6 +74,7 @@ MULTI_SOURCE_CACHE_TTL: int = 20  # seconds
 # Coordinate helpers
 # ---------------------------------------------------------------------------
 
+
 def _bbox_to_center_radius(
     lat_ll: float, lon_ll: float, lat_ur: float, lon_ur: float
 ) -> tuple:
@@ -90,6 +93,7 @@ def _bbox_to_center_radius(
 # ---------------------------------------------------------------------------
 # Shared readsb v2 parser (ADSB-One / ADSBX / local dump1090 all use this format)
 # ---------------------------------------------------------------------------
+
 
 def _parse_readsb_aircraft(ac: dict, now_ts: float) -> Optional[dict]:
     """Parse a readsb v2 aircraft object into the internal position-dict format.
@@ -130,9 +134,17 @@ def _parse_readsb_aircraft(ac: dict, now_ts: float) -> Optional[dict]:
     last_contact = now_ts - seen_pos
 
     # Altitude: prefer geometric, fall back to barometric; feet → metres
-    alt_feet = ac.get("alt_geom") if ac.get("alt_geom") not in (None, "ground", "grnd") else None
+    alt_feet = (
+        ac.get("alt_geom")
+        if ac.get("alt_geom") not in (None, "ground", "grnd")
+        else None
+    )
     if alt_feet is None:
-        alt_feet = ac.get("alt_baro") if ac.get("alt_baro") not in (None, "ground", "grnd") else None
+        alt_feet = (
+            ac.get("alt_baro")
+            if ac.get("alt_baro") not in (None, "ground", "grnd")
+            else None
+        )
     altitude_m = float(alt_feet) * 0.3048 if alt_feet is not None else None
 
     # Ground detection
@@ -149,7 +161,9 @@ def _parse_readsb_aircraft(ac: dict, now_ts: float) -> Optional[dict]:
     speed_kmh = float(gs_kt) * 1.852 if gs_kt is not None else None
 
     # Vertical rate: ft/min → m/s  (prefer geometric rate)
-    vr_ftm = ac.get("geom_rate") if ac.get("geom_rate") is not None else ac.get("baro_rate")
+    vr_ftm = (
+        ac.get("geom_rate") if ac.get("geom_rate") is not None else ac.get("baro_rate")
+    )
     vert_rate_ms = float(vr_ftm) * 0.00508 if vr_ftm is not None else None
 
     # Emitter category: "A3" → integer 3
@@ -195,7 +209,10 @@ def _parse_readsb_aircraft(ac: dict, now_ts: float) -> Optional[dict]:
 # Individual source fetchers
 # ---------------------------------------------------------------------------
 
-def _fetch_adsb_one(lat_ll: float, lon_ll: float, lat_ur: float, lon_ur: float) -> Dict[str, dict]:
+
+def _fetch_adsb_one(
+    lat_ll: float, lon_ll: float, lat_ur: float, lon_ur: float
+) -> Dict[str, dict]:
     """Fetch positions from ADSB-One (api.adsb.one). Free, no authentication."""
     global _adsb_one_backoff_until
 
@@ -204,7 +221,9 @@ def _fetch_adsb_one(lat_ll: float, lon_ll: float, lat_ur: float, lon_ur: float) 
 
     now = time.time()
     if now < _adsb_one_backoff_until:
-        logger.debug(f"[ADSB-One] In backoff ({int(_adsb_one_backoff_until - now)}s remaining)")
+        logger.debug(
+            f"[ADSB-One] In backoff ({int(_adsb_one_backoff_until - now)}s remaining)"
+        )
         return {}
 
     clat, clon, dist_km = _bbox_to_center_radius(lat_ll, lon_ll, lat_ur, lon_ur)
@@ -217,14 +236,18 @@ def _fetch_adsb_one(lat_ll: float, lon_ll: float, lat_ur: float, lon_ur: float) 
             resp = requests.get(url, timeout=REQUEST_TIMEOUT, verify=verify_ssl)
             if resp.status_code == 429:
                 _adsb_one_backoff_until = time.time() + BACKOFF_SECONDS
-                logger.warning(f"[ADSB-One] Rate limited (429) — backoff {BACKOFF_SECONDS}s")
+                logger.warning(
+                    f"[ADSB-One] Rate limited (429) — backoff {BACKOFF_SECONDS}s"
+                )
                 return {}
             resp.raise_for_status()
             raw = resp.json()
             break
         except requests.exceptions.SSLError as exc:
             if not verify_ssl:
-                logger.warning(f"[ADSB-One] SSL error even without verify — skipping: {exc}")
+                logger.warning(
+                    f"[ADSB-One] SSL error even without verify — skipping: {exc}"
+                )
                 return {}
             logger.debug("[ADSB-One] SSL error — retrying without verify")
         except requests.exceptions.Timeout:
@@ -251,7 +274,9 @@ def _fetch_adsb_one(lat_ll: float, lon_ll: float, lat_ur: float, lon_ur: float) 
     return result
 
 
-def _fetch_adsb_lol(lat_ll: float, lon_ll: float, lat_ur: float, lon_ur: float) -> Dict[str, dict]:
+def _fetch_adsb_lol(
+    lat_ll: float, lon_ll: float, lat_ur: float, lon_ur: float
+) -> Dict[str, dict]:
     """Fetch positions from api.adsb.lol (readsb v2 /point — same shape as ADSB-One)."""
     global _adsb_lol_backoff_until
 
@@ -260,7 +285,9 @@ def _fetch_adsb_lol(lat_ll: float, lon_ll: float, lat_ur: float, lon_ur: float) 
 
     now = time.time()
     if now < _adsb_lol_backoff_until:
-        logger.debug(f"[adsb.lol] In backoff ({int(_adsb_lol_backoff_until - now)}s remaining)")
+        logger.debug(
+            f"[adsb.lol] In backoff ({int(_adsb_lol_backoff_until - now)}s remaining)"
+        )
         return {}
 
     clat, clon, dist_km = _bbox_to_center_radius(lat_ll, lon_ll, lat_ur, lon_ur)
@@ -271,7 +298,9 @@ def _fetch_adsb_lol(lat_ll: float, lon_ll: float, lat_ur: float, lon_ur: float) 
         resp = requests.get(url, timeout=REQUEST_TIMEOUT)
         if resp.status_code == 429:
             _adsb_lol_backoff_until = time.time() + BACKOFF_SECONDS
-            logger.warning(f"[adsb.lol] Rate limited (429) — backoff {BACKOFF_SECONDS}s")
+            logger.warning(
+                f"[adsb.lol] Rate limited (429) — backoff {BACKOFF_SECONDS}s"
+            )
             return {}
         resp.raise_for_status()
         raw = resp.json()
@@ -297,7 +326,9 @@ def _fetch_adsb_lol(lat_ll: float, lon_ll: float, lat_ur: float, lon_ur: float) 
     return result
 
 
-def _fetch_adsb_fi(lat_ll: float, lon_ll: float, lat_ur: float, lon_ur: float) -> Dict[str, dict]:
+def _fetch_adsb_fi(
+    lat_ll: float, lon_ll: float, lat_ur: float, lon_ur: float
+) -> Dict[str, dict]:
     """Fetch positions from adsb.fi opendata API (readsb-compatible JSON).
 
     See https://opendata.adsb.fi/api/ — v3/lat/lon/dist with dist in NM.
@@ -309,7 +340,9 @@ def _fetch_adsb_fi(lat_ll: float, lon_ll: float, lat_ur: float, lon_ur: float) -
 
     now = time.time()
     if now < _adsb_fi_backoff_until:
-        logger.debug(f"[adsb.fi] In backoff ({int(_adsb_fi_backoff_until - now)}s remaining)")
+        logger.debug(
+            f"[adsb.fi] In backoff ({int(_adsb_fi_backoff_until - now)}s remaining)"
+        )
         return {}
 
     clat, clon, dist_km = _bbox_to_center_radius(lat_ll, lon_ll, lat_ur, lon_ur)
@@ -346,7 +379,9 @@ def _fetch_adsb_fi(lat_ll: float, lon_ll: float, lat_ur: float, lon_ur: float) -
     return result
 
 
-def _fetch_adsbexchange(lat_ll: float, lon_ll: float, lat_ur: float, lon_ur: float) -> Dict[str, dict]:
+def _fetch_adsbexchange(
+    lat_ll: float, lon_ll: float, lat_ur: float, lon_ur: float
+) -> Dict[str, dict]:
     """Fetch positions from ADS-B Exchange. Requires ADSBX_API_KEY env var."""
     global _adsbx_backoff_until
 
@@ -358,7 +393,9 @@ def _fetch_adsbexchange(lat_ll: float, lon_ll: float, lat_ur: float, lon_ur: flo
 
     now = time.time()
     if now < _adsbx_backoff_until:
-        logger.debug(f"[ADSBX] In backoff ({int(_adsbx_backoff_until - now)}s remaining)")
+        logger.debug(
+            f"[ADSBX] In backoff ({int(_adsbx_backoff_until - now)}s remaining)"
+        )
         return {}
 
     clat, clon, dist_km = _bbox_to_center_radius(lat_ll, lon_ll, lat_ur, lon_ur)
@@ -399,7 +436,9 @@ def _fetch_adsbexchange(lat_ll: float, lon_ll: float, lat_ur: float, lon_ur: flo
     return result
 
 
-def _fetch_adsb_local(lat_ll: float, lon_ll: float, lat_ur: float, lon_ur: float) -> Dict[str, dict]:
+def _fetch_adsb_local(
+    lat_ll: float, lon_ll: float, lat_ur: float, lon_ur: float
+) -> Dict[str, dict]:
     """Fetch from a local RTL-SDR / dump1090 / tar1090 receiver.
 
     Reads the standard ``aircraft.json`` endpoint served by dump1090, tar1090,
@@ -426,7 +465,9 @@ def _fetch_adsb_local(lat_ll: float, lon_ll: float, lat_ur: float, lon_ur: float
         raw = resp.json()
     except Exception as exc:
         _local_backoff_until = time.time() + BACKOFF_SECONDS
-        logger.warning(f"[ADS-B Local] Request failed: {exc} — backoff {BACKOFF_SECONDS}s")
+        logger.warning(
+            f"[ADS-B Local] Request failed: {exc} — backoff {BACKOFF_SECONDS}s"
+        )
         return {}
 
     # dump1090 / tar1090 / readsb: {"aircraft": [...]} or {"ac": [...]}
@@ -439,7 +480,9 @@ def _fetch_adsb_local(lat_ll: float, lon_ll: float, lat_ur: float, lon_ur: float
         if parsed is None:
             continue
         # Filter to bbox (local receiver covers a wide area)
-        if not (lat_ll <= parsed["lat"] <= lat_ur and lon_ll <= parsed["lon"] <= lon_ur):
+        if not (
+            lat_ll <= parsed["lat"] <= lat_ur and lon_ll <= parsed["lon"] <= lon_ur
+        ):
             continue
         callsign = parsed["_callsign"]
         result[callsign] = parsed
@@ -451,6 +494,7 @@ def _fetch_adsb_local(lat_ll: float, lon_ll: float, lat_ur: float, lon_ur: float
 # ---------------------------------------------------------------------------
 # Multi-source entry point
 # ---------------------------------------------------------------------------
+
 
 def fetch_multi_source_positions(
     lat_ll: float,
@@ -472,7 +516,9 @@ def fetch_multi_source_positions(
     now_ts = time.time()
     cached_ts = _multi_source_cache_ts.get(cache_key, 0.0)
     if now_ts - cached_ts < MULTI_SOURCE_CACHE_TTL and cache_key in _multi_source_cache:
-        logger.debug(f"[MultiSource] Returning cached result ({now_ts - cached_ts:.1f}s old)")
+        logger.debug(
+            f"[MultiSource] Returning cached result ({now_ts - cached_ts:.1f}s old)"
+        )
         return _multi_source_cache[cache_key]
 
     from src.opensky import fetch_opensky_positions
@@ -493,6 +539,7 @@ def fetch_multi_source_positions(
     # cancel_futures=True (Py 3.9+) drops pending work on timeout;
     # fall back gracefully on older Python.
     import sys
+
     _shutdown_kwargs = {"wait": False}
     if sys.version_info >= (3, 9):
         _shutdown_kwargs["cancel_futures"] = True
@@ -515,11 +562,13 @@ def fetch_multi_source_positions(
                     merged[callsign] = pos
                 else:
                     # Prefer the fresher position
-                    if (pos.get("last_contact") or 0) > (existing.get("last_contact") or 0):
+                    if (pos.get("last_contact") or 0) > (
+                        existing.get("last_contact") or 0
+                    ):
                         merged[callsign] = pos
     except FuturesTimeoutError:
         completed = [n for f, n in futures.items() if f.done()]
-        pending   = [n for f, n in futures.items() if not f.done()]
+        pending = [n for f, n in futures.items() if not f.done()]
         logger.warning(
             f"[MultiSource] Wall-clock timeout ({MULTI_SOURCE_WALL_TIMEOUT}s) — "
             f"completed: {completed}, still pending (dropped): {pending}"

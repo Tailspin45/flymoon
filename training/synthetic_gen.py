@@ -19,7 +19,6 @@ from __future__ import annotations
 import argparse
 import csv
 import math
-import random
 from pathlib import Path
 from typing import Tuple
 
@@ -35,7 +34,10 @@ RNG = np.random.default_rng(0)
 
 # ── Solar disc synthesis ──────────────────────────────────────────────────────
 
-def _solar_disc(h: int = CLIP_H, w: int = CLIP_W, noise_sigma: float = 4.0) -> np.ndarray:
+
+def _solar_disc(
+    h: int = CLIP_H, w: int = CLIP_W, noise_sigma: float = 4.0
+) -> np.ndarray:
     """
     Generate a single-frame synthetic solar disc (float32, 0–255 range).
     Includes limb darkening and mild Gaussian noise.
@@ -64,18 +66,22 @@ def _shimmer(base: np.ndarray, amplitude: float = 2.5) -> np.ndarray:
     dy = RNG.uniform(-amplitude, amplitude)
     M = np.float32([[1, 0, dx], [0, 1, dy]])
     import cv2
+
     return cv2.warpAffine(base, M, (w, h), borderValue=20.0)
 
 
 def _aircraft_mask(
-    h: int, w: int,
-    cx: float, cy: float,
+    h: int,
+    w: int,
+    cx: float,
+    cy: float,
     angle_deg: float,
     length_px: float = 5.0,
     width_px: float = 2.0,
 ) -> np.ndarray:
     """Boolean mask for a dark ellipse (aircraft silhouette)."""
     import cv2
+
     mask = np.zeros((h, w), dtype=np.uint8)
     axes = (max(1, int(length_px / 2)), max(1, int(width_px / 2)))
     cv2.ellipse(mask, (int(cx), int(cy)), axes, angle_deg, 0, 360, 1, -1)
@@ -83,6 +89,7 @@ def _aircraft_mask(
 
 
 # ── Clip generators ───────────────────────────────────────────────────────────
+
 
 def generate_transit_clip(
     aircraft_length_range: Tuple[float, float] = (4.0, 10.0),
@@ -137,7 +144,7 @@ def generate_transit_clip(
     # Pick a CLIP_T window that overlaps with the transit
     clip_start = max(0, transit_start_frame - CLIP_T // 2)
     clip_start = min(clip_start, len(frames_long) - CLIP_T)
-    clip = np.stack(frames_long[clip_start: clip_start + CLIP_T], axis=0)
+    clip = np.stack(frames_long[clip_start : clip_start + CLIP_T], axis=0)
     return clip
 
 
@@ -152,6 +159,7 @@ def generate_negative_clip(
     kind: 'clear' | 'cloud' | 'sunspot'
     """
     import cv2
+
     h, w = CLIP_H, CLIP_W
     base = _solar_disc(h, w, noise_sigma)
 
@@ -161,8 +169,9 @@ def generate_negative_clip(
         cloud_y = RNG.uniform(-h * 0.3, h * 0.3)
         cloud_r = RNG.integers(h // 4, h // 2)
         cloud_mask = np.zeros((h, w), dtype=np.float32)
-        cv2.circle(cloud_mask, (int(w / 2 + cloud_x), int(h / 2 + cloud_y)),
-                   cloud_r, 1.0, -1)
+        cv2.circle(
+            cloud_mask, (int(w / 2 + cloud_x), int(h / 2 + cloud_y)), cloud_r, 1.0, -1
+        )
         cloud_mask = cv2.GaussianBlur(cloud_mask, (31, 31), 0)
         base = base * (1.0 - cloud_mask * RNG.uniform(0.3, 0.7))
 
@@ -171,8 +180,13 @@ def generate_negative_clip(
         cx_s = RNG.uniform(w * 0.2, w * 0.8)
         cy_s = RNG.uniform(h * 0.2, h * 0.8)
         spot_mask = _aircraft_mask(
-            h, w, cx_s, cy_s, angle_deg=RNG.uniform(0, 180),
-            length_px=RNG.uniform(4, 12), width_px=RNG.uniform(3, 8)
+            h,
+            w,
+            cx_s,
+            cy_s,
+            angle_deg=RNG.uniform(0, 180),
+            length_px=RNG.uniform(4, 12),
+            width_px=RNG.uniform(3, 8),
         )
         base[spot_mask] *= RNG.uniform(0.3, 0.6)
 
@@ -184,6 +198,7 @@ def generate_negative_clip(
 
 
 # ── Batch generation & saving ─────────────────────────────────────────────────
+
 
 def generate_dataset(
     n_pos: int,
@@ -204,7 +219,9 @@ def generate_dataset(
     with open(labels_csv, "a", newline="") as fh:
         writer = csv.writer(fh)
         if first_write:
-            writer.writerow(["filename", "label", "source_video", "center_s", "duration_s"])
+            writer.writerow(
+                ["filename", "label", "source_video", "center_s", "duration_s"]
+            )
 
         print(f"Generating {n_pos} synthetic positives …")
         for i in range(n_pos):
@@ -220,14 +237,20 @@ def generate_dataset(
             clip = generate_negative_clip(kind=kind)
             fname = f"synth_neg_{i:04d}.npz"
             np.savez_compressed(neg_dir / fname, clip=clip)
-            writer.writerow([fname, f"negative_synthetic_{kind}", "synthetic", "0", "0"])
+            writer.writerow(
+                [fname, f"negative_synthetic_{kind}", "synthetic", "0", "0"]
+            )
 
     print(f"Saved to {out_dir}")
 
 
 def main():
-    ap = argparse.ArgumentParser(description="Generate synthetic solar transit training clips")
-    ap.add_argument("--n_pos", type=int, default=400, help="Positive (transit) clips to generate")
+    ap = argparse.ArgumentParser(
+        description="Generate synthetic solar transit training clips"
+    )
+    ap.add_argument(
+        "--n_pos", type=int, default=400, help="Positive (transit) clips to generate"
+    )
     ap.add_argument("--n_neg", type=int, default=400, help="Negative clips to generate")
     ap.add_argument("--out", default=str(OUT_DIR), help="Output directory")
     ap.add_argument("--seed", type=int, default=0)

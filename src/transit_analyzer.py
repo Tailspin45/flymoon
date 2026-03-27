@@ -576,10 +576,12 @@ def analyze_video(
     if transit_events:
         try:
             from src.transit_classifier import get_classifier as _get_clf
+
             _clf = _get_clf()
             if _clf.available:
                 import cv2 as _cv2
                 import numpy as _np
+
                 _CLIP_T = 15
                 _cap2 = _cv2.VideoCapture(str(path))
                 try:
@@ -599,7 +601,9 @@ def analyze_video(
                                 if not ok:
                                     break
                                 gray = _cv2.cvtColor(frame_bgr, _cv2.COLOR_BGR2GRAY)
-                                gray = _cv2.resize(gray, (90, 160), interpolation=_cv2.INTER_AREA)
+                                gray = _cv2.resize(
+                                    gray, (90, 160), interpolation=_cv2.INTER_AREA
+                                )
                                 clip_frames.append(gray)
                                 fi += src_step
                             if clip_frames:
@@ -609,7 +613,9 @@ def analyze_video(
                                 _, cnn_conf = _clf.classify(clip_arr)
                                 ev["cnn_confidence"] = round(float(cnn_conf), 4)
                         except Exception as _ev_exc:
-                            logger.debug("[CNN] event classification error: %s", _ev_exc)
+                            logger.debug(
+                                "[CNN] event classification error: %s", _ev_exc
+                            )
                             ev["cnn_confidence"] = None
                 finally:
                     _cap2.release()
@@ -1679,7 +1685,6 @@ def composite_from_frames(
         "total_selected": len(valid_frames),
         "error": None,
     }
-
 
 
 # ── Lightweight isolation helper for det_*.mp4 clips ─────────────────────────

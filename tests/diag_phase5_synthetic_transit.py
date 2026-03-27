@@ -33,10 +33,12 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 # ── helpers ──────────────────────────────────────────────────────────────────
 
+
 def _sun_position(lat, lon, elev):
     from src.astro import CelestialObject
     from src.constants import ASTRO_EPHEMERIS
     from src.position import get_my_pos
+
     earth = ASTRO_EPHEMERIS["earth"]
     pos = get_my_pos(lat, lon, elev, earth)
     now = datetime.now(timezone.utc)
@@ -50,6 +52,7 @@ def _moon_position(lat, lon, elev):
     from src.astro import CelestialObject
     from src.constants import ASTRO_EPHEMERIS
     from src.position import get_my_pos
+
     earth = ASTRO_EPHEMERIS["earth"]
     pos = get_my_pos(lat, lon, elev, earth)
     now = datetime.now(timezone.utc)
@@ -159,10 +162,10 @@ def write_test_data_file(flight: dict, path: Path):
 
 def run_prediction(lat, lon, elev, target, test_data_path):
     """Call get_transits() in test mode and return result."""
-    from src.transit import get_transits
-
     # Temporarily swap the TEST_DATA_PATH constant so test_mode uses our file
     import src.transit as _transit_mod
+    from src.transit import get_transits
+
     orig = getattr(_transit_mod, "TEST_DATA_PATH", None)
     _transit_mod.TEST_DATA_PATH = str(test_data_path)
 
@@ -185,6 +188,7 @@ def run_prediction(lat, lon, elev, target, test_data_path):
 
 def query_app(app_url: str, timeout: int = 10) -> dict:
     import urllib.request
+
     url = f"{app_url.rstrip('/')}/api/transits"
     try:
         with urllib.request.urlopen(url, timeout=timeout) as resp:
@@ -195,8 +199,10 @@ def query_app(app_url: str, timeout: int = 10) -> dict:
 
 # ── main ─────────────────────────────────────────────────────────────────────
 
+
 def main():
     from dotenv import load_dotenv
+
     load_dotenv()
 
     parser = argparse.ArgumentParser(description="Phase 5: Synthetic transit injection")
@@ -206,14 +212,19 @@ def main():
     parser.add_argument("--target", choices=["sun", "moon"], default="sun")
     parser.add_argument("--transit-in-minutes", type=float, default=5.0)
     parser.add_argument("--app-url", default=None, help="Running app URL (optional)")
-    parser.add_argument("--keep-test-data", action="store_true",
-                        help="Don't delete the temp test data file after run")
+    parser.add_argument(
+        "--keep-test-data",
+        action="store_true",
+        help="Don't delete the temp test data file after run",
+    )
     args = parser.parse_args()
 
     print(f"\n{'='*60}")
     print("Phase 5: Synthetic Transit Injection Test")
     print(f"{'='*60}")
-    print(f"  Observer : {args.observer_lat}, {args.observer_lon}, {args.observer_elev}m")
+    print(
+        f"  Observer : {args.observer_lat}, {args.observer_lon}, {args.observer_elev}m"
+    )
     print(f"  Target   : {args.target}")
     print(f"  Transit in: {args.transit_in_minutes} min")
 
@@ -221,17 +232,23 @@ def main():
     print("\n[1] Fetching current celestial position …")
     try:
         if args.target == "sun":
-            t_alt, t_az = _sun_position(args.observer_lat, args.observer_lon, args.observer_elev)
+            t_alt, t_az = _sun_position(
+                args.observer_lat, args.observer_lon, args.observer_elev
+            )
         else:
-            t_alt, t_az = _moon_position(args.observer_lat, args.observer_lon, args.observer_elev)
+            t_alt, t_az = _moon_position(
+                args.observer_lat, args.observer_lon, args.observer_elev
+            )
         print(f"    {args.target.title()} alt={t_alt:.1f}°  az={t_az:.1f}°")
     except Exception as exc:
         print(f"    ERROR: {exc}")
         sys.exit(1)
 
     if t_alt < 5:
-        print(f"    WARNING: {args.target} is only {t_alt:.1f}° above horizon — "
-              "prediction window may not cover transit correctly.")
+        print(
+            f"    WARNING: {args.target} is only {t_alt:.1f}° above horizon — "
+            "prediction window may not cover transit correctly."
+        )
 
     # ── Step 2: build synthetic flight ─────────────────────────────────────
     print("\n[2] Building synthetic HIGH-probability flight …")
@@ -246,7 +263,9 @@ def main():
     lp = flight["last_position"]
     print(f"    Flight   : {flight['ident']}")
     print(f"    Pos      : lat={lp['latitude']:.4f}  lon={lp['longitude']:.4f}")
-    print(f"    Alt      : {lp['altitude']*100} ft  spd={lp['groundspeed']} kts  hdg={lp['heading']}°")
+    print(
+        f"    Alt      : {lp['altitude']*100} ft  spd={lp['groundspeed']} kts  hdg={lp['heading']}°"
+    )
 
     # ── Step 3: write test data file ───────────────────────────────────────
     test_data_path = Path("data/raw_flight_data_example.json")
@@ -266,6 +285,7 @@ def main():
         )
     except Exception as exc:
         import traceback
+
         print(f"    ERROR: {exc}")
         traceback.print_exc()
         sys.exit(1)
@@ -279,7 +299,7 @@ def main():
     for f in flights:
         lvl = f.get("possibility_level")
         ang = f.get("angular_separation")
-        tm  = f.get("time")
+        tm = f.get("time")
         fid = f.get("id", "?")
         print(f"    → {fid:20s}  sep={ang:.3f}°  level={lvl}  time={tm:.2f} min")
         if fid == "SYN_HIGH" and lvl == 3:  # PossibilityLevel.HIGH = 3
@@ -289,7 +309,9 @@ def main():
         print("\n  ✅ PASS: SYN_HIGH flight detected as HIGH probability")
     else:
         if not flights:
-            print("\n  ❌ FAIL: No flights returned — check bbox, target altitude, or test data path")
+            print(
+                "\n  ❌ FAIL: No flights returned — check bbox, target altitude, or test data path"
+            )
         else:
             print("\n  ❌ FAIL: SYN_HIGH not classified as HIGH (level=3)")
 
@@ -305,7 +327,9 @@ def main():
             any_high = [f for f in api_flights if f.get("possibility_level") == 3]
             print(f"    HIGH-probability: {len(any_high)}")
             for f in any_high:
-                print(f"    → {f.get('id','?'):20s}  sep={f.get('angular_separation','?')}°  time={f.get('time','?')} min")
+                print(
+                    f"    → {f.get('id','?'):20s}  sep={f.get('angular_separation','?')}°  time={f.get('time','?')} min"
+                )
     else:
         print("\n[5] Skipping live app query (no --app-url provided)")
 

@@ -22,7 +22,7 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, Optional, Tuple
 
 from src import logger
 from src.site_context import get_observer_coordinates
@@ -207,7 +207,9 @@ class AlpacaClient:
             self._start_polling()
             return True
         else:
-            logger.error(f"ALPACA connect: connected=true sent but Value={check.get('Value')}")
+            logger.error(
+                f"ALPACA connect: connected=true sent but Value={check.get('Value')}"
+            )
             self._connected = False
             return False
 
@@ -242,8 +244,13 @@ class AlpacaClient:
     def _load_capabilities(self):
         # canmoveaxis requires an Axis parameter; query axis 0 (RA/Az)
         props_plain = [
-            "canslew", "canslewasync", "canslewaltaz", "canslewaltazasync",
-            "canpark", "canpulseguide", "cansettracking",
+            "canslew",
+            "canslewasync",
+            "canslewaltaz",
+            "canslewaltazasync",
+            "canpark",
+            "canpulseguide",
+            "cansettracking",
         ]
         for prop in props_plain:
             r = self._get(prop)
@@ -253,14 +260,22 @@ class AlpacaClient:
         logger.info(f"ALPACA capabilities: {self._capabilities}")
 
     def _load_device_info(self):
-        for prop in ["name", "description", "driverinfo", "driverversion", "interfaceversion"]:
+        for prop in [
+            "name",
+            "description",
+            "driverinfo",
+            "driverversion",
+            "interfaceversion",
+        ]:
             r = self._get(prop)
             self._device_info[prop] = str(r.get("Value", ""))
         # Also grab management description
         mgmt = self._mgmt_get("/management/v1/description")
         if "Value" in mgmt:
             self._device_info["server"] = str(mgmt["Value"])
-        logger.info(f"ALPACA device: {self._device_info.get('name', '?')} — {self._device_info.get('driverinfo', '?')}")
+        logger.info(
+            f"ALPACA device: {self._device_info.get('name', '?')} — {self._device_info.get('driverinfo', '?')}"
+        )
 
     def get_capabilities(self) -> Dict[str, bool]:
         return dict(self._capabilities)
@@ -325,10 +340,13 @@ class AlpacaClient:
         """Async slew to RA/Dec.  RA in hours [0,24), Dec in degrees."""
         if not self._connected:
             return {"error": "not connected"}
-        result = self._put("slewtocoordinatesasync", {
-            "RightAscension": ra_hours,
-            "Declination": dec_degrees,
-        })
+        result = self._put(
+            "slewtocoordinatesasync",
+            {
+                "RightAscension": ra_hours,
+                "Declination": dec_degrees,
+            },
+        )
         if "error" not in result:
             logger.info(f"ALPACA GoTo: RA={ra_hours:.4f}h Dec={dec_degrees:.4f}°")
         return result
@@ -484,10 +502,9 @@ class AlpacaClient:
         alt_r = math.radians(alt)
         az_r = math.radians(az)
 
-        sin_dec = (
-            math.sin(alt_r) * math.sin(lat_r)
-            + math.cos(alt_r) * math.cos(lat_r) * math.cos(az_r)
-        )
+        sin_dec = math.sin(alt_r) * math.sin(lat_r) + math.cos(alt_r) * math.cos(
+            lat_r
+        ) * math.cos(az_r)
         dec_r = math.asin(max(-1.0, min(1.0, sin_dec)))
 
         cos_ha = (math.sin(alt_r) - math.sin(lat_r) * sin_dec) / (
@@ -533,10 +550,14 @@ class MockAlpacaClient:
         self._alt = 60.0
         self._az = 180.0
         self._capabilities = {
-            "canslew": True, "canslewasync": True,
-            "canslewaltaz": False, "canslewaltazasync": False,
-            "canmoveaxis": True, "canpark": True,
-            "canpulseguide": False, "cansettracking": True,
+            "canslew": True,
+            "canslewasync": True,
+            "canslewaltaz": False,
+            "canslewaltazasync": False,
+            "canmoveaxis": True,
+            "canpark": True,
+            "canpulseguide": False,
+            "cansettracking": True,
         }
         self._device_info = {
             "name": "Mock Seestar S50",
@@ -658,8 +679,10 @@ class MockAlpacaClient:
 
     def _update_cached(self):
         self._last_position = {
-            "ra": self._ra, "dec": self._dec,
-            "alt": self._alt, "az": self._az,
+            "ra": self._ra,
+            "dec": self._dec,
+            "alt": self._alt,
+            "az": self._az,
         }
         self._last_state = {
             "tracking": self._tracking,
@@ -687,7 +710,9 @@ def create_alpaca_client_from_env():
 
     host = os.getenv("SEESTAR_HOST", "")
     port = int(os.getenv("SEESTAR_ALPACA_PORT", str(AlpacaClient.DEFAULT_PORT)))
-    timeout = int(os.getenv("SEESTAR_ALPACA_TIMEOUT", str(AlpacaClient.DEFAULT_TIMEOUT)))
+    timeout = int(
+        os.getenv("SEESTAR_ALPACA_TIMEOUT", str(AlpacaClient.DEFAULT_TIMEOUT))
+    )
 
     client = AlpacaClient(host=host, port=port, timeout=timeout)
     logger.info(f"Created ALPACA client: {host or '(auto-discover)'}:{port}")

@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """Poll detection status every 30s, flag stalls or stops."""
-import time, json, urllib.request
+import json
+import time
+import urllib.request
 
 URL = "http://localhost:8000/telescope/detect/status"
 DURATION = 1800
@@ -33,7 +35,9 @@ while time.time() - start < DURATION:
             stalls += 1
             status = "STALL #%d" % stalls
 
-        print("%7.0fs %8d %5.1f %5s %5d %s" % (elapsed, frames, fps, disk, dets, status))
+        print(
+            "%7.0fs %8d %5.1f %5s %5d %s" % (elapsed, frames, fps, disk, dets, status)
+        )
         prev_frames = frames
 
         if not running:

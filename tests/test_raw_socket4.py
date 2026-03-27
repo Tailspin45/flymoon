@@ -3,7 +3,6 @@
 This is a completely different motor code path than scope_speed_move.
 Also tests scope_goto (another firmware command some versions support)."""
 import json
-import math
 import select
 import socket
 import time
@@ -16,6 +15,7 @@ UDP_PORT = 4720
 OBS_LAT = 33.111369
 OBS_LON = -117.310169
 
+
 def send(sock, method, params=None, msg_id=1):
     cmd = {"method": method, "id": msg_id}
     if params is not None:
@@ -24,6 +24,7 @@ def send(sock, method, params=None, msg_id=1):
     sock.sendall(raw.encode())
     print(f"  >> {raw.strip()}")
 
+
 def read_all(sock, duration=5.0):
     deadline = time.time() + duration
     while time.time() < deadline:
@@ -31,14 +32,16 @@ def read_all(sock, duration=5.0):
         if readable:
             chunk = sock.recv(4096)
             if chunk:
-                for line in chunk.decode("utf-8", errors="replace").strip().split("\r\n"):
+                for line in (
+                    chunk.decode("utf-8", errors="replace").strip().split("\r\n")
+                ):
                     if line.strip():
                         print(f"  << {line.strip()}")
+
 
 def wait_for_events(sock, timeout=45.0):
     print(f"  Waiting up to {timeout}s for events...")
     deadline = time.time() + timeout
-    buf = ""
     while time.time() < deadline:
         readable, _, _ = select.select([sock], [], [], 0.5)
         if readable:
@@ -50,14 +53,17 @@ def wait_for_events(sock, timeout=45.0):
                     return True
     return False
 
+
 # 1. UDP
 print("[1] UDP broadcast...")
 usock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 usock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
 usock.settimeout(2.0)
 usock.bind(("", 0))
-usock.sendto((json.dumps({"id": 1, "method": "scan_iscope", "params": ""}) + "\r\n").encode(),
-             ("255.255.255.255", UDP_PORT))
+usock.sendto(
+    (json.dumps({"id": 1, "method": "scan_iscope", "params": ""}) + "\r\n").encode(),
+    ("255.255.255.255", UDP_PORT),
+)
 try:
     data, addr = usock.recvfrom(4096)
     resp = json.loads(data.decode())
@@ -80,8 +86,23 @@ print("  Connected!")
 print("\n[3] Init...")
 send(sock, "set_user_location", {"lat": OBS_LAT, "lon": OBS_LON, "force": True}, 1)
 t = time.gmtime()
-send(sock, "pi_set_time", [{"year": t.tm_year, "mon": t.tm_mon, "day": t.tm_mday,
-     "hour": t.tm_hour, "min": t.tm_min, "sec": t.tm_sec, "time_zone": "UTC"}, "verify"], 2)
+send(
+    sock,
+    "pi_set_time",
+    [
+        {
+            "year": t.tm_year,
+            "mon": t.tm_mon,
+            "day": t.tm_mday,
+            "hour": t.tm_hour,
+            "min": t.tm_min,
+            "sec": t.tm_sec,
+            "time_zone": "UTC",
+        },
+        "verify",
+    ],
+    2,
+)
 send(sock, "pi_is_verified", msg_id=3)
 send(sock, "set_setting", {"master_cli": True}, 4)
 
@@ -94,23 +115,33 @@ if not wait_for_events(sock, 45):
 # Pick a target well away from sun — Polaris (RA ~2.53h, Dec ~89.26°)
 print("\n[5] GoTo via iscope_start_view mode=star (Polaris)...")
 print("  >>> WATCH THE SCOPE — does it slew? <<<")
-send(sock, "iscope_start_view", {
-    "mode": "star",
-    "target_ra_dec": [2.53, 89.26],
-    "target_name": "Polaris",
-    "lp_filter": False,
-}, 50)
+send(
+    sock,
+    "iscope_start_view",
+    {
+        "mode": "star",
+        "target_ra_dec": [2.53, 89.26],
+        "target_name": "Polaris",
+        "lp_filter": False,
+    },
+    50,
+)
 read_all(sock, 10.0)
 
 # 6. Now try GoTo to a completely different target — Sirius
 print("\n[6] GoTo via iscope_start_view mode=star (Sirius)...")
 print("  >>> WATCH THE SCOPE — does it slew? <<<")
-send(sock, "iscope_start_view", {
-    "mode": "star",
-    "target_ra_dec": [6.75, -16.72],
-    "target_name": "Sirius",
-    "lp_filter": False,
-}, 51)
+send(
+    sock,
+    "iscope_start_view",
+    {
+        "mode": "star",
+        "target_ra_dec": [6.75, -16.72],
+        "target_name": "Sirius",
+        "lp_filter": False,
+    },
+    51,
+)
 read_all(sock, 10.0)
 
 # 7. Try scope_goto (some firmware versions have this)

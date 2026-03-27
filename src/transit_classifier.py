@@ -24,9 +24,9 @@ _DEFAULT_MODEL = os.path.join(
     os.path.dirname(os.path.dirname(__file__)), "models", "transit_classifier.onnx"
 )
 
-CLIP_T = 15   # frames per clip
+CLIP_T = 15  # frames per clip
 CLIP_H = 160  # analysis height
-CLIP_W = 90   # analysis width
+CLIP_W = 90  # analysis width
 
 
 class TransitClassifier:
@@ -53,10 +53,13 @@ class TransitClassifier:
 
     def _load_model(self) -> None:
         if not os.path.exists(self._model_path):
-            logger.debug("[CNN] Model not found at %s — classifier disabled", self._model_path)
+            logger.debug(
+                "[CNN] Model not found at %s — classifier disabled", self._model_path
+            )
             return
         try:
             import onnxruntime as ort  # noqa: F401 — lazy import
+
             session = ort.InferenceSession(
                 self._model_path,
                 providers=["CPUExecutionProvider"],
@@ -117,10 +120,16 @@ class TransitClassifier:
             # Spatial resize if needed
             if arr.shape[1] != CLIP_H or arr.shape[2] != CLIP_W:
                 import cv2
+
                 arr = np.stack(
-                    [cv2.resize(f.astype(np.float32), (CLIP_W, CLIP_H),
-                                interpolation=cv2.INTER_AREA)
-                     for f in arr],
+                    [
+                        cv2.resize(
+                            f.astype(np.float32),
+                            (CLIP_W, CLIP_H),
+                            interpolation=cv2.INTER_AREA,
+                        )
+                        for f in arr
+                    ],
                     axis=0,
                 )
 
@@ -138,8 +147,11 @@ class TransitClassifier:
             confidence = float(probs[1])  # probability of transit class
             is_transit = confidence >= self.confidence_threshold
 
-            logger.debug("[CNN] classify → transit=%.3f (threshold=%.2f)",
-                         confidence, self.confidence_threshold)
+            logger.debug(
+                "[CNN] classify → transit=%.3f (threshold=%.2f)",
+                confidence,
+                self.confidence_threshold,
+            )
             return is_transit, confidence
 
         except Exception as exc:

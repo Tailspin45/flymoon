@@ -31,7 +31,10 @@ def load_session(model_path: Path):
     try:
         import onnxruntime as ort
     except ImportError:
-        print("onnxruntime is required. Install with: pip install onnxruntime", file=sys.stderr)
+        print(
+            "onnxruntime is required. Install with: pip install onnxruntime",
+            file=sys.stderr,
+        )
         sys.exit(1)
     return ort.InferenceSession(str(model_path), providers=["CPUExecutionProvider"])
 
@@ -67,7 +70,11 @@ def evaluate(
                 clips.append(_normalize(clip))
             except Exception as e:
                 print(f"  [WARN] cannot load {f}: {e}", file=sys.stderr)
-        return np.stack(clips, axis=0) if clips else np.zeros((0, CLIP_T, 1, 1), dtype=np.float32)
+        return (
+            np.stack(clips, axis=0)
+            if clips
+            else np.zeros((0, CLIP_T, 1, 1), dtype=np.float32)
+        )
 
     print(f"Loading {len(pos_files)} positive clips …")
     pos_clips = load_clips(pos_files)
@@ -79,7 +86,7 @@ def evaluate(
             return np.array([])
         probs = []
         for start in range(0, len(clips), batch_size):
-            batch = clips[start: start + batch_size]
+            batch = clips[start : start + batch_size]
             probs.append(predict_batch(session, batch))
         return np.concatenate(probs)
 
@@ -93,10 +100,10 @@ def evaluate(
     tn = int((neg_probs < threshold).sum())
     fp = int((neg_probs >= threshold).sum())
 
-    recall    = tp / (tp + fn) if (tp + fn) > 0 else 0.0
+    recall = tp / (tp + fn) if (tp + fn) > 0 else 0.0
     precision = tp / (tp + fp) if (tp + fp) > 0 else 0.0
-    fpr       = fp / (fp + tn) if (fp + tn) > 0 else 0.0
-    f1        = 2 * precision * recall / (precision + recall + 1e-9)
+    fpr = fp / (fp + tn) if (fp + tn) > 0 else 0.0
+    f1 = 2 * precision * recall / (precision + recall + 1e-9)
 
     # AUC-ROC (approximate)
     all_probs = np.concatenate([pos_probs, neg_probs])
@@ -106,14 +113,19 @@ def evaluate(
     fp_cum = np.cumsum(1 - all_labels[sorted_idx])
     tpr_curve = tp_cum / max(len(pos_probs), 1)
     fpr_curve = fp_cum / max(len(neg_probs), 1)
-    auc = float(np.trapz(tpr_curve, fpr_curve)) * (-1 if fpr_curve[-1] < fpr_curve[0] else 1)
+    auc = float(np.trapz(tpr_curve, fpr_curve)) * (
+        -1 if fpr_curve[-1] < fpr_curve[0] else 1
+    )
     auc = abs(auc)
 
     results = {
         "threshold": threshold,
         "n_pos": len(pos_probs),
         "n_neg": len(neg_probs),
-        "tp": tp, "fp": fp, "tn": tn, "fn": fn,
+        "tp": tp,
+        "fp": fp,
+        "tn": tn,
+        "fn": fn,
         "recall": round(recall, 4),
         "precision": round(precision, 4),
         "fpr": round(fpr, 4),
@@ -137,7 +149,9 @@ def evaluate(
     target_recall = 0.90
     target_fpr = 0.05
     if recall >= target_recall and fpr <= target_fpr:
-        print(f"\n  ✅ PASS: recall ≥ {target_recall*100:.0f}% and FPR ≤ {target_fpr*100:.0f}%")
+        print(
+            f"\n  ✅ PASS: recall ≥ {target_recall*100:.0f}% and FPR ≤ {target_fpr*100:.0f}%"
+        )
     else:
         fails = []
         if recall < target_recall:

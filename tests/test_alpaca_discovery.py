@@ -7,6 +7,7 @@ import urllib.request
 SCOPE_IP = "192.168.4.139"
 ALPACA_PORT = 32323
 
+
 def get(path, timeout=3):
     url = f"http://{SCOPE_IP}:{ALPACA_PORT}{path}"
     try:
@@ -15,6 +16,7 @@ def get(path, timeout=3):
             return data
     except Exception as e:
         return {"error": str(e)}
+
 
 def put(path, params=None, timeout=5):
     url = f"http://{SCOPE_IP}:{ALPACA_PORT}{path}"
@@ -28,6 +30,7 @@ def put(path, params=None, timeout=5):
             return json.loads(resp.read().decode())
     except Exception as e:
         return {"error": str(e)}
+
 
 # 1. UDP Discovery
 print("[1] ALPACA UDP Discovery (port 32227)...")
@@ -51,7 +54,9 @@ try:
     s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     s.settimeout(2.0)
     result = s.connect_ex((SCOPE_IP, ALPACA_PORT))
-    print(f"  Port {ALPACA_PORT}: {'OPEN' if result == 0 else f'CLOSED (code {result})'}")
+    print(
+        f"  Port {ALPACA_PORT}: {'OPEN' if result == 0 else f'CLOSED (code {result})'}"
+    )
     s.close()
 except Exception as e:
     print(f"  Error: {e}")
@@ -69,17 +74,34 @@ print(f"  {json.dumps(get('/management/apiversions'), indent=2)[:300]}")
 
 # 4. Telescope capabilities
 print("\n[6] Telescope capabilities...")
-for prop in ["canslew", "canslewasync", "canslewaltaz", "canslewaltazasync",
-             "canmoveaxis", "canpark", "canpulseguide", "cansettracking",
-             "tracking", "atpark", "slewing", "connected"]:
+for prop in [
+    "canslew",
+    "canslewasync",
+    "canslewaltaz",
+    "canslewaltazasync",
+    "canmoveaxis",
+    "canpark",
+    "canpulseguide",
+    "cansettracking",
+    "tracking",
+    "atpark",
+    "slewing",
+    "connected",
+]:
     result = get(f"/api/v1/telescope/0/{prop}")
     val = result.get("Value", result.get("error", "?"))
     print(f"  {prop}: {val}")
 
 # 5. Current position
 print("\n[7] Current position...")
-for prop in ["rightascension", "declination", "altitude", "azimuth",
-             "siderealtime", "utcdate"]:
+for prop in [
+    "rightascension",
+    "declination",
+    "altitude",
+    "azimuth",
+    "siderealtime",
+    "utcdate",
+]:
     result = get(f"/api/v1/telescope/0/{prop}")
     val = result.get("Value", result.get("error", "?"))
     print(f"  {prop}: {val}")

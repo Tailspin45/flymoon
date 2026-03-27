@@ -239,9 +239,7 @@ class TransitMonitor:
         self.cached_transits = all_transits
 
         if len(all_transits) > 0:
-            logger.info(
-                f"[TransitMonitor] Found {len(all_transits)} imminent transits"
-            )
+            logger.info(f"[TransitMonitor] Found {len(all_transits)} imminent transits")
 
     def get_transits(self) -> Dict:
         """Get cached transit data."""

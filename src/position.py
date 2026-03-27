@@ -185,7 +185,9 @@ def transit_corridor_bbox(
     # This widens the bbox east/west to capture aircraft on skewed approach
     # paths that a nominal-azimuth box would miss.
     if target_alt_deg < 15.0:
-        az_scale = min(3.0, sin(radians(15.0)) / max(sin(radians(target_alt_deg)), 0.087))
+        az_scale = min(
+            3.0, sin(radians(15.0)) / max(sin(radians(target_alt_deg)), 0.087)
+        )
     else:
         az_scale = 1.0
 
