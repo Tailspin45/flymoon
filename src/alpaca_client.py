@@ -51,7 +51,7 @@ class AlpacaClient:
         self._connected = False
         self._txn_id = 0
         self._txn_lock = threading.Lock()
-        self._capabilities: Dict[str, bool] = {}
+        self._capabilities: Dict[str, Any] = {}
         self._device_info: Dict[str, str] = {}
         # Polling thread for telemetry
         self._poll_thread: Optional[threading.Thread] = None
@@ -277,7 +277,7 @@ class AlpacaClient:
             f"ALPACA device: {self._device_info.get('name', '?')} — {self._device_info.get('driverinfo', '?')}"
         )
 
-    def get_capabilities(self) -> Dict[str, bool]:
+    def get_capabilities(self) -> Dict[str, Any]:
         return dict(self._capabilities)
 
     def get_device_info(self) -> Dict[str, str]:
@@ -323,6 +323,45 @@ class AlpacaClient:
         if "error" not in result:
             logger.debug(f"ALPACA moveaxis: axis={axis} rate={rate}")
         return result
+
+    def get_max_move_rate(self, axis: int = 0) -> float:
+        """Return the maximum supported MoveAxis rate (deg/s) for an axis.
+
+        Falls back to 6.0°/s when the device does not expose axisrates.
+        """
+        if not self._connected:
+            return 6.0
+        cache_key = f"maxrate_axis_{int(axis)}"
+        cached = self._capabilities.get(cache_key)
+        if isinstance(cached, (int, float)) and cached > 0:
+            return float(cached)
+
+        max_rate = 6.0
+        try:
+            r = self._get("axisrates", {"Axis": str(int(axis))})
+            ranges = r.get("Value")
+            if isinstance(ranges, list):
+                maxima = []
+                for item in ranges:
+                    if isinstance(item, dict):
+                        v = item.get("Maximum")
+                    elif isinstance(item, (list, tuple)) and len(item) >= 2:
+                        v = item[1]
+                    else:
+                        v = None
+                    if isinstance(v, (int, float)):
+                        maxima.append(float(v))
+                if maxima:
+                    max_rate = max(maxima)
+        except Exception as e:
+            logger.debug(f"ALPACA axisrates lookup failed (axis={axis}): {e}")
+
+        self._capabilities[cache_key] = max_rate
+        # Keep a convenience global max as well.
+        prev_global = self._capabilities.get("maxrate")
+        if not isinstance(prev_global, (int, float)) or max_rate > float(prev_global):
+            self._capabilities["maxrate"] = max_rate
+        return max_rate
 
     def stop_axes(self) -> Dict:
         """Stop motion on both axes."""
@@ -531,6 +570,7 @@ class AlpacaClient:
             "tracking": self._last_state.get("tracking"),
             "slewing": self._last_state.get("slewing"),
             "parked": self._last_state.get("parked"),
+            "maxrate": self._capabilities.get("maxrate"),
         }
 
 
@@ -599,6 +639,9 @@ class MockAlpacaClient:
         logger.debug(f"MockAlpaca: moveaxis axis={axis} rate={rate}")
         return {"success": True}
 
+    def get_max_move_rate(self, axis: int = 0) -> float:
+        return 6.0
+
     def stop_axes(self) -> Dict:
         logger.debug("MockAlpaca: stop_axes")
         return {"success": True}
@@ -648,7 +691,7 @@ class MockAlpacaClient:
     def is_parked(self) -> bool:
         return self._parked
 
-    def get_capabilities(self) -> Dict[str, bool]:
+    def get_capabilities(self) -> Dict[str, Any]:
         return dict(self._capabilities)
 
     def get_device_info(self) -> Dict[str, str]:
@@ -675,6 +718,7 @@ class MockAlpacaClient:
             "tracking": self._tracking,
             "slewing": self._slewing,
             "parked": self._parked,
+            "maxrate": 6.0,
         }
 
     def _update_cached(self):

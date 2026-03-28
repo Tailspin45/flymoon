@@ -85,6 +85,7 @@ const filmstripSelection = {
 let isDetecting = false;
 let detectionPollInterval = null;
 let detectionStats = { fps: 0, detections: 0, elapsed_seconds: 0 };
+let _ctrlState = 'idle';
 
 // Eclipse state
 let eclipseData = null;         // populated from /telescope/status
@@ -204,6 +205,9 @@ async function connect() {
     if (result && result.success) {
         isConnected = true;
         showStatus('Connected successfully!', 'success', 5000);
+
+        // Eagerly resolve ALPACA state so nudge uses the correct path immediately
+        await pollAlpacaTelemetry();
 
         // Start status polling
         if (statusPollInterval) clearInterval(statusPollInterval);
@@ -339,6 +343,7 @@ async function updateStatus() {
     if (result) {
         isConnected = result.connected || false;
         currentViewingMode = result.viewing_mode || null;
+        _ctrlState = result.ctrl_state || 'idle';
         // Sync recording state from server — server is authoritative.
         // Only preserve local state if we're mid-recording AND server agrees it's active.
         const serverRecording = result.recording || false;
@@ -1440,37 +1445,28 @@ function gotoModeChanged() {
 
 // -- Manual Slew (Joystick) --
 
-let _nudgeInterval = null;
-
 function nudgeStart(angle) {
-    nudgeStop(); // clear any existing
-    if (_alpacaConnected) {
-        // ALPACA mode: convert angle to axis + rate
-        // angle: 0=left, 90=down, 180=right, 270=up (legacy convention)
-        const fast = document.querySelector('input[name="nudgeSpeed"]:checked')?.value === 'fast';
-        const rate = fast ? 3.0 : 1.0;
-        let axis, dir;
-        if (angle === 270)      { axis = 1; dir =  1; } // up = Dec/Alt +
-        else if (angle === 90)  { axis = 1; dir = -1; } // down = Dec/Alt -
-        else if (angle === 180) { axis = 0; dir =  1; } // right = RA/Az +
-        else                    { axis = 0; dir = -1; } // left = RA/Az -
-        const send = () => apiCall('/telescope/nudge', 'POST', { axis, rate: rate * dir });
-        send();
-        _nudgeInterval = setInterval(send, 2000);
-    } else {
-        // Legacy JSON-RPC mode
-        const speed = document.querySelector('input[name="nudgeSpeed"]:checked')?.value === 'fast' ? 8000 : 4000;
-        const send = () => apiCall('/telescope/nudge', 'POST', { speed, angle, dur_sec: 2 });
-        send();
-        _nudgeInterval = setInterval(send, 2000);
+    if (!_alpacaConnected) {
+        showStatus('Motor control requires ALPACA connection', 'error', 3000);
+        return;
     }
+    if (_ctrlState === 'slewing' || _ctrlState === 'goto_resuming') {
+        showStatus(`Cannot nudge while ${_ctrlState.replace('_', ' ')}`, 'warning', 3000);
+        return;
+    }
+    // ALPACA: send once — backend holds the rate until nudge/stop
+    // angle: 0=left, 90=down, 180=right, 270=up (legacy convention)
+    const fast = document.querySelector('input[name="nudgeSpeed"]:checked')?.value === 'fast';
+    const rate = fast ? 3.0 : 1.0;
+    let axis, dir;
+    if (angle === 270)      { axis = 1; dir =  1; } // up = Dec/Alt +
+    else if (angle === 90)  { axis = 1; dir = -1; } // down = Dec/Alt -
+    else if (angle === 180) { axis = 0; dir =  1; } // right = RA/Az +
+    else                    { axis = 0; dir = -1; } // left = RA/Az -
+    apiCall('/telescope/nudge', 'POST', { axis, rate: rate * dir });
 }
 
 function nudgeStop() {
-    if (_nudgeInterval) {
-        clearInterval(_nudgeInterval);
-        _nudgeInterval = null;
-    }
     apiCall('/telescope/nudge/stop', 'POST', {});
 }
 
@@ -1485,6 +1481,10 @@ document.addEventListener('input', (ev) => {
 });
 
 async function gotoExecute(overrideAlt, overrideAz) {
+    if (_ctrlState === 'nudging') {
+        showStatus('Stopping active nudge before GoTo…', 'info', 3000);
+        await apiCall('/telescope/nudge/stop', 'POST', {});
+    }
     const mode = document.getElementById('gotoModeAltaz').checked ? 'altaz' : 'radec';
     let body;
     if (mode === 'altaz') {
@@ -6031,6 +6031,7 @@ let _radarAnimFrame = null;
 let _radarSweepAfterDetectTimer = null;
 let _radarLastTransitTs = 0;        // ms — updated every push; sweep runs while fresh
 const RADAR_SWEEP_KEEPALIVE_MS = 660_000; // freeze ~11 min after last transit push (> 10 min poll cycle)
+window._radarLastUpdateTs = 0;
 
 window.destroyTelescope = function() {
     if (statusPollInterval)     { clearInterval(statusPollInterval);     statusPollInterval     = null; }
@@ -6136,8 +6137,19 @@ function _radarDrawFrame(ts) {
     const cx = W/2, cy = H/2;
     const R  = Math.min(cx, cy) - 8;
 
+    const nowMs = Date.now();
+    for (const [id, tr] of _radarTracks.entries()) {
+        if (!tr.lastUpdateT) continue;
+        if ((nowMs - tr.lastUpdateT) > RADAR_TRACK_STALE_MS) {
+            _radarTracks.delete(id);
+        }
+    }
+
     // derive active state from last-seen timestamp (no fixed timer)
-    _radarSweepActive = _radarLastTransitTs > 0 &&
+    const recentMeasurement = !!window._radarLastUpdateTs &&
+        (Date.now() - window._radarLastUpdateTs) < 5000;
+    _radarSweepActive = recentMeasurement &&
+                        _radarLastTransitTs > 0 &&
                         (Date.now() - _radarLastTransitTs) < RADAR_SWEEP_KEEPALIVE_MS;
 
     // sweep angle
@@ -6441,9 +6453,12 @@ window.pruneRadarTracks = function(activeIds) {
 };
 
 // ── α-β filter constants ─────────────────────────────────────────────────────
-const AB_ALPHA         = 0.20;  // position gain (0..1)
-const AB_BETA          = 0.05;  // velocity gain (0..1)
-const AB_VELLINE_S     = 60;    // seconds of smoothed velocity to project for the heading line
+const AB_ALPHA          = 0.10;  // position gain (0..1)
+const AB_BETA           = 0.02;  // velocity gain (0..1)
+const AB_VELLINE_S      = 60;    // seconds of smoothed velocity to project for the heading line
+const AB_OUTLIER_SIGMA  = 3.0;
+const AB_MEAS_SIGMA_DEG = 1.0;
+const RADAR_TRACK_STALE_MS = 20_000;
 
 // ── pushInterceptPoint (public API for app.js) ───────────────────────────────
 window.pushInterceptPoint = function(flight) {
@@ -6492,8 +6507,11 @@ window.pushInterceptPoint = function(flight) {
     } else if (!track.abBooted) {
         // Second detection — bootstrap velocity directly from displacement so the
         // heading line appears at the correct length immediately (no slow ramp-up)
-        track.svAltD   = (measAltD - track.sAltD) / DT;
-        track.svAzD    = (measAzD  - track.sAzD)  / DT;
+        const rawVAlt = (measAltD - track.sAltD) / DT;
+        const rawVAz  = (measAzD  - track.sAzD)  / DT;
+        const damp = Math.min(1.0, 3.0 / DT);
+        track.svAltD = rawVAlt * damp;
+        track.svAzD  = rawVAz * damp;
         track.sAltD    = measAltD;
         track.sAzD     = measAzD;
         track.abBooted = true;
@@ -6504,10 +6522,19 @@ window.pushInterceptPoint = function(flight) {
         // Correct (α-β)
         const resAltD  = measAltD - predAltD;
         const resAzD   = measAzD  - predAzD;
-        track.sAltD    = predAltD + AB_ALPHA * resAltD;
-        track.sAzD     = predAzD  + AB_ALPHA * resAzD;
-        track.svAltD   = track.svAltD + (AB_BETA / DT) * resAltD;
-        track.svAzD    = track.svAzD  + (AB_BETA / DT) * resAzD;
+        if (
+            Math.abs(resAltD) > AB_OUTLIER_SIGMA * AB_MEAS_SIGMA_DEG ||
+            Math.abs(resAzD) > AB_OUTLIER_SIGMA * AB_MEAS_SIGMA_DEG
+        ) {
+            track.sAltD = predAltD;
+            track.sAzD = predAzD;
+            track.misses = (track.misses || 0) + 1;
+        } else {
+            track.sAltD    = predAltD + AB_ALPHA * resAltD;
+            track.sAzD     = predAzD  + AB_ALPHA * resAzD;
+            track.svAltD   = track.svAltD + (AB_BETA / DT) * resAltD;
+            track.svAzD    = track.svAzD  + (AB_BETA / DT) * resAzD;
+        }
     }
 
     // Store smoothed position in trail (min 2 s gap to avoid duplicate points)
@@ -6525,8 +6552,9 @@ window.pushInterceptPoint = function(flight) {
 
 // ── injectMapTransits: populate upcoming transits list from app.js data ───────
 const _upcomingTransits = [];
-window.injectMapTransits = function(flights) {
+window.injectMapTransits = function(flights, opts = {}) {
     _upcomingTransits.length = 0;
+    const generatedAtMs = Number(opts.generatedAtMs) || Date.now();
     if (!Array.isArray(flights)) return;
     flights.forEach(f => {
         const level = parseInt(f.possibility_level ?? 0);
@@ -6538,7 +6566,7 @@ window.injectMapTransits = function(flights) {
         _upcomingTransits.push({
             id:    String(f.id || f.name || '').trim().toUpperCase(),
             eta:   etaSec,
-            ts:    Date.now(),   // wall-clock when this entry was received
+            ts:    generatedAtMs, // backend compute time for consistent ETA aging
             level,
             target: f.target || 'sun',
         });

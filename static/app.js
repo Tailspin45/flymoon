@@ -186,6 +186,7 @@ var refreshTimerLabelInterval = null; // Countdown timer interval
 var softRefreshInterval = null; // For client-side position updates
 var _radarFastInterval  = null; // 3s radar-only recalculate (active transit candidates only)
 var _radarFastInFlight  = false;
+window._radarLastUpdateTs = 0; // last successful radar recalculate payload ts (ms)
 // Last recalculated positions — dead-reckon ONLY from these (not from original fetch)
 // so a hard refresh never jumps the blip back to its starting point.
 var _radarBaseFlights   = null;  // {id → flight object with lat/lon at _radarBaseTs}
@@ -250,6 +251,7 @@ async function _radarFastUpdate() {
         if (!res.ok) return;
         const data = await res.json();
         if (!data.flights) return;
+        window._radarLastUpdateTs = Date.now();
 
         const activeIds = new Set();
         data.flights.forEach(f => {
@@ -272,7 +274,7 @@ async function _radarFastUpdate() {
         // clear a transit that was confirmed by the last full fetch or soft refresh.
         const transitHits = data.flights.filter(f => parseInt(f.possibility_level ?? 0) >= 1);
         if (typeof window.injectMapTransits === 'function' && transitHits.length > 0) {
-            window.injectMapTransits(transitHits);
+            window.injectMapTransits(transitHits, { generatedAtMs: data.generated_at_ms });
         }
     } catch(e) { console.warn('[RadarFast] update failed:', e && e.message ? e.message : e); }
     finally { _radarFastInFlight = false; }
@@ -2290,7 +2292,10 @@ function fetchFlights() {
             });
         }
         if (typeof window.injectMapTransits === 'function') {
-            window.injectMapTransits(filteredFlights.filter(f => parseInt(f.possibility_level ?? 0) >= 1));
+            window.injectMapTransits(
+                filteredFlights.filter(f => parseInt(f.possibility_level ?? 0) >= 1),
+                { generatedAtMs: data.generated_at_ms }
+            );
         }
 
         // Debug: show transit candidates

@@ -569,6 +569,7 @@ def get_all_flights():
             "nextCheckInterval": next_check_interval,  # Seconds until next check
             "weather": None,  # Weather functionality not implemented yet
             "boundingBox": _bbox_for_client,
+            "generated_at_ms": int(time.time() * 1000),
         }
 
         end_time = time.time()
@@ -889,6 +890,7 @@ def recalculate_transits_endpoint():
                 "flights": all_flights,
                 "targetCoordinates": target_coordinates,
                 "trackingTargets": tracking_targets,
+                "generated_at_ms": int(time.time() * 1000),
             }
         )
 

@@ -12,6 +12,7 @@ import subprocess
 import threading
 import time
 from datetime import datetime
+from enum import Enum
 from typing import Any, Dict, Optional
 
 from flask import Response, jsonify, request
@@ -38,6 +39,25 @@ from src.solar_timelapse import get_timelapse
 
 # Get EARTH reference for position calculations
 EARTH = ASTRO_EPHEMERIS["earth"]
+
+# ── Motor control state machine ────────────────────────────────────────────
+# Serialises GoTo and nudge so they never overlap on the same axes.
+
+
+class _CtrlState(Enum):
+    IDLE = "idle"
+    SLEWING = "slewing"
+    NUDGING = "nudging"
+    GOTO_RESUMING = "goto_resuming"
+
+
+_ctrl_state: _CtrlState = _CtrlState.IDLE
+_ctrl_lock = threading.Lock()
+# Whether the active nudge was started while solar/lunar tracking was on.
+# Used to decide whether to re-enable ALPACA tracking after nudge/stop.
+_pre_nudge_tracking: bool = False
+
+# ──────────────────────────────────────────────────────────────────────────
 
 # User-adjustable settings pushed from the browser (see /api/settings).
 # Stored here so the heartbeat reconnect logic can read them without a
@@ -291,28 +311,6 @@ class MockSeestarClient:
             ).total_seconds()
 
         return status
-
-    # -- Stubs for extended control methods --
-
-    def goto_radec(self, ra, dec):
-        logger.info(f"[Mock] goto_radec RA={ra} Dec={dec}")
-        return {"result": "ok"}
-
-    def goto_altaz(self, alt, az, lat, lon, elev=0):
-        logger.info(f"[Mock] goto_altaz alt={alt} az={az}")
-        return {"result": "ok"}
-
-    def speed_move(self, speed, angle, dur_sec=3):
-        logger.info(f"[Mock] speed_move speed={speed} angle={angle} dur={dur_sec}")
-        return {"result": "ok"}
-
-    def speed_stop(self):
-        logger.info("[Mock] speed_stop")
-        return True
-
-    def manual_goto(self, target_alt, target_az):
-        logger.info(f"[Mock] manual_goto alt={target_alt} az={target_az}")
-        return {"status": "arrived", "alt": target_alt, "az": target_az, "elapsed": 2.0}
 
     def open_arm(self):
         logger.info("[Mock] open_arm")
@@ -571,46 +569,66 @@ def telescope_goto():
     )
     # endregion
 
-    # Prefer ALPACA for motor commands (firmware 3.0+ blocks JSON-RPC motors)
     alpaca = get_alpaca_client()
-    use_alpaca = alpaca and alpaca.is_connected()
+    if not alpaca or not alpaca.is_connected():
+        return jsonify({"error": "ALPACA not connected — motor commands require ALPACA"}), 503
+
+    # State machine: abort any active nudge before slewing
+    global _ctrl_state, _pre_nudge_tracking
+    with _ctrl_lock:
+        if _ctrl_state == _CtrlState.NUDGING:
+            logger.info("[GoTo] Aborting active nudge before slew")
+            try:
+                alpaca.stop_axes()
+                if _pre_nudge_tracking:
+                    alpaca.set_tracking(True)
+                    _pre_nudge_tracking = False
+            except Exception as ex:
+                logger.warning(f"[GoTo] nudge abort failed: {ex}")
+        if _recording_state["active"]:
+            return jsonify({"error": "Cannot GoTo while recording is active"}), 409
+        _ctrl_state = _CtrlState.SLEWING
 
     try:
         if mode == "radec":
             ra = float(data["ra"])
             dec = float(data["dec"])
-            if use_alpaca:
-                result = alpaca.goto_radec(ra, dec)
-                via = "ALPACA"
-            else:
-                result = client.goto_radec(ra, dec)
-                via = "JSON-RPC"
+            result = alpaca.goto_radec(ra, dec)
+
+            def _wait_radec_complete():
+                global _ctrl_state
+                deadline = time.time() + 60
+                while time.time() < deadline:
+                    try:
+                        if not alpaca.is_slewing():
+                            break
+                    except Exception:
+                        break
+                    time.sleep(0.5)
+                with _ctrl_lock:
+                    _ctrl_state = _CtrlState.IDLE
+
+            threading.Thread(target=_wait_radec_complete, daemon=True).start()
             # region agent log
             _agent_debug_log(
                 run_id,
                 "H10",
                 "src/telescope_routes.py:telescope_goto:radec_ok",
-                f"GoTo RA/Dec command succeeded via {via}",
-                {
-                    "ra": ra,
-                    "dec": dec,
-                    "result_type": type(result).__name__,
-                    "via": via,
-                },
+                "GoTo RA/Dec command succeeded via ALPACA",
+                {"ra": ra, "dec": dec, "result_type": type(result).__name__},
             )
             # endregion
-            return jsonify({"success": True, "result": result, "via": via}), 200
+            return jsonify({"success": True, "result": result, "via": "ALPACA"}), 200
         elif mode == "altaz":
             alt = float(data["alt"])
             az = float(data["az"])
-            lat, lon, elev = get_observer_coordinates()
             # region agent log
             _agent_debug_log(
                 run_id,
                 "H10",
                 "src/telescope_routes.py:telescope_goto:altaz_begin",
                 "GoTo Alt/Az command begin",
-                {"alt": alt, "az": az, "lat": lat, "lon": lon, "elev": elev},
+                {"alt": alt, "az": az},
             )
             # endregion
             logger.info(f"[GoTo] Alt/Az GoTo to alt={alt:.1f}° az={az:.1f}°")
@@ -619,39 +637,44 @@ def telescope_goto():
                 resume = ""
 
             def _goto_then_resume():
-                if use_alpaca:
-                    result = alpaca.goto_altaz(alt, az)
-                    logger.info(f"[GoTo] ALPACA goto_altaz dispatched: {result!r}")
-                else:
-                    result = client.goto_altaz(alt, az, lat, lon, elev)
-                    logger.info(f"[GoTo] JSON-RPC goto_altaz dispatched: {result!r}")
-                if resume == "sun":
+                global _ctrl_state
+                result = alpaca.goto_altaz(alt, az)
+                logger.info(f"[GoTo] ALPACA goto_altaz dispatched: {result!r}")
+                if resume in ("sun", "moon"):
+                    # Wait for slew to complete instead of a fixed sleep
+                    with _ctrl_lock:
+                        _ctrl_state = _CtrlState.GOTO_RESUMING
+                    deadline = time.time() + 60
+                    while time.time() < deadline:
+                        try:
+                            if not alpaca.is_slewing():
+                                break
+                        except Exception:
+                            break
+                        time.sleep(0.5)
                     try:
-                        time.sleep(3)
-                        client.start_solar_mode()
-                        logger.info("[GoTo] Resumed solar tracking after Alt/Az GoTo")
+                        if resume == "sun":
+                            client.start_solar_mode()
+                            logger.info("[GoTo] Resumed solar tracking after Alt/Az GoTo")
+                        else:
+                            client.start_lunar_mode()
+                            logger.info("[GoTo] Resumed lunar tracking after Alt/Az GoTo")
                     except Exception as ex:
-                        logger.warning(f"[GoTo] resume_tracking=sun failed: {ex}")
-                elif resume == "moon":
-                    try:
-                        time.sleep(3)
-                        client.start_lunar_mode()
-                        logger.info("[GoTo] Resumed lunar tracking after Alt/Az GoTo")
-                    except Exception as ex:
-                        logger.warning(f"[GoTo] resume_tracking=moon failed: {ex}")
+                        logger.warning(f"[GoTo] resume_tracking={resume} failed: {ex}")
+                with _ctrl_lock:
+                    _ctrl_state = _CtrlState.IDLE
 
             t = threading.Thread(
                 target=_goto_then_resume,
                 daemon=True,
             )
             t.start()
-            via = "ALPACA" if use_alpaca else "JSON-RPC"
             return (
                 jsonify(
                     {
                         "success": True,
-                        "message": f"Slewing to alt={alt:.1f}° az={az:.1f}° via {via}",
-                        "via": via,
+                        "message": f"Slewing to alt={alt:.1f}° az={az:.1f}° via ALPACA",
+                        "via": "ALPACA",
                         "tracking_note": (
                             "Scope enters sidereal tracking after GoTo. "
                             "Pass resume_tracking: 'sun' or 'moon' to switch mode after slew."
@@ -665,6 +688,8 @@ def telescope_goto():
             return jsonify({"error": f"Unknown mode '{mode}'"}), 400
 
     except (KeyError, ValueError) as e:
+        with _ctrl_lock:
+            _ctrl_state = _CtrlState.IDLE
         # region agent log
         _agent_debug_log(
             run_id,
@@ -676,6 +701,8 @@ def telescope_goto():
         # endregion
         return jsonify({"error": f"Invalid parameters: {e}"}), 400
     except Exception as e:
+        with _ctrl_lock:
+            _ctrl_state = _CtrlState.IDLE
         # region agent log
         _agent_debug_log(
             run_id,
@@ -689,103 +716,107 @@ def telescope_goto():
 
 
 def telescope_stop_view():
-    """POST /telescope/stop — stop current view/stack mode."""
+    """POST /telescope/stop — stop current view/stack mode and abort any motor activity."""
+    global _ctrl_state, _pre_nudge_tracking
     client = get_telescope_client()
     if not client or not client.is_connected():
         return jsonify({"error": "Telescope not connected"}), 503
     try:
+        alpaca = get_alpaca_client()
+        if alpaca and alpaca.is_connected():
+            try:
+                alpaca.abort_slew()
+                alpaca.stop_axes()
+            except Exception as ex:
+                logger.warning(f"[Stop] ALPACA abort failed: {ex}")
         client.stop_view_mode()
+        with _ctrl_lock:
+            _ctrl_state = _CtrlState.IDLE
+            _pre_nudge_tracking = False
         return jsonify({"success": True, "message": "Stop command sent"}), 200
     except Exception as e:
         return handle_error(e)
 
 
 def telescope_nudge():
-    """POST /telescope/nudge — joystick-style manual move.
+    """POST /telescope/nudge — joystick-style manual move via ALPACA.
 
-    ALPACA mode (preferred):
-      Body: {"axis": 0, "rate": 1.0}
+    Body: {"axis": 0, "rate": 1.0}
       axis: 0=RA/Az, 1=Dec/Alt.  rate: deg/sec (negative=reverse), 0=stop.
-
-    Legacy JSON-RPC mode (fallback):
-      Body: {"speed": 4000, "angle": 0, "dur_sec": 2}
     """
-    client = get_telescope_client()
+    global _ctrl_state, _pre_nudge_tracking
     alpaca = get_alpaca_client()
-    use_alpaca = alpaca and alpaca.is_connected()
+    if not alpaca or not alpaca.is_connected():
+        return jsonify({"error": "ALPACA not connected — motor commands require ALPACA"}), 503
 
-    if not use_alpaca and (not client or not client.is_connected()):
-        return jsonify({"error": "Telescope not connected"}), 503
+    with _ctrl_lock:
+        if _ctrl_state in (_CtrlState.SLEWING, _CtrlState.GOTO_RESUMING):
+            return jsonify({"error": f"Cannot nudge while {_ctrl_state.value}"}), 409
 
     data = request.get_json(force=True, silent=True) or {}
     try:
-        if use_alpaca:
-            axis = int(data.get("axis", 0))
-            rate = float(data.get("rate", 1.0))
-            result = alpaca.move_axis(axis, rate)
-            return (
-                jsonify(
-                    {
-                        "success": True,
-                        "result": result,
-                        "via": "ALPACA",
-                    }
-                ),
-                200,
+        axis = int(data.get("axis", 0))
+        rate = float(data.get("rate", 1.0))
+        if axis not in (0, 1):
+            return jsonify({"error": "axis must be 0 or 1"}), 400
+        max_rate = float(alpaca.get_max_move_rate(axis))
+        if max_rate <= 0:
+            max_rate = 6.0
+        if abs(rate) > max_rate:
+            clamped = max(-max_rate, min(max_rate, rate))
+            logger.info(
+                f"[Nudge] Clamped rate from {rate:.2f} to {clamped:.2f} (max {max_rate:.2f})"
             )
-        else:
-            speed = int(data.get("speed", 4000))
-            angle = int(data.get("angle", 0))
-            dur = int(data.get("dur_sec", 2))
-            result = client.speed_move(speed, angle, dur)
-            return (
-                jsonify(
-                    {
-                        "success": True,
-                        "result": result,
-                        "via": "JSON-RPC",
-                        "tracking_note": (
-                            "Nudge switches to scenery mode — solar/lunar tracking is OFF until "
-                            "you use Switch to Sun/Moon or the Seestar app."
-                        ),
-                    }
-                ),
-                200,
-            )
+            rate = clamped
+
+        # Disable ALPACA tracking before MoveAxis (required by firmware — Finding A)
+        client = get_telescope_client()
+        viewing_mode = getattr(client, "_viewing_mode", None) if client else None
+        try:
+            pre_tracking = bool(alpaca.get_tracking())
+        except Exception:
+            pre_tracking = viewing_mode in ("sun", "moon")
+        try:
+            alpaca.set_tracking(False)
+        except Exception as ex:
+            logger.warning(f"[Nudge] set_tracking(False) failed: {ex}")
+
+        result = alpaca.move_axis(axis, rate)
+
+        with _ctrl_lock:
+            _pre_nudge_tracking = pre_tracking
+            _ctrl_state = _CtrlState.NUDGING
+        return jsonify({"success": True, "result": result, "via": "ALPACA"}), 200
     except Exception as e:
+        with _ctrl_lock:
+            _ctrl_state = _CtrlState.IDLE
         return handle_error(e)
 
 
 def telescope_nudge_stop():
-    """POST /telescope/nudge/stop — stop all motion."""
+    """POST /telescope/nudge/stop — stop all motion via ALPACA."""
+    global _ctrl_state, _pre_nudge_tracking
     alpaca = get_alpaca_client()
-    if alpaca and alpaca.is_connected():
-        try:
-            result = alpaca.stop_axes()
-            return (
-                jsonify(
-                    {
-                        "success": True,
-                        "message": "Motion stopped",
-                        "via": "ALPACA",
-                        "result": result,
-                    }
-                ),
-                200,
-            )
-        except Exception as e:
-            return handle_error(e)
-
-    client = get_telescope_client()
-    if not client or not client.is_connected():
-        return jsonify({"error": "Telescope not connected"}), 503
+    if not alpaca or not alpaca.is_connected():
+        return jsonify({"error": "ALPACA not connected"}), 503
     try:
-        client.speed_stop()
-        return (
-            jsonify({"success": True, "message": "Nudge stopped", "via": "JSON-RPC"}),
-            200,
-        )
+        result = alpaca.stop_axes()
+        # Restore tracking if it was on before the nudge started
+        with _ctrl_lock:
+            restore = _pre_nudge_tracking
+            _pre_nudge_tracking = False
+            _ctrl_state = _CtrlState.IDLE
+        if restore:
+            try:
+                alpaca.set_tracking(True)
+                logger.info("[NudgeStop] Tracking restored after nudge")
+            except Exception as ex:
+                logger.warning(f"[NudgeStop] set_tracking(True) failed: {ex}")
+        return jsonify({"success": True, "message": "Motion stopped", "via": "ALPACA", "result": result}), 200
     except Exception as e:
+        with _ctrl_lock:
+            _pre_nudge_tracking = False
+            _ctrl_state = _CtrlState.IDLE
         return handle_error(e)
 
 
@@ -1357,6 +1388,8 @@ def get_telescope_status():
         client = get_telescope_client()
 
         if not client or not client.is_connected():
+            with _ctrl_lock:
+                ctrl_state = _ctrl_state.value
             return (
                 jsonify(
                     {
@@ -1370,6 +1403,7 @@ def get_telescope_status():
                             else "mock.telescope"
                         ),
                         "port": int(os.getenv("SEESTAR_PORT", "4700")),
+                        "ctrl_state": ctrl_state,
                         "eclipse": _get_eclipse_data(),
                     }
                 ),
@@ -1396,6 +1430,8 @@ def get_telescope_status():
             "eclipse": _get_eclipse_data(),
             "alpaca": alpaca_status,
         }
+        with _ctrl_lock:
+            status["ctrl_state"] = _ctrl_state.value
         if recording_active and _recording_state["start_time"]:
             status["recording_duration"] = (
                 datetime.now() - _recording_state["start_time"]
@@ -3025,13 +3061,20 @@ def alpaca_tracking():
 
 def alpaca_abort_slew():
     """POST /telescope/alpaca/abort — abort any in-progress slew."""
+    global _ctrl_state, _pre_nudge_tracking
     alpaca = get_alpaca_client()
     if not alpaca or not alpaca.is_connected():
         return jsonify({"error": "ALPACA not connected"}), 503
     try:
         result = alpaca.abort_slew()
+        alpaca.stop_axes()
+        with _ctrl_lock:
+            _ctrl_state = _CtrlState.IDLE
+            _pre_nudge_tracking = False
         return jsonify({"success": True, "result": result}), 200
     except Exception as e:
+        with _ctrl_lock:
+            _ctrl_state = _CtrlState.IDLE
         return handle_error(e)
 
 
