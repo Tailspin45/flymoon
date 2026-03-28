@@ -99,17 +99,6 @@ class SeestarClient:
         )  # id → {"event": Event, "result": ...}
         self._pending_lock = threading.Lock()
 
-        # Track master status from Client events
-        self._is_master: bool = True  # optimistic default
-        self._master_reclaim_attempts: int = 0
-        self._MASTER_RECLAIM_MAX: int = 3
-
-        # Track scope motion state from ScopeTrack events
-        self._scope_tracking: bool = False
-        self._scope_moving: bool = False  # True when "equipment is moving" (code 203)
-
-        # Event-driven device state — populated by push events from firmware
-        self._event_device_state: Dict[str, Any] = {}
 
         logger.info(f"Initialized Seestar client for {host}:{port}")
 
@@ -287,13 +276,16 @@ class SeestarClient:
     def _handle_event(self, event: dict) -> None:
         """Parse unsolicited Event messages from the Seestar firmware.
 
-        Updates internal state (e.g. _viewing_mode) so the app stays in sync
-        with whatever mode the scope is actually in — even when it was set via
-        the Seestar app before Flymoon connected.
+        Push events (PiStatus, ScopeTrack, RecordingStart/Stop, Client) are
+        dead as of firmware 1.2.0-3 (Phase 1a Step 7: zero events in 30 s).
+        ViewStart/Stop branches kept as a shell for future firmware versions.
+        All motor state is now managed by AlpacaClient; recording and
+        viewing_mode are self-managed by method calls.
         """
         name = event.get("Event", "")
 
-        # Viewing-mode state changes
+        # ViewStart/Stop kept as shell — no events currently fire, but
+        # they are harmless if a future firmware re-enables them.
         if name in ("SolarViewStart",):
             if self._viewing_mode != "sun":
                 self._viewing_mode = "sun"
@@ -312,60 +304,8 @@ class SeestarClient:
                     f"Seestar event: viewing mode stopped (was {self._viewing_mode})"
                 )
                 self._viewing_mode = None
-        # Recording state changes
-        elif name == "RecordingStart":
-            if not self._recording:
-                self._recording = True
-                logger.info("Seestar event: recording started")
-        elif name == "RecordingStop":
-            if self._recording:
-                self._recording = False
-                self._recording_start_time = None
-                logger.info("Seestar event: recording stopped")
-        # Device telemetry events (pushed by firmware, not polled)
-        elif name == "PiStatus":
-            if not hasattr(self, "_pi_status_logged"):
-                logger.debug(f"[Event] First PiStatus: {event}")
-                self._pi_status_logged = True
-            pi = event
-            self._event_device_state["cpu_temp"] = pi.get("temp")
-            self._event_device_state["battery_capacity"] = pi.get("battery_capacity")
-            self._event_device_state["charger_status"] = pi.get("charger_status")
-            self._event_device_state["charge_online"] = pi.get("charge_online")
-            self._event_device_state["battery_temp"] = pi.get("battery_temp")
-            self._event_device_state["is_overtemp"] = pi.get("is_overtemp")
-            self._event_device_state["battery_overtemp"] = pi.get("battery_overtemp")
-        elif name == "FocuserMove":
-            fm = event.get("FocuserMove", event)
-            pos = fm.get("position") or fm.get("step")
-            if pos is not None:
-                self._event_device_state["focuser_step"] = pos
-                self._event_device_state["focus_pos"] = pos
-                self._event_device_state["focuser_state"] = fm.get("state", "idle")
-        elif name == "ScopeTrack":
-            tracking = event.get("tracking", False)
-            error = event.get("error", "")
-            code = event.get("code", 0)
-            manual = event.get("manual", False)
-            self._scope_tracking = tracking
-            self._scope_moving = code == 203  # "equipment is moving"
-            self._event_device_state["scope_tracking"] = tracking
-            self._event_device_state["scope_manual"] = manual
-            self._event_device_state["scope_state"] = event.get("state", "unknown")
-            if error:
-                logger.warning(
-                    f"[ScopeTrack] state={event.get('state')} tracking={tracking} "
-                    f"manual={manual} error='{error}' code={code}"
-                )
-            else:
-                logger.warning(
-                    f"[ScopeTrack] state={event.get('state')} tracking={tracking} manual={manual}"
-                )
         else:
-            # Temporarily at WARNING to discover new firmware event names
-            logger.warning(
-                f"[Event-diag] unknown event: {name} keys={list(event.keys())} payload={str(event)[:300]}"
-            )
+            logger.debug(f"[Event] {name} (no handler) keys={list(event.keys())}")
 
     def _reconnect(self) -> bool:
         """Attempt to re-establish the TCP connection without starting a new heartbeat thread.
@@ -1250,262 +1190,8 @@ class SeestarClient:
             return False
 
     # ------------------------------------------------------------------ #
-    #  Extended telescope control (Option A — native JSON-RPC)           #
+    #  Physical arm / park / focus                                        #
     # ------------------------------------------------------------------ #
-
-    def goto_radec(self, ra: float, dec: float) -> dict:
-        """Slew to equatorial coordinates (J2000 RA hours, Dec degrees).
-
-        Uses iscope_start_view with mode=star which performs a GoTo + sidereal
-        tracking.  The command sequence lock prevents heartbeat interleaving.
-        """
-        self._ensure_master()
-        self._wait_for_scope_idle()
-        with self._cmd_seq_lock:
-            if self._viewing_mode is not None:
-                self.stop_view_mode()
-                time.sleep(0.5)
-            return self.start_view_star(ra, dec, target_name="GoTo Target")
-
-    def goto_altaz(
-        self,
-        alt: float,
-        az: float,
-        observer_lat: float,
-        observer_lon: float,
-        observer_elev: float = 0,
-    ) -> dict:
-        """
-        Slew to an alt/az position by first converting to RA/Dec.
-
-        Parameters
-        ----------
-        alt, az : float
-            Altitude and azimuth in degrees.
-        observer_lat, observer_lon : float
-            Observer location in decimal degrees.
-        observer_elev : float
-            Observer elevation in metres.
-        """
-        import math
-
-        from src.constants import EARTH_TIMESCALE
-
-        t = EARTH_TIMESCALE.now()
-        lat_r = math.radians(observer_lat)
-        alt_r = math.radians(alt)
-        az_r = math.radians(az)
-
-        sin_dec = math.sin(alt_r) * math.sin(lat_r) + math.cos(alt_r) * math.cos(
-            lat_r
-        ) * math.cos(az_r)
-        dec_r = math.asin(max(-1.0, min(1.0, sin_dec)))
-
-        cos_ha = (math.sin(alt_r) - math.sin(lat_r) * sin_dec) / (
-            math.cos(lat_r) * math.cos(dec_r) + 1e-12
-        )
-        ha_r = math.acos(max(-1.0, min(1.0, cos_ha)))
-        if math.sin(az_r) > 0:
-            ha_r = 2 * math.pi - ha_r
-
-        # Local Sidereal Time: GAST + longitude (degrees→hours)
-        lst = (t.gast + observer_lon / 15.0) % 24
-        ra_h = (lst - ha_r * 12 / math.pi) % 24
-        dec_d = math.degrees(dec_r)
-
-        logger.info(
-            f"AltAz ({alt:.2f}°, {az:.2f}°) → RA {ra_h:.4f}h Dec {dec_d:.4f}° (LST {lst:.4f}h)"
-        )
-        return self.goto_radec(ra_h, dec_d)
-
-    # ── Manual joystick slew (bypasses firmware horizon limit) ──────────
-
-    # Mechanical safety limits (degrees)
-    _SLEW_ALT_MIN = -45
-    _SLEW_ALT_MAX = 85
-    # Speed thresholds (ALP firmware scale — 4000 is normal, 8000 is fast)
-    _SLEW_FAST_SPEED = 4000
-    _SLEW_SLOW_SPEED = 1000
-    _SLEW_SLOW_THRESHOLD = 5.0  # switch to slow within this many degrees
-    _SLEW_TOLERANCE = 0.5  # stop when within this many degrees
-    _SLEW_MAX_DURATION = 120  # hard timeout (seconds)
-    _SLEW_POLL_INTERVAL = 1.0  # telemetry poll interval during slew
-
-    def speed_move(self, speed: int, angle: int, dur_sec: int = 3) -> dict:
-        """Raw motor move — no horizon check.
-
-        Firmware angle convention (empirically confirmed, Phase 4):
-          90=up  270=down  0=right  180=left
-        API angle convention (after +180 firmware offset applied here):
-          270=up  90=down  180=right  0=left
-
-        Sends scope_speed_move directly without mode switching.
-        ALP does NOT switch to scenery mode before speed_move — the firmware
-        handles the mode conflict internally.  Previous scenery-mode switching
-        was causing the scope to enter a transitional state that rejected
-        motor commands.
-        """
-        self._ensure_master()
-        self._wait_for_scope_idle()
-        # Firmware motor-angle frame is reversed by 180° from the logical
-        # joystick frame used by API/UI. Convert here centrally so all callers
-        # (nudge + manual_goto) behave consistently.
-        fw_angle = (int(angle) + 180) % 360
-        move_params = {"speed": int(speed), "angle": fw_angle, "dur_sec": int(dur_sec)}
-        logger.warning(
-            f"[Motor] Speed move: speed={speed} angle={int(angle)}° fw_angle={fw_angle}° dur={dur_sec}s"
-        )
-        self._send_command(
-            "scope_speed_move",
-            params=move_params,
-            expect_response=False,
-        )
-        return {"success": True}
-
-    def speed_stop(self) -> bool:
-        """Stop an in-progress speed/manual move (preserves current viewing mode)."""
-        try:
-            self._send_command(
-                "scope_speed_move",
-                params={"speed": 0, "angle": 0, "dur_sec": 0},
-                expect_response=False,
-            )
-        except Exception:
-            pass
-        logger.info("Speed move stopped")
-        return True
-
-    def manual_goto(self, target_alt: float, target_az: float) -> dict:
-        """
-        Slew to target alt/az using motor speed control.
-
-        Bypasses the firmware horizon limit. Uses fast speed for large
-        distances, slow speed for fine approach, and enforces mechanical
-        safety limits.
-
-        Returns dict with status info.
-        """
-
-        with self._cmd_seq_lock:
-            return self._manual_goto_inner(target_alt, target_az)
-
-    def _manual_goto_inner(self, target_alt: float, target_az: float) -> dict:
-        import math
-        import time as _time
-
-        # Clamp target to safe range
-        if target_alt < self._SLEW_ALT_MIN or target_alt > self._SLEW_ALT_MAX:
-            msg = f"Target alt {target_alt:.1f}° outside safe range [{self._SLEW_ALT_MIN}°, {self._SLEW_ALT_MAX}°]"
-            logger.warning(f"[ManualGoTo] {msg}")
-            return {"error": msg}
-
-        start = _time.time()
-        stall_count = 0
-        prev_distance = None
-        loop_count = 0
-
-        logger.info(
-            f"[ManualGoTo] Starting: target alt={target_alt:.1f}° az={target_az:.1f}°"
-        )
-
-        while _time.time() - start < self._SLEW_MAX_DURATION:
-            loop_count += 1
-            # Get current position directly from scope
-            cur_alt = cur_az = None
-            try:
-                h = self._send_command(
-                    "scope_get_horiz_coord", quiet=True, timeout_override=2
-                )
-                if isinstance(h, (list, tuple)) and len(h) >= 2:
-                    cur_alt = float(h[0])
-                    cur_az = float(h[1])
-            except Exception:
-                pass
-
-            if cur_alt is None or cur_az is None:
-                logger.warning("[ManualGoTo] No alt/az from scope, retrying…")
-                _time.sleep(self._SLEW_POLL_INTERVAL)
-                continue
-
-            # Compute deltas
-            d_alt = target_alt - cur_alt
-            # Shortest azimuth path (handle 360° wrap)
-            d_az = (target_az - cur_az + 180) % 360 - 180
-
-            distance = math.sqrt(d_alt**2 + d_az**2)
-            logger.debug(
-                f"[ManualGoTo] cur=({cur_alt:.1f}°, {cur_az:.1f}°) "
-                f"delta=({d_alt:.1f}°, {d_az:.1f}°) dist={distance:.1f}°"
-            )
-
-            # Arrived?
-            if distance < self._SLEW_TOLERANCE:
-                self.speed_stop()
-                elapsed = _time.time() - start
-                logger.info(f"[ManualGoTo] Arrived in {elapsed:.1f}s")
-                return {
-                    "status": "arrived",
-                    "alt": cur_alt,
-                    "az": cur_az,
-                    "elapsed": round(elapsed, 1),
-                }
-
-            # Safety: would the next move push us past mechanical limits?
-            projected_alt = cur_alt + d_alt * 0.3  # rough estimate of next step
-            if projected_alt < self._SLEW_ALT_MIN + 2:
-                self.speed_stop()
-                msg = f"Stopped: approaching lower alt limit ({self._SLEW_ALT_MIN}°)"
-                logger.warning(f"[ManualGoTo] {msg}")
-                return {"error": msg, "alt": cur_alt, "az": cur_az}
-            if projected_alt > self._SLEW_ALT_MAX - 2:
-                self.speed_stop()
-                msg = f"Stopped: approaching upper alt limit ({self._SLEW_ALT_MAX}°)"
-                logger.warning(f"[ManualGoTo] {msg}")
-                return {"error": msg, "alt": cur_alt, "az": cur_az}
-
-            # Stall detection — not making progress
-            if prev_distance is not None:
-                if abs(prev_distance - distance) < 0.05:
-                    stall_count += 1
-                    if stall_count >= 5:
-                        self.speed_stop()
-                        msg = "Stopped: no progress (possible hard stop)"
-                        logger.warning(f"[ManualGoTo] {msg}")
-                        return {"error": msg, "alt": cur_alt, "az": cur_az}
-                else:
-                    stall_count = 0
-            prev_distance = distance
-
-            # Choose speed
-            speed = (
-                self._SLEW_SLOW_SPEED
-                if distance < self._SLEW_SLOW_THRESHOLD
-                else self._SLEW_FAST_SPEED
-            )
-
-            # Compute angle for scope_speed_move.
-            # Empirically confirmed firmware convention (Phase 4 diag):
-            #   fw 90=up, 270=down, 0=right, 180=left
-            # speed_move adds +180 to convert API→firmware, so API convention is:
-            #   api 270=up, 90=down, 180=right, 0=left
-            # Formula: negate d_alt so atan2 maps (up=270, right=180) correctly.
-            angle = (math.degrees(math.atan2(d_az, -d_alt)) + 90) % 360
-
-            # Move for a short burst then re-check
-            dur = 2 if distance >= self._SLEW_SLOW_THRESHOLD else 1
-            try:
-                self.speed_move(speed, int(round(angle)), dur)
-            except Exception as e:
-                self.speed_stop()
-                logger.error(f"[ManualGoTo] Move failed: {e}")
-                return {"error": str(e), "alt": cur_alt, "az": cur_az}
-
-            _time.sleep(dur + 0.2)  # wait for move to complete then poll
-
-        # Timeout
-        self.speed_stop()
-        logger.warning("[ManualGoTo] Timed out")
-        return {"error": "Timed out", "elapsed": round(_time.time() - start, 1)}
 
     def open_arm(self) -> bool:
         """Open (unfold) the telescope arm."""
@@ -1603,73 +1289,6 @@ class SeestarClient:
         logger.info(f"Dew heater {'on' if enabled else 'off'} power={power}")
         return result or {}
 
-    def _reclaim_master(self) -> None:
-        """Send set_setting master_cli=True to reclaim master control.
-
-        Called by the reader thread when a Client event reports is_master=false.
-        Retries up to _MASTER_RECLAIM_MAX times with 1s spacing.
-        """
-        if self._master_reclaim_attempts >= self._MASTER_RECLAIM_MAX:
-            logger.warning(
-                f"[Master] Exhausted {self._MASTER_RECLAIM_MAX} reclaim attempts — "
-                "another client is holding master. Close the Seestar app and reconnect."
-            )
-            return
-        self._master_reclaim_attempts += 1
-        logger.info(
-            f"[Master] Reclaiming master control (attempt {self._master_reclaim_attempts}/"
-            f"{self._MASTER_RECLAIM_MAX})..."
-        )
-        try:
-            self._send_command(
-                "set_setting",
-                params={"master_cli": True},
-                expect_response=False,
-                quiet=True,
-            )
-        except Exception as e:
-            logger.warning(f"[Master] Reclaim send failed: {e}")
-
-    def _ensure_master(self) -> None:
-        """Check master status and attempt reclaim if needed.
-
-        Called before motor commands (speed_move, goto_radec) to avoid
-        silently sending commands the firmware will drop.
-        """
-        if not self._is_master:
-            logger.warning(
-                "[Master] Not master — attempting reclaim before motor command"
-            )
-            self._master_reclaim_attempts = 0  # reset for fresh attempt
-            self._reclaim_master()
-            time.sleep(0.5)
-            if not self._is_master:
-                logger.warning(
-                    "[Master] Still not master after reclaim attempt. "
-                    "Motor command will be sent anyway (may be silently ignored)."
-                )
-
-    def _wait_for_scope_idle(self, timeout: float = 10.0) -> bool:
-        """Wait until the scope is no longer mid-slew (code 203).
-
-        Returns True if scope is idle/ready, False if timeout.
-        """
-        if not self._scope_moving:
-            return True
-        logger.warning(
-            "[Motor] Scope is mid-motion (code 203) — waiting for it to settle..."
-        )
-        deadline = time.time() + timeout
-        while time.time() < deadline:
-            if not self._scope_moving:
-                logger.warning("[Motor] Scope settled — proceeding with command")
-                return True
-            time.sleep(0.3)
-        logger.warning(
-            f"[Motor] Scope still moving after {timeout}s — proceeding anyway"
-        )
-        return False
-
     def _reader_loop(self) -> None:
         """Background thread: continuously read from the scope socket.
 
@@ -1712,25 +1331,6 @@ class SeestarClient:
                             logger.debug(
                                 f"[Reader] Event: {event_name} {str(msg)[:200]}"
                             )
-                            # Client event tells us if we have master control
-                            if event_name == "Client":
-                                was_master = self._is_master
-                                self._is_master = msg.get("is_master", True)
-                                if not self._is_master:
-                                    logger.warning(
-                                        f"[Reader] Scope says we are NOT master "
-                                        f"(another client has control): {msg}"
-                                    )
-                                    # Auto-reclaim master control
-                                    self._reclaim_master()
-                                else:
-                                    if not was_master:
-                                        logger.warning(
-                                            "[Reader] Master control regained!"
-                                        )
-                                        self._master_reclaim_attempts = 0
-                                    else:
-                                        logger.debug("[Reader] We are master client")
                             self._handle_event(msg)
                         elif "id" in msg:
                             resp_id = msg.get("id")
@@ -1940,20 +1540,6 @@ class SeestarClient:
             Status information including connection and recording state
         """
         viewing_mode = self._viewing_mode
-        try:
-            t = self.get_telemetry()
-            vm = t.get("view_mode")
-            if vm == "scenery":
-                viewing_mode = "scenery"
-            elif vm == "star":
-                viewing_mode = "star"
-            elif vm == "none":
-                viewing_mode = None
-            elif vm == "solar_sys" and viewing_mode not in ("sun", "moon"):
-                viewing_mode = "sun"
-            self._viewing_mode = viewing_mode
-        except Exception:
-            pass
 
         status = {
             "connected": self._connected,
