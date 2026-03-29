@@ -197,7 +197,7 @@ window.initTelescope = function() {
 async function connect() {
     console.log('[Telescope] Connecting...');
     const btn = document.getElementById('connectBtn');
-    if (btn) { btn.disabled = true; btn.textContent = '⏳ Connecting…'; }
+    if (btn) { btn.disabled = true; btn.textContent = 'Connecting…'; }
     showStatus('Connecting to telescope (3 attempts with backoff)…', 'info', 0);
 
     const result = await apiCall('/telescope/connect', 'POST');
@@ -228,12 +228,12 @@ async function connect() {
 
 async function findSeestar() {
     const btn = document.getElementById('findSeestarBtn');
-    if (btn) { btn.disabled = true; btn.textContent = '⏳ Scanning…'; }
+    if (btn) { btn.disabled = true; btn.textContent = 'Scanning…'; }
     showStatus('Scanning network for Seestar…', 'info', 0);
     try {
         const resp = await fetch('/telescope/discover');
         const data = await resp.json();
-        if (btn) { btn.disabled = false; btn.textContent = '🔍 Find'; }
+        if (btn) { btn.disabled = false; btn.textContent = 'Find'; }
         if (!data.found || data.found.length === 0) {
             showStatus('No Seestar found on ' + data.subnet + ' — is it powered on?', 'warning', 8000);
             return;
@@ -248,7 +248,7 @@ async function findSeestar() {
         console.log('[Discover]', msg, '— found:', data.found);
 
     } catch (err) {
-        if (btn) { btn.disabled = false; btn.textContent = '🔍 Find'; }
+        if (btn) { btn.disabled = false; btn.textContent = 'Find'; }
         showStatus('Scan error: ' + err.message, 'error', 6000);
     }
 }
@@ -819,7 +819,7 @@ async function stopTimelapse() {
 
 async function previewTimelapse() {
     const btn = document.getElementById('previewTimelapseBtn');
-    if (btn) { btn.disabled = true; btn.textContent = '⏳ Building...'; }
+    if (btn) { btn.disabled = true; btn.textContent = 'Building...'; }
     showStatus('Building timelapse preview...', 'info');
 
     const result = await apiCall('/telescope/timelapse/preview', 'POST');
@@ -3593,7 +3593,7 @@ async function buildCompositeFromMarked() {
     const frames = Array.from(_markedFrames).sort((a, b) => a - b);
 
     const btn = document.getElementById('buildCompositeBtn');
-    if (btn) { btn.disabled = true; btn.textContent = '⏳ Building…'; }
+    if (btn) { btn.disabled = true; btn.textContent = 'Building…'; }
     _setScanBanner('Building composite from ' + frames.length + ' frames…', 'info');
 
     try {
@@ -3784,14 +3784,14 @@ async function scanTransit(target) {
     _showStopAnalysisBtn(true);
     // Pulse the button text with frame count estimate
     const _analyzeStart = Date.now();
-    _setScanBanner('info', '🔍 Analyzing… 0s');
+    _setScanBanner('info', 'Analyzing… 0s');
     let _analyzeTimer = setInterval(() => {
         if (btn && btn.disabled) {
             const dots = '.'.repeat(Math.floor(Date.now() / 500) % 4);
-            btn.textContent = `🔍 Analyzing${dots}`;
+            btn.textContent = `Analyzing${dots}`;
         }
         const elapsed = Math.floor((Date.now() - _analyzeStart) / 1000);
-        _setScanBanner('info', `🔍 Analyzing… ${elapsed}s`);
+        _setScanBanner('info', `Analyzing… ${elapsed}s`);
     }, 500);
     _setScanBanner(null);
 
