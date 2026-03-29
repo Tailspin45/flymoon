@@ -6,6 +6,6 @@ PyWavelets>=1.4.0
 onnxruntime>=1.17.0
 python-telegram-bot==21.0
 python-dotenv==1.0.1
-requests==2.32.4
+requests==2.32.5
 skyfield==1.49
 tzlocal==5.2
