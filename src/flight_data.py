@@ -100,9 +100,9 @@ def sort_results(data: List[dict]) -> List[dict]:
         az_diff = abs(a.get("az_diff") or 0)
         total_diff = alt_diff + az_diff
 
-        time_val = a["time"] if a["time"] is not None else 999
+        time_val = a.get("time") if a.get("time") is not None else 999
         # Sort: transits first (descending), then smallest total_diff, then ETA, then id
-        return (-(a["is_possible_transit"] or 0), total_diff, time_val, a["id"])
+        return (-(a.get("is_possible_transit") or 0), total_diff, time_val, a.get("id", ""))
 
     return sorted(data, key=_custom_sort)
 

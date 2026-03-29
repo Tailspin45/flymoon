@@ -530,6 +530,58 @@ def get_all_flights():
                     f"{target.capitalize()} below horizon ({coords['altitude']:.1f}°), skipping transit check"
                 )
 
+        # When both targets are below the horizon, still fetch flights so the
+        # map shows aircraft — just skip transit prediction.
+        if not all_flights and not tracking_targets:
+            from src.flight_sources import fetch_multi_source_positions
+            from src.transit import _fallback_bbox
+
+            logger.info(
+                "Both targets below horizon — fetching flights without transit prediction"
+            )
+            try:
+                combined_data = fetch_multi_source_positions(
+                    _fallback_bbox.lat_lower_left,
+                    _fallback_bbox.long_lower_left,
+                    _fallback_bbox.lat_upper_right,
+                    _fallback_bbox.long_upper_right,
+                )
+                for callsign, pos in combined_data.items():
+                    flight = {
+                        "id": callsign.strip(),
+                        "latitude": pos.get("latitude"),
+                        "longitude": pos.get("longitude"),
+                        "altitude": pos.get("altitude", 0),
+                        "aircraft_elevation": pos.get("altitude", 0),
+                        "speed": (pos.get("ground_speed") or 0) * 1.852,
+                        "direction": pos.get("heading", 0),
+                        "is_possible_transit": 0,
+                        "possibility_level": 0,
+                        "time": None,
+                        "alt_diff": None,
+                        "az_diff": None,
+                    }
+                    if flight["latitude"] and flight["longitude"]:
+                        from math import atan2, cos, radians, sin, sqrt
+
+                        lat1, lon1 = radians(latitude), radians(longitude)
+                        lat2, lon2 = radians(flight["latitude"]), radians(
+                            flight["longitude"]
+                        )
+                        dlat, dlon = lat2 - lat1, lon2 - lon1
+                        a = (
+                            sin(dlat / 2) ** 2
+                            + cos(lat1) * cos(lat2) * sin(dlon / 2) ** 2
+                        )
+                        c = 2 * atan2(sqrt(a), sqrt(1 - a))
+                        flight["distance_nm"] = 6371 * c * 0.539957
+                        flight["aircraft_elevation_feet"] = int(
+                            flight["aircraft_elevation"] * 3.28084
+                        )
+                    all_flights.append(flight)
+            except Exception as exc:
+                logger.warning(f"[Flights] Below-horizon fetch failed: {exc}")
+
         # Deduplicate: sun+moon calls both include excluded aircraft — keep the
         # entry with the highest possibility_level for each flight ID.
         seen: dict = {}

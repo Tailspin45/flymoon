@@ -677,6 +677,13 @@ class TransitDetector:
 
     def get_status(self) -> Dict[str, Any]:
         """Return current detector status."""
+        # Evict expired primed events (safety net for when frame processing is idle)
+        _now = time.time()
+        for _fid in [
+            fid for fid, e in self._primed_events.items() if _now > e["expires_at"]
+        ]:
+            del self._primed_events[_fid]
+
         elapsed = 0.0
         fps = 0.0
         if self._start_time and self._running:
@@ -863,6 +870,8 @@ class TransitDetector:
 
         reconnect_delay = 2
         max_reconnect_delay = 30
+        max_reconnect_attempts = 5
+        consecutive_fails = 0
         _last_stream_lost_warn = 0.0  # Throttle "Stream lost" to once per 60s
 
         while self._running:
@@ -875,9 +884,9 @@ class TransitDetector:
                     bufsize=FRAME_BYTES * 4,
                 )
 
-                reconnect_delay = 2  # reset on successful connect
                 # Reset per-stream state so stale counter/frame from the
                 # previous session cannot immediately trigger a detection.
+                got_frames = False
                 self._prev_frame = None
                 self._consec_above = 0
                 self._track_centroid_prev = None
@@ -889,6 +898,11 @@ class TransitDetector:
                     if len(raw) < FRAME_BYTES:
                         # Stream ended or broken
                         break
+
+                    if not got_frames:
+                        got_frames = True
+                        consecutive_fails = 0
+                        reconnect_delay = 2  # reset backoff on first good frame
 
                     frame = (
                         np.frombuffer(raw, dtype=np.uint8)
@@ -914,11 +928,27 @@ class TransitDetector:
             if not self._running:
                 break
 
-            # Reconnect with backoff. Throttle log to avoid spam when RTSP unavailable.
+            # Track consecutive failures (no frames read at all)
+            if not got_frames:
+                consecutive_fails += 1
+            else:
+                consecutive_fails = 0
+
+            if consecutive_fails >= max_reconnect_attempts:
+                logger.warning(
+                    f"[Detector] Stream unavailable after {max_reconnect_attempts} "
+                    "attempts — giving up. Restart detection manually."
+                )
+                self._emit_status("disconnected")
+                self._running = False
+                break
+
+            # Reconnect with backoff
             now_ = time.time()
             if now_ - _last_stream_lost_warn >= 60:
                 logger.warning(
-                    f"[Detector] Stream lost — reconnecting in {reconnect_delay}s"
+                    f"[Detector] Stream lost — reconnecting in {reconnect_delay}s "
+                    f"(attempt {consecutive_fails}/{max_reconnect_attempts})"
                 )
                 _last_stream_lost_warn = now_
             else:
@@ -961,6 +991,7 @@ class TransitDetector:
         ]
 
         reconnect_delay = 2
+        consecutive_fails = 0
 
         while self._running:
             try:
@@ -972,7 +1003,7 @@ class TransitDetector:
                     bufsize=1024 * 1024,
                 )
 
-                reconnect_delay = 2
+                got_hires_data = False
                 buf = b""
                 SOI = b"\xff\xd8"
                 EOI = b"\xff\xd9"
@@ -982,6 +1013,10 @@ class TransitDetector:
                     chunk = self._hires_process.stdout.read(65536)
                     if not chunk:
                         break
+                    if not got_hires_data:
+                        got_hires_data = True
+                        consecutive_fails = 0
+                        reconnect_delay = 2
                     buf += chunk
 
                     # Extract complete JPEG frames from the MJPEG stream
@@ -1030,6 +1065,12 @@ class TransitDetector:
                     pass
 
             if not self._running:
+                break
+
+            if not got_hires_data:
+                consecutive_fails += 1
+            if consecutive_fails >= 5:
+                logger.warning("[HiRes] Stream unavailable after 5 attempts — giving up")
                 break
 
             time.sleep(reconnect_delay)

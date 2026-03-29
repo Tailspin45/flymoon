@@ -1910,24 +1910,23 @@ function scheduleAzimuthArrowCleanup(riseSetTimes) {
 }
 
 // Periodic "both targets off" reminder while within min-altitude parameters
-(function startBothOffReminder() {
-    setInterval(() => {
-        if (!sunEnabled && !moonEnabled && lastFlightData && lastFlightData.targetCoordinates) {
-            const minAlt = getMinAltitudeAllQuadrants();
-            const coords = lastFlightData.targetCoordinates;
-            const sunAbove  = coords.sun  && coords.sun.altitude  >= minAlt;
-            const moonAbove = coords.moon && coords.moon.altitude >= minAlt;
-            if ((sunAbove || moonAbove) && alertsEnabled) {
-                const targets = [sunAbove ? 'Sun' : null, moonAbove ? 'Moon' : null].filter(Boolean).join(' and ');
-                // Use a non-blocking notification if available, else log to console
-                console.warn(`[Flymoon] Both targets disabled but ${targets} is in range!`);
-                if (typeof showNotification === 'function') {
-                    showNotification(`⚠️ Both targets off — ${targets} is in range`, 'warning');
-                }
+let _bothOffReminderInterval = null;
+function _bothOffReminderTick() {
+    if (!sunEnabled && !moonEnabled && lastFlightData && lastFlightData.targetCoordinates) {
+        const minAlt = getMinAltitudeAllQuadrants();
+        const coords = lastFlightData.targetCoordinates;
+        const sunAbove  = coords.sun  && coords.sun.altitude  >= minAlt;
+        const moonAbove = coords.moon && coords.moon.altitude >= minAlt;
+        if ((sunAbove || moonAbove) && alertsEnabled) {
+            const targets = [sunAbove ? 'Sun' : null, moonAbove ? 'Moon' : null].filter(Boolean).join(' and ');
+            console.warn(`[Flymoon] Both targets disabled but ${targets} is in range!`);
+            if (typeof showNotification === 'function') {
+                showNotification(`Both targets off — ${targets} is in range`, 'warning');
             }
         }
-    }, 60000); // check every minute
-})();
+    }
+}
+_bothOffReminderInterval = setInterval(_bothOffReminderTick, 60000);
 
 function go() {
     // Manual refresh button - always show warning unless cache is expired
@@ -2155,16 +2154,14 @@ function fetchFlights() {
             }
         }
         
-        // Auto-pause only when ALL targets are below the physical horizon (or disabled).
-        // Do NOT pause when targets are merely below the quadrant min-altitude
-        // because we still show those transits (dimmed).
+        // When all targets are below the horizon, keep fetching flights (for map
+        // display) but skip the fast soft-refresh cycle that recalculates transits.
         const anyTargetUp = data.targetCoordinates && Object.entries(data.targetCoordinates).some(
             ([name, c]) => c.altitude > 0 && !(data.disabledTargets || []).includes(name)
         );
         if (!anyTargetUp) {
-            console.log("⏸️  No targets above horizon, pausing auto-refresh");
-            if (autoGoInterval) clearInterval(autoGoInterval);
             if (softRefreshInterval) clearInterval(softRefreshInterval);
+            softRefreshInterval = null;
         }
 
         // LINE 1: Tracking status - Sun and Moon with weather
@@ -2246,13 +2243,9 @@ function fetchFlights() {
             if (anyAboveHorizon) {
                 alertNoResults.innerHTML = "Sun/Moon is above the horizon but below your Min Angle setting — lower the Min Angle to see transits";
             } else {
-                alertNoResults.innerHTML = "Sun and Moon are below the horizon — no transits possible";
+                alertNoResults.innerHTML = "Sun and Moon are below the horizon — flights shown, no transit prediction";
             }
-            // Clear stale flight data so we don't show predictions that can't happen
-            window.lastFlightData = [];
-            window.lastSoftFlightData = [];
-            updateFlightTable([]);
-            if (typeof window.clearAllFlightMarkers === 'function') window.clearAllFlightMarkers();
+            // Don't clear flights — backend still sends them for map display
         }
 
         // Use server bbox only if user hasn't set a custom one via savePosition()
@@ -3067,6 +3060,8 @@ window.addEventListener('pagehide', () => {
     clearInterval(refreshTimerLabelInterval);
     clearInterval(_telescopeStatusInterval);
     _telescopeStatusInterval = null;
+    clearInterval(_bothOffReminderInterval);
+    _bothOffReminderInterval = null;
 });
 
 window.addEventListener('pageshow', (e) => {
@@ -3077,5 +3072,8 @@ window.addEventListener('pageshow', (e) => {
         autoGoInterval = setInterval(goFetch, currentCheckInterval * 1000);
         softRefreshInterval = setInterval(softRefresh, 15000);
         refreshTimerLabelInterval = setInterval(refreshTimer, 1000);
+        if (!_bothOffReminderInterval) {
+            _bothOffReminderInterval = setInterval(_bothOffReminderTick, 60000);
+        }
     }
 });
