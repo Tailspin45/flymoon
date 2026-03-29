@@ -29,6 +29,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 from dotenv import load_dotenv
+
 load_dotenv()
 
 HOST = os.getenv("SEESTAR_HOST", "192.168.4.112")
@@ -39,13 +40,16 @@ def _pass(name, detail=""):
     print(f"  PASS  {name}" + (f" — {detail}" if detail else ""))
     return {"test": name, "status": "PASS", "detail": detail}
 
+
 def _fail(name, detail=""):
     print(f"  FAIL  {name}" + (f" — {detail}" if detail else ""))
     return {"test": name, "status": "FAIL", "detail": detail}
 
+
 def _warn(name, detail=""):
     print(f"  WARN  {name}" + (f" — {detail}" if detail else ""))
     return {"test": name, "status": "WARN", "detail": detail}
+
 
 def _info(msg):
     print(f"        {msg}")
@@ -58,7 +62,7 @@ def check_view_mode(client, expected: str) -> tuple:
         if r:
             vm = (r.get("View") or r or {}).get("mode")
             return vm, (vm == expected)
-    except Exception as e:
+    except Exception:
         return None, False
     return None, False
 
@@ -99,7 +103,11 @@ def run(host, port, cycles, restore_solar, output_path):
     if initial_mode in SOLAR_MODES:
         results.append(_pass("baseline_solar_mode", f"mode={initial_mode}"))
     else:
-        results.append(_warn("baseline_solar_mode", f"mode={initial_mode} (expected solar/solar_sys)"))
+        results.append(
+            _warn(
+                "baseline_solar_mode", f"mode={initial_mode} (expected solar/solar_sys)"
+            )
+        )
 
     print()
 
@@ -130,8 +138,10 @@ def run(host, port, cycles, restore_solar, output_path):
         try:
             t = client.get_telemetry()
             cycle_data["scenery_telemetry"] = {
-                "alt": t.get("alt"), "az": t.get("az"),
-                "scope_alt": t.get("scope_alt"), "scope_az": t.get("scope_az"),
+                "alt": t.get("alt"),
+                "az": t.get("az"),
+                "scope_alt": t.get("scope_alt"),
+                "scope_az": t.get("scope_az"),
             }
             _info(f"  Cycle {i} scenery telemetry: alt={t.get('alt')} az={t.get('az')}")
         except Exception as e:
@@ -160,8 +170,10 @@ def run(host, port, cycles, restore_solar, output_path):
         try:
             t = client.get_telemetry()
             cycle_data["solar_telemetry"] = {
-                "alt": t.get("alt"), "az": t.get("az"),
-                "target_alt": t.get("target_alt"), "target_az": t.get("target_az"),
+                "alt": t.get("alt"),
+                "az": t.get("az"),
+                "target_alt": t.get("target_alt"),
+                "target_az": t.get("target_az"),
             }
             _info(f"  Cycle {i} solar telemetry: alt={t.get('alt')} az={t.get('az')}")
         except Exception as e:
@@ -173,7 +185,9 @@ def run(host, port, cycles, restore_solar, output_path):
     results.append(
         _pass("mode_transition_cycles", f"{cycles} cycles completed")
         if all_cycles_ok
-        else _fail("mode_transition_cycles", f"errors in {cycles} cycles — see raw data")
+        else _fail(
+            "mode_transition_cycles", f"errors in {cycles} cycles — see raw data"
+        )
     )
 
     # 3. Nudge-then-return test (common real-world pattern)
@@ -198,12 +212,17 @@ def run(host, port, cycles, restore_solar, output_path):
         t = client.get_telemetry()
         raw["nudge_then_solar"] = {
             "mode": mode,
-            "alt": t.get("alt"), "az": t.get("az"),
-            "target_alt": t.get("target_alt"), "target_az": t.get("target_az"),
+            "alt": t.get("alt"),
+            "az": t.get("az"),
+            "target_alt": t.get("target_alt"),
+            "target_az": t.get("target_az"),
         }
         results.append(
-            _pass("nudge_then_solar", f"mode={mode} alt={t.get('alt')} az={t.get('az')}")
-            if ok else _warn("nudge_then_solar", f"mode={mode} — check raw")
+            _pass(
+                "nudge_then_solar", f"mode={mode} alt={t.get('alt')} az={t.get('az')}"
+            )
+            if ok
+            else _warn("nudge_then_solar", f"mode={mode} — check raw")
         )
     except Exception as e:
         results.append(_fail("nudge_then_solar", str(e)))
@@ -219,8 +238,10 @@ def run(host, port, cycles, restore_solar, output_path):
         except Exception:
             pass
 
-    try: client.disconnect()
-    except: pass
+    try:
+        client.disconnect()
+    except:
+        pass
 
     passed = sum(1 for r in results if r["status"] == "PASS")
     warned = sum(1 for r in results if r["status"] == "WARN")
@@ -232,7 +253,8 @@ def run(host, port, cycles, restore_solar, output_path):
 
     output = {
         "phase": "phase4_mode_transitions",
-        "host": host, "port": port,
+        "host": host,
+        "port": port,
         "cycles": cycles,
         "tests": results,
         "raw": raw,
@@ -252,8 +274,12 @@ def main():
     parser.add_argument("--port", type=int, default=PORT)
     parser.add_argument("--cycles", type=int, default=3)
     parser.add_argument("--restore-solar", action="store_true", default=True)
-    parser.add_argument("--no-restore-solar", action="store_false", dest="restore_solar")
-    parser.add_argument("--output", default="docs/diag_logs/phase4_mode_transitions.json")
+    parser.add_argument(
+        "--no-restore-solar", action="store_false", dest="restore_solar"
+    )
+    parser.add_argument(
+        "--output", default="docs/diag_logs/phase4_mode_transitions.json"
+    )
     args = parser.parse_args()
     run(args.host, args.port, args.cycles, args.restore_solar, args.output)
 

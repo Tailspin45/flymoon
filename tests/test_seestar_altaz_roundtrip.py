@@ -1,4 +1,5 @@
 """Roundtrip: goto_altaz spherical forward vs _altaz_from_equatorial_for_goto inverse."""
+
 import math
 
 from src.constants import EARTH_TIMESCALE

@@ -29,7 +29,7 @@ import argparse
 import json
 import sys
 from pathlib import Path
-from typing import Dict, List
+from typing import List
 
 _ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(_ROOT))
@@ -73,8 +73,9 @@ def run_fp_test(
     known_windows: List[float],
     analyzer_kwargs: dict,
 ) -> dict:
-    result = analyze_video(str(video_path), output_annotated=False,
-                           target=target, **analyzer_kwargs)
+    result = analyze_video(
+        str(video_path), output_annotated=False, target=target, **analyzer_kwargs
+    )
     expected, fp_events = _classify_events(result.transit_events, known_windows)
     return {
         "file": video_path.name,
@@ -99,8 +100,9 @@ def run_fp_test(
 
 
 def main():
-    parser = argparse.ArgumentParser(description=__doc__,
-                                     formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
     parser.add_argument("--dir", required=True, help="Directory with MP4 files")
     parser.add_argument("--output", default="docs/diag_logs/phase2_fp_results.json")
     parser.add_argument("--diff-threshold", type=int, default=None)
@@ -136,8 +138,10 @@ def main():
         fp_str = f"FP={r['false_positives']}" if r["false_positives"] else "FP=0 ok"
         print(f"events={r['total_events']}  expected={r['expected_events']}  {fp_str}")
         for fp in r["fp_details"]:
-            print(f"    FP: {fp['start_s']:.2f}s–{fp['end_s']:.2f}s "
-                  f"({fp['dur_ms']}ms, {fp['confidence']})")
+            print(
+                f"    FP: {fp['start_s']:.2f}s–{fp['end_s']:.2f}s "
+                f"({fp['dur_ms']}ms, {fp['confidence']})"
+            )
 
     # Lunar FP tests — no known windows (full clip expected to show transit)
     # We just report all events; operator verifies timing manually.
@@ -150,11 +154,15 @@ def main():
         print(f"  {stem}.mp4 ...", end=" ", flush=True)
         r = run_fp_test(vpath, "moon", [], analyzer_kwargs)
         results.append(r)
-        events_str = str(r["total_events"]) + " event(s)"
-        print(f"events={r['total_events']}  disk={'ok' if r['disk_detected'] else 'MISS'}")
+        str(r["total_events"]) + " event(s)"
+        print(
+            f"events={r['total_events']}  disk={'ok' if r['disk_detected'] else 'MISS'}"
+        )
         for ev in r.get("fp_details", []):
-            print(f"    {ev['start_s']:.2f}s–{ev['end_s']:.2f}s "
-                  f"({ev['dur_ms']}ms, {ev['confidence']})")
+            print(
+                f"    {ev['start_s']:.2f}s–{ev['end_s']:.2f}s "
+                f"({ev['dur_ms']}ms, {ev['confidence']})"
+            )
 
     print("\n" + "=" * 60)
     solar_results = [r for r in results if r["target"] == "sun"]

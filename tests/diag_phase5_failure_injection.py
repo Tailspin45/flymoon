@@ -62,6 +62,7 @@ def section(title: str):
 
 # ── Test A: JSON-RPC Reconnect ────────────────────────────────────────────────
 
+
 def test_a_jsonrpc_reconnect(host: str, port: int, recovery_timeout: int) -> bool:
     """
     Simulate a network drop by closing the socket underneath the client,
@@ -90,8 +91,10 @@ def test_a_jsonrpc_reconnect(host: str, port: int, recovery_timeout: int) -> boo
     except Exception as exc:
         print(f"  [{_ts()}] WARNING: start_solar_mode raised {exc} — continuing anyway")
 
-    print(f"  [{_ts()}] Telemetry before drop: connected={client._connected} "
-          f"mode={client._viewing_mode}")
+    print(
+        f"  [{_ts()}] Telemetry before drop: connected={client._connected} "
+        f"mode={client._viewing_mode}"
+    )
 
     # Forcibly close the socket
     print(f"\n  [{_ts()}] Closing socket to simulate network drop …")
@@ -106,7 +109,9 @@ def test_a_jsonrpc_reconnect(host: str, port: int, recovery_timeout: int) -> boo
         print(f"  [{_ts()}] (expected) socket close error: {exc}")
 
     # Wait for heartbeat to reconnect
-    print(f"  [{_ts()}] Waiting for heartbeat reconnect (timeout={recovery_timeout}s) …")
+    print(
+        f"  [{_ts()}] Waiting for heartbeat reconnect (timeout={recovery_timeout}s) …"
+    )
     deadline = time.monotonic() + recovery_timeout
     reconnected = False
     while time.monotonic() < deadline:
@@ -119,10 +124,14 @@ def test_a_jsonrpc_reconnect(host: str, port: int, recovery_timeout: int) -> boo
 
     if reconnected:
         print(f"  [{_ts()}] Reconnected in {recovery_s:.1f}s")
-        print(f"  [{_ts()}] Telemetry after reconnect: connected={client._connected} "
-              f"mode={client._viewing_mode}")
+        print(
+            f"  [{_ts()}] Telemetry after reconnect: connected={client._connected} "
+            f"mode={client._viewing_mode}"
+        )
     else:
-        print(f"  [{_ts()}] {FAIL}: Heartbeat did NOT reconnect within {recovery_timeout}s")
+        print(
+            f"  [{_ts()}] {FAIL}: Heartbeat did NOT reconnect within {recovery_timeout}s"
+        )
 
     try:
         client.stop_view_mode()
@@ -139,6 +148,7 @@ def test_a_jsonrpc_reconnect(host: str, port: int, recovery_timeout: int) -> boo
 
 # ── Test B: RTSP Recovery ────────────────────────────────────────────────────
 
+
 def test_b_rtsp_recovery(rtsp_url: str, recovery_timeout: int) -> bool:
     """
     Launch an ffmpeg RTSP consumer, forcibly kill it, then measure
@@ -151,16 +161,25 @@ def test_b_rtsp_recovery(rtsp_url: str, recovery_timeout: int) -> bool:
         subprocess.run([ffmpeg_bin, "-version"], capture_output=True, check=True)
     except (FileNotFoundError, subprocess.CalledProcessError):
         from src.constants import get_ffmpeg_path
+
         ffmpeg_bin = get_ffmpeg_path() or "ffmpeg"
 
     cmd = [
-        ffmpeg_bin, "-rtsp_transport", "tcp",
-        "-timeout", "10000000",
-        "-i", rtsp_url,
-        "-vf", "scale=160:90",
-        "-r", "15",
-        "-f", "rawvideo",
-        "-pix_fmt", "rgb24",
+        ffmpeg_bin,
+        "-rtsp_transport",
+        "tcp",
+        "-timeout",
+        "10000000",
+        "-i",
+        rtsp_url,
+        "-vf",
+        "scale=160:90",
+        "-r",
+        "15",
+        "-f",
+        "rawvideo",
+        "-pix_fmt",
+        "rgb24",
         "-an",
         "pipe:1",
     ]
@@ -174,7 +193,9 @@ def test_b_rtsp_recovery(rtsp_url: str, recovery_timeout: int) -> bool:
         while True:
             try:
                 proc = subprocess.Popen(
-                    cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                    cmd,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.DEVNULL,
                     bufsize=FRAME_BYTES * 4,
                 )
                 proc_holder[0] = proc
@@ -186,7 +207,7 @@ def test_b_rtsp_recovery(rtsp_url: str, recovery_timeout: int) -> bool:
                     buf += chunk
                     if len(buf) >= FRAME_BYTES:
                         frame_event.set()
-                        buf = buf[FRAME_BYTES * (len(buf) // FRAME_BYTES):]
+                        buf = buf[FRAME_BYTES * (len(buf) // FRAME_BYTES) :]
             except Exception:
                 pass
             p = proc_holder[0]
@@ -206,8 +227,10 @@ def test_b_rtsp_recovery(rtsp_url: str, recovery_timeout: int) -> bool:
     print(f"  [{_ts()}] Waiting for first frame from {rtsp_url} …")
     got_first = frame_event.wait(timeout=30)
     if not got_first:
-        print(f"  [{_ts()}] {FAIL}: No frame received within 30s "
-              "(is Seestar powered on and streaming?)")
+        print(
+            f"  [{_ts()}] {FAIL}: No frame received within 30s "
+            "(is Seestar powered on and streaming?)"
+        )
         return False
 
     print(f"  [{_ts()}] First frame received. Killing ffmpeg process …")
@@ -234,6 +257,7 @@ def test_b_rtsp_recovery(rtsp_url: str, recovery_timeout: int) -> bool:
 
 # ── Test C: Rapid Mode Cycling ────────────────────────────────────────────────
 
+
 def test_c_mode_cycling(host: str, port: int, cycles: int) -> bool:
     """
     Cycle through sun → scenery → moon → scenery → sun modes N times,
@@ -256,8 +280,8 @@ def test_c_mode_cycling(host: str, port: int, cycles: int) -> bool:
 
     mode_sequence = ["sun", "scenery", "moon", "scenery", "sun"]
     mode_fns = {
-        "sun":     client.start_solar_mode,
-        "moon":    client.start_lunar_mode,
+        "sun": client.start_solar_mode,
+        "moon": client.start_lunar_mode,
         "scenery": client.start_scenery_mode,
     }
 
@@ -321,21 +345,37 @@ def test_c_mode_cycling(host: str, port: int, cycles: int) -> bool:
 
 # ── Main ──────────────────────────────────────────────────────────────────────
 
+
 def main():
     from dotenv import load_dotenv
+
     load_dotenv()
 
     parser = argparse.ArgumentParser(description="Phase 5: Failure injection tests")
-    parser.add_argument("--host",     default=os.getenv("SEESTAR_HOST", "192.168.4.112"))
-    parser.add_argument("--port",     type=int, default=int(os.getenv("SEESTAR_PORT", "4700")))
-    parser.add_argument("--rtsp-port", type=int,
-                        default=int(os.getenv("SEESTAR_RTSP_PORT", "4554")))
-    parser.add_argument("--tests",    default="A,B,C",
-                        help="Comma-separated tests to run: A, B, C (default: all)")
-    parser.add_argument("--mode-cycles", type=int, default=5,
-                        help="Number of mode-cycle iterations for Test C (default: 5)")
-    parser.add_argument("--recovery-timeout", type=int, default=30,
-                        help="Max seconds allowed for recovery (default: 30)")
+    parser.add_argument("--host", default=os.getenv("SEESTAR_HOST", "192.168.4.112"))
+    parser.add_argument(
+        "--port", type=int, default=int(os.getenv("SEESTAR_PORT", "4700"))
+    )
+    parser.add_argument(
+        "--rtsp-port", type=int, default=int(os.getenv("SEESTAR_RTSP_PORT", "4554"))
+    )
+    parser.add_argument(
+        "--tests",
+        default="A,B,C",
+        help="Comma-separated tests to run: A, B, C (default: all)",
+    )
+    parser.add_argument(
+        "--mode-cycles",
+        type=int,
+        default=5,
+        help="Number of mode-cycle iterations for Test C (default: 5)",
+    )
+    parser.add_argument(
+        "--recovery-timeout",
+        type=int,
+        default=30,
+        help="Max seconds allowed for recovery (default: 30)",
+    )
     args = parser.parse_args()
 
     rtsp_url = f"rtsp://{args.host}:{args.rtsp_port}/stream"

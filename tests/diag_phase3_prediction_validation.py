@@ -18,14 +18,14 @@ import argparse
 import json
 import math
 import sys
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from src.constants import ASTRO_EPHEMERIS, EARTH_TIMESCALE
 from src.position import geographic_to_altaz, get_my_pos, predict_position
-from src.transit import angular_separation, get_possibility_level
+from src.transit import angular_separation
 
 EARTH = ASTRO_EPHEMERIS["earth"]
 
@@ -59,8 +59,10 @@ def test_angular_separation_same_point():
     """Same alt/az → separation must be 0°."""
     sep = angular_separation(45.0, 180.0, 45.0, 180.0)
     ok = abs(sep) < 1e-9
-    return _pass("ang_sep same point", f"{sep:.6f}°") if ok else _fail(
-        "ang_sep same point", f"got {sep:.6f}°, expected 0"
+    return (
+        _pass("ang_sep same point", f"{sep:.6f}°")
+        if ok
+        else _fail("ang_sep same point", f"got {sep:.6f}°, expected 0")
     )
 
 
@@ -70,8 +72,10 @@ def test_angular_separation_pure_alt_diff():
     sep = angular_separation(alt1, 90.0, alt2, 90.0)
     expected = abs(alt1 - alt2)
     ok = abs(sep - expected) < 0.001
-    return _pass("ang_sep pure alt diff", f"got {sep:.4f}°, expected {expected:.4f}°") if ok else _fail(
-        "ang_sep pure alt diff", f"got {sep:.4f}°, expected {expected:.4f}°"
+    return (
+        _pass("ang_sep pure alt diff", f"got {sep:.4f}°, expected {expected:.4f}°")
+        if ok
+        else _fail("ang_sep pure alt diff", f"got {sep:.4f}°, expected {expected:.4f}°")
     )
 
 
@@ -80,8 +84,12 @@ def test_angular_separation_horizon_az_diff():
     az_diff = 30.0
     sep = angular_separation(0.0, 0.0, 0.0, az_diff)
     ok = abs(sep - az_diff) < 0.001
-    return _pass("ang_sep horizon az diff", f"got {sep:.4f}°, expected {az_diff:.4f}°") if ok else _fail(
-        "ang_sep horizon az diff", f"got {sep:.4f}°, expected {az_diff:.4f}°"
+    return (
+        _pass("ang_sep horizon az diff", f"got {sep:.4f}°, expected {az_diff:.4f}°")
+        if ok
+        else _fail(
+            "ang_sep horizon az diff", f"got {sep:.4f}°, expected {az_diff:.4f}°"
+        )
     )
 
 
@@ -94,12 +102,17 @@ def test_angular_separation_near_zenith_compression():
     sep_sphere = angular_separation(alt, 0.0, alt, 90.0)
     # cos(89°) ≈ 0.01745 → az_diff_cos ≈ 90 * 0.01745 ≈ 1.57°
     from math import cos, radians, sqrt
-    sep_euclid = sqrt(0**2 + (90 * cos(radians(alt)))**2)
-    _info(f"Near zenith (alt={alt}°, Δaz=90°): spherical={sep_sphere:.4f}°, euclidean={sep_euclid:.4f}°")
+
+    sep_euclid = sqrt(0**2 + (90 * cos(radians(alt))) ** 2)
+    _info(
+        f"Near zenith (alt={alt}°, Δaz=90°): spherical={sep_sphere:.4f}°, euclidean={sep_euclid:.4f}°"
+    )
     # Spherical should be < euclidean + 1° (both are small, within 2° of each other)
     ok = sep_sphere < 5.0 and sep_sphere > 0.0
-    return _pass("ang_sep near zenith", f"spherical={sep_sphere:.4f}°") if ok else _fail(
-        "ang_sep near zenith", f"unexpected value {sep_sphere:.4f}°"
+    return (
+        _pass("ang_sep near zenith", f"spherical={sep_sphere:.4f}°")
+        if ok
+        else _fail("ang_sep near zenith", f"unexpected value {sep_sphere:.4f}°")
     )
 
 
@@ -112,7 +125,9 @@ def test_angular_separation_sun_moon_known_date():
     location = wgs84.latlon(obs_lat, obs_lon, elevation_m=obs_elev)
     observer = EARTH + location
 
-    t = EARTH_TIMESCALE.from_datetime(datetime(2024, 1, 1, 0, 0, 0, tzinfo=timezone.utc))
+    t = EARTH_TIMESCALE.from_datetime(
+        datetime(2024, 1, 1, 0, 0, 0, tzinfo=timezone.utc)
+    )
 
     sun = ASTRO_EPHEMERIS["sun"]
     moon = ASTRO_EPHEMERIS["moon"]
@@ -126,10 +141,10 @@ def test_angular_separation_sun_moon_known_date():
     )
 
     # Compute via Skyfield directly (astrometric angle between bodies)
-    from skyfield.positionlib import position_of_radec
+
     sun_astr = observer.at(t).observe(sun).apparent()
     moon_astr = observer.at(t).observe(moon).apparent()
-    from skyfield.units import Angle
+
     sep_skyfield = sun_astr.separation_from(moon_astr).degrees
 
     delta = abs(sep_ours - sep_skyfield)
@@ -137,7 +152,9 @@ def test_angular_separation_sun_moon_known_date():
         f"Sun: alt={sun_alt.degrees:.2f}° az={sun_az.degrees:.2f}°  "
         f"Moon: alt={moon_alt.degrees:.2f}° az={moon_az.degrees:.2f}°"
     )
-    _info(f"Our separation: {sep_ours:.4f}°  Skyfield: {sep_skyfield:.4f}°  delta={delta:.4f}°")
+    _info(
+        f"Our separation: {sep_ours:.4f}°  Skyfield: {sep_skyfield:.4f}°  delta={delta:.4f}°"
+    )
 
     # For our purposes the alt-az spherical formula is an approximation of the
     # 3-D angular separation — acceptable tolerance is 0.1° for nearby bodies.
@@ -147,8 +164,10 @@ def test_angular_separation_sun_moon_known_date():
         return _pass("ang_sep sun-moon known date", "below horizon — skipped")
 
     ok = delta < 0.1
-    return _pass("ang_sep sun-moon known date", f"delta={delta:.4f}° < 0.1°") if ok else _fail(
-        "ang_sep sun-moon known date", f"delta={delta:.4f}° exceeds 0.1°"
+    return (
+        _pass("ang_sep sun-moon known date", f"delta={delta:.4f}° < 0.1°")
+        if ok
+        else _fail("ang_sep sun-moon known date", f"delta={delta:.4f}° exceeds 0.1°")
     )
 
 
@@ -171,7 +190,9 @@ def test_geographic_to_altaz_vs_skyfield(obs_lat, obs_lon, obs_elev):
     tgt_elev_m = 10_000.0
 
     # Our implementation
-    our_alt, our_az = geographic_to_altaz(tgt_lat, tgt_lon, tgt_elev_m, EARTH, my_pos, t_dt)
+    our_alt, our_az = geographic_to_altaz(
+        tgt_lat, tgt_lon, tgt_elev_m, EARTH, my_pos, t_dt
+    )
 
     # Skyfield direct
     t = EARTH_TIMESCALE.from_datetime(t_dt)
@@ -190,8 +211,13 @@ def test_geographic_to_altaz_vs_skyfield(obs_lat, obs_lon, obs_elev):
     _info(f"Delta:    Δalt={delta_alt:.4f}° Δaz={delta_az:.4f}°")
 
     ok = delta_alt < 0.1 and delta_az < 0.1
-    return _pass("geo_to_altaz vs skyfield", f"Δalt={delta_alt:.4f}° Δaz={delta_az:.4f}°") if ok else _fail(
-        "geo_to_altaz vs skyfield", f"Δalt={delta_alt:.4f}° Δaz={delta_az:.4f}° (threshold 0.1°)"
+    return (
+        _pass("geo_to_altaz vs skyfield", f"Δalt={delta_alt:.4f}° Δaz={delta_az:.4f}°")
+        if ok
+        else _fail(
+            "geo_to_altaz vs skyfield",
+            f"Δalt={delta_alt:.4f}° Δaz={delta_az:.4f}° (threshold 0.1°)",
+        )
     )
 
 
@@ -215,13 +241,17 @@ def test_predict_position_error_budget():
     actual_km = _haversine(lat0, lon0, new_lat, new_lon)
     err_km = abs(actual_km - expected_km)
 
-    _info(f"Expected: {expected_km:.1f} km  Actual: {actual_km:.3f} km  Error: {err_km:.3f} km")
+    _info(
+        f"Expected: {expected_km:.1f} km  Actual: {actual_km:.3f} km  Error: {err_km:.3f} km"
+    )
 
     # At ~225 km, angular size from observer ≈ err_km / (altitude_km) radians
     # At 10 km altitude, 0.1 km error = 0.57° angular error — should be << 1°
     ok = err_km < 1.0
-    return _pass("predict_pos error budget", f"err={err_km:.4f} km < 1 km") if ok else _fail(
-        "predict_pos error budget", f"err={err_km:.4f} km exceeds 1 km"
+    return (
+        _pass("predict_pos error budget", f"err={err_km:.4f} km < 1 km")
+        if ok
+        else _fail("predict_pos error budget", f"err={err_km:.4f} km exceeds 1 km")
     )
 
 
@@ -233,7 +263,7 @@ def test_predict_position_angular_error_from_observer(obs_lat, obs_lon, obs_elev
     """
     # Typical transit geometry: aircraft 200 km away at 10 km altitude
     # Place it due north of observer
-    import math
+
     d_km = 200.0
     alt_m = 10_000.0
     tgt_lat = obs_lat + (d_km / 111.32)
@@ -242,19 +272,27 @@ def test_predict_position_angular_error_from_observer(obs_lat, obs_lon, obs_elev
     my_pos = get_my_pos(obs_lat, obs_lon, obs_elev, EARTH)
     t_dt = datetime(2024, 6, 21, 18, 0, 0, tzinfo=timezone.utc)
 
-    true_alt, true_az = geographic_to_altaz(tgt_lat, tgt_lon, alt_m, EARTH, my_pos, t_dt)
+    true_alt, true_az = geographic_to_altaz(
+        tgt_lat, tgt_lon, alt_m, EARTH, my_pos, t_dt
+    )
 
     # Now shift position by 1 km (typical OpenSky position error)
     shifted_lat = tgt_lat + (1.0 / 111.32)
-    shifted_alt, shifted_az = geographic_to_altaz(shifted_lat, tgt_lon, alt_m, EARTH, my_pos, t_dt)
+    shifted_alt, shifted_az = geographic_to_altaz(
+        shifted_lat, tgt_lon, alt_m, EARTH, my_pos, t_dt
+    )
 
     angular_err = angular_separation(true_alt, true_az, shifted_alt, shifted_az)
     _info(f"True: alt={true_alt:.3f}° az={true_az:.3f}°")
-    _info(f"1 km position error (200 km away, 10 km alt) → {angular_err:.4f}° angular error")
+    _info(
+        f"1 km position error (200 km away, 10 km alt) → {angular_err:.4f}° angular error"
+    )
 
     # At 200 km, 1 km error ~ 0.3° — should be well under 2° HIGH threshold
-    return _pass("predict_pos angular error", f"{angular_err:.4f}°/km at 200km") if angular_err < 1.0 else _fail(
-        "predict_pos angular error", f"{angular_err:.4f}°/km is too large"
+    return (
+        _pass("predict_pos angular error", f"{angular_err:.4f}°/km at 200km")
+        if angular_err < 1.0
+        else _fail("predict_pos angular error", f"{angular_err:.4f}°/km is too large")
     )
 
 
@@ -272,13 +310,11 @@ def test_synthetic_transit_prediction(obs_lat, obs_lon, obs_elev, target_name, r
     3. Set speed/heading to cross the target at T+5 min
     4. Run check_transit() and verify prediction says HIGH at ≤ T+5 min
     """
-    from skyfield.api import wgs84
+    import numpy as np
 
     from src.astro import CelestialObject
-    from src.transit import check_transit, angular_separation as ang_sep
-
-    import numpy as np
-    from src.constants import TOP_MINUTE, NUM_SECONDS_PER_MIN, INTERVAL_IN_SECS
+    from src.constants import INTERVAL_IN_SECS, NUM_SECONDS_PER_MIN, TOP_MINUTE
+    from src.transit import check_transit
 
     my_pos = get_my_pos(obs_lat, obs_lon, obs_elev, EARTH)
     celestial = CelestialObject(name=target_name, observer_position=my_pos)
@@ -289,7 +325,9 @@ def test_synthetic_transit_prediction(obs_lat, obs_lon, obs_elev, target_name, r
 
     if t_alt <= 0:
         _info(f"{target_name} is below horizon at {ref_dt.isoformat()} — skipping")
-        return _pass("synthetic transit prediction", f"{target_name} below horizon — skipped")
+        return _pass(
+            "synthetic transit prediction", f"{target_name} below horizon — skipped"
+        )
 
     _info(f"{target_name}: alt={t_alt:.2f}° az={t_az:.2f}°")
 
@@ -318,7 +356,9 @@ def test_synthetic_transit_prediction(obs_lat, obs_lon, obs_elev, target_name, r
     tgp_lat = math.degrees(tgp_lat_r)
     tgp_lon = math.degrees(tgp_lon_r)
 
-    _info(f"Transit ground point: lat={tgp_lat:.3f}° lon={tgp_lon:.3f}° (d={d_km:.1f} km)")
+    _info(
+        f"Transit ground point: lat={tgp_lat:.3f}° lon={tgp_lon:.3f}° (d={d_km:.1f} km)"
+    )
 
     # Place aircraft 5 minutes away, approaching from 90° to target azimuth
     # Perpendicular approach: heading = (target_az + 90) % 360
@@ -361,7 +401,9 @@ def test_synthetic_transit_prediction(obs_lat, obs_lon, obs_elev, target_name, r
         f"hdg={approach_heading:.1f}° spd={approach_speed:.0f} km/h"
     )
 
-    window_time = np.linspace(0, TOP_MINUTE, TOP_MINUTE * (NUM_SECONDS_PER_MIN // INTERVAL_IN_SECS))
+    window_time = np.linspace(
+        0, TOP_MINUTE, TOP_MINUTE * (NUM_SECONDS_PER_MIN // INTERVAL_IN_SECS)
+    )
 
     result = check_transit(
         synthetic_flight, window_time, ref_dt, my_pos, celestial, EARTH
@@ -374,6 +416,7 @@ def test_synthetic_transit_prediction(obs_lat, obs_lon, obs_elev, target_name, r
     _info(f"Result: level={level} sep={sep:.3f}° at t={t_min:.2f} min")
 
     from src.constants import PossibilityLevel
+
     high_val = PossibilityLevel.HIGH.value
     medium_val = PossibilityLevel.MEDIUM.value
 
@@ -382,7 +425,11 @@ def test_synthetic_transit_prediction(obs_lat, obs_lon, obs_elev, target_name, r
     sep_str = f"{sep:.3f}" if sep is not None else "N/A"
 
     # Accept HIGH or MEDIUM — pure synthetic geometry can have ≈0.5° offset
-    if level in (high_val, medium_val) and t_min is not None and t_min <= approach_minutes + 3.0:
+    if (
+        level in (high_val, medium_val)
+        and t_min is not None
+        and t_min <= approach_minutes + 3.0
+    ):
         return _pass(
             "synthetic transit prediction",
             f"level={level_name} sep={sep_str}° at t={t_min:.2f}min (expected ≤{approach_minutes+3:.0f}min)",
@@ -416,12 +463,14 @@ def analyze_thresholds(obs_lat, obs_lon):
             # 2° arc at that distance
             lateral_err_km = math.radians(2.0) * slant_km
             # Position error that would push aircraft 2° off center
-            rows.append({
-                "dist_km": dist_km,
-                "alt_km": alt_km,
-                "slant_km": round(slant_km, 1),
-                "2deg_lateral_km": round(lateral_err_km, 2),
-            })
+            rows.append(
+                {
+                    "dist_km": dist_km,
+                    "alt_km": alt_km,
+                    "slant_km": round(slant_km, 1),
+                    "2deg_lateral_km": round(lateral_err_km, 2),
+                }
+            )
             print(
                 f"  dist={dist_km:4d} km  alt={alt_km:2d} km  slant={slant_km:6.1f} km  "
                 f"2° = {lateral_err_km:.2f} km lateral"
@@ -432,8 +481,12 @@ def analyze_thresholds(obs_lat, obs_lon):
     speed_kmh = 900.0
     stale_km = speed_kmh * (stale_s / 3600.0)
     print()
-    print(f"  OpenSky typical staleness: {stale_s}s at {speed_kmh} km/h → {stale_km:.2f} km position offset")
-    print(f"  At 200 km dist, 10 km alt → {math.degrees(stale_km / math.sqrt(200**2 + 10**2)):.3f}° angular error from staleness")
+    print(
+        f"  OpenSky typical staleness: {stale_s}s at {speed_kmh} km/h → {stale_km:.2f} km position offset"
+    )
+    print(
+        f"  At 200 km dist, 10 km alt → {math.degrees(stale_km / math.sqrt(200**2 + 10**2)):.3f}° angular error from staleness"
+    )
 
     return rows
 
@@ -446,7 +499,10 @@ def _haversine(lat1, lon1, lat2, lon2):
     phi1, phi2 = math.radians(lat1), math.radians(lat2)
     dphi = math.radians(lat2 - lat1)
     dlambda = math.radians(lon2 - lon1)
-    a = math.sin(dphi / 2) ** 2 + math.cos(phi1) * math.cos(phi2) * math.sin(dlambda / 2) ** 2
+    a = (
+        math.sin(dphi / 2) ** 2
+        + math.cos(phi1) * math.cos(phi2) * math.sin(dlambda / 2) ** 2
+    )
     return 2 * R * math.asin(math.sqrt(a))
 
 
@@ -459,8 +515,12 @@ def main():
     parser.add_argument("--observer-lon", type=float, default=-117.310169)
     parser.add_argument("--observer-elev", type=float, default=45.0)
     parser.add_argument("--target", default="sun", choices=["sun", "moon"])
-    parser.add_argument("--date", default=None, help="ISO-8601 UTC datetime e.g. 2025-06-15T18:00:00Z")
-    parser.add_argument("--output", default="docs/diag_logs/phase3_prediction_results.json")
+    parser.add_argument(
+        "--date", default=None, help="ISO-8601 UTC datetime e.g. 2025-06-15T18:00:00Z"
+    )
+    parser.add_argument(
+        "--output", default="docs/diag_logs/phase3_prediction_results.json"
+    )
     args = parser.parse_args()
 
     obs_lat = args.observer_lat
@@ -501,12 +561,16 @@ def main():
     # 3. predict_position() error budget
     print("--- 3. predict_position() error budget ---")
     results.append(test_predict_position_error_budget())
-    results.append(test_predict_position_angular_error_from_observer(obs_lat, obs_lon, obs_elev))
+    results.append(
+        test_predict_position_angular_error_from_observer(obs_lat, obs_lon, obs_elev)
+    )
     print()
 
     # 4. End-to-end synthetic transit
     print("--- 4. End-to-end synthetic transit prediction ---")
-    results.append(test_synthetic_transit_prediction(obs_lat, obs_lon, obs_elev, target, ref_dt))
+    results.append(
+        test_synthetic_transit_prediction(obs_lat, obs_lon, obs_elev, target, ref_dt)
+    )
     print()
 
     # 5. Threshold analysis (informational)

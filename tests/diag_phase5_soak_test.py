@@ -45,16 +45,25 @@ FFMPEG = "ffmpeg"
 
 # ── Consumer definitions ──────────────────────────────────────────────────
 
+
 def _ffmpeg_cmd_detector(rtsp_url: str) -> list:
     """Low-res 160×90 rawvideo — mirrors TransitDetector._reader_loop."""
     return [
-        FFMPEG, "-rtsp_transport", "tcp",
-        "-timeout", "10000000",
-        "-i", rtsp_url,
-        "-vf", "scale=160:90",
-        "-r", "15",
-        "-f", "rawvideo",
-        "-pix_fmt", "rgb24",
+        FFMPEG,
+        "-rtsp_transport",
+        "tcp",
+        "-timeout",
+        "10000000",
+        "-i",
+        rtsp_url,
+        "-vf",
+        "scale=160:90",
+        "-r",
+        "15",
+        "-f",
+        "rawvideo",
+        "-pix_fmt",
+        "rgb24",
         "-an",
         "pipe:1",
     ]
@@ -63,11 +72,17 @@ def _ffmpeg_cmd_detector(rtsp_url: str) -> list:
 def _ffmpeg_cmd_hires(rtsp_url: str) -> list:
     """Full-res MJPEG — mirrors TransitDetector._hires_reader_loop."""
     return [
-        FFMPEG, "-rtsp_transport", "tcp",
-        "-timeout", "10000000",
-        "-i", rtsp_url,
-        "-f", "mjpeg",
-        "-q:v", "3",
+        FFMPEG,
+        "-rtsp_transport",
+        "tcp",
+        "-timeout",
+        "10000000",
+        "-i",
+        rtsp_url,
+        "-f",
+        "mjpeg",
+        "-q:v",
+        "3",
         "pipe:1",
     ]
 
@@ -75,31 +90,40 @@ def _ffmpeg_cmd_hires(rtsp_url: str) -> list:
 def _ffmpeg_cmd_preview(rtsp_url: str) -> list:
     """640×360 MJPEG preview — mirrors the UI preview feed."""
     return [
-        FFMPEG, "-rtsp_transport", "tcp",
-        "-timeout", "10000000",
-        "-i", rtsp_url,
-        "-vf", "scale=640:360",
-        "-r", "10",
-        "-f", "mjpeg",
-        "-q:v", "5",
+        FFMPEG,
+        "-rtsp_transport",
+        "tcp",
+        "-timeout",
+        "10000000",
+        "-i",
+        rtsp_url,
+        "-vf",
+        "scale=640:360",
+        "-r",
+        "10",
+        "-f",
+        "mjpeg",
+        "-q:v",
+        "5",
         "pipe:1",
     ]
 
 
 CONSUMERS = {
-    "detector": (_ffmpeg_cmd_detector, 160 * 90 * 3),   # raw frame bytes
-    "hires":    (_ffmpeg_cmd_hires,    None),             # MJPEG — count by SOI marker
-    "preview":  (_ffmpeg_cmd_preview,  None),             # MJPEG
+    "detector": (_ffmpeg_cmd_detector, 160 * 90 * 3),  # raw frame bytes
+    "hires": (_ffmpeg_cmd_hires, None),  # MJPEG — count by SOI marker
+    "preview": (_ffmpeg_cmd_preview, None),  # MJPEG
 }
 
 
 # ── Consumer thread ───────────────────────────────────────────────────────
 
+
 class ConsumerThread:
     """Runs one ffmpeg consumer, counting frames and detecting stream loss."""
 
     RECONNECT_DELAY_INIT = 2
-    RECONNECT_DELAY_MAX  = 30
+    RECONNECT_DELAY_MAX = 30
 
     def __init__(self, name: str, rtsp_url: str, duration: int, log_file: Path):
         self.name = name
@@ -110,9 +134,9 @@ class ConsumerThread:
         self._cmd_fn, self._frame_bytes = CONSUMERS[name]
         self._total_frames = 0
         self._minute_frames = 0
-        self._deaths = 0           # stream death count
-        self._last_frame_ts = None # wall time of last frame received
-        self._max_gap_s = 0.0      # longest gap without a frame
+        self._deaths = 0  # stream death count
+        self._last_frame_ts = None  # wall time of last frame received
+        self._max_gap_s = 0.0  # longest gap without a frame
         self._recovery_times = []  # list of (death_ts, recovery_ts) tuples
 
         self._running = False
@@ -122,7 +146,9 @@ class ConsumerThread:
     def start(self):
         self._running = True
         self._start_ts = time.monotonic()
-        self._thread = threading.Thread(target=self._run, name=f"soak-{self.name}", daemon=True)
+        self._thread = threading.Thread(
+            target=self._run, name=f"soak-{self.name}", daemon=True
+        )
         self._thread.start()
 
     def stop(self):
@@ -139,12 +165,18 @@ class ConsumerThread:
             "stream_deaths": self._deaths,
             "max_gap_s": round(self._max_gap_s, 1),
             "avg_recovery_s": (
-                round(sum(r - d for d, r in self._recovery_times) / len(self._recovery_times), 1)
-                if self._recovery_times else None
+                round(
+                    sum(r - d for d, r in self._recovery_times)
+                    / len(self._recovery_times),
+                    1,
+                )
+                if self._recovery_times
+                else None
             ),
             "max_recovery_s": (
                 round(max(r - d for d, r in self._recovery_times), 1)
-                if self._recovery_times else None
+                if self._recovery_times
+                else None
             ),
         }
 
@@ -210,7 +242,7 @@ class ConsumerThread:
                     # Count frames in buffer
                     if self._frame_bytes:
                         n = self._count_frames_rawvideo(buf)
-                        buf = buf[n * self._frame_bytes:]
+                        buf = buf[n * self._frame_bytes :]
                     else:
                         n = self._count_frames_mjpeg(buf)
                         # Keep last ~4 KB in case a frame straddles a chunk boundary
@@ -242,8 +274,10 @@ class ConsumerThread:
                 death_ts = time.monotonic()
 
             gap_so_far = time.monotonic() - (self._last_frame_ts or time.monotonic())
-            self._log(f"Stream lost (death #{self._deaths}, gap so far={gap_so_far:.1f}s) — "
-                      f"reconnecting in {reconnect_delay}s")
+            self._log(
+                f"Stream lost (death #{self._deaths}, gap so far={gap_so_far:.1f}s) — "
+                f"reconnecting in {reconnect_delay}s"
+            )
             time.sleep(reconnect_delay)
             reconnect_delay = min(reconnect_delay * 2, self.RECONNECT_DELAY_MAX)
 
@@ -251,6 +285,7 @@ class ConsumerThread:
 
 
 # ── Minute-ticker ─────────────────────────────────────────────────────────
+
 
 class MinuteTicker:
     """Logs per-minute frame counts for all consumers."""
@@ -264,7 +299,9 @@ class MinuteTicker:
 
     def start(self):
         self._running = True
-        self._thread = threading.Thread(target=self._run, name="minute-ticker", daemon=True)
+        self._thread = threading.Thread(
+            target=self._run, name="minute-ticker", daemon=True
+        )
         self._thread.start()
 
     def stop(self):
@@ -294,16 +331,27 @@ class MinuteTicker:
 
 # ── Main ──────────────────────────────────────────────────────────────────
 
+
 def main():
     from dotenv import load_dotenv
+
     load_dotenv()
 
     parser = argparse.ArgumentParser(description="Phase 5: RTSP soak test")
-    parser.add_argument("--rtsp-host", default=os.getenv("SEESTAR_HOST", "192.168.4.112"))
-    parser.add_argument("--rtsp-port", type=int, default=int(os.getenv("SEESTAR_RTSP_PORT", "4554")))
-    parser.add_argument("--duration", type=int, default=7200, help="Test duration (seconds)")
-    parser.add_argument("--consumers", default="detector,hires,preview",
-                        help="Comma-separated consumers to run")
+    parser.add_argument(
+        "--rtsp-host", default=os.getenv("SEESTAR_HOST", "192.168.4.112")
+    )
+    parser.add_argument(
+        "--rtsp-port", type=int, default=int(os.getenv("SEESTAR_RTSP_PORT", "4554"))
+    )
+    parser.add_argument(
+        "--duration", type=int, default=7200, help="Test duration (seconds)"
+    )
+    parser.add_argument(
+        "--consumers",
+        default="detector,hires,preview",
+        help="Comma-separated consumers to run",
+    )
     parser.add_argument("--log-dir", default="docs/diag_logs")
     args = parser.parse_args()
 
@@ -319,7 +367,7 @@ def main():
 
     stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     combined_log = log_dir / f"phase5_soak_{stamp}.log"
-    summary_log  = log_dir / f"phase5_soak_{stamp}_summary.txt"
+    summary_log = log_dir / f"phase5_soak_{stamp}_summary.txt"
 
     print(f"\n{'='*60}")
     print("Phase 5: RTSP Sustained-Operation Soak Test")
@@ -336,6 +384,7 @@ def main():
         subprocess.run([FFMPEG, "-version"], capture_output=True, check=True)
     except (subprocess.CalledProcessError, FileNotFoundError):
         from src.constants import get_ffmpeg_path
+
         FFMPEG = get_ffmpeg_path() or "ffmpeg"
 
     # Create consumers
@@ -390,11 +439,11 @@ def main():
         st = c.stats()
         avg_fps = st["total_frames"] / max(elapsed, 1)
         max_rec = st["max_recovery_s"] or 0
-        deaths   = st["stream_deaths"]
-        gap      = st["max_gap_s"]
+        deaths = st["stream_deaths"]
+        gap = st["max_gap_s"]
 
         # Pass criteria: max recovery < 30s, total deaths reasonable
-        ok_recovery = (max_rec == 0 or max_rec < 30)
+        ok_recovery = max_rec == 0 or max_rec < 30
         row_pass = ok_recovery
         if not row_pass:
             all_pass = False
@@ -424,6 +473,7 @@ def main():
     # Write summary
     with open(summary_log, "w") as f:
         import json
+
         f.write(json.dumps({"duration_s": elapsed, "consumers": rows}, indent=2))
     print(f"\n  Summary written: {summary_log}")
     print(f"{'='*60}\n")

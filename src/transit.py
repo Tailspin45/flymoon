@@ -334,7 +334,7 @@ def check_transit(
         id, origin, destination, time, target_alt, plane_alt, target_az, plane_az, alt_diff, az_diff,
         is_possible_transit, and change_elev.
     """
-    min_diff_combined = float("inf")
+    min_exit_metric = float("inf")  # tracks the metric used for early-exit
     min_sep_seen = float("inf")  # track true minimum angular separation
     response = None
     closest_approach = None  # Track closest approach even if threshold not met
@@ -342,23 +342,65 @@ def check_transit(
     _pts_per_min = NUM_SECONDS_PER_MIN // INTERVAL_IN_SECS
     _no_decrease_limit = 3 * _pts_per_min  # bail after 3 min of increasing diff
 
+    # Vertical rate for altitude projection (m/s); None or 0 means no correction
+    _vertical_rate_ms = flight.get("vertical_rate") or 0.0
+    # Base altitude (metres); used as floor/ceiling reference for clamping
+    _base_elevation = float(
+        flight.get("elevation") or flight.get("aircraft_elevation", 0) or 0
+    )
+
+    # C1/C2 — IMM Kalman filter: update per-aircraft state and use for prediction
+    # The filter is advanced 5 s per loop iteration (matching INTERVAL_IN_SECS)
+    # for numerically stable uncertainty growth over the 15-minute window.
+    _imm_state = None
+    _imm_running = None  # carries the propagated IMM state step-by-step
+    _min_sep_sigma_m: Optional[float] = None
+    _icao24 = (flight.get("icao24") or "").strip().lower()
+    if _icao24:
+        try:
+            _obs_lat = float(os.getenv("OBSERVER_LATITUDE", "0"))
+            _obs_lon = float(os.getenv("OBSERVER_LONGITUDE", "0"))
+            from src.imm_kalman import advance_state as _imm_advance
+            from src.imm_kalman import extract_position as _imm_extract
+            from src.imm_kalman import update_filter as _imm_update
+
+            _imm_state = _imm_update(_icao24, flight, _obs_lat, _obs_lon)
+            _imm_running = _imm_state  # will be advanced each step
+        except Exception as _e:
+            logger.debug(f"[IMM] init failed for {_icao24}: {_e}")
+            _imm_state = None
+
     for idx, minute in enumerate(window_time):
-        # Get future position of plane
-        future_lat, future_lon = predict_position(
-            lat=flight["latitude"],
-            lon=flight["longitude"],
-            speed=flight["speed"],
-            direction=flight["direction"],
-            minutes=minute,
-        )
+        # C1: use IMM for position prediction when filter is available.
+        # Advance the running state by INTERVAL_IN_SECS on every step except
+        # the first (minute == 0 → use current filter position directly).
+        if _imm_running is not None:
+            if idx > 0:
+                _imm_running = _imm_advance(_imm_running, float(INTERVAL_IN_SECS))
+            future_lat, future_lon, _step_sigma_m = _imm_extract(
+                _imm_running, _obs_lat, _obs_lon
+            )
+        else:
+            future_lat, future_lon = predict_position(
+                lat=flight["latitude"],
+                lon=flight["longitude"],
+                speed=flight["speed"],
+                direction=flight["direction"],
+                minutes=minute,
+            )
+            _step_sigma_m = None
 
         future_time = ref_datetime + timedelta(minutes=minute)
 
-        # Convert future position of plane to alt-azimuthal coordinates
-        # Support both 'elevation' (internal) and 'aircraft_elevation' (API response) field names
-        flight_elevation = flight.get("elevation") or flight.get(
-            "aircraft_elevation", 0
-        )
+        # Project altitude forward using vertical rate (T02).
+        # Only apply when the base altitude looks valid (>300 m = airborne),
+        # and clamp to a plausible cruise envelope [300 m, 15 000 m].
+        if _base_elevation > 300 and _vertical_rate_ms:
+            flight_elevation = _base_elevation + _vertical_rate_ms * minute * 60.0
+            flight_elevation = max(300.0, min(15000.0, flight_elevation))
+        else:
+            flight_elevation = _base_elevation
+
         future_alt, future_az = geographic_to_altaz(
             future_lat,
             future_lon,
@@ -394,15 +436,25 @@ def check_transit(
                 "plane_az": round(float(future_az), 2),
             }
 
-        # Early exit: if diff has been consistently increasing for ~3 min, skip rest
+        # Compute true angular separation (spherical law of cosines)
+        sep = angular_separation(t_alt, t_az, future_alt, future_az)
+
+        # Early exit (T01): use spherical separation as the exit metric when the
+        # aircraft is above the horizon, so grazing trajectories are not cut short
+        # by the less-accurate diff_combined heuristic.  Fall back to diff_combined
+        # for below-horizon steps where sep is geometrically meaningless.
+        exit_metric = sep if future_alt > 0 else diff_combined
+
+        # Early exit: if the exit metric has been consistently increasing for ~3 min
         if no_decreasing_count >= _no_decrease_limit:
-            logger.debug(f"diff is increasing, stop checking, min={round(minute, 2)}")
+            logger.debug(f"sep increasing, stop checking, min={round(minute, 2)}")
             break
 
-        if diff_combined < min_diff_combined:
+        if exit_metric < min_exit_metric:
             no_decreasing_count = 0
-            min_diff_combined = diff_combined
-            # Always track closest approach
+            min_exit_metric = exit_metric
+            # Always track closest approach (use diff_combined so the record is
+            # meaningful even when the aircraft is below the horizon)
             closest_approach = {
                 "alt_diff": round(float(alt_diff), 3),
                 "az_diff": round(float(az_diff), 3),
@@ -415,13 +467,11 @@ def check_transit(
         else:
             no_decreasing_count += 1
 
-        # Compute true angular separation (spherical law of cosines)
-        sep = angular_separation(t_alt, t_az, future_alt, future_az)
-
         # Track closest approach for ALL aircraft above horizon
         # (no hard gate — classification handles thresholds)
         if future_alt > 0 and sep < min_sep_seen:
             min_sep_seen = sep
+            _min_sep_sigma_m = _step_sigma_m
             response = {
                 "id": flight.get("name") or flight.get("id", ""),
                 "fa_flight_id": flight.get("fa_flight_id", ""),
@@ -466,6 +516,32 @@ def check_transit(
         response["is_possible_transit"] = (
             0 if level == PossibilityLevel.UNLIKELY.value else 1
         )
+        # C2: angular uncertainty at closest approach (degrees, 1σ)
+        if _min_sep_sigma_m is not None:
+            try:
+                pass
+
+                from src.imm_kalman import angular_sigma as _angular_sigma
+
+                # Slant distance from observer to aircraft (metres)
+                _elev_m = float(response.get("aircraft_elevation") or 0)
+                float(response.get("angular_separation", 0))
+                # Approximate slant using elevation and (angular_separation gives degrees;
+                # compute rough horizontal distance from altitude and target altitude)
+                _target_alt_deg = float(response.get("target_alt", 1))
+                _plane_elev_m = _elev_m if _elev_m > 0 else 10000.0
+                _dist_m = _plane_elev_m / max(
+                    __import__("math").sin(
+                        __import__("math").radians(abs(_target_alt_deg))
+                    ),
+                    0.05,
+                )
+                _sep_1sigma_deg = _angular_sigma(_min_sep_sigma_m, _dist_m)
+                response["sep_1sigma"] = round(_sep_1sigma_deg, 4)
+            except Exception:
+                response["sep_1sigma"] = None
+        else:
+            response["sep_1sigma"] = None
         return response
 
     # Return closest approach data even if threshold not met
@@ -528,6 +604,14 @@ def get_transits(
     data_source: str = "hybrid",
     enrich: bool = False,
 ) -> Dict[str, Any]:
+    # Periodically clean up stale IMM filter states
+    try:
+        from src.imm_kalman import cleanup_stale_filters as _imm_cleanup
+
+        _imm_cleanup()
+    except Exception:
+        pass
+
     # FlightAware is never used for prediction. Only for post-capture enrichment.
     if data_source == "fa-only":
         logger.info(
@@ -654,30 +738,28 @@ def get_transits(
 
         elif data_source == "adsb-local":
             # ── ADS-B local receiver mode ─────────────────────────────────
+            # Implemented via flight_sources._fetch_adsb_local; falls through
+            # to the multi-source block which includes the local source.
             adsb_url = os.getenv("ADSB_LOCAL_URL", "")
             if not adsb_url:
                 logger.warning(
                     "[ADS-B] data_source=adsb-local but ADSB_LOCAL_URL is not set in .env. "
-                    "Falling back to OpenSky. Set ADSB_LOCAL_URL=http://<receiver-ip>/data/aircraft.json "
-                    "to use a local RTL-SDR / dump1090 / tar1090 receiver."
+                    "Falling back to multi-source (OpenSky + ADSB-One). "
+                    "Set ADSB_LOCAL_URL=http://<receiver-ip>/data/aircraft.json."
                 )
-                data_source = "hybrid"  # fall through to OpenSky block below
             else:
-                # TODO: implement local ADS-B JSON fetch from ADSB_LOCAL_URL
-                logger.warning(
-                    f"[ADS-B] Local receiver at {adsb_url} — not yet implemented; falling back to OpenSky"
-                )
-                data_source = "hybrid"
+                logger.info(f"[ADS-B] Local receiver mode — {adsb_url}")
+            data_source = "hybrid"  # fall through to multi-source block below
 
         if not test_mode and data_source in ("hybrid", "opensky-only"):
-            # ── Hybrid / OpenSky-only mode (default) ─────────────────────
-            # Use OpenSky Network for all position data (~60s cache, free).
-            # FA is only called on HIGH-probability transits for metadata.
-            logger.info(f"[Data] {data_source} mode — using OpenSky as primary source")
-            from src.opensky import fetch_opensky_positions
+            # ── Multi-source mode (default) ───────────────────────────────
+            # Queries OpenSky + ADSB-One + ADS-B Exchange (if key set) +
+            # local receiver (if URL set) in parallel and merges results.
+            # FA is only called post-capture for metadata enrichment.
+            from src.flight_sources import fetch_multi_source_positions
 
             try:
-                opensky_data = fetch_opensky_positions(
+                combined_data = fetch_multi_source_positions(
                     bbox.lat_lower_left,
                     bbox.long_lower_left,
                     bbox.lat_upper_right,
@@ -685,25 +767,25 @@ def get_transits(
                 )
             except Exception as exc:
                 logger.warning(
-                    f"[OpenSky] fetch failed: {exc}; flight_data will be empty"
+                    f"[MultiSource] fetch failed: {exc}; flight_data will be empty"
                 )
-                opensky_data = {}
+                combined_data = {}
 
             flight_data = []
-            for callsign, os_pos in opensky_data.items():
-                if os_pos.get("on_ground"):
-                    continue  # skip ground traffic
-                lat, lon = os_pos.get("lat"), os_pos.get("lon")
+            for callsign, pos in combined_data.items():
+                if pos.get("on_ground"):
+                    continue  # already filtered in each source, double-check
+                lat, lon = pos.get("lat"), pos.get("lon")
                 if lat is None or lon is None:
                     continue
                 if not (
                     bbox.lat_lower_left <= lat <= bbox.lat_upper_right
                     and bbox.long_lower_left <= lon <= bbox.long_upper_right
                 ):
-                    continue  # outside bounding box
-                flight_data.append(_parse_opensky_flight(callsign, os_pos))
+                    continue  # radius queries may extend outside bbox
+                flight_data.append(_parse_opensky_flight(callsign, pos))
 
-            logger.info(f"[OpenSky] {len(flight_data)} airborne aircraft in bbox")
+            logger.info(f"[MultiSource] {len(flight_data)} airborne aircraft in bbox")
 
         logger.info(
             f"[Transit] Running full trajectory check on {len(flight_data)} aircraft"

@@ -63,6 +63,22 @@ def get_ffmpeg_path() -> str:
 TEST_DATA_PATH = "data/raw_flight_data_example.json"
 POSSIBLE_TRANSITS_LOGFILENAME = "data/possible-transits/log_{date_}.csv"
 
+# Transit event confirmation log — one row per live detection
+TRANSIT_EVENTS_LOGFILENAME = "data/possible-transits/transit_events_{date_}.csv"
+TRANSIT_EVENTS_FIELDS = [
+    "timestamp",  # ISO-8601 UTC datetime of the detection
+    "detected_flight_id",  # callsign matched by enrichment (or empty)
+    "predicted_flight_id",  # callsign from prediction (empty until T08/T09 cross-link)
+    "prediction_sep_deg",  # best predicted angular separation (° or empty)
+    "detection_confirmed",  # 1 = enrichment found a nearby aircraft, 0 = unconfirmed
+    "confidence",  # 'strong' or 'weak' (detector signal-to-threshold ratio)
+    "confidence_score",  # D3: numeric probability in [0,1] (sigmoid of SNR/ratio/track)
+    "signal_a",  # raw Signal A value at detection time
+    "signal_b",  # raw Signal B value at detection time (wavelet-detrended if pywt)
+    "centre_ratio",  # inner/outer disc ratio at detection time
+    "notes",  # free-text annotations (includes 'matched_filter' when D2 fires)
+]
+
 # Astro data
 ASTRO_EPHEMERIS = load("de421.bsp")
 """

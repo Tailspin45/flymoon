@@ -134,10 +134,12 @@ if not wizard.validate(interactive=False):
 
 app = Flask(__name__)
 app.config["TEMPLATES_AUTO_RELOAD"] = True
+app.config["SEND_FILE_MAX_AGE_DEFAULT"] = 0  # never cache static files
 app.secret_key = os.environ.get("SECRET_KEY", os.urandom(24).hex())
 
 # Compute a stable app version from git commit hash for cache-busting static assets.
-import os as _os, time as _time
+import os as _os
+import time as _time
 
 # Use the most recent mtime of any static asset so the cache busts on every
 # file save during development, even without a new commit.
@@ -210,7 +212,7 @@ def calculate_adaptive_interval(flights: list) -> int:
     - 600s (10 min) otherwise
     """
     if not flights:
-        return 600  # 10 minutes if no flights
+        return 120  # 2 minutes if no flights
 
     # Find closest high/medium probability transit
     priority_transits = [
@@ -223,18 +225,18 @@ def calculate_adaptive_interval(flights: list) -> int:
 
     if not priority_transits:
         # Only low probability or no transits
-        return 600  # 10 minutes
+        return 120  # 2 minutes
 
     closest_transit_time = min(priority_transits)
 
     if closest_transit_time < 2:  # <2 min away
-        return 30  # 30 seconds
+        return 10  # 10 seconds
     elif closest_transit_time < 5:  # <5 min away
-        return 60  # 1 minute
+        return 30  # 30 seconds
     elif closest_transit_time < 10:  # <10 min away
-        return 120  # 2 minutes
+        return 60  # 1 minute
     else:
-        return 600  # 10 minutes (default)
+        return 120  # 2 minutes (default)
 
 
 @app.route("/")
@@ -568,6 +570,7 @@ def get_all_flights():
             "nextCheckInterval": next_check_interval,  # Seconds until next check
             "weather": None,  # Weather functionality not implemented yet
             "boundingBox": _bbox_for_client,
+            "generated_at_ms": int(time.time() * 1000),
         }
 
         end_time = time.time()
@@ -682,6 +685,7 @@ def get_all_flights():
                             flight_id=flight_id,
                             eta_seconds=eta_seconds,
                             transit_duration_estimate=2.0,  # Aircraft transits ~0.5-2 seconds
+                            sep_deg=flight.get("angular_separation", 0.0),
                         )
                         logger.info(
                             f"📹 Scheduled recording for {flight_id} (ETA: {eta_seconds:.0f}s)"
@@ -887,6 +891,7 @@ def recalculate_transits_endpoint():
                 "flights": all_flights,
                 "targetCoordinates": target_coordinates,
                 "trackingTargets": tracking_targets,
+                "generated_at_ms": int(time.time() * 1000),
             }
         )
 
@@ -944,6 +949,109 @@ def get_flight_track(fa_flight_id):
 def telescope_page():
     """Redirect legacy telescope URL to the main SPA."""
     return redirect("/")
+
+
+@app.route("/api/transit-events")
+def api_transit_events():
+    """Return detection events from transit_events_*.csv logs (last 7 days).
+
+    D4 — Detection event log UI data source.
+    """
+    import csv
+    import glob
+
+    from src.constants import TRANSIT_EVENTS_LOGFILENAME
+
+    pattern = TRANSIT_EVENTS_LOGFILENAME.replace("{date_}", "*")
+    files = sorted(glob.glob(pattern), reverse=True)[:7]
+
+    events = []
+    for filepath in files:
+        try:
+            with open(filepath, newline="", encoding="utf-8") as fh:
+                for row in csv.DictReader(fh):
+                    events.append(
+                        {
+                            "timestamp": row.get("timestamp", ""),
+                            "detected_flight_id": row.get("detected_flight_id", ""),
+                            "predicted_flight_id": row.get("predicted_flight_id", ""),
+                            "prediction_sep_deg": row.get("prediction_sep_deg", ""),
+                            "detection_confirmed": row.get("detection_confirmed", ""),
+                            "confidence": row.get("confidence", ""),
+                            "confidence_score": row.get("confidence_score", ""),
+                            "signal_a": row.get("signal_a", ""),
+                            "signal_b": row.get("signal_b", ""),
+                            "centre_ratio": row.get("centre_ratio", ""),
+                            "notes": row.get("notes", ""),
+                        }
+                    )
+        except OSError:
+            continue
+
+    events.sort(key=lambda x: x["timestamp"], reverse=True)
+    # Enrich each event with any existing human label from transit_labels.csv
+    labels = _load_transit_labels()
+    for ev in events:
+        ev["label"] = labels.get(ev.get("timestamp", ""), "")
+    return jsonify(events[:500])
+
+
+@app.route("/api/transit-events/label", methods=["POST"])
+def api_label_transit_event():
+    """T23 — Save a human TP/FP/FN label for a detection event.
+
+    Body: {"timestamp": "...", "label": "tp"|"fp"|"fn"|"tn", "notes": "..."}
+    Appends to data/transit_labels.csv (creates if absent).
+    """
+    import csv as _csv
+
+    body = request.get_json(force=True) or {}
+    ts = body.get("timestamp", "").strip()
+    label = body.get("label", "").strip().lower()
+    notes = body.get("notes", "").strip()
+
+    if not ts or label not in ("tp", "fp", "fn", "tn"):
+        return jsonify({"error": "timestamp and label (tp/fp/fn/tn) required"}), 400
+
+    labels_path = "data/transit_labels.csv"
+    os.makedirs("data", exist_ok=True)
+    first_write = not os.path.exists(labels_path)
+    with open(labels_path, "a", newline="", encoding="utf-8") as fh:
+        writer = _csv.writer(fh)
+        if first_write:
+            writer.writerow(["timestamp", "label", "notes", "labeled_at"])
+        from datetime import datetime as _dt
+        from datetime import timezone as _tz
+
+        writer.writerow([ts, label, notes, _dt.now(_tz.utc).isoformat()])
+
+    # Invalidate cached labels
+    _load_transit_labels.cache = None  # type: ignore[attr-defined]
+
+    return jsonify({"ok": True, "timestamp": ts, "label": label})
+
+
+def _load_transit_labels() -> dict:
+    """Return {timestamp → label} from data/transit_labels.csv (last label wins)."""
+    import csv as _csv
+
+    cache = getattr(_load_transit_labels, "cache", None)
+    if cache is not None:
+        return cache
+    labels: dict = {}
+    path = "data/transit_labels.csv"
+    if os.path.exists(path):
+        try:
+            with open(path, newline="", encoding="utf-8") as fh:
+                for row in _csv.DictReader(fh):
+                    ts = row.get("timestamp", "").strip()
+                    lbl = row.get("label", "").strip()
+                    if ts and lbl:
+                        labels[ts] = lbl
+        except OSError:
+            pass
+    _load_transit_labels.cache = labels  # type: ignore[attr-defined]
+    return labels
 
 
 @app.route("/transit-log")
@@ -1055,26 +1163,75 @@ if __name__ == "__main__":
     # Use PORT env var if set (e.g. by Electron), otherwise find a free port
     import socket
 
+    def _port_is_free(p: int) -> bool:
+        """Return True if *p* can be bound right now."""
+        try:
+            s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            s.bind(("0.0.0.0", p))
+            s.close()
+            return True
+        except OSError:
+            return False
+
+    def _kill_stale_on_port(p: int) -> bool:
+        """Kill any process holding *p* and wait until the port is actually free.
+        Returns True if port is confirmed free within ~3 s."""
+        import signal as _sig
+        import subprocess as _sp
+        import time as _t
+
+        try:
+            out = (
+                _sp.check_output(
+                    ["lsof", "-ti", f"TCP:{p}", "-sTCP:LISTEN"],
+                    stderr=_sp.DEVNULL,
+                )
+                .decode()
+                .split()
+            )
+        except (_sp.CalledProcessError, FileNotFoundError):
+            return False  # lsof not available or no process found
+        killed = False
+        for pid_str in out:
+            try:
+                pid = int(pid_str)
+                if pid == os.getpid():
+                    continue
+                # SIGKILL for immediate release (no graceful-shutdown delay)
+                os.kill(pid, _sig.SIGKILL)
+                killed = True
+                print(f"🔄  Stopped stale process (PID {pid}) on port {p}")
+            except (ValueError, ProcessLookupError, PermissionError):
+                pass
+        if not killed:
+            return False
+        # Poll until the OS actually releases the port (up to 3 s)
+        for _ in range(12):
+            _t.sleep(0.25)
+            if _port_is_free(p):
+                return True
+        return False  # gave up — port still occupied
+
     port = None
     env_port = os.getenv("PORT")
     if env_port:
         port = int(env_port)
     else:
-        for p in range(8000, 8101):
-            try:
-                sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-                sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-                sock.bind(("0.0.0.0", p))
-                sock.close()
-                if p != 8000:
+        preferred = 8000
+        if _port_is_free(preferred):
+            port = preferred
+        elif _kill_stale_on_port(preferred):
+            port = preferred  # confirmed free after kill
+        else:
+            # Owned by something we can't kill (e.g. system service) — bump
+            for p in range(preferred + 1, 8101):
+                if _port_is_free(p):
                     print(
-                        f"⚠️  Port 8000 in use — starting on {p}. "
-                        "A stale app.py may be running; check: lsof -iTCP:8000 -sTCP:LISTEN"
+                        f"⚠️  Port {preferred} is in use by a non-app process — starting on {p}"
                     )
-                port = p
-                break
-            except OSError:
-                continue
+                    port = p
+                    break
 
     if port is None:
         logger.error("❌ No available ports in range 8000-8100")

@@ -33,6 +33,7 @@ and optionally enriches the event with FlightAware flight data.
 
 import collections
 import json
+import math
 import os
 import subprocess
 import threading
@@ -47,6 +48,52 @@ from src import logger
 from src.constants import get_ffmpeg_path
 
 FFMPEG = get_ffmpeg_path() or "ffmpeg"
+
+# ---------------------------------------------------------------------------
+# D1: PyWavelets import — optional; falls back to raw Signal B if unavailable
+# ---------------------------------------------------------------------------
+try:
+    import pywt as _pywt
+
+    _PYWT_AVAILABLE = True
+except ImportError:
+    _pywt = None  # type: ignore[assignment]
+    _PYWT_AVAILABLE = False
+
+
+def _wavelet_detrend(buf: "collections.deque") -> float:
+    """Return wavelet-detrended magnitude of the last sample in *buf*.
+
+    Applies a level-3 sym4 DWT to the buffer, zeroes the approximation
+    (slow atmospheric / cloud-edge trend), reconstructs the detail-only
+    signal, and returns abs(last sample).  Falls back to raw abs(buf[-1])
+    if pywt is unavailable or the buffer is too short.
+
+    At 15 fps, level-3 separates:
+      • Approx  (> ~2 s)  — cloud edges, background drift        [removed]
+      • Detail  (0.13–2 s)— transit impulse, atmospheric shimmer [kept]
+    """
+    if not _PYWT_AVAILABLE or len(buf) < 16:
+        return float(abs(buf[-1]))
+    try:
+        arr = np.array(buf, dtype=np.float32)
+        # Cap level so pywt never hits boundary-effect territory
+        max_lvl = _pywt.dwt_max_level(len(arr), "sym4")
+        level = max(1, min(3, max_lvl))
+        coeffs = _pywt.wavedec(arr, "sym4", mode="periodization", level=level)
+        coeffs[0][:] = 0.0  # zero approximation (slow trend)
+        detail = _pywt.waverec(coeffs, "sym4", mode="periodization")
+        # abs() converts bipolar detail to positive magnitude
+        return float(abs(detail[-1])) if len(detail) > 0 else float(abs(arr[-1]))
+    except Exception:
+        return float(abs(buf[-1]))
+
+
+# D2: Matched-filter gate template durations (frames at 15fps)
+# Covers 0.27 s (fast crossing) → 2.0 s (large aircraft near limb)
+_MF_TEMPLATES: tuple = (4, 7, 12, 18, 30)
+# Fraction of template frames that must be "triggered" for a match
+_MF_THRESHOLD_FRAC: float = 0.70
 
 # ---------------------------------------------------------------------------
 # Detection parameters
@@ -71,9 +118,9 @@ DETECTION_COOLDOWN = int(os.getenv("DETECTION_COOLDOWN", "30"))
 DETECTION_RECORD_DURATION = 10
 
 # Pre-buffer: seconds of video to keep BEFORE detection trigger
-PRE_BUFFER_SECONDS = int(os.getenv("DETECTION_PRE_BUFFER", "5"))
+PRE_BUFFER_SECONDS = int(os.getenv("DETECTION_PRE_BUFFER", "3"))
 # Post-buffer: seconds of video to keep AFTER detection trigger
-POST_BUFFER_SECONDS = int(os.getenv("DETECTION_POST_BUFFER", "5"))
+POST_BUFFER_SECONDS = int(os.getenv("DETECTION_POST_BUFFER", "4"))
 
 # --- Phase 1 algorithm parameters ---
 # Consecutive frames both signals must exceed threshold before firing.
@@ -94,6 +141,10 @@ REF_FREEZE_FRAMES = ANALYSIS_FPS * 5  # 5 seconds
 # active than the limb ring, which genuine transits (dark silhouette crossing
 # the bright interior) reliably produce.
 CENTRE_EDGE_RATIO_MIN = float(os.getenv("CENTRE_EDGE_RATIO_MIN", "2.5"))
+
+# Disc-lost watchdog: emit a warning after this many consecutive frames with no
+# disc detected.  At 15 fps, 60 frames = 4 seconds.  Configurable via env.
+DISC_LOST_THRESHOLD = int(os.getenv("DISC_LOST_THRESHOLD", "60"))
 
 # Signal trace logging (1fps = every ANALYSIS_FPS frames)
 SIGNAL_TRACE_INTERVAL = ANALYSIS_FPS
@@ -341,10 +392,12 @@ class DetectionEvent:
         "flight_info",
         "frame_idx",
         "confidence",
+        "confidence_score",  # D3: numeric [0,1] probability score
         "centre_ratio",
         "frame_path",
         "diff_path",
         "signal_trace",
+        "predicted_flight_id",  # B4: callsign from prediction cross-link
     )
 
     def __init__(
@@ -356,6 +409,7 @@ class DetectionEvent:
         threshold_b: float,
         frame_idx: int,
         confidence: str = "weak",
+        confidence_score: float = 0.0,
         centre_ratio: float = 0.0,
     ):
         self.timestamp = timestamp
@@ -365,12 +419,14 @@ class DetectionEvent:
         self.threshold_b = threshold_b
         self.frame_idx = frame_idx
         self.confidence = confidence
+        self.confidence_score = confidence_score
         self.centre_ratio = centre_ratio
         self.recording_file: Optional[str] = None
         self.flight_info: Optional[Dict] = None
         self.frame_path: Optional[str] = None
         self.diff_path: Optional[str] = None
         self.signal_trace: Optional[List[Dict]] = None
+        self.predicted_flight_id: Optional[str] = None  # B4
 
     def to_dict(self) -> Dict[str, Any]:
         d: Dict[str, Any] = {
@@ -383,7 +439,9 @@ class DetectionEvent:
             "recording_file": self.recording_file,
             "flight_info": self.flight_info,
             "confidence": self.confidence,
+            "confidence_score": round(self.confidence_score, 3),  # D3
             "centre_ratio": round(self.centre_ratio, 2),
+            "predicted_flight_id": getattr(self, "predicted_flight_id", None),
         }
         if self.frame_path:
             d["frame_path"] = self.frame_path
@@ -425,6 +483,10 @@ class TransitDetector:
         self.disk_margin_pct: float = DISK_MARGIN_PCT
         self.centre_ratio_min: float = CENTRE_EDGE_RATIO_MIN
         self.consec_frames_required: int = CONSEC_FRAMES_REQUIRED
+        self.mf_threshold_frac: float = _MF_THRESHOLD_FRAC
+        self.cnn_gate_threshold: float = float(
+            os.environ.get("CNN_GATE_THRESHOLD", "0.40")
+        )
 
         self._running = False
         self._process: Optional[subprocess.Popen] = None
@@ -483,6 +545,30 @@ class TransitDetector:
         self._disk_weight: Optional[np.ndarray] = None  # float32 H×W — smooth weight
         self._disk_detected = False
 
+        # Disc-lost watchdog state
+        self._disc_lost_frames: int = 0  # consecutive frames without a disc
+        self._disc_lost_warning: bool = False  # True once threshold crossed
+
+        # B4 — Prediction-detection cross-link
+        self._primed_events: dict = {}  # {flight_id: primed-event dict}
+
+        # D1 — Wavelet detrending: raw Signal-B ring buffer for pywt
+        _wt_size = 64  # 4.3 s at 15 fps; level-3 sym4 requires >= 32
+        self._wt_buf: collections.deque = collections.deque(maxlen=_wt_size)
+
+        # D2 — Matched-filter gate: per-frame triggered boolean history
+        self._triggered_buf: collections.deque = collections.deque(
+            maxlen=max(_MF_TEMPLATES) + 5
+        )
+
+        # E3 — CNN second-stage gate: ring buffer of last CLIP_T analysis frames
+        _CNN_CLIP_T = 15
+        self._cnn_buf: collections.deque = collections.deque(maxlen=_CNN_CLIP_T)
+        self._cnn_gate_threshold: float = (
+            0.40  # suppress if CNN transit prob < threshold
+        )
+        self._cnn_available: Optional[bool] = None  # lazily resolved on first fire
+
         # Active recording process (for auto-record on detection)
         self._rec_process: Optional[subprocess.Popen] = None
         self._rec_file: Optional[str] = None
@@ -491,6 +577,10 @@ class TransitDetector:
         self._hires_buffer: Deque[bytes] = collections.deque(
             maxlen=PRE_BUFFER_SECONDS * 30  # ~30fps full-res, JPEG-compressed
         )
+        # Monotonic counter: total JPEGs ever appended to _hires_buffer.
+        # Used by the post-buffer collector instead of len(deque) which is
+        # always == maxlen once the buffer is full (the bug in the original code).
+        self._hires_frame_total: int = 0
         self._hires_fps: float = 30.0
         self._hires_width: int = 0
         self._hires_height: int = 0
@@ -531,6 +621,8 @@ class TransitDetector:
         self._limb_mask = None
         self._disk_weight = None
         self._disk_detected = False
+        self._disc_lost_frames = 0
+        self._disc_lost_warning = False
 
         self._thread = threading.Thread(
             target=self._reader_loop, name="transit-detector", daemon=True
@@ -540,6 +632,7 @@ class TransitDetector:
         # Start full-res circular buffer reader alongside detection
         if self.record_on_detect:
             self._hires_buffer.clear()
+            self._hires_frame_total = 0
             self._hires_thread = threading.Thread(
                 target=self._hires_reader_loop, name="hires-buffer", daemon=True
             )
@@ -599,6 +692,8 @@ class TransitDetector:
             "recent_events": [e.to_dict() for e in list(self.events)[-10:]],
             "recording_active": self._rec_process is not None,
             "disk_detected": self._disk_detected,
+            "disc_lost_warning": self._disc_lost_warning,
+            "disc_lost_frames": self._disc_lost_frames,
             "disk_info": (
                 {
                     "cx": self._disk_cx,
@@ -616,8 +711,85 @@ class TransitDetector:
                 "sensitivity_scale": self.sensitivity_scale,
                 "track_min_mag": self.track_min_mag,
                 "track_min_agree_frac": self.track_min_agree_frac,
+                "mf_threshold_frac": self.mf_threshold_frac,
+                "cnn_gate_threshold": self.cnn_gate_threshold,
+                "cnn_available": bool(self._cnn_available),
             },
+            # B4: active primed prediction windows (flight_id → ETA info)
+            "primed_events": [
+                {
+                    "flight_id": e["flight_id"],
+                    "eta_s": round(e["expires_at"] - time.time() - 30, 0),
+                    "sep_deg": round(e.get("sep_deg", 0), 2),
+                }
+                for e in self._primed_events.values()
+                if time.time() <= e["expires_at"]
+            ],
+            "signal_trace": list(self._signal_trace),
         }
+
+    def get_latest_hires_jpeg(self) -> Optional[bytes]:
+        """Return the most recent full-resolution JPEG frame from the hi-res buffer.
+
+        Used by SolarTimelapse to tap the existing hi-res reader instead of
+        opening a separate RTSP connection, reducing concurrent connections to
+        the Seestar from 3+ down to 2 (low-res detection + hi-res buffer).
+
+        Returns None if the detector is not running or the buffer is empty.
+        """
+        if not self._running or not self._hires_buffer:
+            return None
+        return self._hires_buffer[-1]  # most recent complete JPEG
+
+    # ------------------------------------------------------------------
+    # B4 — Prediction-detection cross-link
+    # ------------------------------------------------------------------
+
+    def prime_for_event(
+        self,
+        eta_s: float,
+        flight_id: str,
+        sep_deg: float = 0.0,
+    ) -> None:
+        """Pre-arm the detector for a predicted transit.
+
+        For the duration of the predicted event window the detection
+        sensitivity is raised (consecutive-frames gate is halved) and
+        post-detection enrichment can match the fired event back to the
+        scheduled flight.
+
+        Parameters
+        ----------
+        eta_s:
+            Estimated seconds until mid-transit from now.
+        flight_id:
+            Callsign or unique identifier of the predicted flight.
+        sep_deg:
+            Predicted angular separation at closest approach (degrees).
+        """
+        import time as _time
+
+        entry = {
+            "flight_id": flight_id,
+            "eta_s": eta_s,
+            "sep_deg": sep_deg,
+            "primed_at": _time.time(),
+            "expires_at": _time.time() + eta_s + 30,  # 30 s post-transit grace
+        }
+        self._primed_events[flight_id] = entry
+        logger.info(
+            f"[Detector] Primed for {flight_id} in {eta_s:.0f}s "
+            f"(sep={sep_deg:.2f}°) — sensitivity raised"
+        )
+
+    def get_primed_flight_id(self, event_ts: float) -> Optional[str]:
+        """Return the flight_id of any primed event active at *event_ts*, or None."""
+        for fid, entry in list(self._primed_events.items()):
+            if event_ts <= entry["expires_at"]:
+                return fid
+            # Expired — clean up
+            del self._primed_events[fid]
+        return None
 
     def update_settings(
         self,
@@ -627,6 +799,8 @@ class TransitDetector:
         sensitivity_scale: Optional[float] = None,
         track_min_mag: Optional[float] = None,
         track_min_agree_frac: Optional[float] = None,
+        mf_threshold_frac: Optional[float] = None,
+        cnn_gate_threshold: Optional[float] = None,
     ) -> Dict[str, Any]:
         """Update live detection parameters without restarting the detector.
 
@@ -648,11 +822,16 @@ class TransitDetector:
             self.track_min_mag = float(max(0.0, min(20.0, track_min_mag)))
         if track_min_agree_frac is not None:
             self.track_min_agree_frac = float(max(0.0, min(1.0, track_min_agree_frac)))
+        if mf_threshold_frac is not None:
+            self.mf_threshold_frac = float(max(0.3, min(1.0, mf_threshold_frac)))
+        if cnn_gate_threshold is not None:
+            self.cnn_gate_threshold = float(max(0.0, min(1.0, cnn_gate_threshold)))
         logger.info(
             f"[Detector] Settings updated: margin={self.disk_margin_pct:.0%} "
             f"ratio_min={self.centre_ratio_min} consec={self.consec_frames_required} "
             f"sens={self.sensitivity_scale:.2f} "
-            f"track_mag={self.track_min_mag} track_agree={self.track_min_agree_frac:.0%}"
+            f"track_mag={self.track_min_mag} track_agree={self.track_min_agree_frac:.0%} "
+            f"mf_thresh={self.mf_threshold_frac:.0%}"
         )
         return self.get_status()["settings"]
 
@@ -820,6 +999,7 @@ class TransitDetector:
                         buf = buf[eoi_pos + 2 :]
 
                         self._hires_buffer.append(jpeg_data)
+                        self._hires_frame_total += 1
 
                         # Get dimensions from first frame
                         if not got_dimensions:
@@ -895,9 +1075,42 @@ class TransitDetector:
                     ANALYSIS_HEIGHT, ANALYSIS_WIDTH, cx, cy, r, self.disk_margin_pct
                 )
                 self._disk_detected = True
+                # Reset disc-lost watchdog when disc is (re-)acquired
+                if self._disc_lost_frames > 0 or self._disc_lost_warning:
+                    if self._disc_lost_warning:
+                        logger.info(
+                            "[Detector] Disc re-acquired — clearing disc-lost warning"
+                        )
+                        self._emit_status("disc_reacquired")
+                    self._disc_lost_frames = 0
+                    self._disc_lost_warning = False
             elif self._disk_detected:
                 logger.debug("[Detector] Disk lost — falling back to rectangular masks")
                 self._disk_detected = False
+
+        # --- Disc-lost watchdog ---
+        if not self._disk_detected:
+            self._disc_lost_frames += 1
+            if (
+                self._disc_lost_frames >= DISC_LOST_THRESHOLD
+                and not self._disc_lost_warning
+            ):
+                self._disc_lost_warning = True
+                logger.warning(
+                    f"[Detector] ⚠️ Disc lost for {self._disc_lost_frames} frames "
+                    f"({self._disc_lost_frames / ANALYSIS_FPS:.0f}s) — "
+                    "telescope may be mispointed or solar tracking is off."
+                )
+                self._emit_status("disc_lost")
+                # Async Telegram alert (non-blocking)
+                threading.Thread(
+                    target=self._send_disc_lost_alert,
+                    daemon=True,
+                    name="disc-lost-alert",
+                ).start()
+        else:
+            # Disc is present — keep lost counter at zero between detect intervals
+            self._disc_lost_frames = 0
 
         # Select masks: disk-aware if available, else rectangular fallback
         use_disk = self._disk_detected and self._disk_mask is not None
@@ -930,7 +1143,14 @@ class TransitDetector:
         diff_b -= mean_shift_b
         self._current_diff_b = diff_b
         weighted = np.abs(diff_b) * weight_2d[:, :, np.newaxis]
-        score_b = float(weighted.mean())
+        score_b_raw = float(weighted.mean())
+
+        # D1 — Wavelet detrending: push raw value, compute detrended magnitude.
+        # The wavelet detail signal removes slow drifts (cloud edges, background
+        # lighting ramp) that inflate the EMA reference and cause false positives.
+        # Falls back to raw score_b if pywt is unavailable.
+        self._wt_buf.append(score_b_raw)
+        score_b = _wavelet_detrend(self._wt_buf)
 
         # --- Spatial concentration: inner disk vs limb/edge ---
         abs_diff_gray = np.abs(diff_b).mean(axis=2)  # H×W
@@ -945,6 +1165,9 @@ class TransitDetector:
         centre_ratio = inner_score / max(outer_score, 0.001)
 
         self._prev_frame = frame.copy()
+
+        # E3 — Buffer grayscale frames for CNN second-stage gate
+        self._cnn_buf.append(frame[:, :, 0].copy())  # single channel from RGB24
 
         # --- Store scores ---
         self._scores_a.append(score_a)
@@ -1048,31 +1271,85 @@ class TransitDetector:
             self._consec_above = 0
             self._track_agree_count = 0  # reset track on any threshold break
 
-        if self._consec_above >= self.consec_frames_required:
+        # D2 — Matched-filter gate: record per-frame trigger state and check
+        # whether any template duration has >= 70% triggered frames.  This
+        # catches slow transits (>7 frames) that momentarily dip below threshold
+        # during a seeing spike, as well as very fast crossings (< consec_required).
+        self._triggered_buf.append(triggered)
+        mf_gate = False
+        mf_duration_f = 0
+        buf_list = list(self._triggered_buf)
+        for _n in _MF_TEMPLATES:
+            if len(buf_list) >= _n:
+                _n_hit = sum(buf_list[-_n:])
+                if _n_hit >= max(3, int(self.mf_threshold_frac * _n)):
+                    mf_gate = True
+                    mf_duration_f = _n
+                    break
+
+        # B4: raise sensitivity during a primed prediction window
+        _now = time.time()
+        _active_prime = next(
+            (e for e in self._primed_events.values() if _now <= e["expires_at"]),
+            None,
+        )
+        # Expire stale entries
+        for _fid in [
+            fid for fid, e in self._primed_events.items() if _now > e["expires_at"]
+        ]:
+            del self._primed_events[_fid]
+
+        effective_consec = (
+            max(1, self.consec_frames_required // 2)
+            if _active_prime
+            else self.consec_frames_required
+        )
+
+        consec_gate = self._consec_above >= effective_consec
+
+        if consec_gate or mf_gate:
             # --- Centroid track gate ---
             # Require that a minimum fraction of streak frames showed consistent
             # directional motion.  Noise produces _track_agree_count ~ 0 even
             # when both signals are spuriously elevated; real transits produce
             # monotonically moving centroids so agree_count climbs reliably.
-            min_agree = int(self.consec_frames_required * self.track_min_agree_frac)
+            # For matched-filter-only events the track requirement is halved
+            # (slow aircraft move centroids more gradually).
+            min_agree = int(effective_consec * self.track_min_agree_frac)
+            if mf_gate and not consec_gate:
+                min_agree = max(1, min_agree // 2)
             track_ok = self._track_agree_count >= min_agree
 
-            self._consec_above = 0  # reset so next event starts clean
-            self._track_agree_count = 0
+            if consec_gate:
+                self._consec_above = 0  # reset so next event starts clean
+                self._track_agree_count = 0
+            if mf_gate:
+                self._triggered_buf.clear()  # prevent immediate re-trigger
 
             if not track_ok:
                 logger.debug(
                     f"[Detector] Track gate suppressed: agree={self._track_agree_count} "
-                    f"need={min_agree}/{self.consec_frames_required}"
+                    f"need={min_agree} (consec={consec_gate}, mf={mf_gate})"
                 )
             else:
                 now = time.time()
                 if now - self._last_detection_time >= DETECTION_COOLDOWN:
                     self._last_detection_time = now
+                    predicted_fid = (
+                        _active_prime["flight_id"] if _active_prime else None
+                    )
                     # Freeze reference to prevent transit frames corrupting baseline
                     self._ref_freeze_until = self._frame_idx + REF_FREEZE_FRAMES
                     self._fire_detection(
-                        score_a, score_b, thresh_a, thresh_b, centre_ratio
+                        score_a,
+                        score_b,
+                        thresh_a,
+                        thresh_b,
+                        centre_ratio,
+                        predicted_flight_id=predicted_fid,
+                        mf_gate=mf_gate,
+                        mf_duration_f=mf_duration_f,
+                        effective_consec=effective_consec,
                     )
 
     @staticmethod
@@ -1098,14 +1375,75 @@ class TransitDetector:
         thresh_a: float,
         thresh_b: float,
         centre_ratio: float,
+        predicted_flight_id: Optional[str] = None,
+        mf_gate: bool = False,
+        mf_duration_f: int = 0,
+        effective_consec: int = 0,
     ) -> None:
         """Handle a confirmed transit detection."""
+
+        # E3 — CNN second-stage gate: suppress if model says no-transit
+        cnn_confidence: float = 0.0
+        cnn_verdict: str = "n/a"
+        if self._cnn_available is None:
+            # Resolve once per detector lifetime
+            try:
+                from src.transit_classifier import get_classifier
+
+                self._cnn_available = get_classifier().available
+            except Exception:
+                self._cnn_available = False
+
+        if self._cnn_available and len(self._cnn_buf) >= 15:
+            try:
+                from src.transit_classifier import get_classifier
+
+                frames = np.stack(list(self._cnn_buf), axis=0)  # (15, H, W) uint8
+                is_transit, cnn_confidence = get_classifier(
+                    confidence_threshold=self.cnn_gate_threshold
+                ).classify(frames)
+                cnn_verdict = f"cnn:{cnn_confidence:.2f}"
+                if not is_transit:
+                    logger.info(
+                        "[Detector] CNN gate suppressed detection (confidence=%.3f < %.2f)",
+                        cnn_confidence,
+                        self.cnn_gate_threshold,
+                    )
+                    return  # ← suppressed by CNN
+            except Exception as _cnn_exc:
+                logger.debug("[CNN] gate error: %s", _cnn_exc)
+
         self._detection_count += 1
         ts = datetime.now()
 
-        # Confidence based on signal-to-threshold ratio
-        sig_ratio = min(score_a / max(thresh_a, 0.001), score_b / max(thresh_b, 0.001))
-        confidence = "strong" if sig_ratio > 2.0 else "weak"
+        # D3 — Probabilistic confidence score: sigmoid of multi-signal SNR.
+        # Combines signal-to-threshold ratio, spatial centre/edge ratio, and
+        # centroid track agreement into a [0,1] probability score.
+        snr_a = score_a / max(thresh_a, 0.001)
+        snr_b = score_b / max(thresh_b, 0.001)
+        snr = min(snr_a, snr_b)
+        ratio_factor = min(centre_ratio / 5.0, 1.0)
+        _ec = effective_consec or self.consec_frames_required
+        track_factor = min(self._track_agree_count / max(_ec, 1), 1.0)
+        # Sigmoid logit: centred so SNR=1.5+good_ratio+good_track → score ≈ 0.5
+        _logit = 0.5 * snr + 0.3 * ratio_factor + 0.2 * track_factor - 1.2
+        if mf_gate and not (self._consec_above >= _ec):
+            _logit -= 0.15  # slight penalty for matched-filter-only event
+        _logit = max(-10.0, min(10.0, _logit))
+        confidence_score = round(1.0 / (1.0 + math.exp(-_logit)), 3)
+
+        # Categorical confidence label kept for backward compatibility
+        confidence = "strong" if snr > 2.0 else "weak"
+
+        # Build notes for the event log
+        _notes_parts = []
+        if predicted_flight_id:
+            _notes_parts.append("primed")
+        if mf_gate:
+            _notes_parts.append(f"matched_filter:{mf_duration_f}f")
+        if cnn_verdict != "n/a":
+            _notes_parts.append(cnn_verdict)
+        ",".join(_notes_parts)
 
         event = DetectionEvent(
             timestamp=ts,
@@ -1115,15 +1453,20 @@ class TransitDetector:
             threshold_b=thresh_b,
             frame_idx=self._frame_idx,
             confidence=confidence,
+            confidence_score=confidence_score,
             centre_ratio=centre_ratio,
         )
+        # Attach prediction cross-link (B4)
+        event.predicted_flight_id = predicted_flight_id
 
         logger.info(
-            f"[Detector] 🎯 TRANSIT DETECTED at {ts.strftime('%H:%M:%S.%f')[:-3]} "
-            f"[{confidence}] "
+            f"[Detector] TRANSIT DETECTED at {ts.strftime('%H:%M:%S.%f')[:-3]} "
+            f"[{confidence}|score={confidence_score:.2f}] "
             f"(A={score_a:.4f}/{thresh_a:.4f}, B={score_b:.4f}/{thresh_b:.4f}, "
-            f"CR={centre_ratio:.2f}, "
-            f"consec={self.consec_frames_required}f/{self.consec_frames_required/ANALYSIS_FPS:.0f}ms)"
+            f"CR={centre_ratio:.2f}, gate={'mf' if mf_gate else 'consec'}"
+            + (f":{mf_duration_f}f" if mf_gate else "")
+            + (f", primed={predicted_flight_id}" if predicted_flight_id else "")
+            + ")"
         )
 
         # Save diagnostic frames — discard event if we can't produce evidence
@@ -1136,13 +1479,40 @@ class TransitDetector:
         # Snapshot signal trace
         event.signal_trace = list(self._signal_trace)
 
-        # Auto-record
+        # Auto-record — pass a signal snapshot so the sidecar contains the
+        # exact per-frame data used by the live detector (no replay needed).
         if self.record_on_detect:
-            rec_file = self._start_detection_recording(ts)
+            _sig_snapshot = {
+                "scores_a": list(self._scores_a),
+                "scores_b": list(self._scores_b),
+                "thresh_a": float(thresh_a),
+                "thresh_b": float(thresh_b),
+                "triggered": list(self._triggered_buf),
+                "trigger_det_frame": int(self._frame_idx),
+                "disc_cx": int(self._disk_cx) if self._disk_cx is not None else None,
+                "disc_cy": int(self._disk_cy) if self._disk_cy is not None else None,
+                "disc_r": (
+                    int(self._disk_radius) if self._disk_radius is not None else None
+                ),
+                "confidence_score": float(confidence_score),
+                "gate_type": ("matched_filter" if mf_gate else "consec"),
+                "gate_detail": (
+                    f"matched_filter:{mf_duration_f}f" if mf_gate else f"consec:{_ec}f"
+                ),
+                "cnn_confidence": float(cnn_confidence) if cnn_confidence else None,
+            }
+            rec_file = self._start_detection_recording(
+                ts, signal_snapshot=_sig_snapshot
+            )
             event.recording_file = rec_file
 
         # Store event
         self.events.append(event)  # deque(maxlen=100) discards oldest automatically
+
+        # Write to transit event confirmation log (T05)
+        threading.Thread(
+            target=self._log_event, args=(event,), name="detect-log", daemon=True
+        ).start()
 
         # Enrich with flight data (async, non-blocking)
         threading.Thread(
@@ -1286,7 +1656,9 @@ class TransitDetector:
             logger.error(f"[Detector] Diagnostic frame save failed: {e}")
             return False
 
-    def _start_detection_recording(self, ts: datetime) -> Optional[str]:
+    def _start_detection_recording(
+        self, ts: datetime, signal_snapshot: Optional[dict] = None
+    ) -> Optional[str]:
         """Save pre-buffer frames + capture post-buffer from the circular buffer.
 
         The hi-res reader continuously fills _hires_buffer with JPEG frames.
@@ -1311,33 +1683,43 @@ class TransitDetector:
         filepath = os.path.join(year_month, filename)
         self._rec_file = filepath
 
-        # Snapshot the pre-buffer
-        pre_frames = list(self._hires_buffer)
+        # Snapshot the pre-buffer and trim to a tight window around the transit.
+        # The transit just fired, so it's at the very tail of the hires buffer.
+        # Keep only PRE_TIGHT_SECS before the trigger + POST_BUFFER_SECONDS after.
+        PRE_TIGHT_SECS = 1  # 1s before transit — enough context, avoids dark start
+        _hires_fps_approx = 30
+        _tight_pre = int(PRE_TIGHT_SECS * _hires_fps_approx)
+        _all_pre = list(self._hires_buffer)
+        pre_frames = _all_pre[-_tight_pre:] if len(_all_pre) > _tight_pre else _all_pre
         pre_count = len(pre_frames)
 
         logger.info(
-            f"[Detector] Recording: {pre_count} pre-buffer frames + "
+            f"[Detector] Recording: {pre_count} tight-pre frames + "
             f"{POST_BUFFER_SECONDS}s post-buffer → {filepath}"
         )
 
         # Collect post-buffer in a background thread
+        # Capture signal_snapshot in closure for the sidecar
+        _captured_signal_snapshot = signal_snapshot
+
         def _capture_and_write():
             try:
-                # Collect post-buffer frames
+                # Collect post-buffer frames.
+                # Use _hires_frame_total (monotonically increasing) instead of
+                # len(_hires_buffer) which is always == maxlen once full and
+                # therefore never signals new arrivals (the original bug).
                 post_frames = []
                 target_post = int(POST_BUFFER_SECONDS * 30)
                 deadline = time.monotonic() + POST_BUFFER_SECONDS + 2
-                buf_snapshot_len = len(self._hires_buffer)
+                snapshot_count = self._hires_frame_total
 
                 while len(post_frames) < target_post and time.monotonic() < deadline:
-                    current_len = len(self._hires_buffer)
-                    if current_len > buf_snapshot_len:
-                        # New frames arrived — grab them
-                        new_frames = list(self._hires_buffer)[
-                            -(current_len - buf_snapshot_len) :
-                        ]
-                        post_frames.extend(new_frames)
-                        buf_snapshot_len = current_len
+                    new_total = self._hires_frame_total
+                    arrived = new_total - snapshot_count - len(post_frames)
+                    if arrived > 0:
+                        # Grab the freshest `arrived` frames from the tail
+                        tail = list(self._hires_buffer)
+                        post_frames.extend(tail[-arrived:])
                     time.sleep(0.03)
 
                 all_frames = pre_frames + post_frames
@@ -1425,7 +1807,9 @@ class TransitDetector:
                     f"= {written/fps:.1f}s → {filepath}"
                 )
 
-                self._finalize_recording(filepath, ts, 0)
+                self._finalize_recording(
+                    filepath, ts, 0, signal_snapshot=_captured_signal_snapshot
+                )
 
             except Exception as e:
                 logger.error(f"[Detector] Buffer recording failed: {e}")
@@ -1437,6 +1821,76 @@ class TransitDetector:
         ).start()
 
         return filepath
+
+    def _trim_recording(self, filepath: str, min_luma: float = 15.0) -> None:
+        """Trim dark / blank leading frames from a freshly encoded det_*.mp4.
+
+        Uses ffprobe to read the mean luminance of each frame.  Walks forward
+        until a frame exceeds *min_luma* (default 15/255 — anything brighter
+        than near-black counts as the disc appearing).  Re-encodes from that
+        point if the trim saves at least 0.5 s.  Falls back silently on any
+        error so the original file is always preserved.
+        """
+        try:
+            r = subprocess.run(
+                [
+                    FFMPEG,
+                    "-i",
+                    filepath,
+                    "-vf",
+                    "signalstats",
+                    "-f",
+                    "null",
+                    "-",
+                ],
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+            # signalstats writes YAVG (mean Y luma) per frame to stderr
+            import re as _re
+
+            first_good: Optional[float] = None
+            for line in r.stderr.splitlines():
+                m_t = _re.search(r"pts_time:([\d.]+)", line)
+                m_y = _re.search(r"YAVG:([\d.]+)", line)
+                if m_t:
+                    cur_t = float(m_t.group(1))
+                if m_y and float(m_y.group(1)) >= min_luma:
+                    first_good = cur_t
+                    break
+
+            if first_good is None or first_good < 0.5:
+                return  # nothing to trim
+
+            logger.info(
+                "[Detector] Trimming %s dark leading seconds from %s",
+                f"{first_good:.2f}",
+                os.path.basename(filepath),
+            )
+            tmp = filepath + ".tmp.mp4"
+            subprocess.run(
+                [
+                    FFMPEG,
+                    "-y",
+                    "-ss",
+                    str(first_good),
+                    "-i",
+                    filepath,
+                    "-c",
+                    "copy",
+                    tmp,
+                ],
+                capture_output=True,
+                timeout=30,
+            )
+            if os.path.exists(tmp) and os.path.getsize(tmp) > 0:
+                os.replace(tmp, filepath)
+            else:
+                if os.path.exists(tmp):
+                    os.remove(tmp)
+        except Exception as exc:
+            logger.debug("[Detector] _trim_recording skipped: %s", exc)
 
     def _peak_scene_time(
         self, filepath: str, search_secs: float = 3.0
@@ -1492,7 +1946,13 @@ class TransitDetector:
         except Exception:
             return None
 
-    def _finalize_recording(self, filepath: str, ts: datetime, duration: int) -> None:
+    def _finalize_recording(
+        self,
+        filepath: str,
+        ts: datetime,
+        duration: int,
+        signal_snapshot: Optional[dict] = None,
+    ) -> None:
         """Generate thumbnail + metadata after buffer recording is written."""
         if not os.path.exists(filepath):
             logger.warning(f"[Detector] Recording file missing: {filepath}")
@@ -1502,6 +1962,7 @@ class TransitDetector:
         # (peak scene-change score = maximum pixel difference = aircraft at disc centre).
         # Falls back to first frame if the scene-change scan fails.
         thumb_path = filepath.rsplit(".", 1)[0] + "_thumb.jpg"
+        seek_time: Optional[float] = None
         try:
             seek_time = self._peak_scene_time(filepath)
             seek_args = ["-ss", str(seek_time)] if seek_time is not None else []
@@ -1530,15 +1991,45 @@ class TransitDetector:
         except Exception as e:
             logger.warning(f"[Detector] Thumbnail failed: {e}")
 
-        # Save metadata
+        # Save metadata sidecar — includes the live-detector signal data so the
+        # viewer can render signal charts and transit marks without any replay.
         meta_path = filepath.rsplit(".", 1)[0] + ".json"
-        meta = {
+        meta: dict = {
             "timestamp": ts.isoformat(),
             "duration": duration,
             "source": "transit_detection",
             "type": "video",
             "detection": True,
+            "peak_time_s": round(seek_time, 3) if seek_time is not None else None,
         }
+        if signal_snapshot:
+            # Compute per-frame adaptive thresholds relative to the snapshot.
+            # The snapshot contains the rolling history at the moment of trigger.
+            # We expose the last N scores plus the threshold that was active.
+            sa_list = signal_snapshot.get("scores_a", [])
+            sb_list = signal_snapshot.get("scores_b", [])
+            ta = signal_snapshot.get("thresh_a", 0.0)
+            tb = signal_snapshot.get("thresh_b", 0.0)
+            triggered = signal_snapshot.get("triggered", [])
+            # Build uniform thresh arrays matching score length for the viewer
+            meta["signal"] = {
+                "scores_a": [round(v, 5) for v in sa_list],
+                "scores_b": [round(v, 5) for v in sb_list],
+                "thresh_a": round(ta, 5),
+                "thresh_b": round(tb, 5),
+                "triggered": list(triggered),
+                "trigger_det_frame": signal_snapshot.get("trigger_det_frame"),
+                "disc_cx": signal_snapshot.get("disc_cx"),
+                "disc_cy": signal_snapshot.get("disc_cy"),
+                "disc_r": signal_snapshot.get("disc_r"),
+                "confidence_score": signal_snapshot.get("confidence_score"),
+                "gate_type": signal_snapshot.get("gate_type"),
+                "gate_detail": signal_snapshot.get("gate_detail"),
+                "cnn_confidence": signal_snapshot.get("cnn_confidence"),
+                # Peak in video-frame coordinates (transit is ~1s = 30 hires-fps frames in)
+                "transit_hires_frame": int(30 * 1.0),  # 1s tight-pre at 30fps
+                "analysis_fps": ANALYSIS_FPS,
+            }
         try:
             with open(meta_path, "w") as f:
                 json.dump(meta, f, indent=2)
@@ -1546,6 +2037,49 @@ class TransitDetector:
             logger.warning(f"[Detector] Metadata save failed: {e}")
 
         logger.info(f"[Detector] Recording finalized: {filepath}")
+
+    # ------------------------------------------------------------------
+    # Transit event log (T05)
+    # ------------------------------------------------------------------
+
+    def _log_event(self, event: "DetectionEvent") -> None:
+        """Write a detection event to the daily transit_events_*.csv log."""
+        try:
+            from datetime import date as _date
+
+            from src.constants import TRANSIT_EVENTS_LOGFILENAME
+            from src.flight_data import log_transit_event
+
+            date_ = _date.today().strftime("%Y%m%d")
+            dest = TRANSIT_EVENTS_LOGFILENAME.format(date_=date_)
+
+            flight = event.flight_info or {}
+            pred_fid = getattr(event, "predicted_flight_id", None) or ""
+            # Look up sep_deg from primed_events if still present
+            pred_sep = ""
+            if pred_fid and pred_fid in self._primed_events:
+                pred_sep = round(self._primed_events[pred_fid].get("sep_deg", 0), 4)
+            # Reconstruct notes from the event's stored state
+            _n_parts = []
+            if pred_fid:
+                _n_parts.append("primed")
+            row = {
+                "timestamp": event.timestamp.isoformat(),
+                "detected_flight_id": flight.get("name", ""),
+                "predicted_flight_id": pred_fid,
+                "prediction_sep_deg": pred_sep,
+                "detection_confirmed": 1 if flight.get("name") else 0,
+                "confidence": event.confidence,
+                "confidence_score": getattr(event, "confidence_score", ""),  # D3
+                "signal_a": round(event.signal_a, 5),
+                "signal_b": round(event.signal_b, 5),
+                "centre_ratio": round(event.centre_ratio, 3),
+                "notes": ",".join(_n_parts),
+            }
+            log_transit_event(row, dest)
+            logger.debug(f"[Detector] Event logged → {dest}")
+        except Exception as exc:
+            logger.warning(f"[Detector] Event log write failed: {exc}")
 
     # ------------------------------------------------------------------
     # FlightAware enrichment
@@ -1674,8 +2208,51 @@ class TransitDetector:
     def _fetch_flights_for_enrichment(
         lat_ll: float, lon_ll: float, lat_ur: float, lon_ur: float
     ) -> list:
-        """Fetch aircraft list for enrichment — prefers OpenSky (free) over FA (paid)."""
-        # 1) Try OpenSky first (free, ~60s cache built-in)
+        """Fetch aircraft list for enrichment — prefers OpenSky (free) over FA (paid).
+
+        Enrichment strategy (T04):
+          1. Use the latest cached OpenSky snapshot from any bbox (set by TransitMonitor).
+             This is typically only 10–30 s old and covers the full corridor.
+          2. If the snapshot is too old (>90 s) or empty, issue a fresh OpenSky bbox query.
+          3. Fall back to FlightAware if OpenSky is unavailable.
+        """
+        # 1a) Try the pre-cached wide-corridor snapshot first (avoids a new API call)
+        try:
+            from src.opensky import get_latest_snapshot
+
+            snapshot = get_latest_snapshot()
+            if snapshot:
+                flights = []
+                for callsign, pos in snapshot.items():
+                    if pos.get("on_ground"):
+                        continue
+                    lat, lon = pos.get("lat"), pos.get("lon")
+                    if lat is None or lon is None:
+                        continue
+                    flights.append(
+                        {
+                            "name": callsign.strip(),
+                            "latitude": lat,
+                            "longitude": lon,
+                            "elevation": pos.get("altitude_m") or 10000,
+                            "elevation_feet": int(
+                                (pos.get("altitude_m") or 10000) / 0.3048
+                            ),
+                            "aircraft_type": "",
+                            "origin": "",
+                            "destination": "",
+                        }
+                    )
+                if flights:
+                    logger.debug(
+                        f"[Detector] enrich: using pre-cached snapshot "
+                        f"({len(flights)} aircraft)"
+                    )
+                    return flights
+        except Exception as exc:
+            logger.debug(f"[Detector] snapshot enrichment failed: {exc}")
+
+        # 1b) Fall back to a fresh OpenSky bbox query (free, ~60s cache built-in)
         try:
             from src.opensky import fetch_opensky_positions
 
@@ -1739,6 +2316,23 @@ class TransitDetector:
     # ------------------------------------------------------------------
     # Status emission
     # ------------------------------------------------------------------
+
+    def _send_disc_lost_alert(self) -> None:
+        """Send a Telegram alert when the disc has been lost for too long."""
+        try:
+            import asyncio
+
+            from src.telegram_notify import send_telegram_simple
+
+            asyncio.run(
+                send_telegram_simple(
+                    "⚠️ <b>Disc lost</b> — telescope may be mispointed or solar "
+                    f"tracking is off ({self._disc_lost_frames // ANALYSIS_FPS}s without disc). "
+                    "Check the live preview."
+                )
+            )
+        except Exception as exc:
+            logger.debug(f"[Detector] Disc-lost Telegram alert failed: {exc}")
 
     def _emit_status(self, state: str) -> None:
         """Notify status callback."""

@@ -48,14 +48,10 @@ def get_observer_coordinates() -> Tuple[float, float, float]:
     with _lock:
         olat, olon, oelev = _override_lat, _override_lon, _override_elev
     lat = (
-        olat
-        if olat is not None
-        else float(os.getenv("OBSERVER_LATITUDE", "0") or "0")
+        olat if olat is not None else float(os.getenv("OBSERVER_LATITUDE", "0") or "0")
     )
     lon = (
-        olon
-        if olon is not None
-        else float(os.getenv("OBSERVER_LONGITUDE", "0") or "0")
+        olon if olon is not None else float(os.getenv("OBSERVER_LONGITUDE", "0") or "0")
     )
     elev = (
         oelev

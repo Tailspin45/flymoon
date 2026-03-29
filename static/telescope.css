@@ -21,25 +21,48 @@
 
 /* Sidebar Common Styles */
 .sidebar {
-    background: #1a1a1a;
-    border-right: 1px solid #2a2a2a;
+    background: #111114;
+    border-right: 1px solid #1e1e24;
     overflow-y: auto;
     overflow-x: hidden;
+    scrollbar-width: thin;
+    scrollbar-color: rgba(3,156,156,0.3) transparent;
 }
 
+/* ── NASA console panel metal — medium anodized-aluminum gray ──────
+   Lighter panel face makes dark keycap buttons pop as recessed inserts,
+   matching the physical contrast seen on Apollo Mission Control consoles. */
 .sidebar-right {
     border-right: none;
-    border-left: 1px solid #2a2a2a;
+    border-left: 2px solid #30343A;
+    background: #50545C;
+    display: flex;
+    flex-direction: column;
+}
+
+/* Spacer panel — expands to fill remaining column height, decorative screws only */
+.sidebar-panel-spacer {
+    min-height: 40px;
+    border-bottom: none;
 }
 
 .sidebar-alp {
     border-right: none;
-    border-left: 1px solid #2a2a2a;
+    border-left: 2px solid #30343A;
+    background: #50545C;
 }
 
+/* ── Instrument section panels — slight tonal separation from rail ── */
 .sidebar-panel {
-    padding: 10px 12px;
-    border-bottom: 1px solid #2a2a2a;
+    padding: 7px 10px;
+    border-bottom: 1px solid #40444C;
+    border-top: 1px solid #5A5E66;    /* top highlight = light from above */
+    position: relative;
+    background: #4C5058;
+}
+
+.sidebar-panel:first-child {
+    border-top: none;
 }
 
 .sidebar-panel:last-child {
@@ -47,16 +70,30 @@
 }
 
 .sidebar-panel-compact {
-    padding: 8px 12px;
+    padding: 6px 10px;
 }
 
+/* ── Section label plates — engraved look on aluminum ──────────────
+   Light text on medium-gray panel = high contrast, reads like a
+   stamped/anodized label plate. No teal — teal reserved for live data. */
 .sidebar-panel h3 {
-    margin: 0 0 8px 0;
-    color: #039c9c;
-    font-size: 0.95em;
-    font-weight: 600;
+    margin: 0 0 6px 0;
+    color: #D8DCE2;                 /* bright on aluminum = engraved + filled */
+    font-size: 0.63em;
+    font-weight: 700;
     text-transform: uppercase;
-    letter-spacing: 0.5px;
+    letter-spacing: 2.2px;
+    padding-bottom: 5px;
+    border-bottom: 1px solid #40444C;
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    font-family: 'SF Mono', 'Menlo', 'Consolas', monospace;
+}
+
+/* Remove old teal pip */
+.sidebar-panel h3::before {
+    display: none;
 }
 
 /* Center Preview Area */
@@ -294,7 +331,7 @@
 
 /* Transit Auto-Capture Settings */
 .setting-item {
-    margin-bottom: 12px;
+    margin-bottom: 6px;
 }
 
 .toggle-label {
@@ -340,14 +377,14 @@
 }
 
 .toggle-text {
-    color: #ccc;
-    font-size: 0.9em;
+    color: #b0b4b8;
+    font-size: 0.85em;
     font-weight: 500;
 }
 
 .setting-info {
-    font-size: 0.8em;
-    color: #888;
+    font-size: 0.78em;
+    color: #6a7a85;
     line-height: 1.5;
     margin-top: 8px;
 }
@@ -423,10 +460,16 @@
 .status-indicator {
     display: flex;
     align-items: center;
-    gap: 8px;
-    margin-bottom: 12px;
-    font-size: 0.9em;
-    font-weight: 500;
+    gap: 6px;
+    margin-bottom: 6px;
+    padding: 4px 8px;
+    background: #1C1E22;            /* dark display window inset into aluminum panel */
+    border: 1px solid #141618;
+    border-radius: 2px;
+    font-size: 0.78em;
+    font-weight: 600;
+    color: #8a9ba8;
+    letter-spacing: 0.3px;
 }
 
 .status-dot {
@@ -465,100 +508,247 @@
 
 .button-group {
     display: flex;
-    gap: 6px;
+    gap: 3px;
 }
 
-/* 2×2 connection button grid */
+/* Button grids — tight 2px gap, Apollo-console packed layout */
 .button-grid-2x2 {
     display: grid;
     grid-template-columns: 1fr 1fr;
-    gap: 6px;
+    gap: 2px;
 }
+
+.button-grid-3col {
+    display: grid;
+    grid-template-columns: 1fr 1fr 1fr;
+    gap: 2px;
+}
+
+.button-grid-4col {
+    display: grid;
+    grid-template-columns: 1fr 1fr 1fr 1fr;
+    gap: 2px;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   NASA MISSION CONTROL — Keycap Button System
+   Based on NASA Appendix F Console/Display Design guidelines.
+
+   Physical simulation:
+   ┌─────────────────────────────────────────────────────────────────────┐
+   │  Raised (resting)   →  border-top/left lighter, border-bottom thicker │
+   │  Momentary press    →  :active collapses borders, translateY(1px)    │
+   │  Toggle locked-down →  .is-active sustains pressed appearance +      │
+   │                         inverted/bright label (contrast ≥ 7:1)       │
+   │  Mode indicator     →  .is-active.btn-mode teal-lit label, very dark │
+   └─────────────────────────────────────────────────────────────────────┘
+   ═══════════════════════════════════════════════════════════════════════════ */
 
 .btn {
     flex: 1;
-    padding: 8px 12px;
-    border: none;
-    border-radius: 4px;
-    font-size: 0.85em;
-    font-weight: 600;
-    cursor: pointer;
-    transition: all 0.2s;
+    /* Keycap geometry */
+    padding: 5px 4px 4px;           /* 1px more top = visual lift */
+    border-radius: 2px;
+    min-height: 26px;
+    text-align: center;
     white-space: nowrap;
+    position: relative;
+    cursor: pointer;
+
+    /* Raised keycap borders — asymmetric = light from top-left */
+    border-top:    1px solid #363A40;   /* highlight edge */
+    border-left:   1px solid #363A40;   /* highlight edge */
+    border-right:  1px solid #18191C;   /* shadow edge */
+    border-bottom: 2px solid #0C0D0F;   /* shadow edge — thicker = more raised */
+
+    /* Keycap surface */
+    background: #252830;
+    color: #B8BCC2;
+
+    /* Label style — all-caps, tight, always legible */
+    font-size: 0.72em;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.6px;
+
+    /* Snappy transitions only — no laggy animations per Appendix F */
+    transition: background 0.06s, color 0.06s, border-color 0.05s,
+                transform 0.04s, box-shadow 0.05s;
+
+    /* Eliminate default browser outline — custom focus ring below */
+    outline: none;
 }
 
+/* Accessibility: clear focus ring, visible in all states */
+.btn:focus-visible {
+    outline: 2px solid #5A9BCC;
+    outline-offset: 2px;
+}
+
+/* ── DISABLED — Appendix F: unavailable = dim, no shape/press change ── */
 .btn:disabled {
-    opacity: 0.4;
+    opacity: 0.25;
     cursor: not-allowed;
+    transform: none !important;
+    box-shadow: none !important;
 }
 
-.btn-primary {
-    background: #039c9c;
-    color: white;
+/* ── HOVER — subtle surface brightening, label sharpens ── */
+.btn:hover:not(:disabled):not(.is-active) {
+    background: #2D3038;
+    color: #D0D4DA;
 }
 
-.btn-primary:hover:not(:disabled) {
-    background: #027a7a;
+/* ══════════════════════════════════════════════════════════════════════
+   MOMENTARY PRESS — .btn:active
+   Key physically sinks: top highlight fades, bottom shadow collapses,
+   surface darkens, translateY(1px) reinforces downward movement.
+   ══════════════════════════════════════════════════════════════════════ */
+.btn:active:not(:disabled) {
+    background: #1C1E24;                /* darkened = physically pressed */
+    border-top:    1px solid #24262A;   /* highlight collapses */
+    border-left:   1px solid #24262A;
+    border-right:  1px solid #18191C;
+    border-bottom: 1px solid #0C0D0F;   /* shadow collapses = key sunk */
+    transform: translateY(1px);
+    box-shadow: inset 0 1px 3px rgba(0,0,0,0.5);
 }
 
-.btn-secondary {
-    background: rgba(255, 255, 255, 0.08);
-    color: #aaa;
-    border: 1px solid #333;
+/* ══════════════════════════════════════════════════════════════════════
+   TOGGLE SELECTED — .is-active
+   Button stays locked down: same pressed border profile held permanently,
+   dark surface, label inverted to white (≥ 7:1 contrast ratio).
+   Applied via JS to toggle/mode buttons; removed when deselected.
+   ══════════════════════════════════════════════════════════════════════ */
+.btn.is-active {
+    background: #101214;                /* darkest = deeply set into panel */
+    border-top:    1px solid #1A1C20;   /* no highlight = fully locked down */
+    border-left:   1px solid #1A1C20;
+    border-right:  1px solid #262830;
+    border-bottom: 1px solid #262830;
+    transform: translateY(1px);
+    box-shadow: inset 0 2px 4px rgba(0,0,0,0.65);
+
+    /* Teal-lit label — locked-down indicator glow */
+    color: #00E8E8;
+    text-shadow: 0 0 6px rgba(0,232,232,0.45);
 }
 
-.btn-secondary:hover:not(:disabled) {
-    background: rgba(255, 255, 255, 0.12);
-    border-color: #444;
+.btn.is-active:hover:not(:disabled) {
+    background: #141618;
+    color: #20F0F0;
 }
 
-.btn-info {
-    background: #0066cc;
-    color: white;
+/* ══════════════════════════════════════════════════════════════════════
+   MODE INDICATOR — .is-active.btn-mode
+   Like a lit indicator lamp above a locked key: teal-illuminated label
+   on near-black surface. Used for Solar/Lunar/Scene and Track toggle.
+   ══════════════════════════════════════════════════════════════════════ */
+.btn.is-active.btn-mode {
+    background: #0A1418;                /* near-black with slight teal tint */
+    border-top:    1px solid #0E2830;
+    border-left:   1px solid #0E2830;
+    border-right:  1px solid #1E3238;
+    border-bottom: 1px solid #1E3238;
+    box-shadow: inset 0 2px 4px rgba(0,0,0,0.7),
+                0 0 0 1px rgba(0,200,200,0.18);
+    color: #00E8E8;                     /* teal-lit indicator label */
+    text-shadow: 0 0 6px rgba(0,232,232,0.5);
 }
 
-.btn-info:hover:not(:disabled) {
-    background: #0052a3;
+.btn.is-active.btn-mode:hover:not(:disabled) {
+    background: #0C1A20;
+    color: #20F0F0;
 }
+
+/* ── All standard non-danger variants share the same charcoal keycap ── */
+
+.btn-primary   { background: #252830; color: #FFFFFF; }
+.btn-secondary { background: #252830; color: #FFFFFF; }
+.btn-info      { background: #252830; color: #FFFFFF; }
+
+/* ── Warning & Danger: color-coded + same keycap press mechanics ──
+   Per Appendix F: red = high-alert/failure, amber = caution only.
+   Both retain the asymmetric raised-border and press behavior. */
 
 .btn-warning {
-    background: #ff9900;
-    color: white;
+    background: #3A2508;
+    color: #E8C880;
+    border-top:    1px solid #4A3010;
+    border-left:   1px solid #4A3010;
+    border-right:  1px solid #1A1008;
+    border-bottom: 2px solid #0E0804;
 }
 
-.btn-warning:hover:not(:disabled) {
-    background: #cc7a00;
+.btn-warning:hover:not(:disabled):not(.is-active) {
+    background: #482C0A;
+    color: #F0D898;
 }
 
 .btn-danger {
-    background: #cc0000;
-    color: white;
+    background: #3A0E0E;
+    color: #E8A8A8;
+    border-top:    1px solid #4E1414;
+    border-left:   1px solid #4E1414;
+    border-right:  1px solid #180808;
+    border-bottom: 2px solid #0C0404;
 }
 
-.btn-danger:hover:not(:disabled) {
-    background: #aa0000;
+.btn-danger:hover:not(:disabled):not(.is-active) {
+    background: #4A1212;
+    color: #F0B8B8;
 }
 
+/* Compact variant */
 .btn-compact {
-    padding: 6px 10px;
-    font-size: 0.8em;
+    padding: 4px 4px 3px;
+    font-size: 0.68em;
+    min-height: 24px;
 }
 
-/* Compact Target Display */
+/* ═══════════════════════════════════════════════════════════════════════════
+   FUNCTIONAL CLUSTER GROUPS — .btn-cluster
+   Groups related keys with a recessed border box — mirrors the physical
+   key clusters on the NASA console (each cluster = one functional unit).
+   ═══════════════════════════════════════════════════════════════════════════ */
+.btn-cluster {
+    border: 1px solid #383C44;      /* inset shadow on aluminum = machined recess */
+    border-radius: 3px;
+    padding: 4px;
+    margin-bottom: 4px;
+    background: rgba(0,0,0,0.18);   /* cluster sits in a slight recess in the panel */
+}
+
+.btn-cluster:last-child {
+    margin-bottom: 0;
+}
+
+/* Cluster sub-label — tiny ALL-CAPS tag, readable on aluminum */
+.btn-cluster-label {
+    font-size: 0.58em;
+    font-weight: 700;
+    color: #9AA0A8;
+    text-transform: uppercase;
+    letter-spacing: 1.8px;
+    margin-bottom: 3px;
+    font-family: 'SF Mono', 'Menlo', 'Consolas', monospace;
+}
+
+/* Compact Target Display — dark readout card inset into aluminum */
 .target-compact {
     display: flex;
     align-items: center;
-    gap: 8px;
-    padding: 6px;
-    background: rgba(0, 0, 0, 0.3);
-    border: 1px solid #333;
-    border-radius: 4px;
-    margin-bottom: 5px;
-    transition: all 0.2s;
+    gap: 6px;
+    padding: 5px 8px;
+    background: #1C1E22;
+    border: 1px solid #141618;
+    border-radius: 2px;
+    margin-bottom: 4px;
+    transition: all 0.15s ease;
 }
 
 .target-compact:hover {
-    border-color: #444;
+    border-color: #333;
 }
 
 .target-button {
@@ -566,16 +756,29 @@
 }
 
 .target-button:hover {
-    background: rgba(3, 156, 156, 0.1);
-    border-color: #039c9c;
+    background: rgba(3, 156, 156, 0.08);
+    border-color: rgba(3,156,156,0.4);
+    box-shadow: 0 0 8px rgba(3,156,156,0.08);
 }
 
 .target-button:active {
-    background: rgba(3, 156, 156, 0.2);
+    background: rgba(3, 156, 156, 0.15);
 }
 
 .target-icon {
-    font-size: 1.5em;
+    font-size: 1.2em;
+}
+
+/* Text abbreviation replacing emoji target icons — monospace, all-caps, muted */
+.target-icon-text {
+    font-size: 0.6em;
+    font-weight: 700;
+    font-family: 'SF Mono', 'Menlo', 'Consolas', monospace;
+    letter-spacing: 1px;
+    color: #6A7880;
+    width: 26px;
+    text-align: center;
+    flex-shrink: 0;
 }
 
 .target-info {
@@ -585,42 +788,132 @@
 
 .target-name {
     font-weight: 600;
-    font-size: 0.85em;
-    color: #ccc;
+    font-size: 0.82em;
+    color: #c8ccd0;
+    letter-spacing: 0.3px;
 }
 
 .target-coords {
-    font-size: 0.75em;
-    color: #666;
+    font-size: 0.72em;
+    color: #7a8a95;
     margin-top: 2px;
+    font-family: 'SF Mono', 'Menlo', 'Consolas', monospace;
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
 }
 
 .visibility-badge {
-    padding: 3px 8px;
-    border-radius: 10px;
-    font-size: 0.7em;
-    font-weight: 600;
+    padding: 3px 6px;
+    border-radius: 3px;
+    font-size: 0.65em;
+    font-weight: 700;
     text-transform: uppercase;
     white-space: nowrap;
+    letter-spacing: 0.8px;
+    width: 48px;
+    text-align: center;
+    box-sizing: border-box;
+    flex-shrink: 0;
+    color: #888;        /* neutral fallback — overridden by .visible / .not-visible */
+    border: 1px solid transparent;
 }
 
 .visibility-badge.visible {
-    background: rgba(50, 205, 50, 0.2);
-    color: #32CD32;
-    border: 1px solid #32CD32;
+    background: rgba(50, 205, 50, 0.12);
+    color: #4de04d;
+    border: 1px solid rgba(50,205,50,0.3);
 }
 
-.visibility-badge.hidden {
-    background: rgba(100, 100, 100, 0.2);
-    color: #666;
-    border: 1px solid #444;
+.visibility-badge.hidden,
+.visibility-badge.not-visible {
+    background: rgba(100, 100, 100, 0.12);
+    color: #999;
+    border: 1px solid rgba(100,100,100,0.3);
 }
 
-/* Compact Capture Controls */
+/* ── Capture row — single-line capture controls ──────── */
+.capture-row {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    margin-bottom: 4px;
+}
+
+.capture-row-label {
+    font-size: 0.68em;
+    font-weight: 700;
+    color: #8a9ba8;
+    letter-spacing: 0.8px;
+    text-transform: uppercase;
+    min-width: 50px;
+}
+
+.input-mini {
+    width: 48px;
+    min-width: 0;        /* allow shrink inside grid */
+    padding: 3px 4px;
+    border: 1px solid #222228;
+    border-radius: 3px;
+    background: #08080c;
+    color: #d0d4d8;
+    font-size: 0.72em;
+    font-family: 'SF Mono', 'Menlo', 'Consolas', monospace;
+    text-align: center;
+    box-sizing: border-box;
+}
+
+.input-mini:focus {
+    outline: none;
+    border-color: #039c9c;
+    box-shadow: 0 0 0 1px rgba(3,156,156,0.15);
+}
+
+/* ── D-pad — joystick grid ──────────────────────────── */
+.dpad-grid {
+    display: grid;
+    grid-template-columns: 26px 26px 26px;
+    gap: 3px;
+    flex-shrink: 0;
+}
+
+.btn-dpad {
+    width: 26px;
+    height: 26px;
+    min-height: 26px;
+    padding: 0;
+    font-size: 0.68em;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex: none;
+    border-radius: 2px;
+}
+
+.btn-dpad-stop {
+    font-size: 0.58em;
+}
+
+/* ── Focus step button group ─────────────────────────── */
+.focus-step-group {
+    display: flex;
+    gap: 2px;
+}
+
+.focus-step-group .btn {
+    flex: none;
+    min-width: 28px;
+    padding: 4px 6px;
+}
+
+/* .btn-eclipse is defined in the Eclipse simulator section below */
+
+/* Legacy capture-compact (kept for left sidebar) */
 .capture-compact {
-    margin-bottom: 10px;
-    padding-bottom: 10px;
-    border-bottom: 1px solid #2a2a2a;
+    margin-bottom: 8px;
+    padding-bottom: 8px;
+    border-bottom: 1px solid rgba(255,255,255,0.04);
 }
 
 .capture-compact:last-child {
@@ -630,55 +923,64 @@
 }
 
 .capture-header-compact {
-    font-size: 0.85em;
-    font-weight: 600;
-    color: #aaa;
-    margin-bottom: 8px;
+    font-size: 0.72em;
+    font-weight: 700;
+    color: #8a9ba8;
+    margin-bottom: 6px;
+    letter-spacing: 0.8px;
+    text-transform: uppercase;
 }
 
 .input-row {
     display: flex;
-    gap: 6px;
-    margin-bottom: 8px;
+    gap: 4px;
+    margin-bottom: 4px;
 }
 
 .input-labels-row {
-    margin-top: -6px;
-    margin-bottom: 8px;
+    margin-top: -3px;
+    margin-bottom: 4px;
 }
 
 .input-label {
     flex: 1;
     text-align: center;
-    font-size: 0.7em;
-    color: #888;
+    font-size: 0.65em;
+    color: #6a7a85;
+    letter-spacing: 0.3px;
 }
 
 .input-compact {
     flex: 1;
-    padding: 6px 8px;
-    border: 1px solid #333;
-    border-radius: 4px;
-    background: #0a0a0a;
-    color: white;
-    font-size: 0.8em;
+    padding: 4px 6px;
+    border: 1px solid #222228;
+    border-radius: 3px;
+    background: #08080c;
+    color: #d0d4d8;
+    font-size: 0.75em;
+    font-family: 'SF Mono', 'Menlo', 'Consolas', monospace;
+    transition: border-color 0.15s ease;
 }
 
 .input-compact:focus {
     outline: none;
     border-color: #039c9c;
+    box-shadow: 0 0 0 1px rgba(3,156,156,0.15);
 }
 
 .recording-status-compact {
     display: flex;
     align-items: center;
-    gap: 6px;
-    padding: 6px 8px;
-    background: rgba(0, 0, 0, 0.3);
-    border-radius: 4px;
-    font-size: 0.8em;
+    gap: 5px;
+    padding: 3px 6px;
+    background: #1C1E22;            /* dark display window on aluminum panel */
+    border: 1px solid #141618;
+    border-radius: 2px;
+    font-size: 0.72em;
     font-variant-numeric: tabular-nums;
-    margin-bottom: 8px;
+    margin-bottom: 4px;
+    font-family: 'SF Mono', 'Menlo', 'Consolas', monospace;
+    color: #8a9ba8;
 }
 
 /* Warning Box */
@@ -698,9 +1000,10 @@
 
 /* Bottom Filmstrip */
 .filmstrip {
-    background: #1a1a1a;
-    border-top: 1px solid #2a2a2a;
-    height: 170px;
+    background: #111114;
+    border-top: 1px solid #1e1e24;
+    height: auto;
+    min-height: 140px;
     flex-shrink: 0;
     display: flex;
     flex-direction: column;
@@ -754,7 +1057,7 @@
     display: flex;
     gap: 8px;
     padding: 6px 16px;
-    align-items: stretch;
+    align-items: flex-start;
 }
 
 .filmstrip-item {
@@ -768,6 +1071,7 @@
     transition: all 0.2s;
     display: flex;
     flex-direction: column;
+    height: auto;
 }
 
 .filmstrip-item.temp-file {
@@ -810,10 +1114,11 @@
 
 .filmstrip-thumbnail {
     width: 100%;
-    flex: 1;
-    min-height: 0;
+    aspect-ratio: 16 / 9;
     object-fit: cover;
     background: #000;
+    display: block;
+    flex: none;
 }
 
 .filmstrip-name {
@@ -1393,11 +1698,205 @@ canvas.video-thumb-canvas {
     margin-top: 2px;
 }
 
-/* ── Left sidebar (Transit Capture) compact overrides ────────── */
-.sidebar-left .sidebar-panel { padding: 8px 12px; }
-.sidebar-left .sidebar-panel h3 { margin-bottom: 4px; font-size: 0.88em; }
-.sidebar-left .setting-item { margin-bottom: 6px; }
-.sidebar-left .setting-info { margin-top: 4px; font-size: 0.75em; }
+/* ══════════════════════════════════════════════════════════════════════
+   LEFT SIDEBAR — NASA aluminum console treatment (matches right panels)
+   ══════════════════════════════════════════════════════════════════════ */
+
+/* Panel metal: same anodized aluminum as right sidebars */
+.sidebar-left {
+    background: #50545C;
+    border-right: 2px solid #30343A;
+    color: #1E2228;
+}
+
+/* Section panels on aluminum */
+.sidebar-left .sidebar-panel {
+    padding: 5px 8px;
+    background: #4C5058;
+    border-top: 1px solid #5A5E66;
+    border-bottom: 1px solid #40444C;
+}
+.sidebar-left .sidebar-panel:first-child { border-top: none; }
+.sidebar-left .sidebar-panel:last-child  { border-bottom: none; }
+
+/* Section label plates — bright engraved text on aluminum */
+.sidebar-left .sidebar-panel h3 {
+    margin-bottom: 5px;
+    font-size: 0.63em;
+    color: #D8DCE2;
+    letter-spacing: 2.2px;
+    border-bottom: 1px solid #40444C;
+    padding-bottom: 4px;
+    font-family: 'SF Mono', 'Menlo', 'Consolas', monospace;
+}
+.sidebar-left .sidebar-panel h3::before { display: none; }
+
+/* ══════════════════════════════════════════════════════════════════════
+   PANEL CORNER SCREWS — decorative Phillips-head fasteners
+   12 total: 4 per panel × 3 left-sidebar panels
+   ══════════════════════════════════════════════════════════════════════ */
+.screw {
+    position: absolute;
+    width: 9px;
+    height: 9px;
+    border-radius: 50%;
+    /* Metallic head: off-centre highlight for depth */
+    background:
+        /* Horizontal slot */
+        linear-gradient(rgba(6,8,12,0.78), rgba(6,8,12,0.78))
+            center / 58% 1.5px no-repeat,
+        /* Vertical slot */
+        linear-gradient(rgba(6,8,12,0.78), rgba(6,8,12,0.78))
+            center / 1.5px 58% no-repeat,
+        /* Metallic sphere */
+        radial-gradient(circle at 36% 30%, #BEC6CE 0%, #7A8490 40%, #42484F 75%, #2A2E34 100%);
+    box-shadow:
+        0 1px 2px rgba(0,0,0,0.55),
+        inset 0 0.5px 1px rgba(255,255,255,0.12);
+    pointer-events: none;
+    z-index: 2;
+}
+.screw-tl { top:  5px; left:  5px; }
+.screw-tr { top:  5px; right: 5px; }
+.screw-bl { bottom: 5px; left:  5px; }
+.screw-br { bottom: 5px; right: 5px; }
+
+/* Panels with screws need a little extra horizontal padding so content clears the heads */
+.sidebar-left .sidebar-panel,
+.sidebar-right .sidebar-panel,
+.sidebar-alp .sidebar-panel {
+    padding-left: 18px;
+    padding-right: 18px;
+}
+
+/* Two-screw horizontal divider (between radar and detection tester) */
+.screw-divider {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 3px 5px;
+    margin: 0 0 2px;
+}
+/* Divider screws sit in normal flow so flexbox can space them */
+.screw-divider .screw {
+    position: static;
+}
+
+/* Screw heads flanking the Live Detection h3 label */
+.screw-h3-l,
+.screw-h3-r {
+    position: static;
+    flex-shrink: 0;
+}
+#detectPanel > h3 {
+    justify-content: space-between;
+}
+
+/* Compact auto-capture section */
+.sidebar-left .setting-item  { margin-bottom: 4px; }
+.sidebar-left .setting-info  {
+    margin-top: 3px;
+    font-size: 0.69em;
+    color: #3A4048;
+    line-height: 1.3;
+}
+.sidebar-left .toggle-text   { color: #2A2E34; font-size: 0.82em; }
+
+/* Compact transit list — less height, more density */
+.sidebar-left .transit-list  { max-height: 160px; }
+
+/* ── Detect panel: zero side-padding so radar fills full width ──
+   Items above/below radar use their own internal padding instead. */
+#detectPanel {
+    padding-left: 0 !important;
+    padding-right: 0 !important;
+    padding-top: 5px;
+}
+#detectPanel > h3 {
+    padding-left: 8px;
+    padding-right: 8px;
+}
+
+/* Radar card: edge-to-edge, dark CRT screen inset in aluminum */
+#transitRadarCard {
+    margin: 0 0 4px 0 !important;
+    padding: 5px 6px 4px !important;
+    border-radius: 0 !important;
+    border-left: none !important;
+    border-right: none !important;
+    background: #060d15 !important;
+    border-top: 1px solid rgba(0,255,80,0.12) !important;
+    border-bottom: 1px solid rgba(0,255,80,0.12) !important;
+}
+
+/* Items beneath the radar get their horizontal padding back */
+#detectControls,
+#detectPanel > #detectStats,
+#detectPanel > #tuningBody,
+#detectPanel > .harness-card,
+#detectPanel > .detect-event-log,
+#detectPanel > button {
+    margin-left: 8px;
+    margin-right: 8px;
+}
+
+/* Status indicator + stop button + tune button — single compact row */
+.detect-controls-row {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    margin-bottom: 4px;
+}
+.detect-controls-row .detect-indicator {
+    flex: 1;
+    margin: 0;
+    min-width: 0;
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+}
+
+/* Compact detect indicator */
+.detect-indicator { margin-bottom: 4px; font-size: 0.8em; padding: 3px 6px; }
+
+/* Harness card: compact dark inset */
+.harness-card {
+    margin: 4px 0 5px;
+    padding: 5px 7px;
+    border: 1px solid #383C44;
+    border-radius: 3px;
+    background: rgba(0,0,0,0.22);
+}
+.harness-card-title {
+    font-size: 0.68em;
+    font-weight: 700;
+    color: #D8DCE2;
+    letter-spacing: 1.5px;
+    text-transform: uppercase;
+    font-family: 'SF Mono', 'Menlo', 'Consolas', monospace;
+    margin-bottom: 4px;
+}
+.harness-mode-label { color: #2A2E34; font-size: 0.74em; }
+.harness-note       { color: #3A4048; font-size: 0.85em; }
+
+/* Event log: shorter */
+.detect-event-log {
+    max-height: 80px;
+    margin-bottom: 4px;
+}
+
+/* Transition panel subtitle */
+.panel-subtitle { color: #9AA0A8; }
+
+/* Transit alert cards on aluminum: dark cards so they pop */
+.sidebar-left .transit-alert {
+    background: rgba(0,0,0,0.28);
+    border-left-width: 3px;
+}
+.sidebar-left .empty-state { color: #5A6068; }
+
+/* Detect stats text */
+.detect-stats { color: #3A4048; }
 
 /* ── Detection Test Harness card ─────────────────────────────── */
 .harness-card {
@@ -1494,22 +1993,33 @@ canvas.video-thumb-canvas {
     line-height: 1.3;
 }
 
-/* ── Eclipse simulator controls ──────────────────────────────────── */
+/* ── Eclipse simulation button — purple keycap, inherits press mechanics ── */
 .btn-eclipse {
-    background: linear-gradient(135deg, #1a1a4e 0%, #2d1b6e 100%);
-    color: #c8a8ff;
-    border: 1px solid #5a3a9e;
+    background: #1C1840;
+    color: #B8A0E8;
+    border-top:    1px solid #2E2860;
+    border-left:   1px solid #2E2860;
+    border-right:  1px solid #0E0C20;
+    border-bottom: 2px solid #080610;
 }
-.btn-eclipse:hover { background: linear-gradient(135deg, #2a2a6e 0%, #3d2b8e 100%); }
-.btn-eclipse.active {
-    background: linear-gradient(135deg, #4a2a8e 0%, #7a3a9e 100%);
-    color: #fff;
-    border-color: #9a6aee;
-    animation: eclipseBtnPulse 2s ease-in-out infinite;
+
+.btn-eclipse:hover:not(:disabled):not(.is-active) {
+    background: #242060;
+    color: #CCB8F8;
 }
-@keyframes eclipseBtnPulse {
-    0%,100% { box-shadow: 0 0 0 0 rgba(154,106,238,0); }
-    50%      { box-shadow: 0 0 0 5px rgba(154,106,238,0.4); }
+
+/* When active (.is-active), the generic .btn.is-active locked-down styles
+   apply; we only need to ensure the label colour stays purple-tinted */
+.btn-eclipse.is-active {
+    color: #D0C0FF;
+    text-shadow: 0 0 6px rgba(160,120,255,0.5);
+    background: #0E0C24;
+    border-top:    1px solid #1A1838;
+    border-left:   1px solid #1A1838;
+    border-right:  1px solid #201E30;
+    border-bottom: 1px solid #201E30;
+    box-shadow: inset 0 2px 4px rgba(0,0,0,0.7),
+                0 0 0 1px rgba(140,100,220,0.2);
 }
 
 #simEclipseControls {
@@ -1537,14 +2047,21 @@ canvas.video-thumb-canvas {
     gap: 4px;
     white-space: nowrap;
 }
+/* Transit fire — green keycap variant */
 .btn-transit-fire {
-    background: #2a3a1a;
-    color: #8edd6a;
-    border: 1px solid #4a7a2a;
+    background: #1A2E10;
+    color: #80CC60;
+    border-top:    1px solid #285018;
+    border-left:   1px solid #285018;
+    border-right:  1px solid #0C1808;
+    border-bottom: 2px solid #080E04;
     font-size: 0.78em;
     padding: 3px 8px;
 }
-.btn-transit-fire:hover { background: #3a5a2a; }
+.btn-transit-fire:hover:not(:disabled) {
+    background: #22401A;
+    color: #96E070;
+}
 
 /* ============================================================================
    REAL-TIME TRANSIT DETECTION
@@ -1714,69 +2231,17 @@ canvas.video-thumb-canvas {
     flex-wrap: wrap;
     gap: 4px;
     padding: 6px 10px;
-    background: #0d1117;
-    border-bottom: 1px solid #2a2a2a;
+    background: #1C1E22;        /* dark readout bar on aluminum panel */
+    border-bottom: 1px solid #40444C;
+    border-top: 1px solid #40444C;
     font-size: 0.76em;
+    color: #8a9ba8;
 }
 
-.telemetry-panel {
-    background: #0d1117;
-    border-bottom: 1px solid #2a2a2a;
-    padding: 4px 10px 6px;
-    font-size: 0.76em;
-}
-
-.telemetry-section {
-    margin-bottom: 2px;
-}
-
-.telemetry-section h4 {
-    margin: 4px 0 2px;
-    color: #4a7a7a;
-    font-size: 0.8em;
-    font-weight: 600;
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
-    border-bottom: 1px solid #1a2a2a;
-    padding-bottom: 1px;
-}
-
-.telemetry-grid {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 1px 12px;
-}
-
-.telm-item {
-    display: flex;
-    gap: 4px;
-    align-items: center;
-}
-
-.telm-label {
-    color: #8899aa;
-    font-size: 0.88em;
-    text-transform: uppercase;
-    letter-spacing: 0.03em;
-}
-
-.telm-val {
-    color: #9cd9ff;
-    font-family: 'SF Mono', 'Menlo', monospace;
-}
-
-.telm-warn {
-    color: #ff4444;
-    font-weight: 700;
-}
-
-.telm-batt-green { color: #4ade80; }
-.telm-batt-yellow { color: #facc15; }
-.telm-batt-red { color: #f87171; }
 
 .radio-label {
-    font-size: 0.85em;
-    color: #ccc;
+    font-size: 0.82em;
+    color: #99a0a8;
     cursor: pointer;
     display: flex;
     align-items: center;
@@ -1784,27 +2249,383 @@ canvas.video-thumb-canvas {
 }
 
 .radio-label input[type="radio"] {
-    accent-color: #4da6ff;
+    accent-color: #039c9c;
 }
 
 /* Named-location select */
 #savedLocations {
-    background: #1a1a1a;
-    color: #ddd;
-    border: 1px solid #3a3a3a;
-    border-radius: 4px;
-    padding: 3px 6px;
+    background: #08080c;
+    color: #c0c4c8;
+    border: 1px solid #222228;
+    border-radius: 3px;
+    padding: 4px 6px;
     font-size: 0.82em;
 }
 
 #savedLocations option {
-    background: #1a1a1a;
+    background: #111114;
 }
 
 /* Camera settings slider */
 .setting-slider {
     flex: 1;
-    accent-color: #4da6ff;
+    accent-color: #039c9c;
     height: 4px;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   ALPACA Telemetry Panel — instrument readout aesthetic
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+.alpaca-telemetry {
+    /* Dark instrument module embedded in the aluminum console face */
+    background:
+        linear-gradient(180deg, rgba(3,156,156,0.05) 0%, transparent 40%),
+        #0c0e12;
+    border-bottom: 1px solid #40444C;
+    border-top: 2px solid rgba(3,156,156,0.3);
+    position: relative;
+    overflow: hidden;
+}
+
+/* subtle crosshair grid overlay */
+.alpaca-telemetry::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background:
+        repeating-linear-gradient(0deg,   transparent, transparent 23px, rgba(3,156,156,0.04) 23px, rgba(3,156,156,0.04) 24px),
+        repeating-linear-gradient(90deg,  transparent, transparent 23px, rgba(3,156,156,0.04) 23px, rgba(3,156,156,0.04) 24px);
+    pointer-events: none;
+    z-index: 0;
+}
+
+.alpaca-telemetry > * {
+    position: relative;
+    z-index: 1;
+}
+/* Corner screws must stay absolute, not be overridden by > * rule above */
+.alpaca-telemetry > .screw {
+    position: absolute;
+}
+
+/* ── Header ────────────────────────────────────────── */
+.alpaca-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 8px;
+}
+
+.alpaca-header h3 {
+    margin: 0;
+    font-size: 0.82em;
+    font-weight: 700;
+    letter-spacing: 2px;
+    color: #0cb8b8;
+    text-transform: uppercase;
+    border-bottom: none;
+    padding-bottom: 0;
+}
+
+.alpaca-header h3::before {
+    display: none;
+}
+
+.alpaca-status-badge {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    background: rgba(3,156,156,0.08);
+    border: 1px solid rgba(3,156,156,0.2);
+    border-radius: 3px;
+    padding: 2px 8px 2px 6px;
+    font-size: 0.62em;
+    font-weight: 700;
+    letter-spacing: 1.5px;
+    color: #0cb8b8;
+    text-transform: uppercase;
+}
+
+.alpaca-pulse {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: #039c9c;
+    box-shadow: 0 0 6px #039c9c;
+    animation: alpacaPulse 2s ease-in-out infinite;
+}
+
+@keyframes alpacaPulse {
+    0%, 100% { opacity: 1; box-shadow: 0 0 4px #039c9c; }
+    50%      { opacity: 0.4; box-shadow: 0 0 1px #039c9c; }
+}
+
+/* ── Coordinate Grid ──────────────────────────────── */
+.alpaca-coords {
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+    background: rgba(3,156,156,0.06);
+    border: 1px solid rgba(3,156,156,0.15);
+    border-radius: 3px;
+    overflow: hidden;
+    margin-bottom: 4px;
+}
+
+.alpaca-coord-row {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 1px;
+}
+
+.alpaca-coord-cell {
+    display: flex;
+    align-items: baseline;
+    gap: 4px;
+    padding: 3px 6px;
+    background: rgba(0,0,0,0.55);
+}
+
+.alpaca-coord-label {
+    font-size: 0.6em;
+    font-weight: 700;
+    letter-spacing: 1.5px;
+    color: #8a9ba8;
+    min-width: 22px;
+    text-transform: uppercase;
+}
+
+.alpaca-coord-value {
+    font-size: 0.92em;
+    font-weight: 600;
+    color: #b8e8ff;
+    font-variant-numeric: tabular-nums;
+    font-family: 'SF Mono', 'Menlo', 'Consolas', monospace;
+    text-shadow: 0 0 8px rgba(184,232,255,0.15);
+}
+
+.alpaca-coord-unit {
+    font-size: 0.6em;
+    color: #7a8a95;
+    font-weight: 500;
+}
+
+/* ── State Chips ──────────────────────────────────── */
+.alpaca-state-row {
+    display: flex;
+    gap: 4px;
+    margin-bottom: 6px;
+}
+
+.alpaca-state-chip {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 3px;
+    padding: 4px 0;
+    border-radius: 3px;
+    font-size: 0.62em;
+    font-weight: 700;
+    letter-spacing: 1px;
+    text-transform: uppercase;
+    color: #556068;
+    background: rgba(255,255,255,0.03);
+    border: 1px solid rgba(255,255,255,0.06);
+    transition: all 0.3s ease;
+}
+
+.alpaca-state-chip.active {
+    color: #039c9c;
+    background: rgba(3,156,156,0.08);
+    border-color: rgba(3,156,156,0.25);
+}
+
+.alpaca-state-chip.warn {
+    color: #e8a020;
+    background: rgba(232,160,32,0.08);
+    border-color: rgba(232,160,32,0.2);
+}
+
+.alpaca-state-chip.alert {
+    color: #cc4444;
+    background: rgba(204,68,68,0.08);
+    border-color: rgba(204,68,68,0.2);
+    animation: chipFlash 1s ease-in-out infinite;
+}
+
+@keyframes chipFlash {
+    0%, 100% { opacity: 1; }
+    50%      { opacity: 0.6; }
+}
+
+.alpaca-state-icon {
+    font-size: 0.9em;
+    line-height: 1;
+}
+
+/* ── Device Name ──────────────────────────────────── */
+.alpaca-device-name {
+    font-size: 0.6em;
+    color: #6a7a85;
+    letter-spacing: 0.5px;
+    text-align: center;
+    padding: 2px 0 0;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+/* ── ALPACA Buttons — inherit keycap system fully ──
+   .alpaca-btn-track receives .btn-mode + .is-active via JS for tracking state.
+   .alpaca-btn-abort already inherits .btn-danger styling. */
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   Right Sidebar Refinements — setting labels, camera, focus step buttons
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* ── Aluminum panel: override small label colors for legibility ────
+   Inline-styled labels use dark muted colors suited to a dark BG;
+   on the lighter aluminum panel they need to be lighter/darker. */
+.sidebar-right .capture-row-label,
+.sidebar-alp .capture-row-label {
+    color: #2A2E34;             /* dark label on aluminum = good contrast */
+}
+
+.sidebar-right .radio-label,
+.sidebar-alp .radio-label {
+    color: #2A2E34;
+}
+
+.setting-label {
+    font-size: 0.72em;
+    font-weight: 600;
+    color: #2A2E34;             /* dark on aluminum */
+    letter-spacing: 0.5px;
+    text-transform: uppercase;
+    margin-bottom: 4px;
+    display: block;
+}
+
+/* Camera / capture value readouts */
+.sidebar-right #gainVal,
+.sidebar-right #dewPowerVal,
+.sidebar-alp #gainVal,
+.sidebar-alp #dewPowerVal,
+.sidebar-alp #focusPos {
+    font-family: 'SF Mono', 'Menlo', 'Consolas', monospace;
+    font-variant-numeric: tabular-nums;
+}
+
+/* Focus step buttons — all five (◀, 10, 50, 100, ▶) same size */
+.focus-step-btn {
+    font-family: 'SF Mono', 'Menlo', 'Consolas', monospace;
+    font-variant-numeric: tabular-nums;
+    min-width: 38px;
+    width: 38px;
+    padding: 5px 0;
+    text-align: center;
+}
+.focus-step-group {
+    display: flex;
+    gap: 3px;
+    justify-content: center;
+    flex: none;
+}
+.focus-step-group .btn {
+    min-width: 38px;
+    width: 38px;
+    padding: 5px 0;
+}
+
+/* ── Focus odometer readout ──────────────────────────────── */
+.focus-odometer {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin: 4px 0 6px;
+    background: #080a0e;
+    border: 1px solid #1e2830;
+    border-radius: 3px;
+    padding: 4px 8px;
+    box-shadow: inset 0 1px 3px rgba(0,0,0,0.6);
+}
+.focus-odometer-label {
+    font-size: 0.58em;
+    font-weight: 700;
+    letter-spacing: 1.8px;
+    color: #5a7080;
+    font-family: 'SF Mono', 'Menlo', 'Consolas', monospace;
+    text-transform: uppercase;
+    flex-shrink: 0;
+}
+.focus-odometer-value {
+    font-family: 'SF Mono', 'Menlo', 'Consolas', monospace;
+    font-size: 1.05em;
+    font-weight: 700;
+    color: #00d4ff;
+    letter-spacing: 3px;
+    font-variant-numeric: tabular-nums;
+    text-shadow: 0 0 8px rgba(0,212,255,0.5);
+    flex: 1;
+    text-align: right;
+}
+
+/* Camera checkbox labels — dark on aluminum */
+.sidebar-alp .setting-item label,
+.sidebar-right .setting-item label {
+    color: #2A2E34;
+    font-size: 0.82em;
+}
+
+/* ── Aluminum panel: general small-text color overrides ─────────────
+   Many elements use inline style="color:#6a7a85" or similar muted-dark
+   colors appropriate for a dark background. On the aluminum panel these
+   need to read as dark-on-light instead. We scope broadly so we don't
+   miss individual inline styles. */
+.sidebar-right,
+.sidebar-alp {
+    color: #1E2228;             /* default text on aluminum = near-black */
+}
+
+/* Small inline label text (Smooth, sec, GoTo coords, etc.)
+   Exclude elements that manage their own color. */
+.sidebar-right span:not(.visibility-badge):not(.screw):not(.target-icon-text),
+.sidebar-alp span:not(.visibility-badge):not(.screw):not(.focus-odometer-value):not(.focus-odometer-label) {
+    color: inherit;
+}
+
+/* Locations status line */
+#locationsStatus {
+    color: #3A4048 !important;
+}
+
+/* sim-eclipse-check label */
+.sim-eclipse-check {
+    color: #2A2E34;
+}
+
+/* Scope panel pointing readout — monospace values */
+.sidebar-alp .sidebar-panel [style*="color:#9cd9ff"],
+.sidebar-alp .sidebar-panel [style*="color:#b8e8ff"] {
+    font-family: 'SF Mono', 'Menlo', 'Consolas', monospace;
+    font-variant-numeric: tabular-nums;
+}
+
+/* Eclipse simulation select */
+.sim-eclipse-select {
+    background: #08080c;
+    color: #c0c4c8;
+    border: 1px solid #222228;
+    border-radius: 3px;
+    padding: 4px 6px;
+    font-size: 0.82em;
+    width: 100%;
+}
+
+.sim-eclipse-check {
+    font-size: 0.8em;
+    color: #8a9ba8;
 }
 

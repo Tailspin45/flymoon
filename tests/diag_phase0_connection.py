@@ -25,6 +25,7 @@ sys.path.insert(0, PROJECT_ROOT)
 
 # Load .env before any src imports
 from dotenv import load_dotenv
+
 load_dotenv(os.path.join(PROJECT_ROOT, ".env"))
 
 # ── Logging at DEBUG level ───────────────────────────────────────────────────
@@ -44,6 +45,7 @@ log.info(f"Config: host={HOST}  port={PORT}  timeout={TIMEOUT}s")
 
 # ── Low-level helpers (no SeestarClient dependency for raw capture) ──────────
 msg_id = 0
+
 
 def next_id():
     global msg_id
@@ -115,7 +117,9 @@ def listen_events(sock, duration=30):
             try:
                 parsed = json.loads(line)
                 event_name = parsed.get("Event", "(no Event field)")
-                log.info(f"<<< EVENT #{count}  {event_name}: {json.dumps(parsed, indent=2)}")
+                log.info(
+                    f"<<< EVENT #{count}  {event_name}: {json.dumps(parsed, indent=2)}"
+                )
             except json.JSONDecodeError:
                 log.info(f"<<< RAW #{count}  {line[:300]}")
     log.info(f"--- Event listen done: {count} messages in {duration}s ---")
@@ -136,17 +140,24 @@ def main():
         lat = float(os.getenv("OBSERVER_LATITUDE", "0"))
         lon = float(os.getenv("OBSERVER_LONGITUDE", "0"))
         log.info(f"=== set_user_location (lat={lat}, lon={lon}) ===")
-        resp, _ = send_and_recv(sock, "set_user_location",
-                                params={"lat": lat, "lon": lon, "force": True})
+        resp, _ = send_and_recv(
+            sock, "set_user_location", params={"lat": lat, "lon": lon, "force": True}
+        )
         log.info(f"set_user_location result: {resp}")
 
         # 3. Init sequence — pi_set_time
         now = datetime.now(timezone.utc)
-        time_params = [{
-            "year": now.year, "mon": now.month, "day": now.day,
-            "hour": now.hour, "min": now.minute, "sec": now.second,
-            "time_zone": "UTC",
-        }]
+        time_params = [
+            {
+                "year": now.year,
+                "mon": now.month,
+                "day": now.day,
+                "hour": now.hour,
+                "min": now.minute,
+                "sec": now.second,
+                "time_zone": "UTC",
+            }
+        ]
         log.info(f"=== pi_set_time ({now.strftime('%Y-%m-%dT%H:%M:%SZ')}) ===")
         resp, _ = send_and_recv(sock, "pi_set_time", params=time_params)
         log.info(f"pi_set_time result: {resp}")

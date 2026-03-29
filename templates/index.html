@@ -48,13 +48,11 @@
                 <div id="sunInfo" style="text-align:center;"></div>
                 <div id="moonInfo" style="text-align:center;"></div>
             </div>        </div>
-        <div style="display: flex; gap: 8px;">
-            <button class="btn-sm" onclick="showPanel('telescope')" title="Control Telescope" style="position: relative;">
-                🔭 Telescope
+        <div style="display: flex; gap: 8px; align-items: center;">
+            <button class="btn-sm" onclick="showPanel('telescope')" title="Scope Control (Ctrl/Cmd+S)" style="position: relative;">
+                Scope
                 <span id="telescopeStatusLight" style="position: absolute; top: 2px; right: 2px; width: 8px; height: 8px; border-radius: 50%; background-color: #999;" title="Telescope disconnected"></span>
             </button>
-            <button class="btn-sm" onclick="toggleNearMissLog()" title="View history of all aircraft that came within the transit detection threshold of the Sun or Moon">📋 Near Misses</button>
-            <button class="btn-help" onclick="showInfo('near-misses')" title="Learn about the near-miss log">ℹ️</button>
         </div>
         <!-- Quadrant Min Altitude Control -->
         <div style="display:flex; align-items:center; gap:4px;">
@@ -141,7 +139,9 @@
         <p class="loading-text">Loading flight data...</p>
     </div>
 
-    <div id="transitCountdown" style="display: none; position: fixed; top: 0; left: 0; right: 0; z-index: 1000; text-align: center; font-size: 1.5em; font-weight: bold; font-variant-numeric: tabular-nums; padding: 12px 20px; border-radius: 0 0 8px 8px; box-shadow: 0 4px 16px rgba(0,0,0,0.5); pointer-events: none;"></div>
+    <div id="transitCountdown" style="display: none; position: fixed; top: 0; left: 0; right: 0; z-index: 1000; text-align: center; font-size: 1.5em; font-weight: bold; font-variant-numeric: tabular-nums; padding: 12px 48px 12px 20px; border-radius: 0 0 8px 8px; box-shadow: 0 4px 16px rgba(0,0,0,0.5); pointer-events: auto;">
+      <button onclick="window._dismissTransitBanner()" style="position:absolute;right:10px;top:50%;transform:translateY(-50%);background:rgba(0,0,0,0.25);border:none;color:#fff;font-size:1rem;line-height:1;padding:2px 8px;border-radius:4px;cursor:pointer;" title="Dismiss">×</button>
+    </div>
 
     <div id="mapContainer" style="display: none;">
         <div style="display: flex; align-items: flex-start; gap: 0;">
@@ -320,10 +320,12 @@
     <div class="header-row">
         <img src="{{ url_for('static', filename='images/logo.svg') }}" alt="Flymoon Transit Tracker" class="logo" />
         <div style="flex: 1; text-align: center;">
-            <div style="font-size: 1.2em;">🔭 Seestar Control</div>
+                <div style="font-size: 1.2em; letter-spacing: 1px; font-weight: 600; color: #9aa4aa;">Seestar Control</div>
+            </div>
+        <div style="display: flex; gap: 8px; align-items: center;">
+            <button id="telegramMuteBtn" class="btn-sm" onclick="toggleTelegramMute()" title="Mute/unmute Telegram alerts">Notif</button>
+            <button class="btn-sm" onclick="showPanel('map')" title="Back to Map (Ctrl/Cmd+M)">Map</button>
         </div>
-        <button id="telegramMuteBtn" class="btn-sm" onclick="toggleTelegramMute()" title="Mute/unmute Telegram alerts">🔔</button>
-        <button class="btn-sm" onclick="showPanel('map')">← Map</button>
     </div>
 
     <div class="telescope-container">
@@ -337,24 +339,25 @@
             <div class="sidebar sidebar-left">
                 <!-- Transit Auto-Capture Settings -->
                 <div class="sidebar-panel">
-                    <h3>🚨 Transit Auto-Capture</h3>
-                    <div class="setting-item">
-                        <label class="toggle-label">
-                            <input type="checkbox" id="autoCaptureToggle" checked>
-                            <span class="toggle-slider"></span>
-                            <span class="toggle-text">Auto-Record Transits</span>
-                        </label>
-                    </div>
-                    <div class="setting-info">
-                        Automatically stop any recording and capture transits when detected within 15 seconds.
+                    <span class="screw screw-tl"></span><span class="screw screw-tr"></span><span class="screw screw-bl"></span><span class="screw screw-br"></span>
+                    <h3>Auto-Capture</h3>
+                    <div style="display:flex;align-items:center;gap:6px;">
+                        <input type="checkbox" id="autoCaptureToggle" checked style="display:none;">
+                        <button id="autoCaptureBtn" class="btn btn-compact btn-mode btn-toggle is-active"
+                                onclick="var cb=document.getElementById('autoCaptureToggle');cb.checked=!cb.checked;this.classList.toggle('is-active',cb.checked);localStorage.setItem('autoCaptureTransits',cb.checked);cb.dispatchEvent(new Event('change'));">RECORDING</button>
+                        <span style="font-size:0.75em;color:#8A9298;font-family:'SF Mono','Menlo','Consolas',monospace;letter-spacing:0.05em;text-transform:uppercase;">Auto-Record Transits</span>
                     </div>
                 </div>
 
                 <!-- Transit Notifications -->
                 <div class="sidebar-panel" id="transitPanel">
+                    <span class="screw screw-tl"></span><span class="screw screw-tr"></span><span class="screw screw-bl"></span><span class="screw screw-br"></span>
                     <!-- Eclipse watch/warning/active card — shown when eclipse is imminent/active -->
                     <div id="eclipseCard" style="display:none"></div>
-                    <h3>✈️ Upcoming Transits <span class="panel-subtitle">(Prediction)</span></h3>
+                    <h3>Upcoming Transits <span class="panel-subtitle">(Prediction)</span></h3>
+                    <!-- Map-derived flight predictions (from injectMapTransits) -->
+                    <div id="upcomingTransitsList" style="font-size:0.78em;color:#80C888;margin-bottom:4px;min-height:0;"></div>
+                    <!-- Live telescope transit tracking -->
                     <div id="transitList" class="transit-list">
                         <p class="empty-state">No transits detected</p>
                     </div>
@@ -362,25 +365,31 @@
 
                 <!-- Real-time Transit Detection -->
                 <div class="sidebar-panel" id="detectPanel">
-                    <h3>🎯 Live Detection</h3>
-                    <div id="detectIndicator" class="detect-indicator detect-idle">
-                        <span>Idle</span>
+                    <span class="screw screw-tl"></span><span class="screw screw-tr"></span><span class="screw screw-bl"></span><span class="screw screw-br"></span>
+                    <h3><span class="screw screw-h3-l"></span>Live Detection<span class="screw screw-h3-r"></span></h3>
+                    <!-- Indicator + stop + tuning toggle all in one compact row -->
+                    <div id="detectControls" class="detect-controls-row">
+                        <div id="detectIndicator" class="detect-indicator detect-idle">
+                            <span>Idle</span>
+                        </div>
+                        <button id="detectToggleBtn" class="btn btn-danger btn-compact" onclick="toggleDetection()">Stop</button>
                     </div>
                     <div id="detectStats" class="detect-stats" style="display:none"></div>
-                    <button id="detectToggleBtn" class="btn btn-danger btn-compact" onclick="toggleDetection()">⏹ Stop Detection</button>
+
+                    <!-- Screw divider between radar/controls and detection tester -->
+                    <div class="screw-divider">
+                        <span class="screw"></span>
+                        <span class="screw"></span>
+                    </div>
 
                     <!-- Detection Test Harness -->
                     <div id="harnessPanel" class="harness-card">
-                        <div class="harness-card-title">🧪 Detection Tester</div>
+                        <div class="harness-card-title">Detection Tester</div>
                         <div class="harness-mode-row">
-                            <label for="harnessMode"
-                                   class="harness-mode-label"
-                                   title="Choose how strict the analyzer should be for tester runs">
-                                Mode
-                            </label>
-                            <select id="harnessMode"
-                                    class="harness-mode-select"
-                                    title="Default = production-like thresholds. Sensitive = lower speed/travel gates and no static filtering, better for slow birds/balloons."
+                            <label for="harnessMode" class="harness-mode-label"
+                                   title="Choose how strict the analyzer should be for tester runs">Mode</label>
+                            <select id="harnessMode" class="harness-mode-select"
+                                    title="Default = production-like thresholds. Sensitive = lower speed/travel gates, better for slow birds/balloons."
                                     aria-label="Detection tester mode: default or sensitive">
                                 <option value="default" selected>Default</option>
                                 <option value="sensitive">Sensitive</option>
@@ -388,26 +397,28 @@
                         </div>
                         <div class="harness-buttons">
                             <button class="btn btn-secondary btn-compact"
-                                    title="Inject a synthetic dark blob across a generated solar/lunar disc and check if the analyzer detects it"
-                                    aria-label="Inject a synthetic dark blob across a generated solar or lunar disc and check if the analyzer detects it"
-                                    onclick="runHarnessInject()">
-                                💉 Inject
-                            </button>
+                                    title="Inject a synthetic dark blob across a generated solar/lunar disc"
+                                    aria-label="Inject synthetic transit blob"
+                                    onclick="runHarnessInject()">Inject</button>
                             <button class="btn btn-secondary btn-compact"
-                                    title="Sweep blob size × speed combinations to map detection sensitivity boundaries (takes ~2 min)"
-                                    aria-label="Sweep blob size by speed combinations to map detection sensitivity boundaries"
-                                    onclick="runHarnessSweep()">
-                                📊 Sweep
-                            </button>
+                                    title="Sweep blob size x speed combinations (takes ~2 min)"
+                                    aria-label="Sweep sensitivity boundaries"
+                                    onclick="runHarnessSweep()">Sweep</button>
                             <button class="btn btn-secondary btn-compact"
-                                    title="Run the analyzer on all captured MP4s to check for missed transits"
-                                    aria-label="Run the analyzer on all captured MP4 files to check for missed transits"
-                                    onclick="runHarnessValidate()">
-                                ✅ Validate
-                            </button>
+                                    title="Run analyzer on all captured MP4s for missed transits"
+                                    aria-label="Validate captured files"
+                                    onclick="runHarnessValidate()">Validate</button>
                         </div>
                         <div id="harnessStatus" class="harness-status" style="display:none"></div>
                     </div>
+
+                    <!-- Detection event history -->
+                    <button class="btn btn-secondary btn-compact"
+                            style="width:100%;margin-top:3px;font-size:0.7em;padding:2px 6px;"
+                            onclick="toggleDetectionEventHistory()"
+                            title="View historical detection events with confidence scores and prediction match status">
+                        Event History (7 days)
+                    </button>
 
                     <div id="detectEventLog" class="detect-event-log">
                         <p class="empty-state">No detections yet</p>
@@ -464,40 +475,53 @@
 
                 <!-- Connection Panel -->
                 <div class="sidebar-panel sidebar-panel-compact">
-                    <h3>🔌 Connection</h3>
+                    <span class="screw screw-tl"></span><span class="screw screw-tr"></span><span class="screw screw-bl"></span><span class="screw screw-br"></span>
+                    <h3>Connection</h3>
                     <div class="status-indicator">
                         <span class="status-dot" id="statusDot"></span>
                         <span id="connectionStatus">Disconnected</span>
                     </div>
-                    <div class="button-grid-2x2">
-                        <button id="connectBtn" class="btn btn-primary" onclick="connect()">Connect</button>
-                        <button id="disconnectBtn" class="btn btn-secondary" onclick="disconnect()" disabled>Disconnect</button>
-                        <button id="findSeestarBtn" class="btn btn-info" onclick="findSeestar()" title="Scan network for Seestar (useful if IP changed)">🔍 Find</button>
-                        <button id="simulateBtn" class="btn btn-info" onclick="toggleSimulation()">Simulate</button>
-                        <button id="simEclipseBtn" class="btn btn-eclipse" onclick="toggleSimEclipse()" title="Simulate a full eclipse alert sequence (Watch → Warning → Active → Cleared)">🌑 Sim Eclipse</button>
+                    <!-- LINK cluster: momentary connection commands -->
+                    <div class="btn-cluster">
+                        <div class="btn-cluster-label">Link</div>
+                        <div class="button-grid-3col">
+                            <button id="connectBtn" class="btn btn-primary btn-compact" onclick="connect()">Connect</button>
+                            <button id="disconnectBtn" class="btn btn-secondary btn-compact" onclick="disconnect()" disabled>Discon</button>
+                            <button id="findSeestarBtn" class="btn btn-info btn-compact" onclick="findSeestar()" title="Scan network for Seestar (useful if IP changed)">Find</button>
+                        </div>
+                    </div>
+                    <!-- SIM cluster: toggle buttons (persist on/off state) -->
+                    <div class="btn-cluster">
+                        <div class="btn-cluster-label">Sim</div>
+                        <div class="button-grid-3col">
+                            <button id="simulateBtn" class="btn btn-secondary btn-compact btn-toggle" onclick="toggleSimulation()" title="Toggle flight simulation mode">Sim</button>
+                            <button id="simEclipseBtn" class="btn btn-eclipse btn-compact btn-toggle" onclick="toggleSimEclipse()" title="Simulate a full eclipse alert sequence (Watch → Warning → Active → Cleared)">Eclipse</button>
+                            <button id="telegramMuteBtn2" class="btn btn-secondary btn-compact btn-toggle" onclick="toggleTelegramMute()" title="Mute/unmute Telegram alerts">Notif</button>
+                        </div>
                     </div>
                     <!-- Eclipse sim controls — shown only while sim eclipse is running -->
-                    <div id="simEclipseControls" style="display:none; margin-top:8px">
+                    <div id="simEclipseControls" style="display:none; margin-top:6px">
                         <select id="simEclipseType" class="sim-eclipse-select">
-                            <option value="lunar_total">🌙 Total Lunar</option>
-                            <option value="lunar_partial">🌙 Partial Lunar</option>
-                            <option value="solar_partial">☀️ Partial Solar</option>
-                            <option value="solar_total">☀️ Total Solar</option>
-                            <option value="solar_annular">☀️ Annular Solar</option>
+                            <option value="lunar_total">Total Lunar</option>
+                            <option value="lunar_partial">Partial Lunar</option>
+                            <option value="solar_partial">Partial Solar</option>
+                            <option value="solar_total">Total Solar</option>
+                            <option value="solar_annular">Annular Solar</option>
                         </select>
                         <label class="sim-eclipse-check">
                             <input type="checkbox" id="simEclipseOutlook" onchange="toggleSimEclipseOutlook(this.checked)">
                             Show Outlook Banner
                         </label>
-                        <button id="simFireTransitBtn" class="btn btn-sm btn-transit-fire" onclick="fireSimTransitDuringEclipse()" style="display:none" title="Inject an aircraft transit during the eclipse to demo recording extension + ✈️ marker">✈️ Fire Transit</button>
+                        <button id="simFireTransitBtn" class="btn btn-sm btn-transit-fire" onclick="fireSimTransitDuringEclipse()" style="display:none" title="Inject an aircraft transit during the eclipse">Fire Transit</button>
                     </div>
                 </div>
 
                 <!-- Target Selection Panel -->
                 <div class="sidebar-panel">
-                    <h3>🎯 Target</h3>
+                    <span class="screw screw-tl"></span><span class="screw screw-tr"></span><span class="screw screw-bl"></span><span class="screw screw-br"></span>
+                    <h3>Target</h3>
                     <div class="target-compact target-button" id="sunStatus" onclick="switchToSun()">
-                        <span class="target-icon">☀️</span>
+                        <span class="target-icon-text">SUN</span>
                         <div class="target-info">
                             <div class="target-name">Sun</div>
                             <div class="target-coords" id="sunCoords">--</div>
@@ -505,7 +529,7 @@
                         <span class="visibility-badge" id="sunBadge">--</span>
                     </div>
                     <div class="target-compact target-button" id="moonStatus" onclick="switchToMoon()">
-                        <span class="target-icon">🌙</span>
+                        <span class="target-icon-text">MNS</span>
                         <div class="target-info">
                             <div class="target-name">Moon</div>
                             <div class="target-coords" id="moonCoords">--</div>
@@ -517,287 +541,258 @@
 
                 <!-- Capture Controls Panel -->
                 <div class="sidebar-panel">
-                    <h3>📸 Capture</h3>
+                    <span class="screw screw-tl"></span><span class="screw screw-tr"></span><span class="screw screw-bl"></span><span class="screw screw-br"></span>
+                    <h3>Capture</h3>
 
-                    <!-- Photo Capture -->
-                    <div class="capture-compact">
-                        <div class="capture-header-compact">
-                            <span>📷 Photo</span>
+                    <!-- PHOTO / VIDEO cluster: Snap + Rec side by side -->
+                    <div class="btn-cluster">
+                        <div class="btn-cluster-label">Photo / Video</div>
+                        <!-- Button row: Snap | Rec | Stop -->
+                        <div class="button-grid-3col" style="margin-bottom:3px;">
+                            <button id="capturePhotoBtn" class="btn btn-primary btn-compact" onclick="capturePhoto()" disabled>Snap</button>
+                            <button id="startRecordingBtn" class="btn btn-primary btn-compact" onclick="startRecording()" disabled>Rec</button>
+                            <button id="stopRecordingBtn" class="btn btn-danger btn-compact" onclick="stopRecording()" disabled style="display:none;">Stop</button>
                         </div>
-                        <div class="button-group">
-                            <button id="capturePhotoBtn" class="btn btn-primary btn-compact" onclick="capturePhoto()" disabled>📷 Capture</button>
+                        <!-- Inputs row: spacer under Snap | duration | interval -->
+                        <div style="display:grid; grid-template-columns:1fr 1fr 1fr; gap:2px;">
+                            <span></span>
+                            <input type="number" id="videoDuration" value="10" min="1" max="3600" step="1" class="input-mini" style="width:100%;" placeholder="sec" title="Duration (seconds)">
+                            <input type="number" id="frameInterval" value="0" min="0" max="60" step="0.1" class="input-mini" style="width:100%;" placeholder="int" title="Interval: 0=video >0=timelapse">
                         </div>
                     </div>
-
-                    <!-- Video Recording -->
-                    <div class="capture-compact">
-                        <div class="capture-header-compact">
-                            <span>📹 Video</span>
-                        </div>
-                        <div class="input-row">
-                            <input type="number" id="videoDuration" value="10" min="1" max="3600" step="1" class="input-compact" placeholder="Duration (s)">
-                            <input type="number" id="frameInterval" value="0" min="0" max="60" step="0.1" class="input-compact" placeholder="Interval" title="0 = normal, >0 = timelapse">
-                        </div>
-                        <div class="input-row input-labels-row">
-                            <span class="input-label">Seconds</span>
-                            <span class="input-label">Interval (sec)</span>
-                        </div>
-                        <div class="recording-status-compact" id="recordingStatus">
-                            <span class="status-dot" id="recordingDot"></span>
-                            <span id="recordingText">Ready</span>
-                            <span id="recordingTimer"></span>
-                        </div>
-                        <div class="button-group">
-                            <button id="startRecordingBtn" class="btn btn-primary btn-compact" onclick="startRecording()" disabled>⏺️ Record</button>
-                            <button id="stopRecordingBtn" class="btn btn-danger btn-compact" onclick="stopRecording()" disabled style="display: none;">⏹️ Stop</button>
-                        </div>
+                    <div class="recording-status-compact" id="recordingStatus" style="margin:3px 0 4px;">
+                        <span class="status-dot" id="recordingDot"></span>
+                        <span id="recordingText">Ready</span>
+                        <span id="recordingTimer"></span>
                     </div>
 
-                    <!-- Solar Timelapse -->
-                    <div class="capture-compact">
-                        <div class="capture-header-compact">
-                            <span>🌅 Solar Timelapse</span>
+                    <!-- TIMELAPSE cluster -->
+                    <div class="btn-cluster">
+                        <div class="btn-cluster-label">Timelapse</div>
+                        <!-- Button row: Start | Stop | View -->
+                        <div class="button-grid-3col" style="margin-bottom:3px;">
+                            <button id="startTimelapseBtn" class="btn btn-primary btn-compact" onclick="startTimelapse()" disabled>Start</button>
+                            <button id="stopTimelapseBtn" class="btn btn-danger btn-compact" onclick="stopTimelapse()" disabled style="display:none;">Stop</button>
+                            <button id="previewTimelapseBtn" class="btn btn-secondary btn-compact" onclick="previewTimelapse()" disabled style="display:none;">View</button>
                         </div>
-                        <div class="input-row">
-                            <input type="number" id="timelapseInterval" value="120" min="10" max="600" step="10" class="input-compact" title="Seconds between frames">
-                            <span class="input-label" style="align-self:center;">sec interval</span>
-                        </div>
-                        <div style="margin-top:6px;">
-                            <div style="display:flex; justify-content:space-between; align-items:center; font-size:0.82em; color:#aaa;">
-                                <span style="display:flex; align-items:center; gap:4px;">Stabilize Smoothing
-                                    <span class="tun-tip-anchor" tabindex="0">ⓘ<span class="tun-tip-box">Controls how quickly the stabilizer reacts to disk movement. Low (0.1) = snappy, follows every shift. High (0.9) = smooth, damps out jitter. Default 0.5.</span></span>
-                                </span>
-                                <span id="timelapseSmoothingVal">0.50</span>
-                            </div>
+                        <!-- Interval + Smoothing row -->
+                        <div style="display:flex; align-items:center; gap:4px;">
+                            <input type="number" id="timelapseInterval" value="120" min="10" max="600" step="10" class="input-mini" title="Seconds between frames" style="width:44px;">
+                            <span style="font-size:0.62em; color:#6a7a85; white-space:nowrap;">sec</span>
                             <input type="range" id="timelapseSmoothing" min="0.0" max="0.95" step="0.05" value="0.50"
-                                   style="width:100%; accent-color:#4dff88; margin-top:3px;">
+                                   style="flex:1; accent-color:#039c9c; height:3px;">
+                            <span id="timelapseSmoothingVal" style="font-size:0.68em; color:#8a9ba8; min-width:26px; text-align:right; font-family:'SF Mono',monospace;">0.50</span>
                         </div>
-                        <div class="recording-status-compact" id="timelapseStatus">
-                            <span class="status-dot" id="timelapseDot"></span>
-                            <span id="timelapseText">Idle</span>
-                            <span id="timelapseInfo" style="font-size:0.75em; opacity:0.7;"></span>
-                        </div>
-                        <div id="timelapseThumb" style="display:none; margin:4px 0; text-align:center;">
-                            <img id="timelapseLatestFrame" src="" alt="Latest frame"
-                                 style="max-width:100%; max-height:80px; border-radius:4px; cursor:pointer; border:1px solid #444;"
-                                 onclick="window.open(this.src)" title="Click to view full size">
-                        </div>
-                        <div class="button-group">
-                            <button id="startTimelapseBtn" class="btn btn-primary btn-compact" onclick="startTimelapse()" disabled>▶️ Start</button>
-                            <button id="stopTimelapseBtn" class="btn btn-danger btn-compact" onclick="stopTimelapse()" disabled style="display:none;">⏹️ Stop</button>
-                            <button id="previewTimelapseBtn" class="btn btn-compact" onclick="previewTimelapse()" disabled style="display:none;">👁️ Preview</button>
-                        </div>
+                    </div>
+                    <div class="recording-status-compact" id="timelapseStatus" style="margin:3px 0;">
+                        <span class="status-dot" id="timelapseDot"></span>
+                        <span id="timelapseText">Idle</span>
+                        <span id="timelapseInfo" style="font-size:0.7em; opacity:0.7;"></span>
+                    </div>
+                    <div id="timelapseThumb" style="display:none; margin:2px 0; text-align:center;">
+                        <img id="timelapseLatestFrame" src="" alt="Latest frame"
+                             style="max-width:100%; max-height:60px; border-radius:3px; cursor:pointer; border:1px solid #333;"
+                             onclick="openTimelapseFrame(this.src)" title="Click to view full size">
                     </div>
                 </div>
 
+                <!-- Spacer panel — fills remaining column height -->
+                <div class="sidebar-panel sidebar-panel-spacer" style="flex:1;">
+                    <span class="screw screw-tl"></span><span class="screw screw-tr"></span><span class="screw screw-bl"></span><span class="screw screw-br"></span>
+                </div>
 
             </div>
 
             <!-- Fourth Column: Control Panel -->
             <div class="sidebar sidebar-alp">
 
-                <!-- Live Telemetry Panel -->
-                <div id="telemetryStrip" class="telemetry-panel" style="display:none;">
-                    <div class="telemetry-section">
-                        <h4>Pointing</h4>
-                        <div class="telemetry-grid">
-                            <span class="telm-item"><span class="telm-label">RA</span> <span id="telmRA" class="telm-val">—</span></span>
-                            <span class="telm-item"><span class="telm-label">Dec</span> <span id="telmDec" class="telm-val">—</span></span>
-                            <span class="telm-item"><span class="telm-label">Alt</span> <span id="telmAlt" class="telm-val">—</span></span>
-                            <span class="telm-item"><span class="telm-label">Az</span> <span id="telmAz" class="telm-val">—</span></span>
-                        </div>
-                    </div>
-                    <div class="telemetry-section">
-                        <h4>View</h4>
-                        <div class="telemetry-grid">
-                            <span class="telm-item"><span class="telm-label">Mode</span> <span id="telmViewMode" class="telm-val">—</span></span>
-                            <span class="telm-item"><span class="telm-label">Target</span> <span id="telmViewTarget" class="telm-val">—</span></span>
-                            <span class="telm-item"><span class="telm-label">Stage</span> <span id="telmViewStage" class="telm-val">—</span></span>
-                            <span class="telm-item"><span class="telm-label">RTSP</span> <span id="telmRtsp" class="telm-val">—</span></span>
-                            <span class="telm-item"><span class="telm-label">LP Filter</span> <span id="telmLpFilter" class="telm-val">—</span></span>
-                            <span class="telm-item"><span class="telm-label">AutoFocus</span> <span id="telmAutofocus" class="telm-val">—</span></span>
-                            <span class="telm-item"><span class="telm-label">Exposure</span> <span id="telmManualExp" class="telm-val">—</span></span>
-                        </div>
-                    </div>
-                    <div class="telemetry-section">
-                        <h4>System</h4>
-                        <div class="telemetry-grid">
-                            <span class="telm-item"><span class="telm-label">Battery</span> <span id="telmBatt" class="telm-val">—</span></span>
-                            <span class="telm-item"><span class="telm-label">Charger</span> <span id="telmCharger" class="telm-val">—</span></span>
-                            <span class="telm-item"><span class="telm-label">CPU</span> <span id="telmCpuTemp" class="telm-val">—</span></span>
-                            <span class="telm-item"><span class="telm-label">Batt Temp</span> <span id="telmBattTemp" class="telm-val">—</span></span>
-                            <span class="telm-item" id="telmOvertempRow" style="display:none;"><span class="telm-label">OVERTEMP</span> <span id="telmOvertemp" class="telm-val telm-warn">YES</span></span>
-                        </div>
-                    </div>
-                    <div class="telemetry-section">
-                        <h4>Focuser</h4>
-                        <div class="telemetry-grid">
-                            <span class="telm-item"><span class="telm-label">Position</span> <span id="telmFocuserStep" class="telm-val">—</span></span>
-                            <span class="telm-item"><span class="telm-label">State</span> <span id="telmFocuserState" class="telm-val">—</span></span>
-                            <span class="telm-item"><span class="telm-label">Max</span> <span id="telmFocuserMax" class="telm-val">—</span></span>
-                        </div>
-                    </div>
-                    <div class="telemetry-section">
-                        <h4>Mount</h4>
-                        <div class="telemetry-grid">
-                            <span class="telm-item"><span class="telm-label">Tracking</span> <span id="telmTracking" class="telm-val">—</span></span>
-                            <span class="telm-item"><span class="telm-label">Arm</span> <span id="telmArm" class="telm-val">—</span></span>
-                            <span class="telm-item"><span class="telm-label">Move</span> <span id="telmMoveType" class="telm-val">—</span></span>
-                            <span class="telm-item"><span class="telm-label">Compass</span> <span id="telmCompass" class="telm-val">—</span></span>
-                            <span class="telm-item"><span class="telm-label">Tilt</span> <span id="telmTilt" class="telm-val">—</span></span>
-                        </div>
-                    </div>
-                    <div class="telemetry-section">
-                        <h4>Storage / WiFi</h4>
-                        <div class="telemetry-grid">
-                            <span class="telm-item"><span class="telm-label">Free</span> <span id="telmStorageFree" class="telm-val">—</span></span>
-                            <span class="telm-item"><span class="telm-label">Used</span> <span id="telmStorageUsed" class="telm-val">—</span></span>
-                            <span class="telm-item"><span class="telm-label">WiFi</span> <span id="telmWifiSsid" class="telm-val">—</span></span>
-                            <span class="telm-item"><span class="telm-label">Signal</span> <span id="telmWifiSignal" class="telm-val">—</span></span>
-                        </div>
-                    </div>
-                    <div class="telemetry-section">
-                        <h4>Device</h4>
-                        <div class="telemetry-grid">
-                            <span class="telm-item"><span class="telm-label">Firmware</span> <span id="telmFirmware" class="telm-val">—</span></span>
-                            <span class="telm-item"><span class="telm-label">Heater</span> <span id="telmHeater" class="telm-val">—</span></span>
-                        </div>
-                    </div>
-                </div>
-
-                <!-- Telescope Controls -->
+                <!-- Telescope Commands — two clusters: CTRL and MODE -->
                 <div class="sidebar-panel">
+                    <span class="screw screw-tl"></span><span class="screw screw-tr"></span><span class="screw screw-bl"></span><span class="screw screw-br"></span>
                     <h3>Telescope</h3>
-                    <div class="button-group" style="margin-bottom:6px;">
-                        <button class="btn btn-warning btn-compact" onclick="telescopeStopView()">⏹ Stop</button>
-                        <button class="btn btn-secondary btn-compact" onclick="telescopePark()">Park</button>
-                        <button class="btn btn-secondary btn-compact" onclick="telescopeOpenArm()">Open Arm</button>
-                        <button class="btn btn-secondary btn-compact" onclick="telescopeAutofocus()">Autofocus</button>
+                    <!-- CTRL cluster: momentary commands -->
+                    <div class="btn-cluster">
+                        <div class="btn-cluster-label">Ctrl</div>
+                        <div class="button-grid-4col">
+                            <button class="btn btn-warning btn-compact" onclick="telescopeStopView()">Stop</button>
+                            <button class="btn btn-secondary btn-compact" onclick="telescopePark()">Park</button>
+                            <button class="btn btn-secondary btn-compact" onclick="telescopeOpenArm()">Arm</button>
+                            <button class="btn btn-secondary btn-compact" onclick="telescopeAutofocus()">AF</button>
+                        </div>
                     </div>
-                    <div class="button-group">
-                        <button class="btn btn-primary btn-compact" onclick="switchToSun()">☀️ Solar</button>
-                        <button class="btn btn-primary btn-compact" onclick="switchToMoon()">🌙 Lunar</button>
-                        <button class="btn btn-primary btn-compact" onclick="switchToScenery()">Scenery</button>
-                        <button class="btn btn-danger btn-compact" onclick="telescopeShutdown()">Shutdown</button>
+                    <!-- MODE cluster: toggle selection (one active at a time via currentViewingMode) -->
+                    <div class="btn-cluster">
+                        <div class="btn-cluster-label">Mode</div>
+                        <div class="button-grid-4col">
+                            <button id="modeSolarBtn" class="btn btn-secondary btn-compact btn-mode" onclick="switchToSun()">Solar</button>
+                            <button id="modeLunarBtn" class="btn btn-secondary btn-compact btn-mode" onclick="switchToMoon()">Lunar</button>
+                            <button id="modeSceneBtn" class="btn btn-secondary btn-compact btn-mode" onclick="switchToScenery()">Scene</button>
+                            <button class="btn btn-danger btn-compact" onclick="telescopeShutdown()">Off</button>
+                        </div>
                     </div>
                 </div>
 
-                <!-- GoTo -->
-                <div class="sidebar-panel">
-                    <h3>GoTo</h3>
-                    <div class="input-row" style="margin-bottom:6px;">
-                        <label class="radio-label">
-                            <input type="radio" name="gotoMode" id="gotoModeAltaz" value="altaz" checked onchange="gotoModeChanged()"> Alt/Az
-                        </label>
-                        <label class="radio-label" style="margin-left:10px;">
-                            <input type="radio" name="gotoMode" id="gotoModeRadec" value="radec" onchange="gotoModeChanged()"> RA/Dec
-                        </label>
-                    </div>
-                    <div id="gotoAltazInputs">
-                        <div class="input-row">
-                            <input type="number" id="gotoAlt" class="input-compact" placeholder="Alt °" step="0.1" min="-90" max="90" style="flex:1;">
-                            <input type="number" id="gotoAz" class="input-compact" placeholder="Az °" step="0.1" min="0" max="360" style="flex:1;">
+                <!-- ALPACA Scope Telemetry -->
+                <div class="sidebar-panel alpaca-telemetry" id="alpacaTelemetryPanel">
+                    <span class="screw screw-tl"></span><span class="screw screw-tr"></span><span class="screw screw-bl"></span><span class="screw screw-br"></span>
+                    <div class="alpaca-header">
+                        <h3>SCOPE</h3>
+                        <div class="alpaca-status-badge" id="alpacaStatusBadge">
+                            <span class="alpaca-pulse" id="alpacaStatusDot"></span>
+                            <span class="alpaca-status-label" id="alpacaStatusLabel">LINK</span>
                         </div>
                     </div>
-                    <div id="gotoRadecInputs" style="display:none;">
-                        <div class="input-row">
-                            <input type="number" id="gotoRa" class="input-compact" placeholder="RA hrs" step="0.001" min="0" max="24" style="flex:1;">
-                            <input type="number" id="gotoDec" class="input-compact" placeholder="Dec °" step="0.1" min="-90" max="90" style="flex:1;">
+                    <div class="alpaca-coords">
+                        <div class="alpaca-coord-row">
+                            <div class="alpaca-coord-cell">
+                                <span class="alpaca-coord-label">RA</span>
+                                <span class="alpaca-coord-value" id="alpacaRA">—</span>
+                                <span class="alpaca-coord-unit">h</span>
+                            </div>
+                            <div class="alpaca-coord-cell">
+                                <span class="alpaca-coord-label">DEC</span>
+                                <span class="alpaca-coord-value" id="alpacaDec">—</span>
+                                <span class="alpaca-coord-unit">&deg;</span>
+                            </div>
+                        </div>
+                        <div class="alpaca-coord-row">
+                            <div class="alpaca-coord-cell">
+                                <span class="alpaca-coord-label">ALT</span>
+                                <span class="alpaca-coord-value" id="alpacaAlt">—</span>
+                                <span class="alpaca-coord-unit">&deg;</span>
+                            </div>
+                            <div class="alpaca-coord-cell">
+                                <span class="alpaca-coord-label">AZ</span>
+                                <span class="alpaca-coord-value" id="alpacaAz">—</span>
+                                <span class="alpaca-coord-unit">&deg;</span>
+                            </div>
                         </div>
                     </div>
-                    <button class="btn btn-primary btn-compact" style="width:100%; margin-top:6px;" onclick="gotoExecute()">Go ▶</button>
+                    <div class="alpaca-device-name" id="alpacaDeviceName"></div>
+                    <div class="button-grid-2x2" style="margin-top:4px;">
+                        <button class="btn btn-secondary btn-compact alpaca-btn-track btn-mode btn-toggle" onclick="alpacaToggleTracking()" id="alpacaTrackingBtn">Track</button>
+                        <button class="btn btn-compact btn-danger alpaca-btn-abort" onclick="alpacaAbortSlew()">Abort</button>
+                    </div>
                 </div>
 
-                <!-- Manual Slew (Joystick) -->
+                <!-- GoTo + Slew combined -->
                 <div class="sidebar-panel">
-                    <h3>Manual Slew</h3>
-                    <div style="display:grid; grid-template-columns:1fr 1fr 1fr; gap:4px; max-width:140px; margin:0 auto;">
-                        <div></div>
-                        <button class="btn btn-secondary btn-compact" onmousedown="nudgeStart(270)" onmouseup="nudgeStop()" onmouseleave="nudgeStop()" title="Up">▲</button>
-                        <div></div>
-                        <button class="btn btn-secondary btn-compact" onmousedown="nudgeStart(0)" onmouseup="nudgeStop()" onmouseleave="nudgeStop()" title="Left">◀</button>
-                        <button class="btn btn-danger btn-compact" onclick="nudgeStop()" title="Stop" style="font-size:0.7em;">■</button>
-                        <button class="btn btn-secondary btn-compact" onmousedown="nudgeStart(180)" onmouseup="nudgeStop()" onmouseleave="nudgeStop()" title="Right">▶</button>
-                        <div></div>
-                        <button class="btn btn-secondary btn-compact" onmousedown="nudgeStart(90)" onmouseup="nudgeStop()" onmouseleave="nudgeStop()" title="Down">▼</button>
-                        <div></div>
+                    <span class="screw screw-tl"></span><span class="screw screw-tr"></span><span class="screw screw-bl"></span><span class="screw screw-br"></span>
+                    <h3>GoTo / Slew</h3>
+                    <div style="display:flex; gap:8px; align-items:flex-start;">
+                        <!-- GoTo inputs — left side -->
+                        <div style="flex:1; min-width:0;">
+                            <div style="font-size:0.68em; color:#6a7a85; margin-bottom:3px; display:flex; gap:8px; font-family:'SF Mono',monospace;">
+                                <span>ALT <span id="scopeAlt" style="color:#b8e8ff; font-weight:600;">—</span>&deg;</span>
+                                <span>AZ <span id="scopeAz" style="color:#b8e8ff; font-weight:600;">—</span>&deg;</span>
+                            </div>
+                            <div class="input-row" style="margin-bottom:3px;">
+                                <label class="radio-label" style="font-size:0.72em;">
+                                    <input type="radio" name="gotoMode" id="gotoModeAltaz" value="altaz" checked onchange="gotoModeChanged()"> Alt/Az
+                                </label>
+                                <label class="radio-label" style="font-size:0.72em; margin-left:6px;">
+                                    <input type="radio" name="gotoMode" id="gotoModeRadec" value="radec" onchange="gotoModeChanged()"> RA/Dec
+                                </label>
+                            </div>
+                            <div id="gotoAltazInputs">
+                                <div class="input-row" style="margin-bottom:3px;">
+                                    <input type="number" id="gotoAlt" class="input-compact" placeholder="Alt°" step="0.1" min="-90" max="90" style="flex:1;">
+                                    <input type="number" id="gotoAz" class="input-compact" placeholder="Az°" step="0.1" min="0" max="360" style="flex:1;">
+                                </div>
+                            </div>
+                            <div id="gotoRadecInputs" style="display:none;">
+                                <div class="input-row" style="margin-bottom:3px;">
+                                    <input type="number" id="gotoRa" class="input-compact" placeholder="RA h" step="0.001" min="0" max="24" style="flex:1;">
+                                    <input type="number" id="gotoDec" class="input-compact" placeholder="Dec°" step="0.1" min="-90" max="90" style="flex:1;">
+                                </div>
+                            </div>
+                            <button class="btn btn-primary btn-compact" style="width:100%; letter-spacing:1px;" onclick="gotoExecute()">Execute GoTo</button>
+                        </div>
+                        <!-- D-pad — right side -->
+                        <div class="dpad-grid">
+                            <div></div>
+                            <button class="btn btn-secondary btn-dpad" onmousedown="nudgeStart(270)" onmouseup="nudgeStop()" onmouseleave="nudgeStop()" title="Up">▲</button>
+                            <div></div>
+                            <button class="btn btn-secondary btn-dpad" onmousedown="nudgeStart(0)" onmouseup="nudgeStop()" onmouseleave="nudgeStop()" title="Left">◀</button>
+                            <button class="btn btn-danger btn-dpad btn-dpad-stop" onclick="nudgeStop()" title="Stop">■</button>
+                            <button class="btn btn-secondary btn-dpad" onmousedown="nudgeStart(180)" onmouseup="nudgeStop()" onmouseleave="nudgeStop()" title="Right">▶</button>
+                            <div></div>
+                            <button class="btn btn-secondary btn-dpad" onmousedown="nudgeStart(90)" onmouseup="nudgeStop()" onmouseleave="nudgeStop()" title="Down">▼</button>
+                            <div></div>
+                        </div>
                     </div>
-                    <div style="display:flex; gap:6px; margin-top:6px; justify-content:center;">
-                        <label class="radio-label" style="font-size:0.8em;">
+                    <div style="display:flex; gap:6px; margin-top:3px; justify-content:flex-end;">
+                        <label class="radio-label" style="font-size:0.72em;">
                             <input type="radio" name="nudgeSpeed" value="slow" checked> Slow
                         </label>
-                        <label class="radio-label" style="font-size:0.8em;">
+                        <label class="radio-label" style="font-size:0.72em;">
                             <input type="radio" name="nudgeSpeed" value="fast"> Fast
                         </label>
                     </div>
                 </div>
 
-                <!-- Named Locations -->
+                <!-- Locations — compact -->
                 <div class="sidebar-panel">
-                    <h3>Saved Locations</h3>
-                    <div class="input-row" style="gap:4px;">
-                        <select id="savedLocations" class="input-compact" style="flex:1;"></select>
-                        <button class="btn btn-secondary btn-compact" onclick="gotoSavedLocation()" title="Go to selected location">▶</button>
-                        <button class="btn btn-danger btn-compact" onclick="deleteSelectedLocation()" title="Delete selected location">🗑</button>
+                    <span class="screw screw-tl"></span><span class="screw screw-tr"></span><span class="screw screw-bl"></span><span class="screw screw-br"></span>
+                    <h3>Locations</h3>
+                    <select id="savedLocations" class="input-compact" style="width:100%; margin-bottom:3px;"></select>
+                    <!-- Go / Del / Save as equal-width 3-column cluster -->
+                    <div class="button-grid-3col" style="margin-bottom:3px;">
+                        <button class="btn btn-primary btn-compact" onclick="gotoSavedLocation()" title="Go to selected location">Go</button>
+                        <button class="btn btn-danger btn-compact" onclick="deleteSelectedLocation()" title="Delete selected location">Del</button>
+                        <button class="btn btn-secondary btn-compact" onclick="saveCurrentLocation()">Save</button>
                     </div>
-                    <div style="margin-top:6px; font-size:0.78em; color:#aaa;">Save current Alt/Az as:</div>
-                    <div class="input-row" style="gap:4px; margin-top:3px;">
-                        <input type="text" id="saveLocationName" class="input-compact" placeholder='e.g. "The Water Tower"' style="flex:1;">
-                        <button class="btn btn-info btn-compact" onclick="saveCurrentLocation()">Save</button>
-                    </div>
-                    <div id="locationsStatus" style="font-size:0.75em; color:#aaa; margin-top:3px; min-height:14px;"></div>
+                    <input type="text" id="saveLocationName" class="input-compact" placeholder="Name to save" style="width:100%; box-sizing:border-box;">
+                    <div id="locationsStatus" style="font-size:0.68em; color:#6a7a85; margin-top:2px; min-height:12px;"></div>
                 </div>
 
-                <!-- Manual Focus -->
+                <!-- Focus + Camera — merged -->
                 <div class="sidebar-panel">
-                    <h3>Manual Focus</h3>
-                    <div style="font-size:0.78em; color:#aaa; margin-bottom:4px;">Step size</div>
-                    <div class="button-group" style="margin-bottom:6px;">
-                        <button class="btn btn-secondary btn-compact focus-step-btn" data-steps="10" onclick="setFocusStepSize(10)" style="border-color:#2dd4bf; background:rgba(45,212,191,0.15);">10</button>
-                        <button class="btn btn-secondary btn-compact focus-step-btn" data-steps="50" onclick="setFocusStepSize(50)">50</button>
-                        <button class="btn btn-secondary btn-compact focus-step-btn" data-steps="100" onclick="setFocusStepSize(100)">100</button>
-                    </div>
-                    <div class="button-group" style="margin-bottom:6px;">
-                        <button class="btn btn-secondary btn-compact" style="flex:1;" onclick="focusStep(-_focusStepSize)">&#9664; In</button>
-                        <button class="btn btn-secondary btn-compact" style="flex:1;" onclick="focusStep(_focusStepSize)">Out &#9654;</button>
-                    </div>
-                    <div style="font-size:0.78em; color:#aaa; margin-bottom:2px;">Position: <span id="focusPos" style="color:#9cd9ff;">—</span></div>
-                    <button class="btn btn-secondary btn-compact" style="width:100%; margin-top:4px;" onclick="telescopeAutofocus()">&#128269; Run Autofocus</button>
-                </div>
-
-                <!-- Camera Settings -->
-                <div class="sidebar-panel">
-                    <h3>Camera</h3>
-                    <div class="setting-item">
-                        <span class="setting-label">Gain</span>
-                        <div style="display:flex; align-items:center; gap:6px;">
-                            <input type="range" id="gainSlider" min="0" max="120" value="80" class="setting-slider" oninput="document.getElementById('gainVal').textContent=this.value">
-                            <span id="gainVal" style="font-size:0.82em; color:#9cd9ff; min-width:24px;">80</span>
+                    <span class="screw screw-tl"></span><span class="screw screw-tr"></span><span class="screw screw-bl"></span><span class="screw screw-br"></span>
+                    <h3>Focus &amp; Camera</h3>
+                    <!-- FOCUS cluster: step-size toggles + momentary In/Out -->
+                    <div class="btn-cluster" style="margin-bottom:4px;">
+                        <div class="btn-cluster-label">Focus Step</div>
+                        <div style="display:flex; align-items:center; justify-content:center; gap:3px;">
+                            <button class="btn btn-secondary btn-compact focus-step-btn" onclick="focusStep(-_focusStepSize)" title="Focus In">◀</button>
+                            <div class="focus-step-group">
+                                <button class="btn btn-secondary btn-compact focus-step-btn btn-toggle" data-steps="10" onclick="setFocusStepSize(10)">10</button>
+                                <button class="btn btn-secondary btn-compact focus-step-btn btn-toggle" data-steps="50" onclick="setFocusStepSize(50)">50</button>
+                                <button class="btn btn-secondary btn-compact focus-step-btn btn-toggle" data-steps="100" onclick="setFocusStepSize(100)">100</button>
+                            </div>
+                            <button class="btn btn-secondary btn-compact focus-step-btn" onclick="focusStep(_focusStepSize)" title="Focus Out">▶</button>
                         </div>
                     </div>
-                    <div class="setting-item">
-                        <label style="display:flex; align-items:center; gap:6px; cursor:pointer;">
-                            <input type="checkbox" id="lpFilterToggle"> LP Filter
+                    <div class="focus-odometer">
+                        <span class="focus-odometer-label">POS</span>
+                        <span class="focus-odometer-value" id="focusPos">——————</span>
+                    </div>
+                    <!-- Camera controls -->
+                    <div style="display:flex; align-items:center; gap:6px; margin-bottom:4px;">
+                        <span class="setting-label" style="margin:0; min-width:28px;">Gain</span>
+                        <input type="range" id="gainSlider" min="0" max="120" value="80" class="setting-slider" oninput="document.getElementById('gainVal').textContent=this.value">
+                        <span id="gainVal" style="font-size:0.75em; color:#b8e8ff; min-width:20px; font-family:'SF Mono',monospace;">80</span>
+                    </div>
+                    <div style="display:flex; align-items:center; gap:8px; margin-bottom:4px; font-size:0.78em; color:#99a0a8;">
+                        <label style="display:flex; align-items:center; gap:4px; cursor:pointer;">
+                            <input type="checkbox" id="lpFilterToggle" style="accent-color:#039c9c;"> LP Filter
+                        </label>
+                        <label style="display:flex; align-items:center; gap:4px; cursor:pointer;">
+                            <input type="checkbox" id="dewHeaterToggle" onchange="toggleDewPower()" style="accent-color:#039c9c;"> Dew Heater
                         </label>
                     </div>
-                    <div class="setting-item">
-                        <label style="display:flex; align-items:center; gap:6px; cursor:pointer;">
-                            <input type="checkbox" id="dewHeaterToggle" onchange="toggleDewPower()"> Dew Heater
-                        </label>
-                    </div>
-                    <div id="dewPowerRow" class="setting-item" style="display:none;">
-                        <span class="setting-label">Power</span>
+                    <div id="dewPowerRow" style="display:none; margin-bottom:4px;">
                         <div style="display:flex; align-items:center; gap:6px;">
+                            <span class="setting-label" style="margin:0; min-width:28px;">Pwr</span>
                             <input type="range" id="dewPowerSlider" min="0" max="100" value="50" class="setting-slider" oninput="document.getElementById('dewPowerVal').textContent=this.value+'%'">
-                            <span id="dewPowerVal" style="font-size:0.82em; color:#9cd9ff; min-width:30px;">50%</span>
+                            <span id="dewPowerVal" style="font-size:0.75em; color:#b8e8ff; min-width:26px; font-family:'SF Mono',monospace;">50%</span>
                         </div>
                     </div>
-                    <div class="button-group" style="margin-top:6px;">
-                        <button class="btn btn-primary btn-compact" style="flex:1;" onclick="applyCameraSettings()">Apply</button>
-                        <button id="autoExpBtn" class="btn btn-secondary btn-compact" style="flex:1;" onclick="toggleAutoExp()">Auto Exp</button>
+                    <div class="button-grid-2x2">
+                        <button class="btn btn-primary btn-compact" onclick="applyCameraSettings()">Apply</button>
+                        <button id="autoExpBtn" class="btn btn-secondary btn-compact btn-toggle" onclick="toggleAutoExp()">Auto Exp</button>
                     </div>
                 </div>
-
 
             </div>
         </div>
@@ -946,6 +941,17 @@
                     document.getElementById('nearMissContent').textContent = 'Failed to load transit log.';
                 });
         }
+
+        // Keyboard shortcuts: Ctrl/Cmd+M → Map, Ctrl/Cmd+S → Scope
+        document.addEventListener('keydown', function(e) {
+            if (!(e.metaKey || e.ctrlKey)) return;
+            const k = e.key.toLowerCase();
+            if (k === 'm') { e.preventDefault(); showPanel('map'); }
+            if (k === 's') {
+                const tag = document.activeElement ? document.activeElement.tagName : '';
+                if (tag !== 'INPUT' && tag !== 'TEXTAREA') { e.preventDefault(); showPanel('telescope'); }
+            }
+        });
 
         loadPosition();
 

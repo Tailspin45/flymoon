@@ -189,6 +189,10 @@ flymoon-server.exe
 static/captures/
 DS_Store
 
+# Local transit sample video folders (not for repo)
+transits from */*.mp4
+transits from */
+
 # Analysis output files
 analyzed_*
 *_analyzed_tmp.*

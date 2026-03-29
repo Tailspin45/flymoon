@@ -170,11 +170,124 @@ var _arrowCleanupTimeouts = {};
 // Transit countdown tracking
 var nextTransit = null;
 var transitCountdownInterval = null;
+var _transitBannerDismissed = false;   // user clicked ×
+var _transitBannerAutohideTimer = null;
+var _transitBannerLastThreshold = null; // last ETA bucket that triggered a re-show
+
+window._dismissTransitBanner = function() {
+    _transitBannerDismissed = true;
+    if (_transitBannerAutohideTimer) { clearTimeout(_transitBannerAutohideTimer); _transitBannerAutohideTimer = null; }
+    const el = document.getElementById('transitCountdown');
+    if (el) el.style.display = 'none';
+};
 var target = "auto"; // Always auto-detect sun and moon
 var autoGoInterval = null; // Auto-refresh interval
 var refreshTimerLabelInterval = null; // Countdown timer interval
 var softRefreshInterval = null; // For client-side position updates
-var remainingSeconds = 600; // Track remaining seconds for countdown (default 10 min)
+var _radarFastInterval  = null; // 3s radar-only recalculate (active transit candidates only)
+var _radarFastInFlight  = false;
+window._radarLastUpdateTs = 0; // last successful radar recalculate payload ts (ms)
+// Last recalculated positions — dead-reckon ONLY from these (not from original fetch)
+// so a hard refresh never jumps the blip back to its starting point.
+var _radarBaseFlights   = null;  // {id → flight object with lat/lon at _radarBaseTs}
+var _radarBaseTs        = 0;     // Date.now() when _radarBaseFlights was last set
+
+function _radarUpdateBase(flights) {
+    // Called by hard refresh and soft refresh to reset the dead-reckoning origin.
+    _radarBaseFlights = {};
+    _radarBaseTs = Date.now();
+    flights.forEach(f => {
+        const id = String(f.id || f.name || '').trim().toUpperCase();
+        if (id) _radarBaseFlights[id] = {...f};
+    });
+}
+
+async function _radarFastUpdate() {
+    if (_radarFastInFlight || !_radarBaseFlights) return;
+    if (typeof window.pushInterceptPoint !== 'function') return;
+
+    const dtSec = (Date.now() - _radarBaseTs) / 1000;
+    if (dtSec > 300) return; // base too stale
+
+    // Dead-reckon only the delta from the last known good positions
+    const candidates = Object.values(_radarBaseFlights)
+        .filter(f => parseInt(f.possibility_level ?? 0) >= 1 || f.is_possible_transit === 1)
+        .map(f => {
+            const updated = {...f};
+            if (updated.latitude && updated.longitude && updated.speed && updated.direction) {
+                const speedKmPerSec = updated.speed / 3600;
+                const distKm = speedKmPerSec * dtSec;
+                const hdgRad = updated.direction * Math.PI / 180;
+                updated.latitude  += (distKm / 111.32) * Math.cos(hdgRad);
+                updated.longitude += (distKm / (111.32 * Math.cos(updated.latitude * Math.PI / 180))) * Math.sin(hdgRad);
+            }
+            if (updated.is_possible_transit === 1 && updated.time != null)
+                updated.time = Math.max(0, updated.time - dtSec / 60);
+            return updated;
+        });
+
+    if (!candidates.length) return;
+
+    _radarFastInFlight = true;
+    try {
+        const latitude  = parseFloat(document.getElementById('latitude')?.value);
+        const longitude = parseFloat(document.getElementById('longitude')?.value);
+        const elevation = parseFloat(document.getElementById('elevation')?.value);
+        if (isNaN(latitude) || isNaN(longitude)) return;
+
+        const disabledTargets = [];
+        if (!sunEnabled)  disabledTargets.push('sun');
+        if (!moonEnabled) disabledTargets.push('moon');
+
+        const res = await fetch('/transits/recalculate', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({
+                flights: candidates, latitude, longitude, elevation,
+                target, ...getQuadrantMinAltitudes(),
+                disabled_targets: disabledTargets
+            })
+        });
+        if (!res.ok) return;
+        const data = await res.json();
+        if (!data.flights) return;
+        window._radarLastUpdateTs = Date.now();
+
+        const activeIds = new Set();
+        data.flights.forEach(f => {
+            const lvl = parseInt(f.possibility_level ?? 0);
+            const sep = parseFloat(f.angular_separation ?? 999);
+            if ((lvl >= 1 || f.is_possible_transit === 1) && sep <= 12) {
+                window.pushInterceptPoint(f);
+                activeIds.add(String(f.id || f.name || '').trim().toUpperCase());
+            }
+        });
+        // Only prune when the recalculation actually found some candidates to
+        // compare against — avoids wiping blips after a quiet/empty response
+        // caused by stale dead-reckoning or a rate-limited data source.
+        if (typeof window.pruneRadarTracks === 'function' && candidates.length > 0) {
+            window.pruneRadarTracks(activeIds);
+        }
+
+        // Only update the scope's transit list when recalculation actively confirms
+        // transits.  An empty result (dead-reckoning drift / quiet response) must NOT
+        // clear a transit that was confirmed by the last full fetch or soft refresh.
+        const transitHits = data.flights.filter(f => parseInt(f.possibility_level ?? 0) >= 1);
+        if (typeof window.injectMapTransits === 'function' && transitHits.length > 0) {
+            window.injectMapTransits(transitHits, { generatedAtMs: data.generated_at_ms });
+        }
+    } catch(e) { console.warn('[RadarFast] update failed:', e && e.message ? e.message : e); }
+    finally { _radarFastInFlight = false; }
+}
+
+function _startRadarFastInterval() {
+    if (_radarFastInterval) return;
+    _radarFastInterval = setInterval(_radarFastUpdate, 3000);
+}
+function _stopRadarFastInterval() {
+    if (_radarFastInterval) { clearInterval(_radarFastInterval); _radarFastInterval = null; }
+}
+var remainingSeconds = 120; // Track remaining seconds for countdown (default 2 min)
 var lastFlightData = null; // Cache last flight response for soft refresh
 window.lastFlightUpdateTime = parseInt(sessionStorage.getItem('lastFlightUpdateTime') || '0', 10);
 // Restore cached flight data so the table is populated instantly on back-navigation
@@ -182,12 +295,12 @@ try {
     const _cached = sessionStorage.getItem('lastFlightData');
     if (_cached) lastFlightData = JSON.parse(_cached);
 } catch(e) { lastFlightData = null; }
-var currentCheckInterval = 600; // Current adaptive interval in seconds (default 10 min to match cache TTL)
+var currentCheckInterval = 120; // Current adaptive interval in seconds (default 2 min)
 displayTarget();
 
 // App configuration from server
 var appConfig = {
-    autoRefreshIntervalMinutes: 10  // Default 10 minutes to match cache TTL
+    autoRefreshIntervalMinutes: 2   // Default 2 minutes
 };
 
 // Load configuration from server
@@ -262,24 +375,24 @@ const DATA_SOURCES = {
     },
     'opensky-only': {
         icon: '🌐',
-        label: 'OpenSky Only',
+        label: 'Multi-Source (no FA)',
         cost: 'Free',
         color: '#10b981',
-        note: 'Positions every 60s, no aircraft type or airline data. Zero FlightAware cost.',
+        note: 'OpenSky + ADSB-One + adsb.lol + adsb.fi opendata + ADS-B Exchange (if key set) in parallel. No FlightAware enrichment. Zero cost.',
     },
     'hybrid': {
         icon: '⚡',
-        label: 'Hybrid (OpenSky + FA)',
+        label: 'Hybrid (Multi-Source + FA)',
         cost: 'Free (within $5 credit)',
         color: '#a78bfa',
-        note: 'OpenSky for continuous positions; FlightAware only on HIGH-probability transits. Typically <250 FA calls/month — covered by the free $5 credit.',
+        note: 'OpenSky + ADSB-One + adsb.lol + adsb.fi + ADS-B Exchange for positions; FlightAware only on HIGH-probability transits. Typically <250 FA calls/month — covered by the free $5 credit.',
     },
     'adsb-local': {
         icon: '📡',
-        label: 'ADS-B Receiver + FA',
+        label: 'Local ADS-B + FA',
         cost: '~$0/month',
         color: '#06b6d4',
-        note: 'Local RTL-SDR receiver for real-time positions. Near-zero ongoing cost. Requires hardware.',
+        note: 'Local RTL-SDR / dump1090 receiver merged with OpenSky + ADSB-One. Near-zero ongoing cost. Requires hardware (set ADSB_LOCAL_URL in .env).',
     },
 };
 
@@ -508,7 +621,7 @@ function renderRichFlightRow(item, bodyTable) {
     }
     row.appendChild(vsCell);
 
-    // Col 8 — Sky Δ
+    // Col 8 — Sky Δ  (separation + optional IMM ±1σ uncertainty band)
     const skyCell = document.createElement('td');
     skyCell.style.whiteSpace = 'nowrap';
     if (item.alt_diff != null && item.az_diff != null) {
@@ -516,7 +629,13 @@ function renderRichFlightRow(item, bodyTable) {
         const sep = item.angular_separation;
         // Color by angular separation: HIGH ≤2°, MEDIUM ≤4°
         const c = (sep != null && sep <= 2.0) ? '#4caf50' : (sep != null && sep <= 4.0) ? '#ff9800' : '#888';
-        skyCell.innerHTML = `<span style="color:${c}" title="Δalt ${ad}°, Δaz ${azd}°${sep != null ? ', sep ' + sep.toFixed(1) + '°' : ''}">↕${ad}° ↔${azd}°</span>`;
+        const sigma = item.sep_1sigma;
+        const sigmaStr = (sigma != null && sigma > 0)
+            ? ` <span style="color:#9e9e9e;font-size:0.82em" title="IMM 1σ position uncertainty">±${sigma.toFixed(2)}°</span>`
+            : '';
+        skyCell.innerHTML =
+            `<span style="color:${c}" title="Δalt ${ad}°, Δaz ${azd}°${sep != null ? ', sep ' + sep.toFixed(2) + '°' : ''}">↕${ad}° ↔${azd}°</span>` +
+            sigmaStr;
     } else {
         skyCell.innerHTML = '<span style="color:#444">—</span>';
     }
@@ -552,11 +671,12 @@ function renderRichFlightRow(item, bodyTable) {
     const srcMap = {
         'opensky':     { label: 'OS',      color: '#4caf50', title: 'OpenSky' },
         'flightaware': { label: 'FA',      color: '#5b9bd5', title: 'FlightAware' },
-        'adsb':        { label: 'ADS-B',   color: '#00e5ff', title: 'Direct ADS-B' },
-        'mlat':        { label: 'MLAT',    color: '#ffeb3b', title: 'Multilateration' },
+        'adsb':        { label: 'ADS-B',   color: '#00e5ff', title: 'ADS-B (ADSB-One / ADS-B Exchange)' },
+        'mlat':        { label: 'MLAT',    color: '#ffeb3b', title: 'Multilateration (ADSB-One / ADS-B Exchange)' },
         'flarm':       { label: 'FLARM',   color: '#66bb6a', title: 'FLARM' },
         'asterix':     { label: 'ASTERIX', color: '#ce93d8', title: 'ASTERIX surveillance' },
         'track':       { label: 'TRK',     color: '#2196f3', title: 'Track-derived' },
+        'other':       { label: 'OTHER',   color: '#9e9e9e', title: 'Other surveillance source' },
     };
     const src = (item.position_source || 'flightaware').toLowerCase();
     const si = srcMap[src] || { label: src.toUpperCase(), color: '#888', title: src };
@@ -616,12 +736,14 @@ document.addEventListener('visibilitychange', function() {
         if (autoGoInterval) clearInterval(autoGoInterval);
         if (refreshTimerLabelInterval) clearInterval(refreshTimerLabelInterval);
         if (softRefreshInterval) clearInterval(softRefreshInterval);
+        _stopRadarFastInterval();
     } else if (!document.hidden && pauseWhenHidden) {
         console.log('Page visible - resuming auto-refresh');
         const intervalSecs = currentCheckInterval || appConfig.autoRefreshIntervalMinutes * 60;
         autoGoInterval = setInterval(goFetch, intervalSecs * 1000);
         refreshTimerLabelInterval = setInterval(refreshTimer, 1000);
         softRefreshInterval = setInterval(softRefresh, 15000); // Soft refresh every 15 seconds
+        _startRadarFastInterval();
     }
 });
 
@@ -638,7 +760,7 @@ async function softRefresh() {
     const secondsElapsed = (Date.now() - window.lastFlightUpdateTime) / 1000;
     
     // Don't soft refresh if too much time has passed (data too stale)
-    if (secondsElapsed > 300) {  // 5 minutes
+    if (secondsElapsed > 600) {  // 10 minutes — gives resilience during source outages
         console.log('Data too stale for soft refresh, waiting for full refresh');
         return;
     }
@@ -728,11 +850,27 @@ async function softRefresh() {
             recalcData.flights.forEach(f => { recalcById[String(f.id).trim().toUpperCase()] = f; });
             const mergedFlights = updatedFlights.map(f => recalcById[String(f.id).trim().toUpperCase()] || f);
 
+            // Update radar dead-reckoning base so fast updates continue from here.
+            _radarUpdateBase(mergedFlights);
+
+            // Also push any confirmed transit candidates directly to the radar.
+            // This keeps blips alive during full-fetch outages (rate-limited sources)
+            // when _radarFastUpdate may not have run recently.
+            if (typeof window.pushInterceptPoint === 'function') {
+                recalcData.flights.forEach(f => {
+                    const lvl = parseInt(f.possibility_level ?? 0);
+                    const sep = parseFloat(f.angular_separation ?? 999);
+                    if ((lvl >= 1 || f.is_possible_transit === 1) && sep <= 12) {
+                        window.pushInterceptPoint(f);
+                    }
+                });
+            }
+
             // Update map markers (full set including non-transit for display)
             if (mapVisible && typeof updateAircraftMarkers === 'function') {
                 updateAircraftMarkers(mergedFlights, latitude, longitude);
             }
-            
+
             console.log(`Soft refresh: Recalculated ${recalcFlights.length}/${updatedFlights.length} transit-candidate flights (+${Math.floor(secondsElapsed)}s)`);
         } else {
             // Fallback to position-only update if recalculation fails
@@ -837,10 +975,11 @@ function updateFlightTableFull(flights) {
                 "opensky":     { label: "OS",      color: "#4caf50", title: "OpenSky (~10s latency)" },
                 "flightaware": { label: "FA",       color: "#888",    title: "FlightAware (60–300s latency)" },
                 "track":       { label: "TRK",      color: "#2196f3", title: "Track-derived velocity" },
-                "adsb":        { label: "ADS-B",    color: "#00e5ff", title: "Direct ADS-B (<5s latency)" },
-                "mlat":        { label: "MLAT",     color: "#ffeb3b", title: "Multilateration" },
+                "adsb":        { label: "ADS-B",    color: "#00e5ff", title: "ADS-B (<5s latency) — ADSB-One or ADS-B Exchange" },
+                "mlat":        { label: "MLAT",     color: "#ffeb3b", title: "Multilateration (ADSB-One/ADS-B Exchange)" },
                 "flarm":       { label: "FLARM",    color: "#66bb6a", title: "FLARM" },
                 "asterix":     { label: "ASTERIX",  color: "#ce93d8", title: "ASTERIX surveillance" },
+                "other":       { label: "OTHER",    color: "#9e9e9e", title: "Other surveillance source" },
             };
             const si = srcMap[flight.position_source] || { label: flight.position_source.toUpperCase(), color: "#888", title: flight.position_source };
             const age = flight.position_age_s != null ? ` (${flight.position_age_s}s)` : "";
@@ -853,13 +992,8 @@ function updateFlightTableFull(flights) {
         }
         
         // Update row highlight based on new transit status
-        if (flight.is_possible_transit === 1) {
-            const possibilityLevel = parseInt(flight.possibility_level);
-            highlightPossibleTransit(possibilityLevel, row);
-        } else {
-            // Remove highlighting if no longer a transit
-            row.style.backgroundColor = "";
-        }
+        const possibilityLevel = flight.is_possible_transit === 1 ? parseInt(flight.possibility_level) : 0;
+        highlightPossibleTransit(possibilityLevel, row);
     });
 }
 
@@ -1142,6 +1276,9 @@ function updateTrackedFlight() {
         if (typeof updateSingleAircraftMarker === 'function') {
             updateSingleAircraftMarker(trackedFlight);
         }
+
+        // Update radar base so fast update has fresh position for this flight
+        if (_radarBaseFlights) _radarBaseFlights[String(trackedFlight.id||'').trim().toUpperCase()] = {...trackedFlight};
     })
     .catch(error => {
         console.error('Track mode update error:', error);
@@ -1211,7 +1348,11 @@ function updateFlightRow(row, flight) {
                 cell.style.fontStyle = "";
             }
         } else if (column === "angular_separation") {
-            cell.textContent = value.toFixed(2) + "º";
+            const sigma1 = flight.sep_1sigma;
+            const sigTxt = (sigma1 != null && sigma1 > 0)
+                ? ` <span style="color:#9e9e9e;font-size:0.82em" title="IMM 1σ uncertainty">±${sigma1.toFixed(2)}°</span>`
+                : '';
+            cell.innerHTML = value.toFixed(2) + "º" + sigTxt;
         } else {
             cell.textContent = value;
         }
@@ -1470,10 +1611,37 @@ function updateTransitCountdown() {
         : '';
     const targetEmoji = nextTransit.flight && nextTransit.flight.target === 'sun' ? '☀️' : '🌙';
 
+    // Determine which ETA bucket we're in; re-show banner at each new threshold
+    const etaSec = Math.floor(remainingMs / 1000);
+    const threshold = etaSec <= 60 ? '1min' : etaSec <= 300 ? '5min' : 'initial';
+    const isNewThreshold = threshold !== _transitBannerLastThreshold;
+    if (isNewThreshold) {
+        _transitBannerLastThreshold = threshold;
+        _transitBannerDismissed = false; // re-show at each new threshold
+        if (_transitBannerAutohideTimer) clearTimeout(_transitBannerAutohideTimer);
+    }
+
+    const msgText = `${targetEmoji} ${targetName} — ${levelText} probability transit in ${timeStr}`;
+    // Update text content (don't touch the × button child)
+    const btn = countdownDiv.querySelector('button');
+    countdownDiv.childNodes.forEach(n => { if (n.nodeType === Node.TEXT_NODE) n.remove(); });
+    countdownDiv.insertBefore(document.createTextNode(msgText), btn || null);
+
     countdownDiv.style.backgroundColor = bgColor;
     countdownDiv.style.color = 'white';
-    countdownDiv.style.display = 'block';
-    countdownDiv.innerHTML = `${targetEmoji} ${targetName} — ${levelText} probability transit in ${timeStr}`;
+
+    if (!_transitBannerDismissed) {
+        countdownDiv.style.display = 'block';
+        // Auto-dismiss after 8 s unless within 60 s of transit (keep it up then)
+        if (!_transitBannerAutohideTimer && etaSec > 60) {
+            _transitBannerAutohideTimer = setTimeout(() => {
+                _transitBannerAutohideTimer = null;
+                _transitBannerDismissed = true;
+                const el = document.getElementById('transitCountdown');
+                if (el) el.style.display = 'none';
+            }, 8000);
+        }
+    }
 }
 
 function clearPosition() {
@@ -1614,15 +1782,15 @@ const HELP_CONTENT = {
     },
     'transit-levels': {
         title: 'Transit Probability Levels',
-        body: `<p>Each aircraft is assigned a probability level based on its predicted angular separation from the Sun or Moon at the moment of closest approach:</p>
+        body: `<p>Each aircraft is assigned a probability level from <strong>combined angular separation</strong> (on-sky degrees between aircraft and Sun/Moon at closest approach):</p>
 <table style="width:100%;border-collapse:collapse;margin:10px 0;">
-<tr style="border-bottom:1px solid #444"><td style="padding:5px 8px">🟢 <strong>High</strong></td><td style="padding:5px 8px">≤1° in both altitude and azimuth. Predicted to cross within the Sun/Moon's disk. <em>Start recording!</em></td></tr>
-<tr style="border-bottom:1px solid #444"><td style="padding:5px 8px">🟠 <strong>Medium</strong></td><td style="padding:5px 8px">≤2° separation. Very close pass — may graze the limb or be captured in a wide field. Worth recording.</td></tr>
-<tr style="border-bottom:1px solid #444"><td style="padding:5px 8px">⚪ <strong>Low</strong></td><td style="padding:5px 8px">≤3° separation. Distant near-miss. Not a true transit but interesting to log.</td></tr>
-<tr><td style="padding:5px 8px">— <strong>Unlikely</strong></td><td style="padding:5px 8px">&gt;3° — shown in table but not highlighted.</td></tr>
+<tr style="border-bottom:1px solid #444"><td style="padding:5px 8px">🟢 <strong>High</strong></td><td style="padding:5px 8px">≤2° — very likely near or on disk. <em>Prioritise recording.</em></td></tr>
+<tr style="border-bottom:1px solid #444"><td style="padding:5px 8px">🟠 <strong>Medium</strong></td><td style="padding:5px 8px">≤4° — close pass; may graze the limb or suit a wide field.</td></tr>
+<tr style="border-bottom:1px solid #444"><td style="padding:5px 8px">⚪ <strong>Low</strong></td><td style="padding:5px 8px">≤12° — distant geometry; useful for monitoring, unlikely silhouette.</td></tr>
+<tr><td style="padding:5px 8px">— <strong>Unlikely</strong></td><td style="padding:5px 8px">&gt;12° — shown but not treated as a transit candidate.</td></tr>
 </table>
 <p>The Sun and Moon each subtend about <strong>0.5°</strong> of arc. An aircraft crossing within that cone produces a true silhouette transit lasting 0.5–2 seconds.</p>
-<p>Thresholds are configurable via <code>ALT_THRESHOLD</code> / <code>AZ_THRESHOLD</code> in the server <code>.env</code> file.</p>`
+<p>These bands are defined in <code>get_possibility_level()</code> in <code>src/transit.py</code>. <code>ALT_THRESHOLD</code> / <code>AZ_THRESHOLD</code> in <code>.env</code> affect notifications and search prefiltering, not these labels.</p>`
     },
     'table-columns-rich': {
         title: 'Rich Table — Column Guide',
@@ -1632,7 +1800,7 @@ const HELP_CONTENT = {
 <tr><td style="padding:4px 8px;color:#7eb8f7;white-space:nowrap"><strong>target / @CPA°</strong></td><td style="padding:4px 8px">☀️/🌙 target plus target altitude at closest approach time (CPA), so values can differ by aircraft.</td></tr>
 <tr><td style="padding:4px 8px;color:#7eb8f7;white-space:nowrap"><strong>aircraft</strong></td><td style="padding:4px 8px">Callsign and ICAO type code (e.g. B738 = Boeing 737-800). Click to flash on map and show route.</td></tr>
 <tr><td style="padding:4px 8px;color:#7eb8f7;white-space:nowrap"><strong>alt / v/s</strong></td><td style="padding:4px 8px">Altitude (FL350 above 18,000ft, otherwise feet). Vertical speed: ▲ climbing (green), ▼ descending (red), ▶ level (grey). V/S in ft/min from ADS-B vertical rate; ▲/▼ only from FlightAware elevation_change flag.</td></tr>
-<tr><td style="padding:4px 8px;color:#7eb8f7;white-space:nowrap"><strong>sky Δ</strong></td><td style="padding:4px 8px">Angular separation at closest approach: ↕ altitude diff, ↔ azimuth diff. Green ≤1°, orange ≤2°, grey ≥3°.</td></tr>
+<tr><td style="padding:4px 8px;color:#7eb8f7;white-space:nowrap"><strong>sky Δ</strong></td><td style="padding:4px 8px">Angular separation at closest approach: ↕ altitude diff, ↔ azimuth diff. Colours follow level: green ≤2° HIGH, orange ≤4° MEDIUM, gold ≤12° LOW.</td></tr>
 <tr><td style="padding:4px 8px;color:#7eb8f7;white-space:nowrap"><strong>track</strong></td><td style="padding:4px 8px">Compass direction (NNW etc.), true heading in degrees, and ground speed in knots.</td></tr>
 <tr><td style="padding:4px 8px;color:#7eb8f7;white-space:nowrap"><strong>src / age</strong></td><td style="padding:4px 8px">Position source badge (ADS-B / MLAT / FLARM / OS / FA) and data age in seconds. Age colour: green ≤5s, yellow ≤30s, orange ≤60s, red >60s.</td></tr>
 </table>
@@ -1649,7 +1817,7 @@ const HELP_CONTENT = {
 <tr><td style="padding:4px 8px;color:#7eb8f7;white-space:nowrap"><strong>plane angle</strong></td><td style="padding:4px 8px">Predicted altitude angle of the aircraft at closest approach to the target</td></tr>
 <tr><td style="padding:4px 8px;color:#7eb8f7;white-space:nowrap"><strong>target az</strong></td><td style="padding:4px 8px">Current azimuth of the Sun/Moon — degrees clockwise from true North</td></tr>
 <tr><td style="padding:4px 8px;color:#7eb8f7;white-space:nowrap"><strong>plane az</strong></td><td style="padding:4px 8px">Predicted azimuth of the aircraft at closest approach</td></tr>
-<tr><td style="padding:4px 8px;color:#7eb8f7;white-space:nowrap"><strong>△angle</strong></td><td style="padding:4px 8px">Altitude difference at closest approach. Smaller = better. 🟢 ≤1°, 🟠 ≤2°, ⚪ ≤3°</td></tr>
+<tr><td style="padding:4px 8px;color:#7eb8f7;white-space:nowrap"><strong>△angle</strong></td><td style="padding:4px 8px">Altitude difference at closest approach (one component of separation). Row highlight uses combined separation: 🟢 HIGH ≤2°, 🟠 MEDIUM ≤4°, ⚪ LOW ≤12°.</td></tr>
 <tr><td style="padding:4px 8px;color:#7eb8f7;white-space:nowrap"><strong>△az</strong></td><td style="padding:4px 8px">Azimuth difference at closest approach. Smaller = better.</td></tr>
 <tr><td style="padding:4px 8px;color:#7eb8f7;white-space:nowrap"><strong>elev</strong></td><td style="padding:4px 8px">Flight level in hundreds of feet (350 = FL350 = 35,000 ft)</td></tr>
 <tr><td style="padding:4px 8px;color:#7eb8f7;white-space:nowrap"><strong>GPS alt (ft)</strong></td><td style="padding:4px 8px">GPS altitude in feet above sea level from ADS-B transponder</td></tr>
@@ -1677,7 +1845,7 @@ const HELP_CONTENT = {
 <p>Each row records the <strong>closest angular approach</strong> for that flight:</p>
 <ul>
 <li><strong>Alt° / Az°</strong> — altitude and azimuth separation at closest approach</li>
-<li><strong>Sep°</strong> — total angular separation (red &lt;0.25° = inside the disk; orange &lt;0.5° = grazing limb)</li>
+<li><strong>Sep°</strong> — total angular separation (red &lt;0.25° = inside the disk; orange &lt;0.5° = grazing limb). <span style="color:#9e9e9e">±σ</span> after the value is the 1-sigma position uncertainty from the IMM Kalman filter — narrows over successive ADS-B updates.</li>
 <li><strong>ETA min</strong> — minutes to predicted closest approach at time of detection</li>
 <li><strong>Scope</strong> — whether the Seestar was connected and in which mode</li>
 </ul>
@@ -1893,8 +2061,8 @@ function fetchFlights() {
 
     const minAltQ = getQuadrantMinAltitudes();
     // Use wide outer-search thresholds so all classifiable transits are returned.
-    // HIGH=≤1.5°, MEDIUM=≤2.5°, LOW=≤3.0° — combined_threshold must be ≥3.0°
-    // or flights between 1.0° and 1.5° separation (which are HIGH) get dropped.
+    // Wide prefilter (5°) so server returns candidates; classification bands are
+    // HIGH ≤2°, MEDIUM ≤4°, LOW ≤12° (see get_possibility_level in src/transit.py).
     const altThreshold = 5.0;
     const azThreshold = 5.0;
     
@@ -1966,6 +2134,7 @@ function fetchFlights() {
         window.lastFlightUpdateTime = Date.now();
         sessionStorage.setItem('lastFlightUpdateTime', String(window.lastFlightUpdateTime));
         lastFlightData = data;
+        _radarUpdateBase(data.flights || []);
         try { sessionStorage.setItem('lastFlightData', JSON.stringify(data)); } catch(e) {}
         updateLastUpdateDisplay();
 
@@ -2114,6 +2283,21 @@ function fetchFlights() {
         const filteredFlights = Object.values(seenFlights);
         console.log(`Dedupe: ${data.flights.length} flights -> ${filteredFlights.length} unique`);
 
+        // Radar base update — _radarFastUpdate handles ongoing pushInterceptPoint calls.
+        // But populate transit list immediately so it doesn't wait 3s for the first cycle.
+        if (typeof window.pushInterceptPoint === 'function') {
+            filteredFlights.forEach(f => {
+                const lvl = parseInt(f.possibility_level ?? 0);
+                if (lvl >= 1 || f.is_possible_transit === 1) window.pushInterceptPoint(f);
+            });
+        }
+        if (typeof window.injectMapTransits === 'function') {
+            window.injectMapTransits(
+                filteredFlights.filter(f => parseInt(f.possibility_level ?? 0) >= 1),
+                { generatedAtMs: data.generated_at_ms }
+            );
+        }
+
         // Debug: show transit candidates
         filteredFlights.forEach(f => {
             if (f.is_possible_transit) {
@@ -2122,6 +2306,7 @@ function fetchFlights() {
         });
 
         // Find next HIGH or MEDIUM probability transit for countdown (skip below-min-alt)
+        const _prevTransitFlight = nextTransit ? nextTransit.flight : null;
         nextTransit = null;
         filteredFlights.forEach(flight => {
             if (flight.target_below_min_alt === true) return;
@@ -2137,6 +2322,13 @@ function fetchFlights() {
                 }
             }
         });
+
+        // Reset dismissed state when a different transit becomes imminent
+        if (nextTransit && nextTransit.flight !== _prevTransitFlight) {
+            _transitBannerDismissed = false;
+            _transitBannerLastThreshold = null;
+            if (_transitBannerAutohideTimer) { clearTimeout(_transitBannerAutohideTimer); _transitBannerAutohideTimer = null; }
+        }
 
         // Start or clear countdown interval
         if (transitCountdownInterval) {
@@ -2316,10 +2508,11 @@ function fetchFlights() {
                 "opensky":      { label: "OS",      color: "#4caf50", title: "OpenSky (~10s latency)" },
                 "flightaware":  { label: "FA",       color: "#888",    title: "FlightAware (60–300s latency)" },
                 "track":        { label: "TRK",      color: "#2196f3", title: "Track-derived velocity" },
-                "adsb":         { label: "ADS-B",    color: "#00e5ff", title: "Direct ADS-B (<5s latency)" },
-                "mlat":         { label: "MLAT",     color: "#ffeb3b", title: "Multilateration" },
+                "adsb":         { label: "ADS-B",    color: "#00e5ff", title: "ADS-B (<5s latency) — ADSB-One or ADS-B Exchange" },
+                "mlat":         { label: "MLAT",     color: "#ffeb3b", title: "Multilateration (ADSB-One / ADS-B Exchange)" },
                 "flarm":        { label: "FLARM",    color: "#66bb6a", title: "FLARM" },
                 "asterix":      { label: "ASTERIX",  color: "#ce93d8", title: "ASTERIX surveillance" },
+                "other":        { label: "OTHER",    color: "#9e9e9e", title: "Other surveillance source" },
             };
             const srcInfo = srcMap[src] || { label: src.toUpperCase(), color: "#888", title: src };
             const ageStr = srcAge != null ? ` (${srcAge}s)` : "";
@@ -2413,9 +2606,10 @@ function fetchFlights() {
 }
 
 function highlightPossibleTransit(possibilityLevel, row) {
-    if(possibilityLevel == LOW_LEVEL) row.classList.add("possibleTransitHighlightLow");
-    else if(possibilityLevel == MEDIUM_LEVEL) row.classList.add("possibleTransitHighlightMedium");
-    else if(possibilityLevel == HIGH_LEVEL) row.classList.add("possibleTransitHighlightHigh");
+    row.classList.remove('possibleTransitHighlightLow', 'possibleTransitHighlightMedium', 'possibleTransitHighlightHigh');
+    if      (possibilityLevel == LOW_LEVEL)    row.classList.add('possibleTransitHighlightLow');
+    else if (possibilityLevel == MEDIUM_LEVEL) row.classList.add('possibleTransitHighlightMedium');
+    else if (possibilityLevel == HIGH_LEVEL)   row.classList.add('possibleTransitHighlightHigh');
 }
 
 function updateAltitudeDisplay(flights) {
@@ -2690,6 +2884,7 @@ function initializeAutoRefresh() {
     
     // Start soft refresh interval (15 seconds)
     softRefreshInterval = setInterval(softRefresh, 15000);
+    _startRadarFastInterval();
     console.log('[Init] Soft refresh started (15s interval)');
     
     // Decide whether to fetch immediately

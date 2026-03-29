@@ -69,12 +69,6 @@ const _PREVIEW_BACKOFF_MS = 5000; // 5s between retry attempts after stream fail
 let _previewCheckTimer = null;
 let _lastPreviewRefreshMs = 0;
 const _PREVIEW_REFRESH_INTERVAL_MS = Infinity; // never restart a healthy stream — onerror handles failures
-const _DEBUG_INGEST_URL = 'http://127.0.0.1:7352/ingest/42acc25b-9174-476d-8462-1b85f40db694';
-const _DEBUG_SESSION_ID = '616e1a';
-
-function _agentDebugLog(runId, hypothesisId, location, message, data) {
-    fetch(_DEBUG_INGEST_URL,{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'616e1a'},body:JSON.stringify({sessionId:_DEBUG_SESSION_ID,runId,hypothesisId,location,message,data,timestamp:Date.now()})}).catch(()=>{});
-}
 let isSimulating = false;
 let simulationVideo = null;
 let disconnectedPollCount = 0; // consecutive disconnected polls before stopping preview
@@ -91,6 +85,7 @@ const filmstripSelection = {
 let isDetecting = false;
 let detectionPollInterval = null;
 let detectionStats = { fps: 0, detections: 0, elapsed_seconds: 0 };
+let _ctrlState = 'idle';
 
 // Eclipse state
 let eclipseData = null;         // populated from /telescope/status
@@ -105,6 +100,7 @@ window.initTelescope = function() {
     destroyTelescope(); // clear any existing intervals
     ensureHarnessUI();
     ensureTuningUI();
+    ensureTransitRadar();
 
     // Status polling (always poll while panel is open)
     statusPollInterval = setInterval(updateStatus, 2000);
@@ -132,6 +128,9 @@ window.initTelescope = function() {
     apiCall('/telescope/notifications/status', 'GET').then(r => {
         if (r) updateTelegramMuteBtn(r.muted);
     });
+
+    // Initialise focus step keycap — mark the default size as active
+    setFocusStepSize(_focusStepSize);
 
     // Start polling for target visibility
     updateTargetVisibility();
@@ -168,7 +167,12 @@ window.initTelescope = function() {
     // Load auto-capture preference
     const autoCapture = localStorage.getItem('autoCaptureTransits');
     if (autoCapture !== null) {
-        document.getElementById('autoCaptureToggle').checked = autoCapture === 'true';
+        const isOn = autoCapture === 'true';
+        document.getElementById('autoCaptureToggle').checked = isOn;
+        const autoCaptureBtn = document.getElementById('autoCaptureBtn');
+        if (autoCaptureBtn) {
+            autoCaptureBtn.classList.toggle('is-active', isOn);
+        }
     }
 
     // Mouse-wheel zoom on preview container
@@ -202,15 +206,16 @@ async function connect() {
         isConnected = true;
         showStatus('Connected successfully!', 'success', 5000);
 
+        // Eagerly resolve ALPACA state so nudge uses the correct path immediately
+        await pollAlpacaTelemetry();
+
         // Start status polling
         if (statusPollInterval) clearInterval(statusPollInterval);
         statusPollInterval = setInterval(updateStatus, 2000); // Every 2s
 
-        // Start telemetry polling (RA/Dec/Alt/Az strip)
-        startTelemetryPolling();
-
         updateConnectionUI();
         updateStatus();
+        startPositionSync();
         // Clear any preview backoff and start stream
         _previewLastError = 0;
         stopPreview();
@@ -261,9 +266,7 @@ async function disconnect() {
             statusPollInterval = null;
         }
 
-        // Stop telemetry strip
-        stopTelemetryPolling();
-
+        stopPositionSync();
         updateConnectionUI();
         stopPreview();
     }
@@ -317,12 +320,30 @@ function updateButtonStates() {
     });
 }
 
+/**
+ * Sync Solar/Lunar/Scene mode button keycap state from currentViewingMode.
+ * Applies .is-active to the active mode button and removes it from the others.
+ * Called on every status poll and immediately after a mode switch.
+ */
+function updateModeButtons() {
+    const map = {
+        sun:  'modeSolarBtn',
+        moon: 'modeLunarBtn',
+        scenery: 'modeSceneBtn',
+    };
+    Object.entries(map).forEach(([mode, id]) => {
+        const btn = document.getElementById(id);
+        if (btn) btn.classList.toggle('is-active', currentViewingMode === mode);
+    });
+}
+
 async function updateStatus() {
     if (isSimulating) return; // sim owns connection state — don't let real status poll overwrite it
     const result = await apiCall('/telescope/status', 'GET');
     if (result) {
         isConnected = result.connected || false;
         currentViewingMode = result.viewing_mode || null;
+        _ctrlState = result.ctrl_state || 'idle';
         // Sync recording state from server — server is authoritative.
         // Only preserve local state if we're mid-recording AND server agrees it's active.
         const serverRecording = result.recording || false;
@@ -346,6 +367,7 @@ async function updateStatus() {
 
         updateConnectionUI();
         updateRecordingUI();
+        updateModeButtons();    // sync Solar/Lunar/Scene mode keycap state
         checkTargetMismatch();
         
         // Auto-start preview if connected; stop stale stream if disconnected
@@ -355,19 +377,24 @@ async function updateStatus() {
             console.log('[Scope] Reconnected — mode:', result.viewing_mode);
             _previewLastError = 0;
             _lastConnectedStatus = null;
-            startTelemetryPolling();
+            startPositionSync();
         }
         if (justDisconnected) {
             console.warn('[Scope] Disconnected — prior connected state:', JSON.stringify(_lastConnectedStatus || {}));
             if (result.error) console.warn('[Scope] Server error:', result.error);
-            // Immediately clear transit cards — nothing to capture with
             upcomingTransits = [];
             updateTransitList();
-            stopTelemetryPolling();
+            stopPositionSync();
         }
         // Cache last connected response for diagnostics
         if (isConnected) {
             _lastConnectedStatus = { viewing_mode: result.viewing_mode, recording: result.recording, host: result.host };
+        }
+
+        // Update focus odometer from last known position
+        if (result.focus_pos != null) {
+            const focEl = document.getElementById('focusPos');
+            if (focEl) focEl.textContent = result.focus_pos;
         }
         _prevConnected = isConnected;
 
@@ -433,7 +460,7 @@ async function updateTargetVisibility() {
             sunBadge.className = 'visibility-badge visible';
             if (isConnected && sunBtn) sunBtn.disabled = false;
         } else {
-            sunBadge.textContent = 'Below Horizon';
+            sunBadge.textContent = 'Below';
             sunBadge.className = 'visibility-badge not-visible';
             if (sunBtn) sunBtn.disabled = true;
         }
@@ -452,7 +479,7 @@ async function updateTargetVisibility() {
             moonBadge.className = 'visibility-badge visible';
             if (isConnected && moonBtn) moonBtn.disabled = false;
         } else {
-            moonBadge.textContent = 'Below Horizon';
+            moonBadge.textContent = 'Below';
             moonBadge.className = 'visibility-badge not-visible';
             if (moonBtn) moonBtn.disabled = true;
         }
@@ -466,12 +493,11 @@ async function switchToSun() {
     const result = await apiCall('/telescope/target/sun', 'POST');
     if (result && result.success) {
         showStatus('Switched to Solar mode', 'success', 5000);
-        // Force-restart the preview stream (mode change kills old RTSP)
+        currentViewingMode = 'sun';
+        updateModeButtons();    // immediately light Solar keycap
         stopPreview();
         _previewLastError = 0;
         setTimeout(startPreview, 3000);
-
-        // Show solar filter warning
         showWarning(
             '⚠️ SOLAR FILTER REQUIRED - Ensure solar filter is installed before viewing!',
             'warning',
@@ -483,16 +509,15 @@ async function switchToSun() {
 async function switchToMoon() {
     console.log('[Telescope] Switching to Moon');
     showStatus('Switching to Lunar mode...', 'info');
-    
+
     const result = await apiCall('/telescope/target/moon', 'POST');
     if (result && result.success) {
         showStatus('Switched to Lunar mode', 'success', 5000);
-        // Force-restart the preview stream (mode change kills old RTSP)
+        currentViewingMode = 'moon';
+        updateModeButtons();    // immediately light Lunar keycap
         stopPreview();
         _previewLastError = 0;
         setTimeout(startPreview, 3000);
-
-        // Show lunar filter reminder
         showWarning(
             '✓ Remove solar filter if installed - Lunar viewing safe without filter',
             'info',
@@ -508,6 +533,8 @@ async function switchToScenery() {
     const result = await apiCall('/telescope/mode/scenery', 'POST');
     if (result && result.success) {
         showStatus('Scenery mode active — no tracking, manual positioning enabled', 'success', 5000);
+        currentViewingMode = 'scenery';
+        updateModeButtons();    // immediately light Scene keycap
         stopPreview();
         _previewLastError = 0;
         setTimeout(startPreview, 3000);
@@ -813,6 +840,21 @@ async function previewTimelapse() {
     }
 }
 
+function openTimelapseFrame(src) {
+    // Strip cache-buster before opening so the URL stays clean
+    const cleanSrc = src.split('?')[0];
+    const viewer = document.getElementById('fileViewer');
+    const body   = document.getElementById('fileViewerBody');
+    const name   = document.getElementById('fileViewerName');
+    if (viewer && body) {
+        body.innerHTML = `<img src="${cleanSrc}" style="max-width:100%; max-height:85vh; display:block; margin:auto;" alt="Timelapse frame">`;
+        if (name) name.textContent = cleanSrc.split('/').pop();
+        viewer.style.display = 'flex';
+    } else {
+        window.open(cleanSrc);
+    }
+}
+
 function _startTimelapsePoll() {
     _stopTimelapsePoll();
     _timelapsePollInterval = setInterval(_pollTimelapseStatus, 5000);
@@ -979,8 +1021,6 @@ function updateTimelapseUI(data) {
 // ============================================================================
 
 function startPreview(forceRefresh = false) {
-    const runId = `preview_${Date.now()}`;
-    
     const previewImage = document.getElementById('previewImage');
     const previewPlaceholder = document.getElementById('previewPlaceholder');
     const previewStatusDot = document.getElementById('previewStatusDot');
@@ -989,9 +1029,6 @@ function startPreview(forceRefresh = false) {
     
     if (!previewImage) {
         console.error('[Telescope] Preview image element not found');
-        // #region agent log
-        _agentDebugLog(runId,'H6','static/telescope.js:startPreview:noElement','previewImage missing',{});
-        // #endregion
         return;
     }
 
@@ -1031,45 +1068,26 @@ function startPreview(forceRefresh = false) {
     if (previewStatusText) previewStatusText.textContent = 'Connecting...';
     if (previewTitleIcon) previewTitleIcon.textContent = '🟡';
     
-    // Confirm stream is live by polling for a successful HEAD request to the MJPEG endpoint
-    // (MJPEG <img> streams don't fire onload, so we verify separately)
-    const checkStream = async () => {
-        try {
-            const r = await fetch(streamUrl, { method: 'HEAD', signal: AbortSignal.timeout(4000) });
-            if (r.ok) {
-                if (previewStatusDot) previewStatusDot.className = 'status-dot connected';
-                if (previewStatusText) previewStatusText.textContent = 'Live Stream Active';
-                if (previewTitleIcon) previewTitleIcon.textContent = '🟢';
-                currentZoom = 2.0;
-                applyZoom();
-            } else {
-                // Server responded but not OK — stream not ready
-                if (previewStatusDot) previewStatusDot.className = 'status-dot disconnected';
-                if (previewStatusText) previewStatusText.textContent = 'Stream unavailable';
-                if (previewTitleIcon) previewTitleIcon.textContent = '🔴';
-            }
-        } catch (_) {
-            // Fetch failed — retry once more after 3s before giving up
-            _previewCheckTimer = setTimeout(async () => {
-                try {
-                    const r2 = await fetch(streamUrl, { method: 'HEAD', signal: AbortSignal.timeout(4000) });
-                    if (r2.ok) {
-                        if (previewStatusDot) previewStatusDot.className = 'status-dot connected';
-                        if (previewStatusText) previewStatusText.textContent = 'Live Stream Active';
-                        if (previewTitleIcon) previewTitleIcon.textContent = '🟢';
-                        currentZoom = 2.0;
-                        applyZoom();
-                    } else {
-                        if (previewStatusDot) previewStatusDot.className = 'status-dot disconnected';
-                        if (previewStatusText) previewStatusText.textContent = 'Stream unavailable';
-                        if (previewTitleIcon) previewTitleIcon.textContent = '🔴';
-                    }
-                } catch (_2) {
-                    if (previewStatusDot) previewStatusDot.className = 'status-dot disconnected';
-                    if (previewStatusText) previewStatusText.textContent = 'Stream unavailable';
-                    if (previewTitleIcon) previewTitleIcon.textContent = '🔴';
-                }
-            }, 3000);
+    // Confirm stream is live by checking whether the <img> element has started
+    // rendering frames (naturalWidth > 0).  We cannot use HEAD on the MJPEG URL —
+    // MJPEG is a long-lived streaming response; HEAD either hangs or returns
+    // non-OK even when the stream is fully working.
+    const checkStream = (attempt = 1) => {
+        const img = document.getElementById('previewImage');
+        const live = img && img.naturalWidth > 0;
+        if (live) {
+            if (previewStatusDot) previewStatusDot.className = 'status-dot connected';
+            if (previewStatusText) previewStatusText.textContent = 'Live Stream Active';
+            if (previewTitleIcon) previewTitleIcon.textContent = '🟢';
+            currentZoom = 2.0;
+            applyZoom();
+        } else if (attempt < 6) {
+            // Frames may take a few seconds to arrive — keep polling
+            _previewCheckTimer = setTimeout(() => checkStream(attempt + 1), 2000);
+        } else {
+            if (previewStatusDot) previewStatusDot.className = 'status-dot disconnected';
+            if (previewStatusText) previewStatusText.textContent = 'Stream unavailable';
+            if (previewTitleIcon) previewTitleIcon.textContent = '🔴';
         }
     };
     setTimeout(checkStream, 2000);
@@ -1085,9 +1103,6 @@ function startPreview(forceRefresh = false) {
         if (previewStatusDot) previewStatusDot.className = 'status-dot disconnected';
         if (previewStatusText) previewStatusText.textContent = 'Stream unavailable';
         if (previewTitleIcon) previewTitleIcon.textContent = '🔴';
-        // #region agent log
-        _agentDebugLog(runId,'H6','static/telescope.js:startPreview:onerror','preview image error',{streamUrl,isConnected});
-        // #endregion
     };
 }
 
@@ -1346,12 +1361,6 @@ function _formatApiError(data, status) {
 }
 
 async function apiCall(endpoint, method = 'GET', body = null) {
-    const runId = `api_${Date.now()}`;
-    if (endpoint === '/telescope/goto') {
-        // #region agent log
-        _agentDebugLog(runId,'H9','static/telescope.js:apiCall:send','apiCall send /telescope/goto',{method,hasBody:!!body,body});
-        // #endregion
-    }
     try {
         const options = {
             method: method,
@@ -1372,27 +1381,12 @@ async function apiCall(endpoint, method = 'GET', body = null) {
         const data = await response.json();
 
         if (!response.ok) {
-            if (endpoint === '/telescope/goto') {
-                // #region agent log
-                _agentDebugLog(runId,'H9_H10','static/telescope.js:apiCall:response_error','apiCall /telescope/goto non-ok response',{status:response.status,data});
-                // #endregion
-            }
             throw new Error(_formatApiError(data, response.status));
-        }
-        if (endpoint === '/telescope/goto') {
-            // #region agent log
-            _agentDebugLog(runId,'H9_H10','static/telescope.js:apiCall:response_ok','apiCall /telescope/goto ok response',{status:response.status,data});
-            // #endregion
         }
 
         return data;
 
     } catch (error) {
-        if (endpoint === '/telescope/goto') {
-            // #region agent log
-            _agentDebugLog(runId,'H9_H10','static/telescope.js:apiCall:catch','apiCall /telescope/goto catch',{message:error?.message || String(error)});
-            // #endregion
-        }
         console.error(`[Telescope] API call failed: ${endpoint}`, error);
         showStatus(`Error: ${error.message}`, 'error');
         return null;
@@ -1403,127 +1397,61 @@ async function apiCall(endpoint, method = 'GET', body = null) {
 // CONTROL PANEL — GoTo, Park, Autofocus, Camera Settings, Named Locations
 // ============================================================================
 
-let _telemetryInterval = null;
-const _TELEMETRY_POLL_MS = 2000;
-let _telemetryPollInFlight = false;
-
 function initControlPanel() {
     loadSavedLocations();
 }
 
-// -- Telemetry polling --
+// -- Live position readout (scope_get_horiz_coord) --
 
-function startTelemetryPolling() {
-    if (_telemetryInterval) return;
-    _telemetryInterval = setInterval(_pollTelemetry, _TELEMETRY_POLL_MS);
-    _pollTelemetry(); // immediate first fetch
-    document.getElementById('telemetryStrip').style.display = '';
+let _posInterval = null;
+let _posInFlight = false;
+
+function startPositionSync() {
+    if (_posInterval) return;
+    _pollPosition();
+    _posInterval = setInterval(_pollPosition, 3000);
 }
 
-function stopTelemetryPolling() {
-    if (_telemetryInterval) {
-        clearInterval(_telemetryInterval);
-        _telemetryInterval = null;
-    }
-    document.getElementById('telemetryStrip').style.display = 'none';
+function stopPositionSync() {
+    clearInterval(_posInterval);
+    _posInterval = null;
+    document.getElementById('scopeAlt') && (document.getElementById('scopeAlt').textContent = '—');
+    document.getElementById('scopeAz')  && (document.getElementById('scopeAz').textContent  = '—');
 }
 
-function _setText(id, val) {
-    const el = document.getElementById(id);
-    if (el) el.textContent = val != null ? String(val) : '—';
-}
-
-async function _pollTelemetry() {
-    if (_telemetryPollInFlight) return;
-    _telemetryPollInFlight = true;
+async function _pollPosition() {
+    if (_posInFlight || !isConnected) return;
+    _posInFlight = true;
     try {
-        const controller = new AbortController();
-        const timer = setTimeout(() => controller.abort(), 6000);
-        const res = await fetch(`/telescope/telemetry?t=${Date.now()}`, {
-            signal: controller.signal,
-            cache: 'no-store',
+        const ctrl = new AbortController();
+        const t = setTimeout(() => ctrl.abort(), 4000);
+        const res = await fetch(`/telescope/position?t=${Date.now()}`, {
+            signal: ctrl.signal, cache: 'no-store',
         });
-        clearTimeout(timer);
-        if (!res.ok) return;
+        clearTimeout(t);
         const d = await res.json();
-        const fmt = (v, dp=2) => v != null ? (+v).toFixed(dp) : '—';
-        const runId = `telemetry_ui_${Date.now()}`;
+        const altEl = document.getElementById('scopeAlt');
+        const azEl  = document.getElementById('scopeAz');
+        if (!res.ok || d.error) {
+            // Scenery mode or other — no pointing source, show dash
+            if (altEl) altEl.textContent = '—';
+            if (azEl)  azEl.textContent  = '—';
+            return;
+        }
 
-        // Pointing
-        _setText('telmRA',  fmt(d.ra,  4) + (d.ra  != null ? 'h' : ''));
-        _setText('telmDec', fmt(d.dec, 3) + (d.dec != null ? '°' : ''));
-        _setText('telmAlt', fmt(d.alt, 1) + (d.alt != null ? '°' : ''));
-        _setText('telmAz',  fmt(d.az,  1) + (d.az  != null ? '°' : ''));
+        // Update position readout
+        if (altEl) altEl.textContent = (+d.alt).toFixed(1);
+        if (azEl)  azEl.textContent  = (+d.az).toFixed(1);
 
-        // Bidirectional Alt/Az — update GoTo inputs unless user has edited them
+        // Pre-fill GoTo inputs if user hasn't typed in them
         const altIn = document.getElementById('gotoAlt');
         const azIn  = document.getElementById('gotoAz');
-        // #region agent log
-        _agentDebugLog(runId,'H7_H8','static/telescope.js:_pollTelemetry:inputs','telemetry before goto overwrite check',{alt:d.alt,az:d.az,altUserEdited:!!(altIn&&altIn.dataset.userEdited),azUserEdited:!!(azIn&&azIn.dataset.userEdited),altActive:document.activeElement===altIn,azActive:document.activeElement===azIn,shownAlt:document.getElementById('telmAlt')?.textContent,shownAz:document.getElementById('telmAz')?.textContent});
-        // #endregion
-        if (altIn && !altIn.dataset.userEdited && document.activeElement !== altIn && d.alt != null)
+        if (altIn && !altIn.dataset.userEdited && document.activeElement !== altIn)
             altIn.value = (+d.alt).toFixed(1);
-        if (azIn && !azIn.dataset.userEdited && document.activeElement !== azIn && d.az != null)
+        if (azIn && !azIn.dataset.userEdited && document.activeElement !== azIn)
             azIn.value = (+d.az).toFixed(1);
-
-        // View
-        _setText('telmViewMode',   d.view_mode);
-        _setText('telmViewTarget', d.view_target);
-        _setText('telmViewStage',  d.view_stage);
-        _setText('telmRtsp',       d.rtsp_state);
-        _setText('telmLpFilter',   d.lp_filter != null ? (d.lp_filter ? 'On' : 'Off') : null);
-        _setText('telmAutofocus',  d.autofocus_state);
-        _setText('telmManualExp',  d.manual_exp != null ? (d.manual_exp ? 'Manual' : 'Auto') : null);
-
-        // System
-        const batt = d.battery_capacity;
-        const battEl = document.getElementById('telmBatt');
-        if (battEl) {
-            battEl.textContent = batt != null ? batt + '%' : '—';
-            battEl.className = 'telm-val' + (batt != null ? (batt > 50 ? ' telm-batt-green' : batt > 20 ? ' telm-batt-yellow' : ' telm-batt-red') : '');
-        }
-        _setText('telmCharger',  d.charger_status);
-        _setText('telmCpuTemp',  d.cpu_temp != null ? (+d.cpu_temp).toFixed(1) + '°C' : null);
-        _setText('telmBattTemp', d.battery_temp != null ? d.battery_temp + '°C' : null);
-        // Overtemp warning
-        const otRow = document.getElementById('telmOvertempRow');
-        if (otRow) otRow.style.display = (d.is_overtemp || d.battery_overtemp) ? '' : 'none';
-
-        // Focuser
-        _setText('telmFocuserStep',  d.focuser_step);
-        _setText('telmFocuserState', d.focuser_state);
-        _setText('telmFocuserMax',   d.focuser_max_step);
-        // Also update Manual Focus panel position
-        const focusPosEl = document.getElementById('focusPos');
-        if (focusPosEl && d.focus_pos != null) focusPosEl.textContent = d.focus_pos;
-
-        // Mount
-        _setText('telmTracking', d.mount_tracking != null ? (d.mount_tracking ? 'Yes' : 'No') : null);
-        _setText('telmArm',      d.mount_closed != null ? (d.mount_closed ? 'Closed' : 'Open') : null);
-        _setText('telmMoveType', d.mount_move_type);
-        _setText('telmCompass',  d.compass_direction != null ? (+d.compass_direction).toFixed(0) + '°' : null);
-        _setText('telmTilt',     d.tilt_angle != null ? (+d.tilt_angle).toFixed(1) + '°' : null);
-
-        // Storage / WiFi
-        _setText('telmStorageFree', d.storage_free_mb != null ? (d.storage_free_mb > 1024 ? (d.storage_free_mb / 1024).toFixed(1) + ' GB' : d.storage_free_mb + ' MB') : null);
-        _setText('telmStorageUsed', d.storage_used_pct != null ? d.storage_used_pct + '%' : null);
-        _setText('telmWifiSsid',    d.wifi_ssid);
-        _setText('telmWifiSignal',  d.wifi_signal != null ? d.wifi_signal + ' dBm' : null);
-
-        // Device
-        _setText('telmFirmware', d.firmware_ver != null ? 'v' + d.firmware_ver : null);
-        _setText('telmHeater',   d.heater_enable != null ? (d.heater_enable ? 'On' : 'Off') : null);
-
-        // Update Auto Exp button style based on telemetry
-        try {
-            const aeBtn = document.getElementById('autoExpBtn');
-            if (aeBtn && d.manual_exp != null) {
-                aeBtn.className = d.manual_exp ? 'btn btn-warning btn-compact' : 'btn btn-secondary btn-compact';
-            }
-        } catch (_ae) { /* non-fatal */ }
-
-    } catch (_) { /* non-fatal */ }
-    finally { _telemetryPollInFlight = false; }
+    } catch (_) { /* silent — scope may not support this command */ }
+    finally { _posInFlight = false; }
 }
 
 // -- GoTo mode radio toggle --
@@ -1538,39 +1466,46 @@ function gotoModeChanged() {
 
 // -- Manual Slew (Joystick) --
 
-let _nudgeInterval = null;
-
 function nudgeStart(angle) {
-    nudgeStop(); // clear any existing
-    const speed = document.querySelector('input[name="nudgeSpeed"]:checked')?.value === 'fast' ? 80 : 20;
-    // Send immediately, then repeat every 2s for held button
-    const send = () => apiCall('/telescope/nudge', 'POST', { speed, angle, dur_sec: 2 });
-    send();
-    _nudgeInterval = setInterval(send, 2000);
+    if (!_alpacaConnected) {
+        showStatus('Motor control requires ALPACA connection', 'error', 3000);
+        return;
+    }
+    if (_ctrlState === 'slewing' || _ctrlState === 'goto_resuming') {
+        showStatus(`Cannot nudge while ${_ctrlState.replace('_', ' ')}`, 'warning', 3000);
+        return;
+    }
+    // ALPACA: send once — backend holds the rate until nudge/stop
+    // angle: 0=left, 90=down, 180=right, 270=up (legacy convention)
+    const fast = document.querySelector('input[name="nudgeSpeed"]:checked')?.value === 'fast';
+    const rate = fast ? 3.0 : 1.0;
+    let axis, dir;
+    if (angle === 270)      { axis = 1; dir =  1; } // up = Dec/Alt +
+    else if (angle === 90)  { axis = 1; dir = -1; } // down = Dec/Alt -
+    else if (angle === 180) { axis = 0; dir =  1; } // right = RA/Az +
+    else                    { axis = 0; dir = -1; } // left = RA/Az -
+    apiCall('/telescope/nudge', 'POST', { axis, rate: rate * dir });
 }
 
 function nudgeStop() {
-    if (_nudgeInterval) {
-        clearInterval(_nudgeInterval);
-        _nudgeInterval = null;
-    }
     apiCall('/telescope/nudge/stop', 'POST', {});
 }
 
-// Mark GoTo inputs as user-edited so telemetry doesn't overwrite them.
+// Mark GoTo inputs as user-edited (prevents accidental resets).
 // Use delegated handler in case control-panel DOM is recreated.
 document.addEventListener('input', (ev) => {
     const el = ev.target;
     if (!el || !el.id) return;
     if (el.id === 'gotoAlt' || el.id === 'gotoAz' || el.id === 'gotoRa' || el.id === 'gotoDec') {
         el.dataset.userEdited = '1';
-        // #region agent log
-        _agentDebugLog(`input_${Date.now()}`,'H7','static/telescope.js:input:userEdited','marked goto input userEdited',{id:el.id,value:el.value});
-        // #endregion
     }
 });
 
 async function gotoExecute(overrideAlt, overrideAz) {
+    if (_ctrlState === 'nudging') {
+        showStatus('Stopping active nudge before GoTo…', 'info', 3000);
+        await apiCall('/telescope/nudge/stop', 'POST', {});
+    }
     const mode = document.getElementById('gotoModeAltaz').checked ? 'altaz' : 'radec';
     let body;
     if (mode === 'altaz') {
@@ -1592,24 +1527,22 @@ async function gotoExecute(overrideAlt, overrideAz) {
         if (isNaN(ra) || isNaN(dec)) { showStatus('Enter RA and Dec values', 'error', 3000); return; }
         body = { mode: 'radec', ra, dec };
     }
-    showStatus('Slewing…', 'info', 10000);
+    showStatus('Sending GoTo…', 'info', 5000);
     const result = await apiCall('/telescope/goto', 'POST', body);
     if (result) {
-        if (result.manual_slew) {
-            const msg = result.message || 'Manual slewing — watch telemetry for progress';
+        if (result.success) {
+            const msg = result.message || 'GoTo command sent';
             if (result.resume_tracking) {
                 showStatus(
-                    `${msg} — will re-enable ${result.resume_tracking} tracking when aligned`,
+                    `${msg} — will re-enable ${result.resume_tracking} tracking after slew`,
                     'info',
                     15000,
                 );
             } else {
-                showStatus(msg, 'info', 15000);
+                showStatus(msg, 'success', 5000);
             }
-        } else {
-            showStatus('GoTo command sent', 'success', 3000);
         }
-        // Resume telemetry updates in GoTo fields
+        // Clear user-edited flag so GoTo fields can be updated again
         ['gotoAlt','gotoAz','gotoRa','gotoDec'].forEach(id => {
             const el = document.getElementById(id);
             if (el) {
@@ -1651,25 +1584,15 @@ async function saveCurrentLocation() {
     const name = nameInput ? nameInput.value.trim() : '';
     if (!name) { showStatus('Enter a name for this location', 'error', 3000); return; }
 
-    // Use current telemetry alt/az if available, else prompt for manual entry
-    const altEl = document.getElementById('telmAlt');
-    const azEl  = document.getElementById('telmAz');
-    const altText = altEl && altEl.textContent.replace('°','').trim();
-    const azText  = azEl  && azEl.textContent.replace('°','').trim();
-    const alt = parseFloat(altText);
-    const az  = parseFloat(azText);
-
-    if (isNaN(alt) || isNaN(az)) {
-        // Fall back to the GoTo inputs
-        const altInput = parseFloat(document.getElementById('gotoAlt').value);
-        const azInput  = parseFloat(document.getElementById('gotoAz').value);
-        if (isNaN(altInput) || isNaN(azInput)) {
-            showStatus('No telemetry available — enter Alt/Az in the GoTo fields first', 'error', 5000);
-            return;
-        }
+    // Use the GoTo inputs for alt/az
+    const altInput = parseFloat(document.getElementById('gotoAlt').value);
+    const azInput  = parseFloat(document.getElementById('gotoAz').value);
+    if (isNaN(altInput) || isNaN(azInput)) {
+        showStatus('Enter Alt/Az in the GoTo fields first', 'error', 5000);
+        return;
+    }
+    {
         await _doSaveLocation(name, altInput, azInput);
-    } else {
-        await _doSaveLocation(name, alt, az);
     }
     if (nameInput) nameInput.value = '';
 }
@@ -1740,10 +1663,9 @@ let _focusStepSize = 10;
 
 function setFocusStepSize(size) {
     _focusStepSize = size;
+    // Use .is-active (locked-down keycap) instead of inline styles
     document.querySelectorAll('.focus-step-btn').forEach(btn => {
-        const active = parseInt(btn.dataset.steps) === size;
-        btn.style.borderColor = active ? '#2dd4bf' : '';
-        btn.style.background  = active ? 'rgba(45,212,191,0.15)' : '';
+        btn.classList.toggle('is-active', parseInt(btn.dataset.steps) === size);
     });
 }
 
@@ -1778,8 +1700,15 @@ async function applyCameraSettings() {
 }
 
 async function toggleAutoExp() {
-    const result = await apiCall('/telescope/camera/auto-exp', 'POST', { enabled: true });
-    if (result && result.success) showStatus('Auto exposure enabled', 'success', 3000);
+    const btn = document.getElementById('autoExpBtn');
+    // Toggle state locally (server has no persistent on/off for auto-exp)
+    const willEnable = !(btn && btn.classList.contains('is-active'));
+    const result = await apiCall('/telescope/camera/auto-exp', 'POST', { enabled: willEnable });
+    if (result && result.success) {
+        // .is-active = locked-down keycap when auto-exp is on
+        if (btn) btn.classList.toggle('is-active', willEnable);
+        showStatus(willEnable ? 'Auto exposure on' : 'Auto exposure off', 'success', 3000);
+    }
 }
 
 // ============================================================================
@@ -2381,6 +2310,9 @@ function dismissTransit(flight) {
     }
     document.addEventListener('keydown', (e) => {
         if (e.key === 'Escape') closeFileViewer();
+        const tag = document.activeElement ? document.activeElement.tagName : '';
+        const inInput = tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT'
+            || document.activeElement?.isContentEditable;
         // CMD/Ctrl + Delete: delete without confirmation in any context
         if ((e.key === 'Delete' || e.key === 'Backspace') && (e.metaKey || e.ctrlKey)) {
             // 1. File viewer lightbox is open
@@ -2404,6 +2336,13 @@ function dismissTransit(flight) {
                 return;
             }
         }
+        // Plain Delete: delete filmstrip selection (non-favorited skipped silently)
+        if (e.key === 'Delete' && !e.metaKey && !e.ctrlKey && !inInput) {
+            if (filmstripSelection.selected.size > 0) {
+                e.preventDefault();
+                filmstripDeleteSelectedSkipConfirm();
+            }
+        }
     });
 })();
 
@@ -2417,11 +2356,18 @@ async function toggleTelegramMute() {
 }
 
 function updateTelegramMuteBtn(muted) {
+    // Update header toolbar button (top bar) — no emojis
     const btn = document.getElementById('telegramMuteBtn');
-    if (!btn) return;
-    btn.textContent = muted ? '🔕' : '🔔';
-    btn.title = muted ? 'Telegram alerts muted — click to unmute' : 'Mute Telegram alerts';
-    btn.style.opacity = muted ? '0.5' : '1';
+    if (btn) {
+        btn.textContent = muted ? 'Muted' : 'Notif';
+        btn.title = muted ? 'Telegram alerts muted — click to unmute' : 'Mute Telegram alerts';
+    }
+    // Update sidebar panel button: .is-active = muted (locked-down keycap)
+    const btn2 = document.getElementById('telegramMuteBtn2');
+    if (btn2) {
+        btn2.classList.toggle('is-active', !!muted);
+        btn2.title = muted ? 'Telegram alerts muted — click to unmute' : 'Mute/unmute Telegram alerts';
+    }
 }
 
 function toggleFilesModal() {
@@ -2510,7 +2456,7 @@ function _syncFilmstripSelectionUI() {
 
 function filmstripSelectItem(index, path, event) {
     event.stopPropagation();
-    if (event.shiftKey && filmstripSelection.lastClicked !== null) {
+    if ((event.ctrlKey || event.metaKey) && event.shiftKey && filmstripSelection.lastClicked !== null) {
         const lo = Math.min(filmstripSelection.lastClicked, index);
         const hi = Math.max(filmstripSelection.lastClicked, index);
         for (let i = lo; i <= hi; i++) {
@@ -2912,6 +2858,8 @@ var _loopSegment = null; // { start, end } for segment looping, or true for full
 var _markedFrames = new Set(); // frame indices marked for composite
 var _videoFps = 30; // detected fps of current video
 var _scrubSlider = null; // reference to the range input
+// Isolation result for det_*.mp4 clips (transit spans / scores from backend)
+var _isolateResult = null;
 
 /** Build HTML strip showing diff heatmap and trigger frame beside the video. */
 function _buildCompanionStrip(fileInfo) {
@@ -2941,6 +2889,306 @@ function _buildCompanionStrip(fileInfo) {
     return parts.join('');
 }
 
+// ---------------------------------------------------------------------------
+// Transit isolation for det_*.mp4 clips (lightweight, no disk-detect needed)
+// ---------------------------------------------------------------------------
+
+/**
+ * Call the backend isolate-transit endpoint for a det_*.mp4 clip.
+ * On success, draws red span marks on markedFrameBar and auto-seeks the
+ * hidden video to the peak transit frame, setting a 3s loop around it.
+ */
+async function _runIsolateTransit(apiPath, peakHint) {
+    _isolateResult = null;
+    try {
+        const body = { path: apiPath };
+        if (peakHint != null) body.peak_time_s = peakHint;
+        const resp = await fetch('/telescope/files/isolate-transit', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(body),
+        });
+        if (!resp.ok) return;
+        const data = await resp.json();
+        if (data.error) { console.warn('[isolate]', data.error); return; }
+        _isolateResult = data;
+        _drawTransitSpans();
+        // Add Prev/Next buttons (idempotent)
+        _ensureTransitNavButtons();
+        // Auto-seek to peak and set 3s loop
+        const vid = document.getElementById('hiddenVid');
+        if (vid && data.peak_time_s != null) {
+            const ps = parseFloat(data.peak_time_s);
+            const half = 1.5;
+            _loopSegment = { start: Math.max(0, ps - half), end: ps + half };
+            vid.currentTime = _loopSegment.start;
+            vid.play().catch(() => {});
+        }
+    } catch (err) {
+        console.warn('[isolate] error:', err);
+    }
+}
+
+/**
+ * Draw red transit-span tick marks on markedFrameBar.
+ * Yellow ticks (user-marked frames) are preserved alongside.
+ */
+function _drawTransitSpans() {
+    const bar = document.getElementById('markedFrameBar');
+    if (!bar) return;
+    const total = _frameTotalCount || 1;
+    // Re-render yellow user marks first
+    bar.innerHTML = '';
+    for (const f of _markedFrames) {
+        const pct = (f / Math.max(1, total - 1)) * 100;
+        const tick = document.createElement('div');
+        tick.style.cssText = `position:absolute; left:${pct}%; top:0; width:2px; height:100%; background:#fd0; border-radius:1px; cursor:pointer;`;
+        tick.title = `Marked frame ${f}`;
+        tick.onclick = () => { const v = document.querySelector('#fileViewerBody video'); if (v) { v.pause(); v.currentTime = f / _videoFps; } };
+        bar.appendChild(tick);
+    }
+    // Red transit spans
+    if (!_isolateResult || !_isolateResult.spans) return;
+    for (const [s, e] of _isolateResult.spans) {
+        const pctL = (s / Math.max(1, total - 1)) * 100;
+        const pctW = Math.max(0.5, ((e - s + 1) / Math.max(1, total - 1)) * 100);
+        const span = document.createElement('div');
+        span.style.cssText = `position:absolute; left:${pctL}%; top:0; width:${pctW}%; height:100%; background:rgba(255,60,60,0.7); border-radius:2px; cursor:pointer;`;
+        span.title = `Transit span: frames ${s}–${e}`;
+        span.onclick = () => { const v = document.querySelector('#fileViewerBody video'); if (v) { v.pause(); v.currentTime = s / _videoFps; } };
+        bar.appendChild(span);
+    }
+    // Peak frame indicator (bright green)
+    if (_isolateResult.peak_frame != null) {
+        const pct = (_isolateResult.peak_frame / Math.max(1, total - 1)) * 100;
+        const pk = document.createElement('div');
+        pk.style.cssText = `position:absolute; left:${pct}%; top:0; width:3px; height:100%; background:#0f0; border-radius:1px; cursor:pointer;`;
+        pk.title = `Peak transit frame ${_isolateResult.peak_frame}`;
+        pk.onclick = () => { const v = document.querySelector('#fileViewerBody video'); if (v) { v.pause(); v.currentTime = _isolateResult.peak_frame / _videoFps; } };
+        bar.appendChild(pk);
+    }
+}
+
+/** Inject Prev/Next transit-span buttons into the scrubber control row. */
+function _ensureTransitNavButtons() {
+    if (document.getElementById('transitPrevBtn')) return; // already there
+    const counter = document.getElementById('frameCounter');
+    if (!counter || !counter.parentNode) return;
+    const prev = document.createElement('button');
+    prev.id = 'transitPrevBtn';
+    prev.className = 'btn-viewer';
+    prev.style.cssText = 'font-size:0.8em; padding:2px 7px;';
+    prev.title = 'Jump to previous transit span';
+    prev.textContent = '⏮ Transit';
+    prev.onclick = () => _jumpToTransitSpan(-1);
+    const next = document.createElement('button');
+    next.id = 'transitNextBtn';
+    next.className = 'btn-viewer';
+    next.style.cssText = 'font-size:0.8em; padding:2px 7px;';
+    next.title = 'Jump to next transit span';
+    next.textContent = 'Transit ⏭';
+    next.onclick = () => _jumpToTransitSpan(1);
+    counter.parentNode.insertBefore(prev, counter.nextSibling);
+    counter.parentNode.insertBefore(next, prev.nextSibling);
+}
+
+/** Jump to the previous (-1) or next (+1) transit span relative to current frame. */
+function _jumpToTransitSpan(dir) {
+    if (!_isolateResult || !_isolateResult.spans || !_isolateResult.spans.length) return;
+    const vid = document.getElementById('hiddenVid');
+    if (!vid) return;
+    const spans = _isolateResult.spans;
+    const cur = _currentFrame;
+    let target = null;
+    if (dir > 0) {
+        // next span whose start > cur
+        target = spans.find(([s]) => s > cur);
+        if (!target) target = spans[0]; // wrap
+    } else {
+        // previous span whose end < cur
+        const prev = [...spans].reverse().find(([, e]) => e < cur);
+        target = prev || spans[spans.length - 1]; // wrap
+    }
+    if (target) {
+        vid.pause();
+        const [s, e] = target;
+        const mid = (s + e) / 2;
+        vid.currentTime = Math.max(0, mid / _videoFps - 0.2);
+        _loopSegment = { start: Math.max(0, s / _videoFps - 0.2), end: e / _videoFps + 0.4 };
+        vid.play().catch(() => {});
+    }
+}
+
+
+// ---------------------------------------------------------------------------
+// Sidecar signal chart — uses live-detector data from det_*.json
+// ---------------------------------------------------------------------------
+
+/**
+ * Load the enriched sidecar and populate transit marks + signal chart.
+ * The sidecar.signal field contains scores_a/b, thresh_a/b, triggered,
+ * and transit_hires_frame — all computed by the live detector at fire time.
+ */
+function _loadSidecarSignal(sidecar, videoPath) {
+    const sig = sidecar.signal || {};
+    const hiresFps = 30;                 // hires buffer is always 30fps
+    const analysisFps = sig.analysis_fps || 15;
+    const step = Math.round(hiresFps / analysisFps);  // detector frames → hires frames
+
+    // Build _isolateResult from sidecar data so scrub bar marks work
+    const triggered = sig.triggered || [];
+    const spans = [];
+    let inSpan = false, spanStart = 0;
+    for (let i = 0; i < triggered.length; i++) {
+        if (triggered[i] && !inSpan) { inSpan = true; spanStart = i; }
+        else if (!triggered[i] && inSpan) {
+            inSpan = false;
+            if (i - spanStart >= 1) spans.push([spanStart * step, (i - 1) * step]);
+        }
+    }
+    if (inSpan) spans.push([spanStart * step, (triggered.length - 1) * step]);
+
+    const transitHiresFrame = sig.transit_hires_frame != null
+        ? sig.transit_hires_frame
+        : Math.round((sidecar.peak_time_s || 1.0) * hiresFps);
+
+    _isolateResult = {
+        spans: spans.length > 0 ? spans : [[Math.max(0, transitHiresFrame - 8), transitHiresFrame + 8]],
+        peak_frame: transitHiresFrame,
+        peak_time_s: sidecar.peak_time_s || (transitHiresFrame / hiresFps),
+    };
+    _drawTransitSpans();
+    _ensureTransitNavButtons();
+
+    // Auto-seek to transit
+    const vid = document.getElementById('hiddenVid');
+    if (vid && _isolateResult.peak_time_s != null) {
+        const ps = _isolateResult.peak_time_s;
+        _loopSegment = { start: Math.max(0, ps - 1.0), end: ps + 1.5 };
+        vid.currentTime = _loopSegment.start;
+        vid.play().catch(() => {});
+    }
+
+    // Confidence banner
+    const conf = sig.confidence_score != null ? `${Math.round(sig.confidence_score * 100)}%` : '';
+    const gate = sig.gate_detail || sig.gate_type || '';
+    const cnn = sig.cnn_confidence != null ? ` · CNN ${Math.round(sig.cnn_confidence * 100)}%` : '';
+    _setScanBanner('success', `✅ Live detection: ${gate} · confidence ${conf}${cnn}`);
+
+    // Draw signal chart
+    _drawSidecarSignalChart(sig, step);
+}
+
+/** Render the live-detector signal_a / signal_b history chart below the scrub bar. */
+function _drawSidecarSignalChart(sig, step) {
+    const root = document.getElementById('frameViewerRoot');
+    if (!root) return;
+
+    let card = document.getElementById('replaySignalCard');
+    if (!card) {
+        card = document.createElement('div');
+        card.id = 'replaySignalCard';
+        card.style.cssText = 'width:100%; padding:4px 12px 6px; background:#111; border-top:1px solid #333; flex-shrink:0;';
+        card.innerHTML =
+            '<div style="color:#888; font-size:0.7em; margin-bottom:2px;">📊 Live-detector signal — ' +
+            '<span style="color:#0cf;">A</span> consec diff · ' +
+            '<span style="color:#f80;">B</span> EMA/wavelet · ' +
+            '<span style="color:#0cf; opacity:0.5;">─ ─</span> threshold A · ' +
+            '<span style="color:#f80; opacity:0.5;">─ ─</span> threshold B</div>' +
+            '<canvas id="replaySignalCanvas" style="width:100%; height:56px; display:block;"></canvas>';
+        const scrubber = document.getElementById('frameScrubber');
+        if (scrubber && scrubber.parentNode) {
+            scrubber.parentNode.insertBefore(card, scrubber.nextSibling);
+        } else {
+            root.appendChild(card);
+        }
+    }
+
+    const canvas = document.getElementById('replaySignalCanvas');
+    if (!canvas) return;
+    const W = canvas.offsetWidth || 600;
+    const H = 56;
+    canvas.width = W;
+    canvas.height = H;
+    const ctx = canvas.getContext('2d');
+    ctx.fillStyle = '#111';
+    ctx.fillRect(0, 0, W, H);
+
+    const sa = sig.scores_a || [];
+    const sb = sig.scores_b || [];
+    const ta_val = sig.thresh_a || 0;
+    const tb_val = sig.thresh_b || 0;
+    const triggered = sig.triggered || [];
+    const n = Math.max(sa.length, sb.length);
+    if (n < 2) return;
+
+    const ta = new Array(n).fill(ta_val);
+    const tb = new Array(n).fill(tb_val);
+
+    const allVals = [...sa, ...sb, ta_val, tb_val].filter(v => v > 0);
+    const maxVal = Math.max(...allVals, 1e-6);
+    const toY = v => H - 2 - Math.round((Math.min(v, maxVal) / maxVal) * (H - 4));
+    const toX = i => Math.round((i / Math.max(n - 1, 1)) * (W - 1));
+
+    // Shade triggered spans
+    ctx.fillStyle = 'rgba(255,60,60,0.2)';
+    let inSpan = false, spanX = 0;
+    for (let i = 0; i < triggered.length; i++) {
+        if (triggered[i] && !inSpan) { inSpan = true; spanX = toX(i); }
+        else if (!triggered[i] && inSpan) { inSpan = false; ctx.fillRect(spanX, 0, toX(i) - spanX, H); }
+    }
+    if (inSpan) ctx.fillRect(spanX, 0, W - spanX, H);
+
+    // Transit event marker (brighter)
+    const peakDetFrame = sig.trigger_det_frame;
+    if (peakDetFrame != null && peakDetFrame < n) {
+        const px = toX(peakDetFrame);
+        ctx.fillStyle = 'rgba(255,80,80,0.5)';
+        ctx.fillRect(Math.max(0, px - 6), 0, 12, H);
+        ctx.fillStyle = '#fff';
+        ctx.font = '9px monospace';
+        ctx.fillText('⚡', px - 4, 9);
+    }
+
+    const drawLine = (arr, color, dash) => {
+        ctx.beginPath();
+        ctx.strokeStyle = color;
+        ctx.lineWidth = 1.2;
+        ctx.setLineDash(dash ? [3, 3] : []);
+        for (let i = 0; i < arr.length; i++) {
+            const x = toX(i), y = toY(arr[i]);
+            if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+        }
+        ctx.stroke();
+    };
+
+    drawLine(ta, 'rgba(0,200,255,0.4)', true);
+    drawLine(tb, 'rgba(255,136,0,0.4)', true);
+    drawLine(sa, '#0cf', false);
+    drawLine(sb, '#f80', false);
+    ctx.setLineDash([]);
+
+    // Playhead cursor — updated on scrub
+    canvas._step = step;
+    canvas._n = n;
+}
+
+/** Update the playhead cursor on the signal chart as the user scrubs. */
+function _updateSidecarChartCursor() {
+    const canvas = document.getElementById('replaySignalCanvas');
+    if (!canvas || !canvas._n) return;
+    // Lightweight redraw: the chart base is already painted; just draw/erase the cursor
+    // by triggering a full redraw via _drawSidecarSignalChart with cached sig
+    // (expensive for large arrays — skip cursor update if n > 1000)
+    if (canvas._n > 500) return;
+    const W = canvas.width, H = canvas.height;
+    const ctx = canvas.getContext('2d');
+    const detFrame = Math.round(_currentFrame / Math.max(1, canvas._step || 2));
+    const x = Math.round((detFrame / Math.max(canvas._n - 1, 1)) * (W - 1));
+    // We can't easily erase just the cursor without full redraw, so skip live cursor
+    // The chart is static and the scrub bar already shows position.
+}
+
 function viewFile(path, name, opts) {
     opts = opts || {};
     name = name || path.split('/').pop();
@@ -2966,6 +3214,7 @@ function viewFile(path, name, opts) {
     _setScanBanner(null); // clear any previous scan result
     _loopSegment = null;
     _markedFrames = new Set();
+    _isolateResult = null;
     _scrubSlider = null;
     // Resolve companion images for this file
     const curFileInfo = files.find(f => f.path === path) || {};
@@ -2996,7 +3245,7 @@ function viewFile(path, name, opts) {
                     `←/→ step · Shift ±10 · Space play/pause · M mark` +
                   `</div>` +
                 `</div>` +
-                `<div id="markedFrameBar" style="position:relative; width:100%; height:8px; background:#222; margin-top:4px; border-radius:4px; overflow:hidden;" title="Yellow ticks = marked frames"></div>` +
+                `<div id="markedFrameBar" style="position:relative; width:100%; height:8px; background:#222; margin-top:4px; border-radius:4px; overflow:hidden;" title="Yellow = marked frames · Red = transit spans · Green = peak frame"></div>` +
               `</div>` +
               `<div id="buildCompositeRow" style="display:none; padding:4px 8px; background:#1a1a1a; border-top:1px solid #222; text-align:center; flex-shrink:0;">` +
                 `<button class="btn-viewer" id="buildCompositeBtn" onclick="buildCompositeFromMarked()">🖼 Build Composite (<span id="compositeCountBtn">0</span>)</button>` +
@@ -3027,7 +3276,28 @@ function viewFile(path, name, opts) {
             _updateFivePanel();
         });
         vid.addEventListener('seeked', updateAfterSeek);
-        vid.addEventListener('loadedmetadata', () => { _initFrameScrubber(vid); updateAfterSeek(); });
+        const _isDetClip = /\/det_[^/]+\.mp4$/i.test(path);
+        // For det_*.mp4 clips: load the sidecar JSON which contains the exact
+        // live-detector signal data (no replay needed).  Fall back to lightweight
+        // isolation for older clips that predate the enriched sidecar format.
+        const _maybeAutoIsolate = () => {
+            if (!_isDetClip) return;
+            const apiPath = path.replace(/^\/static\//, '');
+            const sidecarPath = path.replace(/\.mp4$/i, '.json');
+            fetch(sidecarPath).then(r => r.ok ? r.json() : null).then(sidecar => {
+                const peak = sidecar && sidecar.peak_time_s != null ? sidecar.peak_time_s : null;
+                if (sidecar && sidecar.signal) {
+                    // New format: use live-detector signal directly
+                    _loadSidecarSignal(sidecar, path);
+                } else {
+                    // Legacy: fall back to lightweight frame-diff isolation
+                    _runIsolateTransit(apiPath, peak);
+                }
+            }).catch(() => {
+                _runIsolateTransit(apiPath, null);
+            });
+        };
+        vid.addEventListener('loadedmetadata', () => { _initFrameScrubber(vid); updateAfterSeek(); _maybeAutoIsolate(); });
         vid.addEventListener('loadeddata', () => { _initFrameScrubber(vid); updateAfterSeek(); });
         if (vid.readyState >= 1) { _initFrameScrubber(vid); updateAfterSeek(); }
         _extractFrameThumbs(vid);
@@ -3046,10 +3316,13 @@ function viewFile(path, name, opts) {
     if (actionsEl) {
         const hasPrev = _viewerIndex > 0;
         const hasNext = _viewerIndex >= 0 && _viewerIndex < files.length - 1;
+        // det_*.mp4 clips are confirmed transits — analysis buttons are redundant.
+        // Only show Solar/Lunar Transit analyze buttons for vid_* and other recordings.
+        const _isDetFile = /\/det_[^/]+\.mp4$/i.test(path);
         const scanBtn = isVideo
             ? `<button class="btn-viewer" onmousedown="frameStepStart(-1)" onmouseup="frameStepStop()" onmouseleave="frameStepStop()" title="Back 1 frame (hold to repeat)">◁</button>` +
-              `<button class="btn-viewer btn-viewer-sun" id="scanTransitBtn" onclick="scanTransit('sun')" title="Analyze for solar transit">☀️ Solar Transit</button>` +
-              `<button class="btn-viewer btn-viewer-moon" onclick="scanTransit('moon')" title="Analyze for lunar transit">🌙 Lunar Transit</button>` +
+              (!_isDetFile ? `<button class="btn-viewer btn-viewer-sun" id="scanTransitBtn" onclick="scanTransit('sun')" title="Analyze for solar transit">☀️ Solar Transit</button>` +
+              `<button class="btn-viewer btn-viewer-moon" onclick="scanTransit('moon')" title="Analyze for lunar transit">🌙 Lunar Transit</button>` : '') +
               `<button class="btn-viewer" onmousedown="frameStepStart(1)" onmouseup="frameStepStop()" onmouseleave="frameStepStop()" title="Forward 1 frame (hold to repeat)">▷</button>`
             : '';
         // Show composite image button if an analyzed_xxx.jpg exists for this file
@@ -3304,20 +3577,8 @@ function _updateMarkedUI() {
         if (buildCount) buildCount.textContent = count;
     }
 
-    // Draw tick marks on the marked-frame bar
-    const bar = document.getElementById('markedFrameBar');
-    if (!bar) return;
-    const total = _frameTotalCount || 1;
-    bar.innerHTML = '';
-    for (const f of _markedFrames) {
-        const pct = (f / Math.max(1, total - 1)) * 100;
-        const tick = document.createElement('div');
-        tick.style.cssText = `position:absolute; left:${pct}%; top:0; width:2px; height:100%; background:#fd0; border-radius:1px;`;
-        tick.title = `Frame ${f}`;
-        tick.style.cursor = 'pointer';
-        tick.onclick = () => { const v = document.querySelector('#fileViewerBody video'); if (v) { v.pause(); v.currentTime = f / _videoFps; } };
-        bar.appendChild(tick);
-    }
+    // Draw tick marks + transit spans on the marked-frame bar
+    _drawTransitSpans();
 }
 
 async function buildCompositeFromMarked() {
@@ -4212,7 +4473,8 @@ function startSimulation() {
     const statusDot   = document.getElementById('statusDot');
     const statusText  = document.getElementById('connectionStatus');
 
-    if (simulateBtn)   { simulateBtn.textContent = 'Stop Sim'; simulateBtn.className = 'btn btn-warning'; }
+    // Toggle .is-active (locked-down keycap) to show simulation is running
+    if (simulateBtn)   { simulateBtn.textContent = 'Stop Sim'; simulateBtn.classList.add('is-active'); }
     if (connectBtn)    connectBtn.disabled = true;
     if (disconnectBtn) disconnectBtn.disabled = true;
     if (statusDot)     statusDot.className = 'status-dot connected';
@@ -4264,7 +4526,8 @@ function stopSimulation() {
     const statusDot     = document.getElementById('statusDot');
     const statusText    = document.getElementById('connectionStatus');
 
-    if (simulateBtn)   { simulateBtn.textContent = 'Simulate'; simulateBtn.className = 'btn btn-info'; }
+    // Remove .is-active to restore raised/unselected keycap
+    if (simulateBtn)   { simulateBtn.textContent = 'Sim'; simulateBtn.classList.remove('is-active'); }
     if (connectBtn)    connectBtn.disabled = false;
     if (disconnectBtn) disconnectBtn.disabled = true;
     if (statusDot)     statusDot.className = 'status-dot disconnected';
@@ -4770,9 +5033,9 @@ function startSimEclipse() {
     eclipseAlertLevel = null;  // let updateEclipseState compute it fresh
     eclipseBannerDismissed = false; // reset so banner can show if checkbox ticked
 
-    // Style the button as active
+    // Lock-down keycap (.is-active) to show eclipse sim is running
     const btn = document.getElementById('simEclipseBtn');
-    if (btn) { btn.textContent = `${preset.icon} Stop Eclipse`; btn.classList.add('active'); }
+    if (btn) { btn.textContent = 'Stop Ecl'; btn.classList.add('is-active'); }
 
     // Show the controls row
     const controls = document.getElementById('simEclipseControls');
@@ -4798,8 +5061,9 @@ function stopSimEclipse() {
     eclipseBannerDismissed = false;
     updateEclipseState();  // immediately clears card and banner
 
+    // Restore raised keycap on stop
     const btn = document.getElementById('simEclipseBtn');
-    if (btn) { btn.textContent = '🌑 Sim Eclipse'; btn.classList.remove('active'); }
+    if (btn) { btn.textContent = 'Eclipse'; btn.classList.remove('is-active'); }
 
     // Hide fire-transit button and controls
     const fireBtn = document.getElementById('simFireTransitBtn');
@@ -4989,18 +5253,93 @@ async function pollDetectionStatus() {
             detectionPollInterval = null;
         }
 
+        // Disc-lost watchdog (T03)
+        updateDiscLostWarning(result.disc_lost_warning || false, result.disk_detected || false);
+
+        // B4: primed prediction window indicator
+        updatePrimedEventBadge(result.primed_events || []);
+
+        // D4/Phase D: live signal sparkline
+        if (result.signal_trace && result.signal_trace.length > 0 && isDetecting) {
+            const sparkCard = document.getElementById('signalSparkCard');
+            if (sparkCard) sparkCard.style.display = '';
+            _pushSignalTrace(result.signal_trace);
+        } else {
+            const sparkCard = document.getElementById('signalSparkCard');
+            if (sparkCard && !isDetecting) sparkCard.style.display = 'none';
+        }
+
         updateDetectionUI();
     } catch (e) {
         // Silent — polling failure is transient; don't reset isDetecting
     }
 }
 
+function updateDiscLostWarning(lostWarning, diskDetected) {
+    const warnId = 'discLostWarning';
+    let el = document.getElementById(warnId);
+
+    if (lostWarning && !diskDetected) {
+        if (!el) {
+            el = document.createElement('div');
+            el.id = warnId;
+            el.style.cssText =
+                'background:#7c2d12; color:#fed7aa; border:1px solid #ea580c; ' +
+                'border-radius:6px; padding:6px 10px; margin:6px 0; font-size:0.82em; ' +
+                'display:flex; align-items:center; gap:6px;';
+            el.innerHTML =
+                '<span style="font-size:1.1em;">⚠️</span>' +
+                '<span>Disc lost — telescope may be mispointed or solar tracking is off.</span>';
+            // Insert before the event log inside the detect panel
+            const log = document.getElementById('detectEventLog');
+            if (log && log.parentNode) {
+                log.parentNode.insertBefore(el, log);
+            }
+        }
+    } else if (el) {
+        el.remove();
+    }
+}
+
+function updatePrimedEventBadge(primedEvents) {
+    const badgeId = 'primedEventBadge';
+    let el = document.getElementById(badgeId);
+
+    if (primedEvents && primedEvents.length > 0) {
+        const ev = primedEvents[0]; // show first/nearest
+        const etaLabel = ev.eta_s > 0 ? `ETA ${ev.eta_s}s` : 'NOW';
+        const text = `Primed: ${ev.flight_id}  ${etaLabel}  (${ev.sep_deg}°)`;
+        if (!el) {
+            el = document.createElement('div');
+            el.id = badgeId;
+            el.style.cssText =
+                'background:#1c3a1c; color:#86efac; border:1px solid #22c55e; ' +
+                'border-radius:6px; padding:6px 10px; margin:6px 0; font-size:0.82em; ' +
+                'display:flex; align-items:center; gap:6px;';
+            el.innerHTML =
+                '<span style="font-size:1.1em;">🎯</span>' +
+                `<span id="${badgeId}Text"></span>`;
+            const log = document.getElementById('detectEventLog');
+            if (log && log.parentNode) log.parentNode.insertBefore(el, log);
+        }
+        const textEl = document.getElementById(`${badgeId}Text`);
+        if (textEl) textEl.textContent = text;
+    } else if (el) {
+        el.remove();
+    }
+}
+
 function onTransitDetected(event) {
     const ts = new Date(event.timestamp).toLocaleTimeString();
     const flight = event.flight_info;
+    const predicted = event.predicted_flight_id;
     let msg = `🎯 Transit detected at ${ts}`;
     if (flight) {
         msg += ` — ${flight.name} (${flight.aircraft_type}) ${flight.separation_deg}°`;
+    }
+    if (predicted) {
+        const matchLabel = flight && flight.name === predicted ? '✅ prediction match' : `predicted: ${predicted}`;
+        msg += `  [${matchLabel}]`;
     }
     showStatus(msg, 'success', 10000);
 
@@ -5031,11 +5370,27 @@ function appendDetectionEvent(event) {
     const flightStr = flight ? `${flight.name} (${flight.aircraft_type})` : 'Unknown';
     const sepStr = flight ? `${flight.separation_deg}°` : '';
 
+    // D3: numeric confidence score badge
+    const cscore = event.confidence_score;
+    const cCol = (cscore >= 0.65) ? '#4caf50' : (cscore >= 0.4) ? '#ff9800' : '#9e9e9e';
+    const cBadge = (cscore != null)
+        ? ` <span style="color:${cCol};font-size:0.82em" title="Confidence score">${Math.round(cscore * 100)}%</span>`
+        : '';
+    // D3: prediction match badge
+    const predFid = event.predicted_flight_id;
+    const evFlight = event.flight_info;
+    const predMatched = predFid && evFlight && evFlight.name && predFid === evFlight.name;
+    const predBadge = predFid
+        ? (predMatched
+            ? ' <span style="color:#4caf50;font-size:0.75em" title="Prediction matched">✅match</span>'
+            : ` <span style="color:#ff9800;font-size:0.75em" title="Primed for ${predFid}">🎯primed</span>`)
+        : '';
+
     const row = document.createElement('div');
     row.className = 'detect-event-row';
     row.innerHTML =
         `<span class="detect-event-time">${ts}</span>` +
-        `<span class="detect-event-flight">${flightStr}</span>` +
+        `<span class="detect-event-flight">${flightStr}${cBadge}${predBadge}</span>` +
         `<span class="detect-event-sep">${sepStr}</span>`;
 
     // If there's a recording file, make it clickable
@@ -5065,7 +5420,7 @@ function updateDetectionUI() {
     const statsEl = document.getElementById('detectStats');
 
     if (btn) {
-        btn.textContent = isDetecting ? '⏹ Stop Detection' : '▶ Start Detection';
+        btn.textContent = isDetecting ? 'Stop' : 'Start';
         btn.className = isDetecting
             ? 'btn btn-danger btn-compact'
             : 'btn btn-primary btn-compact';
@@ -5099,9 +5454,7 @@ function updateDetectionUI() {
     if (log) {
         const empty = log.querySelector('.empty-state');
         if (empty) {
-            empty.textContent = isDetecting
-                ? '🔭 Watching for transits…'
-                : 'No detections yet';
+            empty.textContent = 'No detections yet';
         }
     }
 }
@@ -5148,6 +5501,7 @@ const TUNING_DEFAULTS = {
     sensitivity_scale: 1.0,
     track_min_mag: 2.0,
     track_min_agree_frac: 0.6,
+    mf_threshold_frac: 0.70,
 };
 
 /** Load saved tuning from localStorage (fallback to defaults). */
@@ -5159,6 +5513,7 @@ function _loadTuning() {
         sensitivity_scale:    parseFloat(localStorage.getItem('det_sensitivity')    ?? TUNING_DEFAULTS.sensitivity_scale),
         track_min_mag:        parseFloat(localStorage.getItem('det_track_mag')      ?? TUNING_DEFAULTS.track_min_mag),
         track_min_agree_frac: parseFloat(localStorage.getItem('det_track_agree')    ?? TUNING_DEFAULTS.track_min_agree_frac),
+        mf_threshold_frac:    parseFloat(localStorage.getItem('det_mf_thresh')      ?? TUNING_DEFAULTS.mf_threshold_frac),
     };
 }
 
@@ -5181,12 +5536,14 @@ function _syncTuningSliders(s) {
     const ss = document.getElementById('tunSensitivity');
     const tm = document.getElementById('tunTrackMag');
     const ta = document.getElementById('tunTrackAgree');
+    const mf = document.getElementById('tunMFThresh');
     if (m)  { m.value  = Math.round((s.disk_margin_pct ?? TUNING_DEFAULTS.disk_margin_pct) * 100); _updateTuningLabel('tunMargin'); }
     if (r)  { r.value  = s.centre_ratio_min ?? TUNING_DEFAULTS.centre_ratio_min; _updateTuningLabel('tunRatio'); }
     if (c)  { c.value  = s.consec_frames ?? TUNING_DEFAULTS.consec_frames; _updateTuningLabel('tunConsec'); }
     if (ss) { ss.value = s.sensitivity_scale ?? TUNING_DEFAULTS.sensitivity_scale; _updateTuningLabel('tunSensitivity'); }
     if (tm) { tm.value = s.track_min_mag ?? TUNING_DEFAULTS.track_min_mag; _updateTuningLabel('tunTrackMag'); }
     if (ta) { ta.value = Math.round((s.track_min_agree_frac ?? TUNING_DEFAULTS.track_min_agree_frac) * 100); _updateTuningLabel('tunTrackAgree'); }
+    if (mf) { mf.value = Math.round((s.mf_threshold_frac ?? TUNING_DEFAULTS.mf_threshold_frac) * 100); _updateTuningLabel('tunMFThresh'); }
 }
 
 function _updateTuningLabel(id) {
@@ -5198,43 +5555,59 @@ function _updateTuningLabel(id) {
 function ensureTuningUI() {
     const detectPanel = document.getElementById('detectPanel');
     if (!detectPanel) return;
-    if (document.getElementById('tuningCard')) return;
+    if (document.getElementById('tuningBody')) return;
 
     const saved = _loadTuning();
 
-    const card = document.createElement('div');
-    card.id = 'tuningCard';
-    card.className = 'harness-card';
-    card.innerHTML = `
-        <div class="harness-card-title">⚙️ Detection Tuning</div>
-        <div style="font-size:0.82em; color:#888; margin-bottom:8px;">Changes apply immediately to the live detector.</div>
-        ${_tuningSliderRow('tunMargin',  'Edge Margin %', 5, 50, Math.round(saved.disk_margin_pct*100),
+    // Add compact TUNE keycap to the detect controls row
+    const controls = document.getElementById('detectControls');
+    if (controls) {
+        const tuneBtn = document.createElement('button');
+        tuneBtn.id = 'tuningToggleBtn';
+        tuneBtn.className = 'btn btn-compact btn-toggle';
+        tuneBtn.title = 'Detection tuning parameters';
+        tuneBtn.textContent = 'TUNE';
+        tuneBtn.onclick = _toggleTuningBody;
+        controls.appendChild(tuneBtn);
+    }
+
+    // Collapsible tuning sliders body — inserted directly into detectPanel
+    const body = document.createElement('div');
+    body.id = 'tuningBody';
+    body.style.cssText = 'display:none; margin-bottom:4px;';
+    body.innerHTML = `
+        <div style="font-size:0.74em;color:#6A7A85;padding:3px 0 5px;border-bottom:1px solid rgba(255,255,255,0.06);margin-bottom:6px;">
+            Tuning — changes apply to live detector immediately.
+        </div>
+        ${_tuningSliderRow('tunMargin',  'Edge Margin %', 5, 50, Math.round(saved.disk_margin_pct*100), 1,
             'Exclude the outermost N% of disk radius (limb zone). Higher = fewer false positives from limb jitter.')}
         ${_tuningSliderRow('tunRatio',   'Centre Ratio', 0.5, 6, saved.centre_ratio_min, 0.1,
             'Inner-disk signal must be N× the limb signal. Higher = stricter concentration requirement.')}
         ${_tuningSliderRow('tunConsec',  'Consec Frames', 2, 20, saved.consec_frames, 1,
-            'How many consecutive frames must exceed the signal threshold before a detection fires — a <em>time</em> gate (~0.5 s at default 7 frames). Prevents single-frame noise spikes. Does not care about <em>where</em> the motion is going, only that it is strong enough for long enough.')}
+            'Fast gate — fires when N consecutive frames all exceed the signal threshold.')}
+        ${_tuningSliderRow('tunMFThresh', 'MF Threshold %', 50, 100, Math.round(saved.mf_threshold_frac * 100), 5,
+            'Matched-filter gate — fires when at least N% of frames in a sliding window are triggered.')}
         ${_tuningSliderRow('tunSensitivity', 'Sensitivity', 0.2, 3.0, saved.sensitivity_scale, 0.1,
-            'Multiplier applied to both adaptive thresholds. Below 1 = lower bar (more detections). Above 1 = higher bar (fewer detections). Adjust if you are getting too many or too few alerts.')}
+            'Multiplier on both adaptive thresholds. Below 1 = more detections; above 1 = fewer.')}
         ${_tuningSliderRow('tunTrackMag', 'Track Min Motion (px)', 0, 10, saved.track_min_mag, 0.1,
-            'A <em>spatial</em> gate — complements Consec Frames. Sets the minimum pixel displacement of the detected blob\'s centroid between frames to count as real directional motion. Atmospheric shimmer moves the centroid randomly by ≤2 px with no consistent direction; a real aircraft moves 3–8 px per frame in a straight line. Frames below this threshold abstain from the direction vote. Set to 0 to disable.')}
+            'Minimum centroid displacement per frame to count as real directional motion. Set 0 to disable.')}
         ${_tuningSliderRow('tunTrackAgree', 'Track Agreement %', 0, 100, Math.round(saved.track_min_agree_frac * 100), 5,
-            'What fraction of the streak frames (that cleared Track Min Motion) must agree on direction before the detection fires. 60% = default. Set to 0 to disable the direction gate entirely.')}
-        <button class="btn btn-secondary btn-compact" style="margin-top:6px; width:100%;" onclick="_resetTuning()">↩ Reset to defaults</button>
+            'Fraction of streak frames that must agree on direction before firing. Set 0 to disable.')}
+        <button class="btn btn-secondary btn-compact" style="margin-top:4px;width:100%;" onclick="_resetTuning()">Reset to defaults</button>
     `;
 
-    // Insert before the harness panel (or event log)
+    // Insert before harness panel (or event log)
     const harness = document.getElementById('harnessPanel');
     const eventLog = document.getElementById('detectEventLog');
     const ref = harness || eventLog;
     if (ref && ref.parentNode === detectPanel) {
-        detectPanel.insertBefore(card, ref);
+        detectPanel.insertBefore(body, ref);
     } else {
-        detectPanel.appendChild(card);
+        detectPanel.appendChild(body);
     }
 
     // Wire up sliders
-    ['tunMargin', 'tunRatio', 'tunConsec', 'tunSensitivity', 'tunTrackMag', 'tunTrackAgree'].forEach(id => {
+    ['tunMargin', 'tunRatio', 'tunConsec', 'tunMFThresh', 'tunSensitivity', 'tunTrackMag', 'tunTrackAgree'].forEach(id => {
         const el = document.getElementById(id);
         if (!el) return;
         el.addEventListener('input', () => {
@@ -5242,6 +5615,15 @@ function ensureTuningUI() {
             _debouncedApplyTuning();
         });
     });
+}
+
+function _toggleTuningBody() {
+    const body = document.getElementById('tuningBody');
+    const btn = document.getElementById('tuningToggleBtn');
+    if (!body) return;
+    const open = body.style.display !== 'none';
+    body.style.display = open ? 'none' : '';
+    if (btn) btn.classList.toggle('is-active', !open);
 }
 
 let _tuningDebounceTimer = null;
@@ -5254,6 +5636,7 @@ function _debouncedApplyTuning() {
         const ss = document.getElementById('tunSensitivity');
         const tm = document.getElementById('tunTrackMag');
         const ta = document.getElementById('tunTrackAgree');
+        const mf = document.getElementById('tunMFThresh');
         const settings = {
             disk_margin_pct:      m  ? parseFloat(m.value)  / 100 : TUNING_DEFAULTS.disk_margin_pct,
             centre_ratio_min:     r  ? parseFloat(r.value)        : TUNING_DEFAULTS.centre_ratio_min,
@@ -5261,6 +5644,7 @@ function _debouncedApplyTuning() {
             sensitivity_scale:    ss ? parseFloat(ss.value)       : TUNING_DEFAULTS.sensitivity_scale,
             track_min_mag:        tm ? parseFloat(tm.value)       : TUNING_DEFAULTS.track_min_mag,
             track_min_agree_frac: ta ? parseInt(ta.value) / 100   : TUNING_DEFAULTS.track_min_agree_frac,
+            mf_threshold_frac:    mf ? parseInt(mf.value)  / 100  : TUNING_DEFAULTS.mf_threshold_frac,
         };
         localStorage.setItem('det_disk_margin',   settings.disk_margin_pct);
         localStorage.setItem('det_centre_ratio',  settings.centre_ratio_min);
@@ -5268,6 +5652,7 @@ function _debouncedApplyTuning() {
         localStorage.setItem('det_sensitivity',   settings.sensitivity_scale);
         localStorage.setItem('det_track_mag',     settings.track_min_mag);
         localStorage.setItem('det_track_agree',   settings.track_min_agree_frac);
+        localStorage.setItem('det_mf_thresh',     settings.mf_threshold_frac);
         _applyDetectionSettings(settings);
     }, 300);
 }
@@ -5279,6 +5664,7 @@ function _resetTuning() {
     localStorage.removeItem('det_sensitivity');
     localStorage.removeItem('det_track_mag');
     localStorage.removeItem('det_track_agree');
+    localStorage.removeItem('det_mf_thresh');
     _syncTuningSliders(TUNING_DEFAULTS);
     _applyDetectionSettings(TUNING_DEFAULTS);
 }
@@ -5519,8 +5905,162 @@ async function runHarnessValidate() {
 }
 
 // ============================================================================
+// D4 — Detection event history log panel
+// ============================================================================
+
+let _detEventsPanel = null;
+let _detEventsFetched = false;
+
+/**
+ * Create or toggle the detection-event-history panel inside detectPanel.
+ * Fetches from /api/transit-events the first time it's opened.
+ */
+window.toggleDetectionEventHistory = async function() {
+    const detectPanel = document.getElementById('detectPanel');
+    if (!detectPanel) return;
+
+    if (_detEventsPanel) {
+        _detEventsPanel.style.display =
+            _detEventsPanel.style.display === 'none' ? '' : 'none';
+        return;
+    }
+
+    _detEventsPanel = document.createElement('div');
+    _detEventsPanel.id = 'detEventsPanel';
+    _detEventsPanel.style.cssText =
+        'margin:8px 0;background:#1a1a2e;border:1px solid #2a2a4a;border-radius:6px;padding:8px;';
+
+    const title = document.createElement('div');
+    title.style.cssText = 'font-weight:600;font-size:0.85em;color:#90caf9;margin-bottom:6px;';
+    title.textContent = '📋 Detection Event History (last 7 days)';
+    _detEventsPanel.appendChild(title);
+
+    const tableWrap = document.createElement('div');
+    tableWrap.id = 'detEventsTableWrap';
+    tableWrap.style.cssText = 'overflow-x:auto;max-height:260px;overflow-y:auto;';
+    tableWrap.innerHTML = '<div style="color:#555;font-size:0.8em;padding:6px">Loading…</div>';
+    _detEventsPanel.appendChild(tableWrap);
+
+    detectPanel.appendChild(_detEventsPanel);
+    await _refreshDetectionEventHistory();
+};
+
+async function _refreshDetectionEventHistory() {
+    const wrap = document.getElementById('detEventsTableWrap');
+    if (!wrap) return;
+
+    let events = [];
+    try {
+        const resp = await fetch('/api/transit-events');
+        if (resp.ok) events = await resp.json();
+    } catch (_) {
+        wrap.innerHTML = '<div style="color:#e57373;font-size:0.8em;padding:4px">Failed to load events</div>';
+        return;
+    }
+
+    if (!events.length) {
+        wrap.innerHTML = '<div style="color:#555;font-size:0.8em;padding:4px">No detection events recorded yet</div>';
+        return;
+    }
+
+    const _LABEL_COLORS = { tp: '#4caf50', fp: '#f44336', fn: '#ff9800', tn: '#9e9e9e' };
+    const _LABEL_ICONS  = { tp: '✅TP', fp: '❌FP', fn: '⚠️FN', tn: '⬜TN' };
+
+    const cols = [
+        { key: 'timestamp',          label: 'Time',         fmt: v => v ? new Date(v).toLocaleString('en-US', {month:'short',day:'numeric',hour:'2-digit',minute:'2-digit',second:'2-digit',hour12:false}) : '—' },
+        { key: 'detected_flight_id', label: 'Flight',       fmt: v => v || '<span style="color:#555">unconfirmed</span>' },
+        { key: 'predicted_flight_id',label: 'Predicted',    fmt: v => v || '—' },
+        { key: 'confidence_score',   label: 'Score',        fmt: v => {
+            const n = parseFloat(v);
+            if (isNaN(n)) return '—';
+            const col = n >= 0.65 ? '#4caf50' : n >= 0.4 ? '#ff9800' : '#9e9e9e';
+            return `<span style="color:${col};font-weight:600">${(n*100).toFixed(0)}%</span>`;
+        }},
+        { key: 'confidence',         label: 'Grade',        fmt: v => v === 'strong'
+            ? '<span style="color:#4caf50">strong</span>'
+            : '<span style="color:#9e9e9e">weak</span>' },
+        { key: 'notes',              label: 'Notes',        fmt: v => v
+            ? `<span style="color:#90caf9;font-size:0.82em">${v}</span>`
+            : '' },
+        { key: 'label',              label: 'Label',        fmt: (v, ev) => {
+            const cur = v || '';
+            const ts = (ev.timestamp || '').replace(/"/g, '&quot;');
+            const btns = ['tp','fp','fn'].map(lbl => {
+                const active = cur === lbl;
+                const col = active ? _LABEL_COLORS[lbl] : '#333';
+                const bord = active ? _LABEL_COLORS[lbl] : '#444';
+                return `<button onclick="_labelEvent('${ts}','${lbl}',this)"
+                    style="background:${col};border:1px solid ${bord};color:#fff;
+                    padding:1px 5px;border-radius:3px;cursor:pointer;font-size:0.78em;
+                    margin-right:2px;">${_LABEL_ICONS[lbl]}</button>`;
+            }).join('');
+            return `<span style="display:inline-flex;align-items:center;">${btns}</span>`;
+        }},
+    ];
+
+    const tbl = document.createElement('table');
+    tbl.style.cssText = 'width:100%;border-collapse:collapse;font-size:0.78em;';
+    const thead = tbl.createTHead();
+    const hrow = thead.insertRow();
+    cols.forEach(c => {
+        const th = document.createElement('th');
+        th.textContent = c.label;
+        th.style.cssText = 'padding:3px 6px;text-align:left;color:#90caf9;border-bottom:1px solid #2a2a4a;white-space:nowrap;position:sticky;top:0;background:#1a1a2e;';
+        hrow.appendChild(th);
+    });
+
+    const tbody = tbl.createTBody();
+    events.slice(0, 100).forEach(ev => {
+        const tr = tbody.insertRow();
+        tr.style.cssText = 'border-bottom:1px solid #1e1e3a;';
+        tr.onmouseenter = () => tr.style.background = '#1e1e3a';
+        tr.onmouseleave = () => tr.style.background = '';
+        cols.forEach(c => {
+            const td = tr.insertCell();
+            td.style.cssText = 'padding:3px 6px;white-space:nowrap;';
+            td.innerHTML = c.fmt(ev[c.key] ?? '', ev);
+        });
+    });
+
+    wrap.innerHTML = '';
+    wrap.appendChild(tbl);
+}
+
+/** T23 — Send a TP/FP/FN label for a detection event to the backend. */
+async function _labelEvent(timestamp, label, btnEl) {
+    try {
+        const resp = await fetch('/api/transit-events/label', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ timestamp, label }),
+        });
+        if (!resp.ok) throw new Error(await resp.text());
+
+        // Visual feedback: highlight the active button in its row
+        const row = btnEl.closest('tr');
+        if (row) {
+            row.querySelectorAll('button').forEach(b => {
+                const lbl = b.textContent.toLowerCase().replace(/[^a-z]/g, '').slice(0, 2);
+                const _LABEL_COLORS_JS = { tp: '#4caf50', fp: '#f44336', fn: '#ff9800' };
+                const active = lbl === label;
+                b.style.background = active ? (_LABEL_COLORS_JS[lbl] || '#555') : '#333';
+                b.style.borderColor = active ? (_LABEL_COLORS_JS[lbl] || '#666') : '#444';
+            });
+        }
+    } catch (e) {
+        console.error('[Label]', e);
+    }
+}
+
+// ============================================================================
 // CLEANUP
 // ============================================================================
+
+let _radarAnimFrame = null;
+let _radarSweepAfterDetectTimer = null;
+let _radarLastTransitTs = 0;        // ms — updated every push; sweep runs while fresh
+const RADAR_SWEEP_KEEPALIVE_MS = 660_000; // freeze ~11 min after last transit push (> 10 min poll cycle)
+window._radarLastUpdateTs = 0;
 
 window.destroyTelescope = function() {
     if (statusPollInterval)     { clearInterval(statusPollInterval);     statusPollInterval     = null; }
@@ -5529,10 +6069,873 @@ window.destroyTelescope = function() {
     if (transitPollInterval)    { clearInterval(transitPollInterval);    transitPollInterval    = null; }
     if (transitTickInterval)    { clearInterval(transitTickInterval);    transitTickInterval    = null; }
     if (detectionPollInterval)  { clearInterval(detectionPollInterval);  detectionPollInterval  = null; }
+    if (_radarAnimFrame) { cancelAnimationFrame(_radarAnimFrame); _radarAnimFrame = null; }
+    _radarLastTransitTs = 0;
 };
 
 document.addEventListener('DOMContentLoaded', () => {
     ensureHarnessUI();
+    ensureTransitRadar();
 });
 
-console.log('[Telescope] Module loaded');
+// ============================================================================
+// TRANSIT RADAR SCOPE
+// ============================================================================
+
+// ── constants ───────────────────────────────────────────────────────────────
+const RADAR_SWEEP_SEC_PER_REV   = 3;       // seconds per full rotation
+const RADAR_PREDICT_HORIZON_S   = 12;      // enhanced-mode look-ahead (s)
+const RADAR_DISC_DEG            = 0.53;    // solar/lunar disc radius (°)
+const RADAR_MAX_SEP_DEG         = 12;      // outer ring = 12° (full LOW range)
+const RADAR_HISTORY_MAX         = 24;      // trail length per blip
+const RADAR_SWEEP_RUN_AFTER_DETECT_S = 30; // seconds sweep stays on after detection
+
+// ── state ───────────────────────────────────────────────────────────────────
+const _radarTracks       = new Map();  // id → {points[], color, level, label, altFt, speedKmh, heading}
+let   _radarCanvas       = null;
+let   _radarCtx          = null;
+let   _radarSweepStart   = null;       // performance.now() reference (null = frozen)
+let   _radarSweepAngle   = 0;          // frozen angle (rad) when sweep is paused
+let   _radarMode         = 'default';  // 'default' | 'enhanced'
+let   _radarHoveredId    = null;
+let   _radarPinnedId     = null;
+let   _radarHitTest      = [];         // [{id, x, y, r}] rebuilt each frame
+let   _radarSweepActive  = false;
+
+// ── helpers ─────────────────────────────────────────────────────────────────
+function _hexToRgba(hex, alpha) {
+    const r = parseInt(hex.slice(1,3),16);
+    const g = parseInt(hex.slice(3,5),16);
+    const b = parseInt(hex.slice(5,7),16);
+    return `rgba(${r},${g},${b},${alpha})`;
+}
+
+function _radarAzDelta(azCraft, azTarget) {
+    let d = azCraft - azTarget;
+    while (d >  180) d -= 360;
+    while (d < -180) d += 360;
+    return d;
+}
+function _radarAltFtStr(ft) { return ft != null ? `${Math.round(ft).toLocaleString()} ft` : '—'; }
+function _radarSpeedStr(kmh){ return kmh != null ? `${Math.round(kmh)} km/h` : '—'; }
+
+function _radarVelocity(pts) {
+    if (pts.length < 2) return null;
+    const a = pts[pts.length-2], b = pts[pts.length-1];
+    const dt = (b.t - a.t) / 1000;
+    if (dt < 0.1) return null;
+    return { dAlt: (b.altD - a.altD)/dt, dAz: (b.azD - a.azD)/dt };
+}
+
+function _radarPolar(altD, azD, R) {
+    // azD → tangential, altD → radial; map to canvas polar coords
+    const sepDeg = Math.hypot(altD, azD);
+    const ang    = Math.atan2(azD, altD);  // 0 = up (alt-only offset)
+    const frac   = Math.min(sepDeg / RADAR_MAX_SEP_DEG, 1);
+    return { r: frac * R, ang };
+}
+
+function _radarBlipXY(pt, cx, cy, R) {
+    const { r, ang } = _radarPolar(pt.altD, pt.azD, R);
+    return { x: cx + r * Math.sin(ang), y: cy - r * Math.cos(ang) };
+}
+
+// ── resize ──────────────────────────────────────────────────────────────────
+function _resizeRadarCanvas() {
+    if (!_radarCanvas) return;
+    const W = _radarCanvas.offsetWidth;
+    _radarCanvas.width  = W;
+    _radarCanvas.height = W;
+}
+
+// ── draw frame ──────────────────────────────────────────────────────────────
+let _radarLastEtaRender = 0;
+function _radarDrawFrame(ts) {
+    _radarAnimFrame = requestAnimationFrame(_radarDrawFrame);
+    // Tick the upcoming-transit ETA countdown once per second
+    if (ts - _radarLastEtaRender > 1000) {
+        _radarLastEtaRender = ts;
+        _renderUpcomingTransits();
+    }
+
+    const canvas = _radarCanvas;
+    if (!canvas || !canvas.isConnected) return;
+    const ctx = _radarCtx;
+    const W = canvas.width, H = canvas.height;
+    if (W < 10 || H < 10) return;
+    const cx = W/2, cy = H/2;
+    const R  = Math.min(cx, cy) - 8;
+
+    const nowMs = Date.now();
+    for (const [id, tr] of _radarTracks.entries()) {
+        if (!tr.lastUpdateT) continue;
+        if ((nowMs - tr.lastUpdateT) > RADAR_TRACK_STALE_MS) {
+            _radarTracks.delete(id);
+        }
+    }
+
+    // derive active state from last-seen timestamp (no fixed timer)
+    const recentMeasurement = !!window._radarLastUpdateTs &&
+        (Date.now() - window._radarLastUpdateTs) < 5000;
+    _radarSweepActive = recentMeasurement &&
+                        _radarLastTransitTs > 0 &&
+                        (Date.now() - _radarLastTransitTs) < RADAR_SWEEP_KEEPALIVE_MS;
+
+    // sweep angle
+    let sweepAng;
+    if (_radarSweepActive) {
+        if (_radarSweepStart == null) _radarSweepStart = ts;
+        const elapsed = (ts - _radarSweepStart) / 1000;
+        sweepAng = ((elapsed / RADAR_SWEEP_SEC_PER_REV) % 1) * Math.PI * 2;
+        _radarSweepAngle = sweepAng;
+    } else {
+        _radarSweepStart = null;   // reset so it restarts cleanly next time
+        sweepAng = _radarSweepAngle;
+    }
+
+    // ── background ──────────────────────────────────────────────────────────
+    ctx.clearRect(0, 0, W, H);
+    ctx.fillStyle = '#050a10';
+    ctx.fillRect(0, 0, W, H);
+
+    // rings
+    const ringFracs = [0.25, 0.5, 0.75, 1.0];
+    const ringLabels = ['3°','6°','9°','12°'];
+    ctx.strokeStyle = 'rgba(0,180,80,0.18)';
+    ctx.lineWidth   = 1;
+    for (let i = 0; i < ringFracs.length; i++) {
+        ctx.beginPath();
+        ctx.arc(cx, cy, ringFracs[i]*R, 0, Math.PI*2);
+        ctx.stroke();
+        if (ringFracs[i] < 1) {
+            ctx.fillStyle = 'rgba(0,180,80,0.28)';
+            ctx.font = '9px monospace';
+            ctx.textAlign = 'left';
+            ctx.fillText(ringLabels[i], cx + ringFracs[i]*R + 3, cy + 3);
+        }
+    }
+    // disc circle
+    const discR = (RADAR_DISC_DEG / RADAR_MAX_SEP_DEG) * R;
+    ctx.strokeStyle = 'rgba(255,220,50,0.35)';
+    ctx.lineWidth = 1;
+    ctx.setLineDash([3,3]);
+    ctx.beginPath(); ctx.arc(cx, cy, discR, 0, Math.PI*2); ctx.stroke();
+    ctx.setLineDash([]);
+
+    // crosshairs
+    ctx.strokeStyle = 'rgba(0,180,80,0.15)';
+    ctx.lineWidth = 1;
+    [[0, -R, 0, R],[-R, 0, R, 0]].forEach(([x1,y1,x2,y2])=>{
+        ctx.beginPath(); ctx.moveTo(cx+x1,cy+y1); ctx.lineTo(cx+x2,cy+y2); ctx.stroke();
+    });
+
+    // ── sweep wedge (always visible; only rotates when active) ──────────────
+    {
+        const wedgeAlpha = _radarSweepActive ? 0.10 : 0.05;
+        const lineAlpha  = _radarSweepActive ? 0.85 : 0.35;
+        ctx.save();
+        ctx.translate(cx, cy);
+        ctx.rotate(sweepAng);
+        // Radial gradient: bright at centre, fades to transparent at rim
+        const grad = ctx.createRadialGradient(0, 0, 0, 0, 0, R);
+        grad.addColorStop(0,   `rgba(0,255,80,${wedgeAlpha * 2.5})`);
+        grad.addColorStop(0.4, `rgba(0,255,80,${wedgeAlpha * 1.2})`);
+        grad.addColorStop(1,   `rgba(0,255,80,0)`);
+        ctx.beginPath();
+        ctx.moveTo(0, 0);
+        // arc goes counter-clockwise (anticlockwise=true) so glow trails behind the line
+        ctx.arc(0, 0, R, -Math.PI/2, -Math.PI/2 - Math.PI*0.55, true);
+        ctx.closePath();
+        ctx.fillStyle = grad;
+        ctx.fill();
+        ctx.restore();
+
+        ctx.save();
+        ctx.strokeStyle = `rgba(0,255,80,${lineAlpha})`;
+        ctx.lineWidth = _radarSweepActive ? 1.5 : 1;
+        if (_radarSweepActive) { ctx.shadowBlur = 4; ctx.shadowColor = '#00ff50'; }
+        ctx.beginPath();
+        ctx.moveTo(cx, cy);
+        ctx.lineTo(cx + R*Math.sin(sweepAng), cy - R*Math.cos(sweepAng));
+        ctx.stroke();
+        ctx.restore();
+    }
+
+    // ── blips ────────────────────────────────────────────────────────────────
+    _radarHitTest = [];
+    const beamHalf = Math.PI * 2 / (RADAR_SWEEP_SEC_PER_REV * 60); // ~1 frame
+
+    // sort ascending level so HIGH draws on top
+    const sorted = [..._radarTracks.values()].sort((a,b) => a.level - b.level);
+
+    sorted.forEach(track => {
+        if (!track.points.length) return;
+        const last = track.points[track.points.length-1];
+        const id   = track.id;
+        const color= track.color;
+
+        const drawPts = track.points;
+
+        // trail
+        if (drawPts.length > 1) {
+            ctx.beginPath();
+            drawPts.forEach((p, i) => {
+                const {x,y} = _radarBlipXY(p, cx, cy, R);
+                i === 0 ? ctx.moveTo(x,y) : ctx.lineTo(x,y);
+            });
+            ctx.strokeStyle = _hexToRgba(color, 0.25);
+            ctx.lineWidth = 1;
+            ctx.stroke();
+        }
+
+        // blip glow / brightness
+        const {x, y} = _radarBlipXY(last, cx, cy, R);
+        const dAng = _radarSweepActive
+            ? ((sweepAng - _radarPolar(last.altD, last.azD, R).ang) % (Math.PI*2) + Math.PI*2) % (Math.PI*2)
+            : 0;
+        const lit   = !_radarSweepActive || dAng < beamHalf + 0.15;
+        const alpha = lit ? 1.0 : 0.82; // keep blips clearly visible between sweep passes
+        const blipR = track.level >= 3 ? 6 : track.level === 2 ? 5 : 4;
+
+        // ── velocity / heading line (tadpole tail) ───────────────────────
+        // Direction comes from a short angular-space forward step (avoids
+        // the projection growing as the blip moves across the disc).
+        // Length is a fixed base + a tiny increment per 100 kts of true airspeed,
+        // so it only changes when the reported speed changes.
+        if (track.sAltD !== null && track.abBooted) {
+            const speed2d = Math.hypot(track.svAltD, track.svAzD); // deg/s
+            if (speed2d > 0.0001) {
+                const DIR_DT = 5; // seconds — enough for a clean heading sample
+                const futPt  = {
+                    altD: track.sAltD + track.svAltD * DIR_DT,
+                    azD:  track.sAzD  + track.svAzD  * DIR_DT
+                };
+                const futXY  = _radarBlipXY(futPt, cx, cy, R);
+                const ang    = Math.atan2(futXY.y - y, futXY.x - x);
+                // Length: 6 px base + 3 px per 100 kts
+                const speedKts = track.speedKmh != null
+                    ? track.speedKmh / 1.852
+                    : speed2d * 200; // rough fallback
+                const len = 6 + (speedKts / 100) * 3;
+                ctx.save();
+                ctx.strokeStyle = _hexToRgba(color, alpha * 0.9);
+                ctx.lineWidth   = 1.5;
+                ctx.beginPath();
+                ctx.moveTo(x, y);
+                ctx.lineTo(x + len * Math.cos(ang), y + len * Math.sin(ang));
+                ctx.stroke();
+                ctx.restore();
+            }
+        }
+
+        // ── diamond blip ──────────────────────────────────────────────────
+        if (lit && _radarSweepActive) {
+            ctx.save();
+            ctx.shadowBlur  = 14;
+            ctx.shadowColor = color;
+            ctx.fillStyle   = '#fff';
+            ctx.beginPath();
+            ctx.moveTo(x,          y - (blipR + 2));
+            ctx.lineTo(x + blipR + 2, y);
+            ctx.lineTo(x,          y + (blipR + 2));
+            ctx.lineTo(x - blipR - 2, y);
+            ctx.closePath();
+            ctx.fill();
+            ctx.restore();
+        }
+        ctx.fillStyle = _hexToRgba(color, alpha);
+        ctx.beginPath();
+        ctx.moveTo(x,       y - blipR);
+        ctx.lineTo(x + blipR, y);
+        ctx.lineTo(x,       y + blipR);
+        ctx.lineTo(x - blipR, y);
+        ctx.closePath();
+        ctx.fill();
+
+        // ring for hovered/pinned
+        if (id === _radarHoveredId || id === _radarPinnedId) {
+            ctx.strokeStyle = _hexToRgba(color, 0.9);
+            ctx.lineWidth = 1.5;
+            ctx.beginPath();
+            ctx.moveTo(x,           y - (blipR + 5));
+            ctx.lineTo(x + blipR + 5, y);
+            ctx.lineTo(x,           y + (blipR + 5));
+            ctx.lineTo(x - blipR - 5, y);
+            ctx.closePath();
+            ctx.stroke();
+        }
+
+        // label
+        ctx.fillStyle = _hexToRgba(color, 0.85);
+        ctx.font = '9px monospace';
+        ctx.textAlign = 'left';
+        ctx.fillText(track.label, x + blipR + 3, y + 3);
+
+        _radarHitTest.push({id, x, y, r: blipR + 6});
+    });
+
+    // centre dot (target body)
+    ctx.fillStyle = 'rgba(255,220,50,0.85)';
+    ctx.beginPath(); ctx.arc(cx, cy, 4, 0, Math.PI*2); ctx.fill();
+
+    // empty state
+    if (_radarTracks.size === 0) {
+        ctx.fillStyle = 'rgba(0,180,80,0.35)';
+        ctx.font = '11px monospace';
+        ctx.textAlign = 'center';
+        ctx.fillText('Waiting for transit candidates…', cx, cy + R*0.55);
+    }
+}
+
+// ── hit testing ──────────────────────────────────────────────────────────────
+function _radarPick(mx, my) {
+    for (const h of _radarHitTest) {
+        if (Math.hypot(mx-h.x, my-h.y) <= h.r) return h.id;
+    }
+    return null;
+}
+
+// ── tooltip ──────────────────────────────────────────────────────────────────
+function _radarShowTooltip(id, x, y) {
+    let tt = document.getElementById('radarTooltip');
+    if (!tt) {
+        tt = document.createElement('div');
+        tt.id = 'radarTooltip';
+        tt.style.cssText =
+            'position:absolute;pointer-events:none;background:rgba(5,12,20,0.92);' +
+            'border:1px solid rgba(0,255,80,0.4);border-radius:6px;padding:6px 9px;' +
+            'font:11px/1.6 monospace;color:#c8ffd0;z-index:9999;white-space:nowrap;' +
+            'box-shadow:0 0 8px rgba(0,255,80,0.25);';
+        document.body.appendChild(tt);
+    }
+    const t = _radarTracks.get(id);
+    if (!t) return;
+    const lvlStr = t.level >= 3 ? 'HIGH' : t.level === 2 ? 'MEDIUM' : 'LOW';
+    const lvlCol = t.level >= 3 ? '#00FF00' : t.level === 2 ? '#FFFF00' : '#808080';
+    const last   = t.points[t.points.length-1];
+    const sep    = last ? Math.hypot(last.altD, last.azD).toFixed(2) : '—';
+    tt.innerHTML = `
+        <div style="font-weight:700;font-size:12px;letter-spacing:.05em">${t.label}</div>
+        <div>${_radarAltFtStr(t.altFt)}</div>
+        <div>${_radarSpeedStr(t.speedKmh)}</div>
+        <div>Sep&nbsp;<b>${sep}°</b></div>
+        <div style="color:${lvlCol}">${lvlStr}</div>
+    `;
+    const canvas = _radarCanvas;
+    const rect   = canvas ? canvas.getBoundingClientRect() : {left:0,top:0};
+    tt.style.left = (rect.left + x + 12) + 'px';
+    tt.style.top  = (rect.top  + y -  8 + window.scrollY) + 'px';
+    tt.style.display = 'block';
+}
+
+function _radarHideTooltip() {
+    const tt = document.getElementById('radarTooltip');
+    if (tt) tt.style.display = 'none';
+}
+
+// ── sweep control ────────────────────────────────────────────────────────────
+// Sweep stays active as long as transit candidates keep arriving.
+// It freezes only after RADAR_SWEEP_KEEPALIVE_MS with no new pushes.
+function _radarMarkTransitSeen() {
+    _radarLastTransitTs = Date.now();
+}
+
+// Call from outside when a transit is confirmed
+window.onTransitDetected = function() { _radarMarkTransitSeen(); };
+
+// Remove tracks for IDs no longer in the active set
+window.pruneRadarTracks = function(activeIds) {
+    const testIds = new Set(_TEST_AIRCRAFT.map(a => a.id));
+    for (const id of _radarTracks.keys()) {
+        if (testIds.has(id)) continue; // never prune synthetic test tracks
+        if (!activeIds.has(id)) _radarTracks.delete(id);
+    }
+};
+
+// ── α-β filter constants ─────────────────────────────────────────────────────
+const AB_ALPHA          = 0.10;  // position gain (0..1)
+const AB_BETA           = 0.02;  // velocity gain (0..1)
+const AB_VELLINE_S      = 60;    // seconds of smoothed velocity to project for the heading line
+const AB_OUTLIER_SIGMA  = 3.0;
+const AB_MEAS_SIGMA_DEG = 1.0;
+const RADAR_TRACK_STALE_MS = 20_000;
+
+// ── pushInterceptPoint (public API for app.js) ───────────────────────────────
+window.pushInterceptPoint = function(flight) {
+    const id = String(flight.id || flight.name || '').trim().toUpperCase();
+    if (!id || flight.angular_separation == null) return;
+    const level = parseInt(flight.possibility_level ?? 0);
+    if (level < 1 || level > 3) return;
+
+    // Confidence colours per spec: green=HIGH, yellow=MEDIUM, grey=LOW
+    const color = level >= 3 ? '#00FF00' : level === 2 ? '#FFFF00' : '#808080';
+
+    if (!_radarTracks.has(id)) {
+        _radarTracks.set(id, {
+            id, points:[], color, level, label:id,
+            altFt:null, speedKmh:null, heading:null,
+            // α-β state (null = not yet initialised)
+            sAltD:null, sAzD:null, svAltD:0, svAzD:0,
+            lastUpdateT:null, misses:0, abBooted:false
+        });
+    }
+    const track = _radarTracks.get(id);
+    track.color    = color;
+    track.level    = level;
+    track.label    = id;
+    track.altFt    = flight.altitude  != null ? parseFloat(flight.altitude)  : null;
+    track.speedKmh = flight.speed     != null ? parseFloat(flight.speed)     : null;
+    track.heading  = flight.heading   != null ? parseFloat(flight.heading)   : null;
+    track.misses   = 0;
+
+    let measAltD = parseFloat(flight.alt_diff ?? 'NaN');
+    let measAzD  = parseFloat(flight.az_diff  ?? 'NaN');
+    if (!isFinite(measAltD) || !isFinite(measAzD)) {
+        const sep = parseFloat(flight.angular_separation);
+        measAltD = isFinite(sep) ? sep : 0;
+        measAzD  = 0;
+    }
+
+    const now = Date.now();
+    const DT  = track.lastUpdateT ? Math.max(0.5, (now - track.lastUpdateT) / 1000) : 3.0;
+    track.lastUpdateT = now;
+
+    if (track.sAltD === null) {
+        // First detection — store position; velocity unknown yet
+        track.sAltD  = measAltD;
+        track.sAzD   = measAzD;
+    } else if (!track.abBooted) {
+        // Second detection — bootstrap velocity directly from displacement so the
+        // heading line appears at the correct length immediately (no slow ramp-up)
+        const rawVAlt = (measAltD - track.sAltD) / DT;
+        const rawVAz  = (measAzD  - track.sAzD)  / DT;
+        const damp = Math.min(1.0, 3.0 / DT);
+        track.svAltD = rawVAlt * damp;
+        track.svAzD  = rawVAz * damp;
+        track.sAltD    = measAltD;
+        track.sAzD     = measAzD;
+        track.abBooted = true;
+    } else {
+        // Predict
+        const predAltD = track.sAltD + track.svAltD * DT;
+        const predAzD  = track.sAzD  + track.svAzD  * DT;
+        // Correct (α-β)
+        const resAltD  = measAltD - predAltD;
+        const resAzD   = measAzD  - predAzD;
+        if (
+            Math.abs(resAltD) > AB_OUTLIER_SIGMA * AB_MEAS_SIGMA_DEG ||
+            Math.abs(resAzD) > AB_OUTLIER_SIGMA * AB_MEAS_SIGMA_DEG
+        ) {
+            track.sAltD = predAltD;
+            track.sAzD = predAzD;
+            track.misses = (track.misses || 0) + 1;
+        } else {
+            track.sAltD    = predAltD + AB_ALPHA * resAltD;
+            track.sAzD     = predAzD  + AB_ALPHA * resAzD;
+            track.svAltD   = track.svAltD + (AB_BETA / DT) * resAltD;
+            track.svAzD    = track.svAzD  + (AB_BETA / DT) * resAzD;
+        }
+    }
+
+    // Store smoothed position in trail (min 2 s gap to avoid duplicate points)
+    const last = track.points[track.points.length - 1];
+    if (!last || now - last.t >= 2000) {
+        track.points.push({ altD: track.sAltD, azD: track.sAzD, t: now });
+        if (track.points.length > RADAR_HISTORY_MAX) track.points.shift();
+    } else {
+        last.altD = track.sAltD;
+        last.azD  = track.sAzD;
+    }
+
+    if (level >= 1) _radarMarkTransitSeen();
+};
+
+// ── injectMapTransits: populate upcoming transits list from app.js data ───────
+const _upcomingTransits = [];
+window.injectMapTransits = function(flights, opts = {}) {
+    _upcomingTransits.length = 0;
+    const generatedAtMs = Number(opts.generatedAtMs) || Date.now();
+    if (!Array.isArray(flights)) return;
+    flights.forEach(f => {
+        const level = parseInt(f.possibility_level ?? 0);
+        if (level < 1) return;
+        // transit_eta_seconds is not always set; fall back to time (minutes) × 60
+        const etaSec = f.transit_eta_seconds != null
+            ? parseFloat(f.transit_eta_seconds)
+            : (f.time != null ? parseFloat(f.time) * 60 : null);
+        _upcomingTransits.push({
+            id:    String(f.id || f.name || '').trim().toUpperCase(),
+            eta:   etaSec,
+            ts:    generatedAtMs, // backend compute time for consistent ETA aging
+            level,
+            target: f.target || 'sun',
+        });
+    });
+    _upcomingTransits.sort((a,b) => {
+        if (a.eta == null && b.eta == null) return 0;
+        if (a.eta == null) return 1;
+        if (b.eta == null) return -1;
+        return a.eta - b.eta;
+    });
+    _renderUpcomingTransits();
+};
+
+function _renderUpcomingTransits() {
+    const el = document.getElementById('upcomingTransitsList');
+    if (!el) return;
+    const now = Date.now();
+    // Age-out the stored ETA by elapsed wall-clock time since it was received
+    const live = _upcomingTransits
+        .map(tr => {
+            const ageS = (now - (tr.ts || now)) / 1000;
+            return {...tr, liveEta: tr.eta != null ? tr.eta - ageS : null};
+        })
+        .filter(tr => tr.liveEta == null || tr.liveEta > -30); // keep for 30s past T-0
+    if (!live.length) {
+        el.innerHTML = '';
+        return;
+    }
+    live.sort((a, b) => {
+        if (a.liveEta == null && b.liveEta == null) return 0;
+        if (a.liveEta == null) return 1;
+        if (b.liveEta == null) return -1;
+        return a.liveEta - b.liveEta;
+    });
+    el.innerHTML = live.slice(0, 5).map(tr => {
+        const lvlCol = tr.level >= 3 ? '#00FF00' : tr.level === 2 ? '#FFFF00' : '#808080';
+        const lvlStr = tr.level >= 3 ? 'HIGH' : tr.level === 2 ? 'MED' : 'LOW';
+        let etaStr;
+        if (tr.liveEta == null) {
+            etaStr = '—';
+        } else if (tr.liveEta <= 0) {
+            etaStr = '<span style="color:#f44">NOW</span>';
+        } else {
+            const m = Math.floor(tr.liveEta / 60), s = Math.floor(tr.liveEta % 60);
+            etaStr = m > 0 ? `T−${m}m${String(s).padStart(2,'0')}s` : `T−${s}s`;
+        }
+        return `<div style="display:flex;justify-content:space-between;align-items:center;
+                    padding:2px 0;border-bottom:1px solid rgba(255,255,255,0.05)">
+            <span style="font-weight:600;letter-spacing:.04em">${tr.id}</span>
+            <span style="color:${lvlCol};font-size:0.75em">${lvlStr}</span>
+            <span style="color:#778;font-size:0.75em">${etaStr}</span>
+        </div>`;
+    }).join('');
+}
+
+// ── synthetic test-mode aircraft ─────────────────────────────────────────────
+let _radarTestInterval = null;
+let _radarTestT        = 0;      // elapsed ticks
+const _RADAR_TEST_DT   = 2000;   // ms between ticks
+
+// Three synthetic aircraft: each has a starting position in (altD, azD) space
+// and a velocity (deg per tick = deg per _RADAR_TEST_DT seconds).
+// Closest-approach distances (d_min) are set by the cross-product formula:
+//   d_min = |altD*vAz - azD*vAlt| / hypot(vAlt, vAz)
+const _TEST_AIRCRAFT = [
+    {
+        id: 'TEST-H', level: 3,   // HIGH  — transits the disc centre  (d_min ≈ 0°)
+        altD:  9.0, azD: -4.5,
+        vAlt: -0.50, vAz:  0.25, // ratio matches start → passes through (0,0) at t≈18
+        altitude: 35000, speed: 860,
+    },
+    {
+        id: 'TEST-M', level: 2,   // MEDIUM — passes ~2° from centre
+        altD: -8.0, azD:  3.0,
+        vAlt:  0.45, vAz: -0.05, // d_min = |(-8)(-0.05)-(3)(0.45)| / hypot ≈ 2.1°
+        altitude: 39000, speed: 920,
+    },
+    {
+        id: 'TEST-L', level: 1,   // LOW    — passes ~6° from centre
+        altD:  7.0, azD: -9.0,
+        vAlt: -0.05, vAz:  0.45, // d_min = |(7)(0.45)-(-9)(-0.05)| / hypot ≈ 5.9°
+        altitude: 28000, speed: 590,
+    },
+];
+
+function _startRadarTest(btn) {
+    // Reset per-aircraft mutable state
+    _TEST_AIRCRAFT.forEach(a => { a._altD = a.altD; a._azD = a.azD; });
+    _radarMarkTransitSeen();
+    if (btn) { btn.classList.add('is-active'); btn.textContent = 'Stop'; }
+
+    function _tick() {
+        window._radarLastUpdateTs = Date.now();   // keep sweep active during test
+        _TEST_AIRCRAFT.forEach(a => {
+            a._altD += a.vAlt;
+            a._azD  += a.vAz;
+
+            // Wrap back to starting position when blip exits the disc
+            if (Math.hypot(a._altD, a._azD) > RADAR_MAX_SEP_DEG * 1.1) {
+                a._altD = a.altD;
+                a._azD  = a.azD;
+                // Clear the filter state so velocity re-bootstraps cleanly
+                const tr = _radarTracks.get(a.id);
+                if (tr) { tr.sAltD = null; tr.abBooted = false; tr.svAltD = 0; tr.svAzD = 0; tr.points = []; }
+            }
+
+            window.pushInterceptPoint({
+                id:                  a.id,
+                name:                a.id,
+                possibility_level:   String(a.level),
+                angular_separation:  String(Math.hypot(a._altD, a._azD).toFixed(3)),
+                alt_diff:            String(a._altD.toFixed(3)),
+                az_diff:             String(a._azD.toFixed(3)),
+                altitude:            String(a.altitude),
+                speed:               String(a.speed),
+                heading:             String(Math.atan2(a.vAz, a.vAlt) * 180 / Math.PI),
+                is_possible_transit: 1,
+            });
+        });
+        _radarMarkTransitSeen();
+    }
+
+    _tick();  // immediate first frame
+    _radarTestInterval = setInterval(_tick, _RADAR_TEST_DT);
+}
+
+function _stopRadarTest() {
+    if (!_radarTestInterval) return;
+    clearInterval(_radarTestInterval);
+    _radarTestInterval = null;
+    // Remove synthetic tracks
+    _TEST_AIRCRAFT.forEach(a => _radarTracks.delete(a.id));
+    const btn = document.getElementById('radarModeTest');
+    if (btn) { btn.classList.remove('is-active'); btn.textContent = 'Test'; }
+}
+
+// ── ensureTransitRadar ────────────────────────────────────────────────────────
+function ensureTransitRadar() {
+    const detectPanel = document.getElementById('detectPanel');
+    if (!detectPanel) return;
+
+    let card = document.getElementById('transitRadarCard');
+    if (!card) {
+        card = document.createElement('div');
+        card.id = 'transitRadarCard';
+        // Styling applied via #transitRadarCard in telescope.css (edge-to-edge dark CRT inset)
+
+        // NASA console header row: engraved label plate + keycap mode buttons
+        card.innerHTML = `
+            <div style="display:flex;justify-content:space-between;align-items:center;
+                        padding:0 6px;margin-bottom:4px;">
+                <span style="font-size:0.63em;font-weight:700;color:#9AA0A8;
+                             letter-spacing:2.2px;text-transform:uppercase;
+                             font-family:'SF Mono','Menlo',monospace;">
+                    Transit Radar
+                </span>
+                <div style="display:flex;gap:2px;">
+                    <button id="radarModeDefault" title="Default mode: current position only"
+                        class="btn btn-compact btn-toggle"
+                        style="min-height:18px;padding:2px 7px;font-size:0.62em;">Default</button>
+                    <button id="radarModeEnhanced" title="Enhanced mode: projects trajectory forward ${RADAR_PREDICT_HORIZON_S}s"
+                        class="btn btn-compact btn-toggle"
+                        style="min-height:18px;padding:2px 7px;font-size:0.62em;">Enhanced</button>
+                    <button id="radarModeTest" title="Inject synthetic aircraft to preview blip rendering"
+                        class="btn btn-compact btn-toggle"
+                        style="min-height:18px;padding:2px 7px;font-size:0.62em;">Test</button>
+                </div>
+            </div>
+            <canvas id="radarCanvas"
+                    style="display:block;width:100%;aspect-ratio:1;
+                           border-top:1px solid rgba(0,255,80,0.06);"></canvas>
+        `;
+
+        if (detectPanel.firstChild) {
+            detectPanel.insertBefore(card, detectPanel.firstChild);
+        } else {
+            detectPanel.appendChild(card);
+        }
+    }
+
+    // bind canvas
+    _radarCanvas = card.querySelector('#radarCanvas');
+    _radarCtx    = _radarCanvas.getContext('2d');
+    _resizeRadarCanvas();
+    if (window.ResizeObserver) {
+        new ResizeObserver(() => _resizeRadarCanvas()).observe(card);
+    }
+
+    // mode buttons — use .is-active keycap (locked-down = selected mode)
+    const btnDef  = card.querySelector('#radarModeDefault');
+    const btnEnh  = card.querySelector('#radarModeEnhanced');
+    const btnTest = card.querySelector('#radarModeTest');
+    function _applyMode(m) {
+        _radarMode = m;
+        btnDef.classList.toggle('is-active', m === 'default');
+        btnEnh.classList.toggle('is-active', m === 'enhanced');
+    }
+    btnDef.onclick = () => { _stopRadarTest(); _applyMode('default'); };
+    btnEnh.onclick = () => { _stopRadarTest(); _applyMode('enhanced'); };
+    btnTest.onclick = () => {
+        if (_radarTestInterval) { _stopRadarTest(); }
+        else { _startRadarTest(btnTest); }
+    };
+    _applyMode(_radarMode);
+
+    // mouse events
+    _radarCanvas.addEventListener('mousemove', e => {
+        const rect = _radarCanvas.getBoundingClientRect();
+        const scaleX = _radarCanvas.width  / rect.width;
+        const scaleY = _radarCanvas.height / rect.height;
+        const mx = (e.clientX - rect.left) * scaleX;
+        const my = (e.clientY - rect.top ) * scaleY;
+        const hit = _radarPick(mx, my);
+        _radarHoveredId = hit;
+        if (hit && hit !== _radarPinnedId) _radarShowTooltip(hit, e.clientX - rect.left, e.clientY - rect.top);
+        else if (!hit && !_radarPinnedId) _radarHideTooltip();
+        _radarCanvas.style.cursor = hit ? 'pointer' : 'default';
+    });
+    _radarCanvas.addEventListener('click', e => {
+        const rect = _radarCanvas.getBoundingClientRect();
+        const scaleX = _radarCanvas.width  / rect.width;
+        const scaleY = _radarCanvas.height / rect.height;
+        const mx = (e.clientX - rect.left) * scaleX;
+        const my = (e.clientY - rect.top ) * scaleY;
+        const hit = _radarPick(mx, my);
+        if (hit) {
+            _radarPinnedId = _radarPinnedId === hit ? null : hit;
+            if (_radarPinnedId) _radarShowTooltip(hit, e.clientX - rect.left, e.clientY - rect.top);
+            else _radarHideTooltip();
+        } else {
+            _radarPinnedId = null;
+            _radarHideTooltip();
+        }
+    });
+    _radarCanvas.addEventListener('mouseleave', () => {
+        _radarHoveredId = null;
+        if (!_radarPinnedId) _radarHideTooltip();
+    });
+
+    // start animation loop (cancel any previous)
+    if (_radarAnimFrame) cancelAnimationFrame(_radarAnimFrame);
+    _radarAnimFrame = requestAnimationFrame(_radarDrawFrame);
+
+    _renderUpcomingTransits();
+}
+
+
+// ============================================================================
+// ALPACA Telemetry Panel
+// ============================================================================
+
+let _alpacaConnected = false;
+let _alpacaPollTimer = null;
+let _alpacaTracking = false;
+
+async function pollAlpacaTelemetry() {
+    try {
+        const data = await apiCall('/telescope/alpaca/telemetry', 'GET');
+        if (!data || !data.connected) {
+            _alpacaConnected = false;
+            _updateAlpacaPanel(null);
+            return;
+        }
+        _alpacaConnected = true;
+        _updateAlpacaPanel(data);
+    } catch (e) {
+        _alpacaConnected = false;
+        _updateAlpacaPanel(null);
+    }
+}
+
+function _updateAlpacaPanel(data) {
+    const panel = document.getElementById('alpacaTelemetryPanel');
+    if (!panel) return;
+
+    panel.style.display = '';
+
+    if (!data || !data.connected) {
+        // Show panel in disconnected/placeholder state — coords reset to dashes
+        ['alpacaRA','alpacaDec','alpacaAlt','alpacaAz'].forEach(id => {
+            const el = document.getElementById(id);
+            if (el) el.textContent = '—';
+        });
+        const badge = document.getElementById('alpacaStatusBadge');
+        if (badge) badge.className = 'alpaca-status-badge';
+        const label = document.getElementById('alpacaStatusLabel');
+        if (label) label.textContent = 'DISC';
+        const dot = document.getElementById('alpacaStatusDot');
+        if (dot) dot.style.background = '#555';
+        const name = document.getElementById('alpacaDeviceName');
+        if (name) name.textContent = '';
+        return;
+    }
+
+    const pos = data.position || {};
+    const state = data.state || {};
+    const info = data.device_info || {};
+
+    const fmt = (v, d) => v !== undefined && v !== null ? Number(v).toFixed(d) : '—';
+
+    // Coordinate values
+    const ra = document.getElementById('alpacaRA');
+    const dec = document.getElementById('alpacaDec');
+    const alt = document.getElementById('alpacaAlt');
+    const az = document.getElementById('alpacaAz');
+    if (ra) ra.textContent = fmt(pos.ra, 4);
+    if (dec) dec.textContent = fmt(pos.dec, 2);
+    if (alt) alt.textContent = fmt(pos.alt, 2);
+    if (az) az.textContent = fmt(pos.az, 2);
+
+    // Also update the GoTo pointing display with ALPACA data
+    const scopeAlt = document.getElementById('scopeAlt');
+    const scopeAz = document.getElementById('scopeAz');
+    if (scopeAlt && pos.alt != null) scopeAlt.textContent = fmt(pos.alt, 1);
+    if (scopeAz && pos.az != null) scopeAz.textContent = fmt(pos.az, 1);
+
+    // Tracking state
+    _alpacaTracking = state.tracking || false;
+
+    // Device name
+    const nameEl = document.getElementById('alpacaDeviceName');
+    if (nameEl && info.name) nameEl.textContent = info.name;
+
+    // Tracking button — teal = tracking on, white = tracking off
+    const btn = document.getElementById('alpacaTrackingBtn');
+    if (btn) {
+        btn.classList.toggle('is-active', !!_alpacaTracking);
+    }
+}
+
+function startAlpacaPolling() {
+    if (_alpacaPollTimer) return;
+    pollAlpacaTelemetry();
+    _alpacaPollTimer = setInterval(pollAlpacaTelemetry, 2500);
+}
+
+function stopAlpacaPolling() {
+    if (_alpacaPollTimer) {
+        clearInterval(_alpacaPollTimer);
+        _alpacaPollTimer = null;
+    }
+    _alpacaConnected = false;
+    _updateAlpacaPanel(null);
+}
+
+async function alpacaToggleTracking() {
+    const newState = !_alpacaTracking;
+    await apiCall('/telescope/alpaca/tracking', 'POST', { enabled: newState });
+    // .is-active.btn-mode = lit teal indicator when tracking is on
+    const btn = document.getElementById('alpacaTrackingBtn');
+    if (btn) btn.classList.toggle('is-active', newState);
+    showStatus(newState ? 'Tracking enabled' : 'Tracking disabled', 'info', 2000);
+}
+
+async function alpacaAbortSlew() {
+    await apiCall('/telescope/alpaca/abort', 'POST', {});
+    showStatus('Slew aborted', 'warning', 2000);
+}
+
+// Start/stop ALPACA polling with telescope connection
+const _origUpdateStatus = updateStatus;
+updateStatus = async function() {
+    await _origUpdateStatus();
+    // Start/stop ALPACA polling based on connection state
+    if (isConnected && !_alpacaPollTimer) {
+        startAlpacaPolling();
+    } else if (!isConnected && _alpacaPollTimer) {
+        stopAlpacaPolling();
+    }
+};
+
+console.log('[Telescope] Module loaded (ALPACA support enabled)');

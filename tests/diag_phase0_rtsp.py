@@ -8,7 +8,6 @@ matching production pipeline configuration.
 import subprocess
 import threading
 import time
-import sys
 
 RTSP_URL = "rtsp://192.168.4.112:4554/stream"
 DURATION = 90  # seconds
@@ -31,9 +30,7 @@ def run_reader(name, cmd, results):
 
     start = time.time()
     try:
-        proc = subprocess.Popen(
-            cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE
-        )
+        proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     except Exception as e:
         info["stderr_tail"] = str(e)
         info["death_time"] = time.time() - start
@@ -81,9 +78,7 @@ def run_reader(name, cmd, results):
                         info["first_frame_time"] = time.time() - start
                 now = time.time()
                 if now - last_log >= 1.0:
-                    info["frame_counts"].append(
-                        (round(now - start, 1), frame_count)
-                    )
+                    info["frame_counts"].append((round(now - start, 1), frame_count))
                     last_log = now
             except Exception:
                 break
@@ -126,33 +121,57 @@ def main():
     # Define the 3 readers matching production config
     readers = {
         "low-res (160x90 raw @15fps)": [
-            "ffmpeg", "-rtsp_transport", "tcp",
-            "-i", RTSP_URL,
-            "-vf", "scale=160:90",
-            "-r", "15",
-            "-f", "rawvideo",
-            "-pix_fmt", "rgb24",
-            "-loglevel", "warning",
+            "ffmpeg",
+            "-rtsp_transport",
+            "tcp",
+            "-i",
+            RTSP_URL,
+            "-vf",
+            "scale=160:90",
+            "-r",
+            "15",
+            "-f",
+            "rawvideo",
+            "-pix_fmt",
+            "rgb24",
+            "-loglevel",
+            "warning",
             "pipe:1",
         ],
         "high-res (mjpeg q3 @30fps)": [
-            "ffmpeg", "-rtsp_transport", "tcp",
-            "-i", RTSP_URL,
-            "-c:v", "mjpeg",
-            "-q:v", "3",
-            "-r", "30",
-            "-f", "mjpeg",
-            "-loglevel", "warning",
+            "ffmpeg",
+            "-rtsp_transport",
+            "tcp",
+            "-i",
+            RTSP_URL,
+            "-c:v",
+            "mjpeg",
+            "-q:v",
+            "3",
+            "-r",
+            "30",
+            "-f",
+            "mjpeg",
+            "-loglevel",
+            "warning",
             "pipe:1",
         ],
         "preview (mjpeg q5 @10fps)": [
-            "ffmpeg", "-rtsp_transport", "tcp",
-            "-i", RTSP_URL,
-            "-c:v", "mjpeg",
-            "-q:v", "5",
-            "-r", "10",
-            "-f", "mjpeg",
-            "-loglevel", "warning",
+            "ffmpeg",
+            "-rtsp_transport",
+            "tcp",
+            "-i",
+            RTSP_URL,
+            "-c:v",
+            "mjpeg",
+            "-q:v",
+            "5",
+            "-r",
+            "10",
+            "-f",
+            "mjpeg",
+            "-loglevel",
+            "warning",
             "pipe:1",
         ],
     }
@@ -192,7 +211,9 @@ def main():
         if info["total_frames"] > 0 and elapsed > 0:
             print(f"  Average FPS: {info['total_frames'] / elapsed:.1f}")
         if info["death_time"] is not None:
-            print(f"  Died at: {info['death_time']:.1f}s (exit code: {info['exit_code']})")
+            print(
+                f"  Died at: {info['death_time']:.1f}s (exit code: {info['exit_code']})"
+            )
         if info["stderr_tail"]:
             print(f"  Stderr (last lines):")
             for line in info["stderr_tail"].split("\n"):
@@ -208,7 +229,10 @@ def main():
                 ts, fc = samples[i]
                 print(f"    t={ts:>6.1f}s  frames={fc}")
             # Always show last
-            if samples[-1] != samples[min(len(samples)-1, (len(samples)//step)*step)]:
+            if (
+                samples[-1]
+                != samples[min(len(samples) - 1, (len(samples) // step) * step)]
+            ):
                 ts, fc = samples[-1]
                 print(f"    t={ts:>6.1f}s  frames={fc}")
 

@@ -230,21 +230,30 @@ body {
 }
 
 .possibleTransitHighlightHigh {
-    background-color: rgb(0, 230, 118) !important;  /* Bright green for HIGH */
+    background-color: rgb(0, 200, 100) !important;
+}
+.possibleTransitHighlightHigh td,
+.possibleTransitHighlightHigh td span,
+.possibleTransitHighlightHigh td strong {
+    color: #0a1a0a !important;
 }
 
 .possibleTransitHighlightMedium {
-    background-color: rgb(249, 158, 31) !important;
+    background-color: rgb(240, 150, 20) !important;
+}
+.possibleTransitHighlightMedium td,
+.possibleTransitHighlightMedium td span,
+.possibleTransitHighlightMedium td strong {
+    color: #1a0f00 !important;
 }
 
 .possibleTransitHighlightLow {
-    background-color: rgb(236, 224, 113) !important;
-    color: #111 !important;
+    background-color: rgb(220, 210, 90) !important;
 }
 .possibleTransitHighlightLow td,
 .possibleTransitHighlightLow td span,
 .possibleTransitHighlightLow td strong {
-    color: #111 !important;
+    color: #1a1800 !important;
 }
 
 /* Map styles */

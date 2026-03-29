@@ -121,12 +121,17 @@ def run_baseline(videos: List[Path], output_path: Path) -> None:
         if r["error"]:
             print(f"ERROR: {r['error']}")
         elif r["num_events"]:
-            print(f"✓ {r['num_events']} event(s): " + ", ".join(
-                f"{e['start_s']:.2f}s–{e['end_s']:.2f}s ({e['dur_ms']}ms)"
-                for e in r["events"]
-            ))
+            print(
+                f"✓ {r['num_events']} event(s): "
+                + ", ".join(
+                    f"{e['start_s']:.2f}s–{e['end_s']:.2f}s ({e['dur_ms']}ms)"
+                    for e in r["events"]
+                )
+            )
         else:
-            print(f"✗ no events  ({r['total_blobs']} blobs, disk={'✓' if r['disk_detected'] else '✗'})")
+            print(
+                f"✗ no events  ({r['total_blobs']} blobs, disk={'✓' if r['disk_detected'] else '✗'})"
+            )
 
     # Summary
     detected = sum(1 for r in results if r["num_events"] > 0)
@@ -134,9 +139,13 @@ def run_baseline(videos: List[Path], output_path: Path) -> None:
     solar_v = [r for r in results if r["target"] == "sun"]
     lunar_v = [r for r in results if r["target"] == "moon"]
     if solar_v:
-        print(f"  Solar : {sum(1 for r in solar_v if r['num_events'] > 0)}/{len(solar_v)}")
+        print(
+            f"  Solar : {sum(1 for r in solar_v if r['num_events'] > 0)}/{len(solar_v)}"
+        )
     if lunar_v:
-        print(f"  Lunar : {sum(1 for r in lunar_v if r['num_events'] > 0)}/{len(lunar_v)}")
+        print(
+            f"  Lunar : {sum(1 for r in lunar_v if r['num_events'] > 0)}/{len(lunar_v)}"
+        )
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_text(json.dumps(results, indent=2))
@@ -152,7 +161,9 @@ def run_sweep(videos: List[Path], target: str, output_path: Path) -> None:
     ranges = [sweep[k] for k in keys]
     combos = list(product(*ranges))
 
-    print(f"\nParameter sweep — target={target}, {len(combos)} combos × {len(videos)} video(s)")
+    print(
+        f"\nParameter sweep — target={target}, {len(combos)} combos × {len(videos)} video(s)"
+    )
     print("=" * 70)
 
     all_results = []
@@ -167,8 +178,14 @@ def run_sweep(videos: List[Path], target: str, output_path: Path) -> None:
 
         for vpath in videos:
             r = _run_one(vpath, target, **params)
-            per_video.append({"file": vpath.name, "num_events": r["num_events"],
-                               "blobs": r["total_blobs"], "error": r["error"]})
+            per_video.append(
+                {
+                    "file": vpath.name,
+                    "num_events": r["num_events"],
+                    "blobs": r["total_blobs"],
+                    "error": r["error"],
+                }
+            )
             if r["num_events"] > 0:
                 detected += 1
 
@@ -192,11 +209,17 @@ def run_sweep(videos: List[Path], target: str, output_path: Path) -> None:
 
     print(f"\nBest combo ({best_score}/{len(videos)} detected): {best_combo}")
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    output_path.write_text(json.dumps(
-        {"target": target, "sweep": LUNAR_SWEEP if target == "moon" else SOLAR_SWEEP,
-         "results": all_results, "best": best_combo},
-        indent=2,
-    ))
+    output_path.write_text(
+        json.dumps(
+            {
+                "target": target,
+                "sweep": LUNAR_SWEEP if target == "moon" else SOLAR_SWEEP,
+                "results": all_results,
+                "best": best_combo,
+            },
+            indent=2,
+        )
+    )
     print(f"Sweep results → {output_path}")
 
 
@@ -204,8 +227,9 @@ def run_sweep(videos: List[Path], target: str, output_path: Path) -> None:
 
 
 def main():
-    parser = argparse.ArgumentParser(description=__doc__,
-                                     formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
     sub = parser.add_subparsers(dest="command", required=True)
 
     p_base = sub.add_parser("baseline", help="Run analyzer with defaults on all videos")

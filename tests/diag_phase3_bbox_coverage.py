@@ -20,13 +20,12 @@ import argparse
 import json
 import math
 import sys
-from datetime import datetime, timezone
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from src.constants import ASTRO_EPHEMERIS, EARTH_TIMESCALE
-from src.position import geographic_to_altaz, get_my_pos, predict_position, transit_corridor_bbox
+from src.constants import ASTRO_EPHEMERIS
+from src.position import transit_corridor_bbox
 
 EARTH = ASTRO_EPHEMERIS["earth"]
 
@@ -74,7 +73,10 @@ def _haversine(lat1, lon1, lat2, lon2):
     phi1, phi2 = math.radians(lat1), math.radians(lat2)
     dphi = math.radians(lat2 - lat1)
     dlambda = math.radians(lon2 - lon1)
-    a = math.sin(dphi / 2) ** 2 + math.cos(phi1) * math.cos(phi2) * math.sin(dlambda / 2) ** 2
+    a = (
+        math.sin(dphi / 2) ** 2
+        + math.cos(phi1) * math.cos(phi2) * math.sin(dlambda / 2) ** 2
+    )
     return 2 * R * math.asin(math.sqrt(a))
 
 
@@ -115,13 +117,17 @@ def test_bbox_contains_ground_point_multi_az(obs_lat, obs_lon):
             and bbox.long_lower_left <= gp_lon <= bbox.long_upper_right
         )
         if not in_bbox:
-            _info(f"  az={az:3d}° MISS: gp=({gp_lat:.2f},{gp_lon:.2f}) bbox=[({bbox.lat_lower_left:.2f},{bbox.long_lower_left:.2f}),({bbox.lat_upper_right:.2f},{bbox.long_upper_right:.2f})]")
+            _info(
+                f"  az={az:3d}° MISS: gp=({gp_lat:.2f},{gp_lon:.2f}) bbox=[({bbox.lat_lower_left:.2f},{bbox.long_lower_left:.2f}),({bbox.lat_upper_right:.2f},{bbox.long_upper_right:.2f})]"
+            )
             all_pass = False
 
     return (
         _pass("bbox contains ground point (8 azimuths)")
         if all_pass
-        else _fail("bbox contains ground point (8 azimuths)", "one or more azimuths missed")
+        else _fail(
+            "bbox contains ground point (8 azimuths)", "one or more azimuths missed"
+        )
     )
 
 
@@ -162,9 +168,15 @@ def test_bbox_captures_15min_inbound_aircraft(obs_lat, obs_lon):
     )
 
     return (
-        _pass("bbox captures 15-min inbound aircraft", f"aircraft at ({aircraft_lat:.2f},{aircraft_lon:.2f})")
+        _pass(
+            "bbox captures 15-min inbound aircraft",
+            f"aircraft at ({aircraft_lat:.2f},{aircraft_lon:.2f})",
+        )
         if in_bbox
-        else _fail("bbox captures 15-min inbound aircraft", f"aircraft ({aircraft_lat:.2f},{aircraft_lon:.2f}) outside bbox")
+        else _fail(
+            "bbox captures 15-min inbound aircraft",
+            f"aircraft ({aircraft_lat:.2f},{aircraft_lon:.2f}) outside bbox",
+        )
     )
 
 
@@ -176,8 +188,12 @@ def test_bbox_low_altitude_not_degenerate(obs_lat, obs_lon):
     area_5 = _bbox_area_km2(bbox_5, obs_lat)
     area_30 = _bbox_area_km2(bbox_30, obs_lat)
 
-    _info(f"Alt=5°:  area={area_5:,.0f} km²  bbox width={bbox_5.long_upper_right - bbox_5.long_lower_left:.2f}°")
-    _info(f"Alt=30°: area={area_30:,.0f} km²  bbox width={bbox_30.long_upper_right - bbox_30.long_lower_left:.2f}°")
+    _info(
+        f"Alt=5°:  area={area_5:,.0f} km²  bbox width={bbox_5.long_upper_right - bbox_5.long_lower_left:.2f}°"
+    )
+    _info(
+        f"Alt=30°: area={area_30:,.0f} km²  bbox width={bbox_30.long_upper_right - bbox_30.long_lower_left:.2f}°"
+    )
 
     valid = (
         bbox_5.lat_lower_left < bbox_5.lat_upper_right
@@ -198,7 +214,9 @@ def test_bbox_size_api_budget(obs_lat, obs_lon):
     """
     print()
     print("  Bbox size vs target altitude (for API budget planning):")
-    print(f"  {'Alt':>5}  {'Width°':>8}  {'Height°':>8}  {'Area km²':>12}  {'OpenSky budget note'}")
+    print(
+        f"  {'Alt':>5}  {'Width°':>8}  {'Height°':>8}  {'Area km²':>12}  {'OpenSky budget note'}"
+    )
 
     rows = []
     for alt in [5, 10, 20, 30, 45, 60, 75]:
@@ -208,7 +226,14 @@ def test_bbox_size_api_budget(obs_lat, obs_lon):
         area = _bbox_area_km2(bbox, obs_lat)
         note = "OK" if area < 2_000_000 else "LARGE"
         print(f"  {alt:5}°  {w:8.2f}  {h:8.2f}  {area:12,.0f}  {note}")
-        rows.append({"alt_deg": alt, "width_deg": round(w, 3), "height_deg": round(h, 3), "area_km2": round(area)})
+        rows.append(
+            {
+                "alt_deg": alt,
+                "width_deg": round(w, 3),
+                "height_deg": round(h, 3),
+                "area_km2": round(area),
+            }
+        )
 
     return rows
 
@@ -223,7 +248,10 @@ def test_bbox_fl350_altitude(obs_lat, obs_lon):
     target_az = 200.0  # SW
 
     bbox = transit_corridor_bbox(
-        obs_lat, obs_lon, target_alt, target_az,
+        obs_lat,
+        obs_lon,
+        target_alt,
+        target_az,
         aircraft_altitude_m=fl350_m,
     )
     area = _bbox_area_km2(bbox, obs_lat)
@@ -247,13 +275,16 @@ def generate_html_map(obs_lat, obs_lon, output_path):
     for alt in [10, 20, 30, 45, 60]:
         for az in [90, 180, 270]:
             bbox = transit_corridor_bbox(obs_lat, obs_lon, alt, az)
-            bboxes.append({
-                "alt": alt, "az": az,
-                "lat_ll": bbox.lat_lower_left,
-                "lon_ll": bbox.long_lower_left,
-                "lat_ur": bbox.lat_upper_right,
-                "lon_ur": bbox.long_upper_right,
-            })
+            bboxes.append(
+                {
+                    "alt": alt,
+                    "az": az,
+                    "lat_ll": bbox.lat_lower_left,
+                    "lon_ll": bbox.long_lower_left,
+                    "lat_ur": bbox.lat_upper_right,
+                    "lon_ur": bbox.long_upper_right,
+                }
+            )
 
     colors = {10: "red", 20: "orange", 30: "yellow", 45: "green", 60: "blue"}
 
@@ -289,7 +320,9 @@ legend.onAdd = function() {
   d.innerHTML = '<b>Target alt</b><br>';
 """
     for alt, color in colors.items():
-        html += f"  d.innerHTML += '<span style=\"color:{color}\">■</span> {alt}°<br>';\n"
+        html += (
+            f"  d.innerHTML += '<span style=\"color:{color}\">■</span> {alt}°<br>';\n"
+        )
     html += """  return d;};
 legend.addTo(map);
 </script></body></html>"""
@@ -309,7 +342,9 @@ def main():
     parser.add_argument("--observer-lat", type=float, default=33.111369)
     parser.add_argument("--observer-lon", type=float, default=-117.310169)
     parser.add_argument("--output", default="docs/diag_logs/bbox_map.html")
-    parser.add_argument("--json-output", default="docs/diag_logs/phase3_bbox_results.json")
+    parser.add_argument(
+        "--json-output", default="docs/diag_logs/phase3_bbox_results.json"
+    )
     args = parser.parse_args()
 
     obs_lat = args.observer_lat
@@ -344,7 +379,7 @@ def main():
     print()
 
     print("--- 6. Generating HTML coverage map ---")
-    bboxes = generate_html_map(obs_lat, obs_lon, args.output)
+    generate_html_map(obs_lat, obs_lon, args.output)
     print()
 
     passed = sum(1 for r in results if r["status"] == "PASS")

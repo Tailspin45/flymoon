@@ -31,12 +31,11 @@ import json
 import os
 import sys
 import time
-import threading
-from datetime import datetime, timezone
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 from dotenv import load_dotenv
+
 load_dotenv()
 
 HOST = os.getenv("SEESTAR_HOST", "192.168.4.112")
@@ -49,21 +48,27 @@ NUDGE_ANGLES = {"up": 90, "down": 270, "left": 0, "right": 180}
 
 def _pass(name, detail=""):
     msg = f"  PASS  {name}"
-    if detail: msg += f" — {detail}"
+    if detail:
+        msg += f" — {detail}"
     print(msg)
     return {"test": name, "status": "PASS", "detail": detail}
 
+
 def _fail(name, detail=""):
     msg = f"  FAIL  {name}"
-    if detail: msg += f" — {detail}"
+    if detail:
+        msg += f" — {detail}"
     print(msg)
     return {"test": name, "status": "FAIL", "detail": detail}
 
+
 def _warn(name, detail=""):
     msg = f"  WARN  {name}"
-    if detail: msg += f" — {detail}"
+    if detail:
+        msg += f" — {detail}"
     print(msg)
     return {"test": name, "status": "WARN", "detail": detail}
+
 
 def _info(msg):
     print(f"        {msg}")
@@ -74,6 +79,7 @@ def capture_events(client, duration_s: float) -> list:
     events = []
     deadline = time.time() + duration_s
     import select
+
     while time.time() < deadline:
         try:
             with client._socket_lock:
@@ -85,7 +91,9 @@ def capture_events(client, duration_s: float) -> list:
                     continue
                 chunk = sock.recv(4096)
                 if chunk:
-                    lines = chunk.decode("utf-8", errors="replace").strip().split("\r\n")
+                    lines = (
+                        chunk.decode("utf-8", errors="replace").strip().split("\r\n")
+                    )
                     for line in lines:
                         line = line.strip()
                         if not line:
@@ -110,7 +118,9 @@ def snapshot(client, label: str) -> dict:
         r = client._send_command("scope_get_equ_coord", quiet=True, timeout_override=5)
         s["equ"] = r
         if r:
-            _info(f"[{label}] scope_get_equ_coord: RA={r.get('ra')}h  Dec={r.get('dec')}°")
+            _info(
+                f"[{label}] scope_get_equ_coord: RA={r.get('ra')}h  Dec={r.get('dec')}°"
+            )
         else:
             _info(f"[{label}] scope_get_equ_coord: no response")
     except Exception as e:
@@ -119,7 +129,9 @@ def snapshot(client, label: str) -> dict:
 
     # scope_get_horiz_coord
     try:
-        r = client._send_command("scope_get_horiz_coord", quiet=True, timeout_override=5)
+        r = client._send_command(
+            "scope_get_horiz_coord", quiet=True, timeout_override=5
+        )
         s["horiz"] = r
         if r:
             _info(f"[{label}] scope_get_horiz_coord: {r}")
@@ -199,8 +211,10 @@ def run(host, port, nudge_direction, nudge_sec, restore_solar, output_path):
         results.append(_pass("switch_to_scenery"))
     except Exception as e:
         results.append(_fail("switch_to_scenery", str(e)))
-        try: client.disconnect()
-        except: pass
+        try:
+            client.disconnect()
+        except:
+            pass
         return results, raw
 
     # 3. Snapshot in scenery mode (before nudge)
@@ -221,7 +235,9 @@ def run(host, port, nudge_direction, nudge_sec, restore_solar, output_path):
             expect_response=False,
         )
         _info(f"scope_speed_move sent: speed=50 fw_angle={fw_angle}° dur={nudge_sec}s")
-        results.append(_pass("nudge_sent", f"direction={nudge_direction} fw_angle={fw_angle}°"))
+        results.append(
+            _pass("nudge_sent", f"direction={nudge_direction} fw_angle={fw_angle}°")
+        )
     except Exception as e:
         results.append(_fail("nudge_sent", str(e)))
 
@@ -244,20 +260,35 @@ def run(host, port, nudge_direction, nudge_sec, restore_solar, output_path):
 
     if before_equ.get("ra") is not None and after_equ.get("ra") is not None:
         delta_ra = abs(float(after_equ["ra"]) - float(before_equ["ra"]))
-        delta_dec = abs(float(after_equ.get("dec", 0)) - float(before_equ.get("dec", 0)))
+        delta_dec = abs(
+            float(after_equ.get("dec", 0)) - float(before_equ.get("dec", 0))
+        )
         raw["delta_ra_h"] = round(delta_ra, 6)
         raw["delta_dec_deg"] = round(delta_dec, 6)
         _info(f"RA change:  {delta_ra:.6f} h ({delta_ra * 15:.4f}°)")
         _info(f"Dec change: {delta_dec:.6f}°")
 
         if delta_ra * 15 > 0.05 or delta_dec > 0.05:
-            results.append(_pass("equ_coord_updates_after_nudge",
-                f"ΔRA={delta_ra*15:.3f}° ΔDec={delta_dec:.3f}° — position feedback WORKS in scenery"))
+            results.append(
+                _pass(
+                    "equ_coord_updates_after_nudge",
+                    f"ΔRA={delta_ra*15:.3f}° ΔDec={delta_dec:.3f}° — position feedback WORKS in scenery",
+                )
+            )
         else:
-            results.append(_fail("equ_coord_updates_after_nudge",
-                f"ΔRA={delta_ra*15:.4f}° ΔDec={delta_dec:.4f}° — RA/Dec FROZEN, servo loop will be blind"))
+            results.append(
+                _fail(
+                    "equ_coord_updates_after_nudge",
+                    f"ΔRA={delta_ra*15:.4f}° ΔDec={delta_dec:.4f}° — RA/Dec FROZEN, servo loop will be blind",
+                )
+            )
     else:
-        results.append(_warn("equ_coord_updates_after_nudge", "could not compare — missing before or after data"))
+        results.append(
+            _warn(
+                "equ_coord_updates_after_nudge",
+                "could not compare — missing before or after data",
+            )
+        )
 
     # Tilt change
     before_tilt = before.get("tilt")
@@ -267,9 +298,19 @@ def run(host, port, nudge_direction, nudge_sec, restore_solar, output_path):
         _info(f"Tilt change: {delta_tilt:.2f}°")
         raw["delta_tilt_deg"] = round(delta_tilt, 3)
         if delta_tilt > 0.2:
-            results.append(_pass("tilt_updates_after_nudge", f"Δtilt={delta_tilt:.2f}° — balance sensor responds"))
+            results.append(
+                _pass(
+                    "tilt_updates_after_nudge",
+                    f"Δtilt={delta_tilt:.2f}° — balance sensor responds",
+                )
+            )
         else:
-            results.append(_warn("tilt_updates_after_nudge", f"Δtilt={delta_tilt:.2f}° — may not have moved far enough"))
+            results.append(
+                _warn(
+                    "tilt_updates_after_nudge",
+                    f"Δtilt={delta_tilt:.2f}° — may not have moved far enough",
+                )
+            )
     else:
         results.append(_warn("tilt_updates_after_nudge", "tilt data unavailable"))
 
@@ -281,15 +322,19 @@ def run(host, port, nudge_direction, nudge_sec, restore_solar, output_path):
         delta_comp = min(delta_comp, 360 - delta_comp)
         _info(f"Compass change: {delta_comp:.2f}°")
         raw["delta_compass_deg"] = round(delta_comp, 3)
-    
+
     # horiz_coord change
     before_horiz = before.get("horiz")
     after_horiz = after.get("horiz")
     if before_horiz and after_horiz:
         _info(f"horiz_coord before: {before_horiz}  after: {after_horiz}")
-        results.append(_pass("horiz_coord_exists", f"before={before_horiz} after={after_horiz}"))
+        results.append(
+            _pass("horiz_coord_exists", f"before={before_horiz} after={after_horiz}")
+        )
     elif before_horiz is None and after_horiz is None:
-        results.append(_warn("horiz_coord_exists", "scope_get_horiz_coord not supported"))
+        results.append(
+            _warn("horiz_coord_exists", "scope_get_horiz_coord not supported")
+        )
 
     # 7. Restore solar mode (optional)
     if restore_solar:
@@ -303,8 +348,10 @@ def run(host, port, nudge_direction, nudge_sec, restore_solar, output_path):
         except Exception as e:
             results.append(_fail("restore_solar", str(e)))
 
-    try: client.disconnect()
-    except: pass
+    try:
+        client.disconnect()
+    except:
+        pass
 
     passed = sum(1 for r in results if r["status"] == "PASS")
     warned = sum(1 for r in results if r["status"] == "WARN")
@@ -315,7 +362,9 @@ def run(host, port, nudge_direction, nudge_sec, restore_solar, output_path):
     print("=" * 70)
 
     # Key finding
-    equ_result = next((r for r in results if r["test"] == "equ_coord_updates_after_nudge"), None)
+    equ_result = next(
+        (r for r in results if r["test"] == "equ_coord_updates_after_nudge"), None
+    )
     if equ_result:
         print()
         print("KEY FINDING (servo loop viability):")
@@ -323,7 +372,8 @@ def run(host, port, nudge_direction, nudge_sec, restore_solar, output_path):
 
     output = {
         "phase": "phase4_position_feedback",
-        "host": host, "port": port,
+        "host": host,
+        "port": port,
         "nudge_direction": nudge_direction,
         "nudge_sec": nudge_sec,
         "tests": results,
@@ -342,12 +392,25 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--host", default=HOST)
     parser.add_argument("--port", type=int, default=PORT)
-    parser.add_argument("--nudge-direction", default="up", choices=["up", "down", "left", "right"])
+    parser.add_argument(
+        "--nudge-direction", default="up", choices=["up", "down", "left", "right"]
+    )
     parser.add_argument("--nudge-sec", type=int, default=2)
-    parser.add_argument("--restore-solar", action="store_true", help="Restart solar mode after test")
-    parser.add_argument("--output", default="docs/diag_logs/phase4_position_feedback.json")
+    parser.add_argument(
+        "--restore-solar", action="store_true", help="Restart solar mode after test"
+    )
+    parser.add_argument(
+        "--output", default="docs/diag_logs/phase4_position_feedback.json"
+    )
     args = parser.parse_args()
-    run(args.host, args.port, args.nudge_direction, args.nudge_sec, args.restore_solar, args.output)
+    run(
+        args.host,
+        args.port,
+        args.nudge_direction,
+        args.nudge_sec,
+        args.restore_solar,
+        args.output,
+    )
 
 
 if __name__ == "__main__":
