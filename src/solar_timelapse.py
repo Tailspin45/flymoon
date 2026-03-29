@@ -201,7 +201,6 @@ class SolarTimelapse:
         self._stabilize_offset = (0.0, 0.0)  # smoothed cumulative offset
         self._consecutive_failures: int = 0
         self._last_error: Optional[str] = None
-        self._last_frame_grab_warn: float = 0.0  # Throttle frame-grab failure logs
 
     # ── Public API ──────────────────────────────────────────────────────
 
@@ -310,11 +309,6 @@ class SolarTimelapse:
                 f"frames_dir={self._frames_dir}"
             )
             return self.status()
-
-    def has_frames_today(self) -> bool:
-        """Return True if today's frames directory has at least one captured frame."""
-        frames_dir, _ = self._today_paths(datetime.now())
-        return self._existing_frame_count(frames_dir) > 0
 
     def resume_today(self, host: str, interval: float = 120.0) -> dict:
         """Resume today's timelapse from existing frames after restart/crash."""
@@ -627,9 +621,6 @@ class SolarTimelapse:
                         self._consecutive_failures = 0
                         self._last_error = None
                         self._retry_delay = self._interval
-                        self._last_frame_grab_warn = (
-                            0  # Reset so next failure logs WARNING
-                        )
                     else:
                         self._consecutive_failures += 1
                         self._retry_delay = 10.0
@@ -658,23 +649,8 @@ class SolarTimelapse:
             if was_running and self._frame_count > 0 and not self._stop_event.is_set():
                 self._assemble_video()
 
-    def _log_frame_grab_fail(self, msg: str) -> None:
-        """Log frame grab failure, throttled to once per 60s to avoid spam."""
-        now = time.monotonic()
-        if now - self._last_frame_grab_warn >= 60:
-            logger.warning(f"[Timelapse] {msg}")
-            self._last_frame_grab_warn = now
-        else:
-            logger.debug(f"[Timelapse] {msg}")
-
     def _grab_frame(self) -> Tuple[bool, Optional[str]]:
         """Grab a single JPEG frame from the RTSP stream via ffmpeg.
-
-        Optimisation: if a TransitDetector is actively running its hi-res
-        reader, reuse its latest JPEG frame instead of opening a separate RTSP
-        connection.  This keeps concurrent RTSP connections at ≤2 (low-res
-        detection reader + hi-res buffer reader) even when the timelapse and
-        detector are both active.
 
         After capture, annotates the frame with sunspot circles and a
         timestamp overlay, saving the annotated version alongside the raw.
@@ -686,39 +662,29 @@ class SolarTimelapse:
         filename = f"frame_{seq:05d}.jpg"
         filepath = os.path.join(self._frames_dir, filename)
 
-        # ── Try detector hi-res buffer first (zero extra RTSP connections) ──
-        jpeg_bytes: Optional[bytes] = None
-        try:
-            from src.transit_detector import get_detector
+        # Try primary port first, then fallbacks if connection refused
+        # Port scan suggests 4500, 4700, 4800 are open. 4554 is standard but closed here.
+        candidate_ports = [self._rtsp_port]
+        if self._rtsp_port != 4500:
+            candidate_ports.append(4500)
+        if self._rtsp_port != 8554:
+            candidate_ports.append(8554)
+        if self._rtsp_port != 554:
+            candidate_ports.append(554)
 
-            det = get_detector()
-            if det is not None:
-                jpeg_bytes = det.get_latest_hires_jpeg()
-        except Exception:
-            jpeg_bytes = None
+        last_err = ""
+        success = False
 
-        if jpeg_bytes and len(jpeg_bytes) > 1000:
-            try:
-                with open(filepath, "wb") as fh:
-                    fh.write(jpeg_bytes)
-                logger.debug(
-                    "[Timelapse] Frame grabbed from detector hi-res buffer (no new RTSP)"
-                )
-            except Exception as exc:
-                logger.warning(f"[Timelapse] Failed to write buffer frame: {exc}")
-                jpeg_bytes = None  # fall through to ffmpeg below
+        for port in candidate_ports:
+            rtsp_url = f"rtsp://{self._host}:{port}/stream"
 
-        if (
-            not jpeg_bytes
-            or not os.path.exists(filepath)
-            or os.path.getsize(filepath) < 100
-        ):
-            # Fall back: spawn ffmpeg to grab a single frame from RTSP
-            rtsp_url = f"rtsp://{self._host}:{self._rtsp_port}/stream"
+            # Build command
             cmd = [
                 FFMPEG,
                 "-rtsp_transport",
                 "tcp",
+                "-timeout",
+                "3000000",
                 "-i",
                 rtsp_url,
                 "-frames:v",
@@ -730,37 +696,64 @@ class SolarTimelapse:
                 "-y",
                 filepath,
             ]
+
             try:
                 result = subprocess.run(
-                    cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, timeout=15
+                    cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, timeout=8
                 )
+
                 if result.returncode != 0:
                     stderr_tail = result.stderr.decode(errors="replace")[-200:].strip()
-                    self._log_frame_grab_fail(f"Frame grab failed: {stderr_tail}")
-                    return False, f"FFmpeg error: {stderr_tail}"
+                    if (
+                        "Connection refused" in stderr_tail
+                        or "Input/output error" in stderr_tail
+                    ):
+                        last_err = f"Port {port} failed: {stderr_tail}"
+                        continue  # Try next port
+                    else:
+                        logger.warning(
+                            f"[Timelapse] Frame grab failed on port {port}: {stderr_tail}"
+                        )
+                        last_err = f"FFmpeg error: {stderr_tail}"
+                        continue
+
+                if not os.path.exists(filepath) or os.path.getsize(filepath) < 100:
+                    logger.warning(
+                        f"[Timelapse] Frame too small or missing on port {port}: {filepath}"
+                    )
+                    last_err = "Frame too small or missing"
+                    continue
+
+                # Success!
+                if port != self._rtsp_port:
+                    logger.info(
+                        f"[Timelapse] Found working RTSP stream on port {port} (was {self._rtsp_port})"
+                    )
+                    self._rtsp_port = port  # Remember working port
+
+                success = True
+                break
+
             except subprocess.TimeoutExpired:
-                self._log_frame_grab_fail("Frame grab timed out")
-                return False, "FFmpeg timed out"
+                logger.warning(f"[Timelapse] Frame grab timed out on port {port}")
+                last_err = "RTSP timeout"
+            except Exception as e:
+                logger.warning(f"[Timelapse] Frame grab error on port {port}: {e}")
+                last_err = str(e)
 
-            if not os.path.exists(filepath) or os.path.getsize(filepath) < 100:
-                self._log_frame_grab_fail(f"Frame too small or missing: {filepath}")
-                return False, "Frame too small or missing"
+        if not success:
+            return False, last_err
 
-        # ── Both paths (buffer + ffmpeg) converge here ────────────────────
-        try:
-            if not self._stabilize_frame(filepath):
-                return False, "Stabilization failed"
+        # Post-process frame
+        if not self._stabilize_frame(filepath):
+            return False, "Stabilization failed"
 
-            # Annotate with sunspot detection
-            self._annotate_frame(filepath, seq)
+        # Annotate with sunspot detection
+        self._annotate_frame(filepath, seq)
 
-            if seq % 10 == 0 or seq == 1:
-                logger.info(f"[Timelapse] Frame {seq} captured + annotated")
-            return True, None
-
-        except Exception as exc:
-            self._log_frame_grab_fail(f"Frame post-processing error: {exc}")
-            return False, str(exc)
+        if seq % 10 == 0 or seq == 1:
+            logger.info(f"[Timelapse] Frame {seq} captured + annotated")
+        return True, None
 
     def _stabilize_frame(self, frame_path: str) -> bool:
         """Stabilize frame in-place by locking the solar disk center to the anchor position.
