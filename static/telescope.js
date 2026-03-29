@@ -6087,11 +6087,12 @@ const RADAR_SWEEP_SEC_PER_REV   = 3;       // seconds per full rotation
 const RADAR_PREDICT_HORIZON_S   = 12;      // enhanced-mode look-ahead (s)
 const RADAR_DISC_DEG            = 0.53;    // solar/lunar disc radius (°)
 const RADAR_MAX_SEP_DEG         = 12;      // outer ring = 12° (full LOW range)
-const RADAR_HISTORY_MAX         = 24;      // trail length per blip
+const RADAR_HISTORY_MAX         = 50;      // trail length per blip
 const RADAR_SWEEP_RUN_AFTER_DETECT_S = 30; // seconds sweep stays on after detection
+const RADAR_FLYOFF_MS           = 120_000; // let dead-reckoning carry a track for 2 min before removal
 
 // ── state ───────────────────────────────────────────────────────────────────
-const _radarTracks       = new Map();  // id → {points[], color, level, label, altFt, speedKmh, heading}
+const _radarTracks       = new Map();  // id → track object (see pushInterceptPoint)
 let   _radarCanvas       = null;
 let   _radarCtx          = null;
 let   _radarSweepStart   = null;       // performance.now() reference (null = frozen)
@@ -6167,10 +6168,30 @@ function _radarDrawFrame(ts) {
     const R  = Math.min(cx, cy) - 8;
 
     const nowMs = Date.now();
+    // Dead-reckon stale tracks and remove ones that have flown off-screen
     for (const [id, tr] of _radarTracks.entries()) {
         if (!tr.lastUpdateT) continue;
-        if ((nowMs - tr.lastUpdateT) > RADAR_TRACK_STALE_MS) {
+        const ageSec = (nowMs - tr.lastUpdateT) / 1000;
+        // Beyond flyoff timeout with no updates — remove
+        if (ageSec * 1000 > RADAR_FLYOFF_MS) {
             _radarTracks.delete(id);
+            continue;
+        }
+        // Dead-reckon position if we have velocity and data is stale (> 1s)
+        if (ageSec > 1.0 && (Math.abs(tr.vAltD) > 0.0001 || Math.abs(tr.vAzD) > 0.0001)) {
+            const drAltD = tr.altD + tr.vAltD * ageSec;
+            const drAzD  = tr.azD  + tr.vAzD  * ageSec;
+            // If dead-reckoned position is off-screen, let it fly off naturally
+            if (Math.hypot(drAltD, drAzD) > RADAR_MAX_SEP_DEG * 1.3) {
+                _radarTracks.delete(id);
+                continue;
+            }
+            // Append dead-reckoned point to trail (min 1s gap)
+            const lastPt = tr.points[tr.points.length - 1];
+            if (!lastPt || nowMs - lastPt.t >= 1000) {
+                tr.points.push({ altD: drAltD, azD: drAzD, t: nowMs });
+                if (tr.points.length > RADAR_HISTORY_MAX) tr.points.shift();
+            }
         }
     }
 
@@ -6270,9 +6291,13 @@ function _radarDrawFrame(ts) {
 
     sorted.forEach(track => {
         if (!track.points.length) return;
-        const last = track.points[track.points.length-1];
         const id   = track.id;
         const color= track.color;
+
+        // Current display position: dead-reckon from last raw measurement
+        const ageSec = (nowMs - track.lastUpdateT) / 1000;
+        const curAltD = track.altD + track.vAltD * Math.min(ageSec, 60);
+        const curAzD  = track.azD  + track.vAzD  * Math.min(ageSec, 60);
 
         const drawPts = track.points;
 
@@ -6289,43 +6314,37 @@ function _radarDrawFrame(ts) {
         }
 
         // blip glow / brightness
-        const {x, y} = _radarBlipXY(last, cx, cy, R);
+        const curPt = { altD: curAltD, azD: curAzD };
+        const {x, y} = _radarBlipXY(curPt, cx, cy, R);
         const dAng = _radarSweepActive
-            ? ((sweepAng - _radarPolar(last.altD, last.azD, R).ang) % (Math.PI*2) + Math.PI*2) % (Math.PI*2)
+            ? ((sweepAng - _radarPolar(curAltD, curAzD, R).ang) % (Math.PI*2) + Math.PI*2) % (Math.PI*2)
             : 0;
         const lit   = !_radarSweepActive || dAng < beamHalf + 0.15;
-        const alpha = lit ? 1.0 : 0.82; // keep blips clearly visible between sweep passes
+        const alpha = lit ? 1.0 : 0.82;
         const blipR = track.level >= 3 ? 6 : track.level === 2 ? 5 : 4;
 
         // ── velocity / heading line (tadpole tail) ───────────────────────
-        // Direction comes from a short angular-space forward step (avoids
-        // the projection growing as the blip moves across the disc).
-        // Length is a fixed base + a tiny increment per 100 kts of true airspeed,
-        // so it only changes when the reported speed changes.
-        if (track.sAltD !== null && track.abBooted) {
-            const speed2d = Math.hypot(track.svAltD, track.svAzD); // deg/s
-            if (speed2d > 0.0001) {
-                const DIR_DT = 5; // seconds — enough for a clean heading sample
-                const futPt  = {
-                    altD: track.sAltD + track.svAltD * DIR_DT,
-                    azD:  track.sAzD  + track.svAzD  * DIR_DT
-                };
-                const futXY  = _radarBlipXY(futPt, cx, cy, R);
-                const ang    = Math.atan2(futXY.y - y, futXY.x - x);
-                // Length: 6 px base + 3 px per 100 kts
-                const speedKts = track.speedKmh != null
-                    ? track.speedKmh / 1.852
-                    : speed2d * 200; // rough fallback
-                const len = 6 + (speedKts / 100) * 3;
-                ctx.save();
-                ctx.strokeStyle = _hexToRgba(color, alpha * 0.9);
-                ctx.lineWidth   = 1.5;
-                ctx.beginPath();
-                ctx.moveTo(x, y);
-                ctx.lineTo(x + len * Math.cos(ang), y + len * Math.sin(ang));
-                ctx.stroke();
-                ctx.restore();
-            }
+        const speed2d = Math.hypot(track.vAltD, track.vAzD);
+        if (speed2d > 0.0001) {
+            const DIR_DT = 5;
+            const futPt  = {
+                altD: curAltD + track.vAltD * DIR_DT,
+                azD:  curAzD  + track.vAzD  * DIR_DT
+            };
+            const futXY  = _radarBlipXY(futPt, cx, cy, R);
+            const ang    = Math.atan2(futXY.y - y, futXY.x - x);
+            const speedKts = track.speedKmh != null
+                ? track.speedKmh / 1.852
+                : speed2d * 200;
+            const len = 6 + (speedKts / 100) * 3;
+            ctx.save();
+            ctx.strokeStyle = _hexToRgba(color, alpha * 0.9);
+            ctx.lineWidth   = 1.5;
+            ctx.beginPath();
+            ctx.moveTo(x, y);
+            ctx.lineTo(x + len * Math.cos(ang), y + len * Math.sin(ang));
+            ctx.stroke();
+            ctx.restore();
         }
 
         // ── diamond blip ──────────────────────────────────────────────────
@@ -6412,8 +6431,7 @@ function _radarShowTooltip(id, x, y) {
     if (!t) return;
     const lvlStr = t.level >= 3 ? 'HIGH' : t.level === 2 ? 'MEDIUM' : 'LOW';
     const lvlCol = t.level >= 3 ? '#00FF00' : t.level === 2 ? '#FFFF00' : '#808080';
-    const last   = t.points[t.points.length-1];
-    const sep    = last ? Math.hypot(last.altD, last.azD).toFixed(2) : '—';
+    const sep    = Math.hypot(t.altD, t.azD).toFixed(2);
     tt.innerHTML = `
         <div style="font-weight:700;font-size:12px;letter-spacing:.05em">${t.label}</div>
         <div>${_radarAltFtStr(t.altFt)}</div>
@@ -6452,41 +6470,17 @@ window.pruneRadarTracks = function(activeIds) {
     }
 };
 
-// ── α-β filter constants ─────────────────────────────────────────────────────
-const AB_ALPHA          = 0.10;  // position gain (0..1)
-const AB_BETA           = 0.02;  // velocity gain (0..1)
-const AB_VELLINE_S      = 60;    // seconds of smoothed velocity to project for the heading line
-const AB_OUTLIER_SIGMA  = 3.0;
-const AB_MEAS_SIGMA_DEG = 1.0;
-const RADAR_TRACK_STALE_MS = 20_000;
-
 // ── pushInterceptPoint (public API for app.js) ───────────────────────────────
+// Stores raw alt_diff / az_diff from the backend — no smoothing or filtering.
+// Velocity is derived from the last two raw measurements for the heading line.
+// Dead-reckoning between updates happens in _radarDrawFrame.
 window.pushInterceptPoint = function(flight) {
     const id = String(flight.id || flight.name || '').trim().toUpperCase();
     if (!id || flight.angular_separation == null) return;
     const level = parseInt(flight.possibility_level ?? 0);
     if (level < 1 || level > 3) return;
 
-    // Confidence colours per spec: green=HIGH, yellow=MEDIUM, grey=LOW
     const color = level >= 3 ? '#00FF00' : level === 2 ? '#FFFF00' : '#808080';
-
-    if (!_radarTracks.has(id)) {
-        _radarTracks.set(id, {
-            id, points:[], color, level, label:id,
-            altFt:null, speedKmh:null, heading:null,
-            // α-β state (null = not yet initialised)
-            sAltD:null, sAzD:null, svAltD:0, svAzD:0,
-            lastUpdateT:null, misses:0, abBooted:false
-        });
-    }
-    const track = _radarTracks.get(id);
-    track.color    = color;
-    track.level    = level;
-    track.label    = id;
-    track.altFt    = flight.altitude  != null ? parseFloat(flight.altitude)  : null;
-    track.speedKmh = flight.speed     != null ? parseFloat(flight.speed)     : null;
-    track.heading  = flight.heading   != null ? parseFloat(flight.heading)   : null;
-    track.misses   = 0;
 
     let measAltD = parseFloat(flight.alt_diff ?? 'NaN');
     let measAzD  = parseFloat(flight.az_diff  ?? 'NaN');
@@ -6497,54 +6491,54 @@ window.pushInterceptPoint = function(flight) {
     }
 
     const now = Date.now();
-    const DT  = track.lastUpdateT ? Math.max(0.5, (now - track.lastUpdateT) / 1000) : 3.0;
-    track.lastUpdateT = now;
 
-    if (track.sAltD === null) {
-        // First detection — store position; velocity unknown yet
-        track.sAltD  = measAltD;
-        track.sAzD   = measAzD;
-    } else if (!track.abBooted) {
-        // Second detection — bootstrap velocity directly from displacement so the
-        // heading line appears at the correct length immediately (no slow ramp-up)
-        const rawVAlt = (measAltD - track.sAltD) / DT;
-        const rawVAz  = (measAzD  - track.sAzD)  / DT;
-        const damp = Math.min(1.0, 3.0 / DT);
-        track.svAltD = rawVAlt * damp;
-        track.svAzD  = rawVAz * damp;
-        track.sAltD    = measAltD;
-        track.sAzD     = measAzD;
-        track.abBooted = true;
-    } else {
-        // Predict
-        const predAltD = track.sAltD + track.svAltD * DT;
-        const predAzD  = track.sAzD  + track.svAzD  * DT;
-        // Correct (α-β)
-        const resAltD  = measAltD - predAltD;
-        const resAzD   = measAzD  - predAzD;
-        if (
-            Math.abs(resAltD) > AB_OUTLIER_SIGMA * AB_MEAS_SIGMA_DEG ||
-            Math.abs(resAzD) > AB_OUTLIER_SIGMA * AB_MEAS_SIGMA_DEG
-        ) {
-            track.sAltD = predAltD;
-            track.sAzD = predAzD;
-            track.misses = (track.misses || 0) + 1;
-        } else {
-            track.sAltD    = predAltD + AB_ALPHA * resAltD;
-            track.sAzD     = predAzD  + AB_ALPHA * resAzD;
-            track.svAltD   = track.svAltD + (AB_BETA / DT) * resAltD;
-            track.svAzD    = track.svAzD  + (AB_BETA / DT) * resAzD;
+    if (!_radarTracks.has(id)) {
+        _radarTracks.set(id, {
+            id, points: [], color, level, label: id,
+            altFt: null, speedKmh: null, heading: null,
+            // Raw position from last measurement
+            altD: measAltD, azD: measAzD,
+            // Velocity (deg/s) derived from last two measurements
+            vAltD: 0, vAzD: 0,
+            // Previous raw position for velocity computation
+            prevAltD: null, prevAzD: null, prevT: null,
+            lastUpdateT: now,
+        });
+    }
+
+    const track = _radarTracks.get(id);
+    track.color    = color;
+    track.level    = level;
+    track.label    = id;
+    track.altFt    = flight.altitude != null ? parseFloat(flight.altitude) : null;
+    track.speedKmh = flight.speed    != null ? parseFloat(flight.speed)    : null;
+    track.heading  = flight.heading  != null ? parseFloat(flight.heading)  : null;
+
+    // Compute velocity from previous raw position
+    if (track.lastUpdateT && track.lastUpdateT !== now) {
+        const dt = (now - track.lastUpdateT) / 1000;
+        if (dt > 0.5 && dt < 120) {
+            track.vAltD = (measAltD - track.altD) / dt;
+            track.vAzD  = (measAzD  - track.azD)  / dt;
         }
     }
 
-    // Store smoothed position in trail (min 2 s gap to avoid duplicate points)
-    const last = track.points[track.points.length - 1];
-    if (!last || now - last.t >= 2000) {
-        track.points.push({ altD: track.sAltD, azD: track.sAzD, t: now });
+    // Store previous position, update current
+    track.prevAltD = track.altD;
+    track.prevAzD  = track.azD;
+    track.prevT    = track.lastUpdateT;
+    track.altD     = measAltD;
+    track.azD      = measAzD;
+    track.lastUpdateT = now;
+
+    // Append to trail (raw position, min 1s gap)
+    const lastPt = track.points[track.points.length - 1];
+    if (!lastPt || now - lastPt.t >= 1000) {
+        track.points.push({ altD: measAltD, azD: measAzD, t: now });
         if (track.points.length > RADAR_HISTORY_MAX) track.points.shift();
     } else {
-        last.altD = track.sAltD;
-        last.azD  = track.sAzD;
+        lastPt.altD = measAltD;
+        lastPt.azD  = measAzD;
     }
 
     if (level >= 1) _radarMarkTransitSeen();
@@ -6668,9 +6662,8 @@ function _startRadarTest(btn) {
             if (Math.hypot(a._altD, a._azD) > RADAR_MAX_SEP_DEG * 1.1) {
                 a._altD = a.altD;
                 a._azD  = a.azD;
-                // Clear the filter state so velocity re-bootstraps cleanly
                 const tr = _radarTracks.get(a.id);
-                if (tr) { tr.sAltD = null; tr.abBooted = false; tr.svAltD = 0; tr.svAzD = 0; tr.points = []; }
+                if (tr) { tr.points = []; tr.vAltD = 0; tr.vAzD = 0; }
             }
 
             window.pushInterceptPoint({
