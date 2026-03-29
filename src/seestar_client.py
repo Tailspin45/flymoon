@@ -781,31 +781,8 @@ class SeestarClient:
                         pass
                     self.socket = None
 
-                # On host-down / unreachable errors, try auto-discovering the
-                # Seestar on the local subnet before retrying.
-                if isinstance(e, (socket.error, socket.timeout)):
-                    import errno as _errno
-
-                    host_down = hasattr(e, "errno") and e.errno in (
-                        _errno.EHOSTDOWN,
-                        _errno.EHOSTUNREACH,
-                        _errno.ECONNREFUSED,
-                        64,
-                    )
-                    timed_out = isinstance(e, socket.timeout) or (
-                        hasattr(e, "errno") and e.errno == _errno.ETIMEDOUT
-                    )
-
-                    if (host_down or timed_out) and attempt < self.retry_attempts:
-                        discovered = self._auto_discover()
-                        if discovered and discovered != self.host:
-                            logger.warning(
-                                f"[Seestar] Auto-discovered at {discovered} "
-                                f"(was {self.host}). Persisting to .env."
-                            )
-                            self.host = discovered
-                            self._persist_host_to_env(discovered)
-                        continue
+                # Auto-discover already ran once before the retry loop.
+                # Don't re-scan on every failure — just retry with backoff.
 
         # All retries exhausted
         error_msg = f"Connection failed after {self.retry_attempts} attempts"

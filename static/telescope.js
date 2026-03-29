@@ -105,12 +105,9 @@ window.initTelescope = function() {
     // Status polling (always poll while panel is open)
     statusPollInterval = setInterval(updateStatus, 2000);
 
-    // Auto-connect: check current state, then connect silently if not already connected.
-    // After connection is confirmed, auto-start detection (default on).
+    // Check current state — do NOT auto-connect (UDP floods when scope is off).
+    // User must click Connect or Find explicitly.
     updateStatus().then(async () => {
-        if (!isConnected) {
-            await connect();
-        }
         // Check if detection is already running (page reload) — if so just hook up polling
         const statusResult = await apiCall('/telescope/detect/status', 'GET');
         if (statusResult && statusResult.running) {
@@ -199,9 +196,13 @@ window.initTelescope = function() {
 
 async function connect() {
     console.log('[Telescope] Connecting...');
-    showStatus('Connecting to telescope...', 'info');
-    
+    const btn = document.getElementById('connectBtn');
+    if (btn) { btn.disabled = true; btn.textContent = '⏳ Connecting…'; }
+    showStatus('Connecting to telescope (3 attempts with backoff)…', 'info', 0);
+
     const result = await apiCall('/telescope/connect', 'POST');
+    if (btn) { btn.disabled = false; btn.textContent = 'Connect'; }
+
     if (result && result.success) {
         isConnected = true;
         showStatus('Connected successfully!', 'success', 5000);
@@ -211,15 +212,17 @@ async function connect() {
 
         // Start status polling
         if (statusPollInterval) clearInterval(statusPollInterval);
-        statusPollInterval = setInterval(updateStatus, 2000); // Every 2s
+        statusPollInterval = setInterval(updateStatus, 2000);
 
         updateConnectionUI();
         updateStatus();
         startPositionSync();
-        // Clear any preview backoff and start stream
         _previewLastError = 0;
         stopPreview();
-        setTimeout(startPreview, 2000); // give RTSP a moment to spin up
+        setTimeout(startPreview, 2000);
+    } else {
+        showStatus('Scope not found — power it on and click Find', 'warning', 10000);
+        updateConnectionUI();
     }
 }
 
