@@ -390,6 +390,12 @@ async function updateStatus() {
         if (isConnected) {
             _lastConnectedStatus = { viewing_mode: result.viewing_mode, recording: result.recording, host: result.host };
         }
+
+        // Update focus odometer from last known position
+        if (result.focus_pos != null) {
+            const focEl = document.getElementById('focusPos');
+            if (focEl) focEl.textContent = result.focus_pos;
+        }
         _prevConnected = isConnected;
 
         if (isConnected && typeof startPreview === 'function') {
@@ -454,7 +460,7 @@ async function updateTargetVisibility() {
             sunBadge.className = 'visibility-badge visible';
             if (isConnected && sunBtn) sunBtn.disabled = false;
         } else {
-            sunBadge.textContent = 'Below Horizon';
+            sunBadge.textContent = 'Below';
             sunBadge.className = 'visibility-badge not-visible';
             if (sunBtn) sunBtn.disabled = true;
         }
@@ -473,7 +479,7 @@ async function updateTargetVisibility() {
             moonBadge.className = 'visibility-badge visible';
             if (isConnected && moonBtn) moonBtn.disabled = false;
         } else {
-            moonBadge.textContent = 'Below Horizon';
+            moonBadge.textContent = 'Below';
             moonBadge.className = 'visibility-badge not-visible';
             if (moonBtn) moonBtn.disabled = true;
         }
@@ -831,6 +837,21 @@ async function previewTimelapse() {
         }
     } else {
         showStatus(result?.error || 'Preview failed', 'error', 5000);
+    }
+}
+
+function openTimelapseFrame(src) {
+    // Strip cache-buster before opening so the URL stays clean
+    const cleanSrc = src.split('?')[0];
+    const viewer = document.getElementById('fileViewer');
+    const body   = document.getElementById('fileViewerBody');
+    const name   = document.getElementById('fileViewerName');
+    if (viewer && body) {
+        body.innerHTML = `<img src="${cleanSrc}" style="max-width:100%; max-height:85vh; display:block; margin:auto;" alt="Timelapse frame">`;
+        if (name) name.textContent = cleanSrc.split('/').pop();
+        viewer.style.display = 'flex';
+    } else {
+        window.open(cleanSrc);
     }
 }
 
@@ -2289,6 +2310,9 @@ function dismissTransit(flight) {
     }
     document.addEventListener('keydown', (e) => {
         if (e.key === 'Escape') closeFileViewer();
+        const tag = document.activeElement ? document.activeElement.tagName : '';
+        const inInput = tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT'
+            || document.activeElement?.isContentEditable;
         // CMD/Ctrl + Delete: delete without confirmation in any context
         if ((e.key === 'Delete' || e.key === 'Backspace') && (e.metaKey || e.ctrlKey)) {
             // 1. File viewer lightbox is open
@@ -2310,6 +2334,13 @@ function dismissTransit(flight) {
                 e.preventDefault();
                 filmstripDeleteSelectedSkipConfirm();
                 return;
+            }
+        }
+        // Plain Delete: delete filmstrip selection (non-favorited skipped silently)
+        if (e.key === 'Delete' && !e.metaKey && !e.ctrlKey && !inInput) {
+            if (filmstripSelection.selected.size > 0) {
+                e.preventDefault();
+                filmstripDeleteSelectedSkipConfirm();
             }
         }
     });
@@ -2425,7 +2456,7 @@ function _syncFilmstripSelectionUI() {
 
 function filmstripSelectItem(index, path, event) {
     event.stopPropagation();
-    if (event.shiftKey && filmstripSelection.lastClicked !== null) {
+    if ((event.ctrlKey || event.metaKey) && event.shiftKey && filmstripSelection.lastClicked !== null) {
         const lo = Math.min(filmstripSelection.lastClicked, index);
         const hi = Math.max(filmstripSelection.lastClicked, index);
         for (let i = lo; i <= hi; i++) {
@@ -5423,9 +5454,7 @@ function updateDetectionUI() {
     if (log) {
         const empty = log.querySelector('.empty-state');
         if (empty) {
-            empty.textContent = isDetecting
-                ? '🔭 Watching for transits…'
-                : 'No detections yet';
+            empty.textContent = 'No detections yet';
         }
     }
 }
@@ -6246,35 +6275,6 @@ function _radarDrawFrame(ts) {
         const color= track.color;
 
         const drawPts = track.points;
-        if (_radarMode === 'enhanced' && track.sAltD !== null) {
-            const speed2d = Math.hypot(track.svAltD, track.svAzD);
-            if (speed2d > 0.0005) {
-                // Use α-β smoothed velocity for the dashed prediction cone
-                const pA = _radarBlipXY(
-                    { altD: track.sAltD + track.svAltD * 5,  azD: track.sAzD + track.svAzD * 5  }, cx, cy, R);
-                const pB = _radarBlipXY(
-                    { altD: track.sAltD + track.svAltD * RADAR_PREDICT_HORIZON_S,
-                      azD:  track.sAzD  + track.svAzD  * RADAR_PREDICT_HORIZON_S }, cx, cy, R);
-                ctx.beginPath();
-                ctx.moveTo(pA.x, pA.y);
-                ctx.lineTo(pB.x, pB.y);
-                ctx.strokeStyle = _hexToRgba(color, 0.35);
-                ctx.lineWidth = 2;
-                ctx.setLineDash([3, 3]);
-                ctx.stroke();
-                ctx.setLineDash([]);
-                // arrowhead
-                const ang2 = Math.atan2(pB.y - pA.y, pB.x - pA.x);
-                const al = 7;
-                ctx.fillStyle = _hexToRgba(color, 0.5);
-                ctx.beginPath();
-                ctx.moveTo(pB.x, pB.y);
-                ctx.lineTo(pB.x - al * Math.cos(ang2 - 0.4), pB.y - al * Math.sin(ang2 - 0.4));
-                ctx.lineTo(pB.x - al * Math.cos(ang2 + 0.4), pB.y - al * Math.sin(ang2 + 0.4));
-                ctx.closePath();
-                ctx.fill();
-            }
-        }
 
         // trail
         if (drawPts.length > 1) {
@@ -6592,7 +6592,7 @@ function _renderUpcomingTransits() {
         })
         .filter(tr => tr.liveEta == null || tr.liveEta > -30); // keep for 30s past T-0
     if (!live.length) {
-        el.innerHTML = '<div style="color:#334;font-size:0.8em;padding:4px 0">No upcoming transits</div>';
+        el.innerHTML = '';
         return;
     }
     live.sort((a, b) => {
@@ -6659,6 +6659,7 @@ function _startRadarTest(btn) {
     if (btn) { btn.classList.add('is-active'); btn.textContent = 'Stop'; }
 
     function _tick() {
+        window._radarLastUpdateTs = Date.now();   // keep sweep active during test
         _TEST_AIRCRAFT.forEach(a => {
             a._altD += a.vAlt;
             a._azD  += a.vAz;
@@ -6734,8 +6735,6 @@ function ensureTransitRadar() {
                         style="min-height:18px;padding:2px 7px;font-size:0.62em;">Test</button>
                 </div>
             </div>
-            <div id="upcomingTransitsList"
-                 style="font-size:0.72em;color:#80C888;padding:0 6px;margin-bottom:3px;min-height:14px;"></div>
             <canvas id="radarCanvas"
                     style="display:block;width:100%;aspect-ratio:1;
                            border-top:1px solid rgba(0,255,80,0.06);"></canvas>
@@ -6843,12 +6842,24 @@ function _updateAlpacaPanel(data) {
     const panel = document.getElementById('alpacaTelemetryPanel');
     if (!panel) return;
 
+    panel.style.display = '';
+
     if (!data || !data.connected) {
-        panel.style.display = 'none';
+        // Show panel in disconnected/placeholder state — coords reset to dashes
+        ['alpacaRA','alpacaDec','alpacaAlt','alpacaAz'].forEach(id => {
+            const el = document.getElementById(id);
+            if (el) el.textContent = '—';
+        });
+        const badge = document.getElementById('alpacaStatusBadge');
+        if (badge) badge.className = 'alpaca-status-badge';
+        const label = document.getElementById('alpacaStatusLabel');
+        if (label) label.textContent = 'DISC';
+        const dot = document.getElementById('alpacaStatusDot');
+        if (dot) dot.style.background = '#555';
+        const name = document.getElementById('alpacaDeviceName');
+        if (name) name.textContent = '';
         return;
     }
-
-    panel.style.display = '';
 
     const pos = data.position || {};
     const state = data.state || {};
@@ -6872,34 +6883,16 @@ function _updateAlpacaPanel(data) {
     if (scopeAlt && pos.alt != null) scopeAlt.textContent = fmt(pos.alt, 1);
     if (scopeAz && pos.az != null) scopeAz.textContent = fmt(pos.az, 1);
 
-    // State chips — apply active/warn/alert classes
+    // Tracking state
     _alpacaTracking = state.tracking || false;
-
-    const trackChip = document.getElementById('alpacaTrackingChip');
-    const slewChip = document.getElementById('alpacaSlewingChip');
-    const parkChip = document.getElementById('alpacaParkedChip');
-
-    if (trackChip) {
-        trackChip.classList.toggle('active', !!state.tracking);
-        trackChip.classList.remove('warn', 'alert');
-    }
-    if (slewChip) {
-        slewChip.classList.remove('active', 'warn', 'alert');
-        if (state.slewing) slewChip.classList.add('warn');
-    }
-    if (parkChip) {
-        parkChip.classList.remove('active', 'warn', 'alert');
-        if (state.parked) parkChip.classList.add('alert');
-    }
 
     // Device name
     const nameEl = document.getElementById('alpacaDeviceName');
     if (nameEl && info.name) nameEl.textContent = info.name;
 
-    // Tracking button — label + .is-active.btn-mode keycap state
+    // Tracking button — teal = tracking on, white = tracking off
     const btn = document.getElementById('alpacaTrackingBtn');
     if (btn) {
-        btn.textContent = _alpacaTracking ? 'Trk Off' : 'Track';
         btn.classList.toggle('is-active', !!_alpacaTracking);
     }
 }

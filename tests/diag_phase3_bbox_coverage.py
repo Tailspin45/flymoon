@@ -25,9 +25,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from src.constants import ASTRO_EPHEMERIS
-from src.position import (
-    transit_corridor_bbox,
-)
+from src.position import transit_corridor_bbox
 
 EARTH = ASTRO_EPHEMERIS["earth"]
 

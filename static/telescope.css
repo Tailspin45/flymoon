@@ -36,6 +36,14 @@
     border-right: none;
     border-left: 2px solid #30343A;
     background: #50545C;
+    display: flex;
+    flex-direction: column;
+}
+
+/* Spacer panel — expands to fill remaining column height, decorative screws only */
+.sidebar-panel-spacer {
+    min-height: 40px;
+    border-bottom: none;
 }
 
 .sidebar-alp {
@@ -621,14 +629,14 @@
     transform: translateY(1px);
     box-shadow: inset 0 2px 4px rgba(0,0,0,0.65);
 
-    /* Inverted label — bright white on very dark bg = ≥ 7:1 contrast */
-    color: #FFFFFF;
-    text-shadow: 0 0 4px rgba(200,220,255,0.25);
+    /* Teal-lit label — locked-down indicator glow */
+    color: #00E8E8;
+    text-shadow: 0 0 6px rgba(0,232,232,0.45);
 }
 
 .btn.is-active:hover:not(:disabled) {
     background: #141618;
-    color: #FFFFFF;
+    color: #20F0F0;
 }
 
 /* ══════════════════════════════════════════════════════════════════════
@@ -655,9 +663,9 @@
 
 /* ── All standard non-danger variants share the same charcoal keycap ── */
 
-.btn-primary   { background: #252830; color: #B8BCC2; }
-.btn-secondary { background: #252830; color: #B8BCC2; }
-.btn-info      { background: #252830; color: #B8BCC2; }
+.btn-primary   { background: #252830; color: #FFFFFF; }
+.btn-secondary { background: #252830; color: #FFFFFF; }
+.btn-info      { background: #252830; color: #FFFFFF; }
 
 /* ── Warning & Danger: color-coded + same keycap press mechanics ──
    Per Appendix F: red = high-alert/failure, amber = caution only.
@@ -768,7 +776,7 @@
     font-family: 'SF Mono', 'Menlo', 'Consolas', monospace;
     letter-spacing: 1px;
     color: #6A7880;
-    min-width: 26px;
+    width: 26px;
     text-align: center;
     flex-shrink: 0;
 }
@@ -791,16 +799,25 @@
     margin-top: 2px;
     font-family: 'SF Mono', 'Menlo', 'Consolas', monospace;
     font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
 }
 
 .visibility-badge {
-    padding: 3px 8px;
+    padding: 3px 6px;
     border-radius: 3px;
     font-size: 0.65em;
     font-weight: 700;
     text-transform: uppercase;
     white-space: nowrap;
     letter-spacing: 0.8px;
+    width: 48px;
+    text-align: center;
+    box-sizing: border-box;
+    flex-shrink: 0;
+    color: #888;        /* neutral fallback — overridden by .visible / .not-visible */
+    border: 1px solid transparent;
 }
 
 .visibility-badge.visible {
@@ -809,10 +826,11 @@
     border: 1px solid rgba(50,205,50,0.3);
 }
 
-.visibility-badge.hidden {
+.visibility-badge.hidden,
+.visibility-badge.not-visible {
     background: rgba(100, 100, 100, 0.12);
-    color: #666;
-    border: 1px solid #333;
+    color: #999;
+    border: 1px solid rgba(100,100,100,0.3);
 }
 
 /* ── Capture row — single-line capture controls ──────── */
@@ -984,7 +1002,8 @@
 .filmstrip {
     background: #111114;
     border-top: 1px solid #1e1e24;
-    height: 140px;
+    height: auto;
+    min-height: 140px;
     flex-shrink: 0;
     display: flex;
     flex-direction: column;
@@ -1038,7 +1057,7 @@
     display: flex;
     gap: 8px;
     padding: 6px 16px;
-    align-items: stretch;
+    align-items: flex-start;
 }
 
 .filmstrip-item {
@@ -1052,6 +1071,7 @@
     transition: all 0.2s;
     display: flex;
     flex-direction: column;
+    height: auto;
 }
 
 .filmstrip-item.temp-file {
@@ -1094,10 +1114,11 @@
 
 .filmstrip-thumbnail {
     width: 100%;
-    flex: 1;
-    min-height: 0;
+    aspect-ratio: 16 / 9;
     object-fit: cover;
     background: #000;
+    display: block;
+    flex: none;
 }
 
 .filmstrip-name {
@@ -1761,6 +1782,16 @@ canvas.video-thumb-canvas {
     position: static;
 }
 
+/* Screw heads flanking the Live Detection h3 label */
+.screw-h3-l,
+.screw-h3-r {
+    position: static;
+    flex-shrink: 0;
+}
+#detectPanel > h3 {
+    justify-content: space-between;
+}
+
 /* Compact auto-capture section */
 .sidebar-left .setting-item  { margin-bottom: 4px; }
 .sidebar-left .setting-info  {
@@ -2273,6 +2304,10 @@ canvas.video-thumb-canvas {
     position: relative;
     z-index: 1;
 }
+/* Corner screws must stay absolute, not be overridden by > * rule above */
+.alpaca-telemetry > .screw {
+    position: absolute;
+}
 
 /* ── Header ────────────────────────────────────────── */
 .alpaca-header {
@@ -2335,7 +2370,7 @@ canvas.video-thumb-canvas {
     border: 1px solid rgba(3,156,156,0.15);
     border-radius: 3px;
     overflow: hidden;
-    margin-bottom: 8px;
+    margin-bottom: 4px;
 }
 
 .alpaca-coord-row {
@@ -2348,7 +2383,7 @@ canvas.video-thumb-canvas {
     display: flex;
     align-items: baseline;
     gap: 4px;
-    padding: 6px 8px;
+    padding: 3px 6px;
     background: rgba(0,0,0,0.55);
 }
 
@@ -2483,10 +2518,58 @@ canvas.video-thumb-canvas {
     font-variant-numeric: tabular-nums;
 }
 
-/* Focus step button active highlight */
+/* Focus step buttons — all five (◀, 10, 50, 100, ▶) same size */
 .focus-step-btn {
     font-family: 'SF Mono', 'Menlo', 'Consolas', monospace;
     font-variant-numeric: tabular-nums;
+    min-width: 38px;
+    width: 38px;
+    padding: 5px 0;
+    text-align: center;
+}
+.focus-step-group {
+    display: flex;
+    gap: 3px;
+    justify-content: center;
+    flex: none;
+}
+.focus-step-group .btn {
+    min-width: 38px;
+    width: 38px;
+    padding: 5px 0;
+}
+
+/* ── Focus odometer readout ──────────────────────────────── */
+.focus-odometer {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin: 4px 0 6px;
+    background: #080a0e;
+    border: 1px solid #1e2830;
+    border-radius: 3px;
+    padding: 4px 8px;
+    box-shadow: inset 0 1px 3px rgba(0,0,0,0.6);
+}
+.focus-odometer-label {
+    font-size: 0.58em;
+    font-weight: 700;
+    letter-spacing: 1.8px;
+    color: #5a7080;
+    font-family: 'SF Mono', 'Menlo', 'Consolas', monospace;
+    text-transform: uppercase;
+    flex-shrink: 0;
+}
+.focus-odometer-value {
+    font-family: 'SF Mono', 'Menlo', 'Consolas', monospace;
+    font-size: 1.05em;
+    font-weight: 700;
+    color: #00d4ff;
+    letter-spacing: 3px;
+    font-variant-numeric: tabular-nums;
+    text-shadow: 0 0 8px rgba(0,212,255,0.5);
+    flex: 1;
+    text-align: right;
 }
 
 /* Camera checkbox labels — dark on aluminum */
@@ -2506,9 +2589,10 @@ canvas.video-thumb-canvas {
     color: #1E2228;             /* default text on aluminum = near-black */
 }
 
-/* Small inline label text (Smooth, sec, GoTo coords, etc.) */
-.sidebar-right span,
-.sidebar-alp span {
+/* Small inline label text (Smooth, sec, GoTo coords, etc.)
+   Exclude elements that manage their own color. */
+.sidebar-right span:not(.visibility-badge):not(.screw):not(.target-icon-text),
+.sidebar-alp span:not(.visibility-badge):not(.screw):not(.focus-odometer-value):not(.focus-odometer-label) {
     color: inherit;
 }
 

@@ -48,13 +48,11 @@
                 <div id="sunInfo" style="text-align:center;"></div>
                 <div id="moonInfo" style="text-align:center;"></div>
             </div>        </div>
-        <div style="display: flex; gap: 8px;">
-            <button class="btn-sm" onclick="showPanel('telescope')" title="Control Telescope" style="position: relative;">
-                🔭 Telescope
+        <div style="display: flex; gap: 8px; align-items: center;">
+            <button class="btn-sm" onclick="showPanel('telescope')" title="Scope Control (Ctrl/Cmd+S)" style="position: relative;">
+                Scope
                 <span id="telescopeStatusLight" style="position: absolute; top: 2px; right: 2px; width: 8px; height: 8px; border-radius: 50%; background-color: #999;" title="Telescope disconnected"></span>
             </button>
-            <button class="btn-sm" onclick="toggleNearMissLog()" title="View history of all aircraft that came within the transit detection threshold of the Sun or Moon">📋 Near Misses</button>
-            <button class="btn-help" onclick="showInfo('near-misses')" title="Learn about the near-miss log">ℹ️</button>
         </div>
         <!-- Quadrant Min Altitude Control -->
         <div style="display:flex; align-items:center; gap:4px;">
@@ -324,8 +322,10 @@
         <div style="flex: 1; text-align: center;">
                 <div style="font-size: 1.2em; letter-spacing: 1px; font-weight: 600; color: #9aa4aa;">Seestar Control</div>
             </div>
-        <button id="telegramMuteBtn" class="btn-sm" onclick="toggleTelegramMute()" title="Mute/unmute Telegram alerts">Notif</button>
-        <button class="btn-sm" onclick="showPanel('map')">← Map</button>
+        <div style="display: flex; gap: 8px; align-items: center;">
+            <button id="telegramMuteBtn" class="btn-sm" onclick="toggleTelegramMute()" title="Mute/unmute Telegram alerts">Notif</button>
+            <button class="btn-sm" onclick="showPanel('map')" title="Back to Map (Ctrl/Cmd+M)">Map</button>
+        </div>
     </div>
 
     <div class="telescope-container">
@@ -344,7 +344,7 @@
                     <div style="display:flex;align-items:center;gap:6px;">
                         <input type="checkbox" id="autoCaptureToggle" checked style="display:none;">
                         <button id="autoCaptureBtn" class="btn btn-compact btn-mode btn-toggle is-active"
-                                onclick="var cb=document.getElementById('autoCaptureToggle');cb.checked=!cb.checked;this.classList.toggle('is-active',cb.checked);localStorage.setItem('autoCaptureTransits',cb.checked);cb.dispatchEvent(new Event('change'));">AUTO-REC</button>
+                                onclick="var cb=document.getElementById('autoCaptureToggle');cb.checked=!cb.checked;this.classList.toggle('is-active',cb.checked);localStorage.setItem('autoCaptureTransits',cb.checked);cb.dispatchEvent(new Event('change'));">RECORDING</button>
                         <span style="font-size:0.75em;color:#8A9298;font-family:'SF Mono','Menlo','Consolas',monospace;letter-spacing:0.05em;text-transform:uppercase;">Auto-Record Transits</span>
                     </div>
                 </div>
@@ -355,6 +355,9 @@
                     <!-- Eclipse watch/warning/active card — shown when eclipse is imminent/active -->
                     <div id="eclipseCard" style="display:none"></div>
                     <h3>Upcoming Transits <span class="panel-subtitle">(Prediction)</span></h3>
+                    <!-- Map-derived flight predictions (from injectMapTransits) -->
+                    <div id="upcomingTransitsList" style="font-size:0.78em;color:#80C888;margin-bottom:4px;min-height:0;"></div>
+                    <!-- Live telescope transit tracking -->
                     <div id="transitList" class="transit-list">
                         <p class="empty-state">No transits detected</p>
                     </div>
@@ -363,7 +366,7 @@
                 <!-- Real-time Transit Detection -->
                 <div class="sidebar-panel" id="detectPanel">
                     <span class="screw screw-tl"></span><span class="screw screw-tr"></span><span class="screw screw-bl"></span><span class="screw screw-br"></span>
-                    <h3>Live Detection</h3>
+                    <h3><span class="screw screw-h3-l"></span>Live Detection<span class="screw screw-h3-r"></span></h3>
                     <!-- Indicator + stop + tuning toggle all in one compact row -->
                     <div id="detectControls" class="detect-controls-row">
                         <div id="detectIndicator" class="detect-indicator detect-idle">
@@ -409,10 +412,6 @@
                         <div id="harnessStatus" class="harness-status" style="display:none"></div>
                     </div>
 
-                    <div id="detectEventLog" class="detect-event-log">
-                        <p class="empty-state">No detections yet</p>
-                    </div>
-
                     <!-- Detection event history -->
                     <button class="btn btn-secondary btn-compact"
                             style="width:100%;margin-top:3px;font-size:0.7em;padding:2px 6px;"
@@ -420,6 +419,10 @@
                             title="View historical detection events with confidence scores and prediction match status">
                         Event History (7 days)
                     </button>
+
+                    <div id="detectEventLog" class="detect-event-log">
+                        <p class="empty-state">No detections yet</p>
+                    </div>
                 </div>
             </div>
 
@@ -589,8 +592,13 @@
                     <div id="timelapseThumb" style="display:none; margin:2px 0; text-align:center;">
                         <img id="timelapseLatestFrame" src="" alt="Latest frame"
                              style="max-width:100%; max-height:60px; border-radius:3px; cursor:pointer; border:1px solid #333;"
-                             onclick="window.open(this.src)" title="Click to view full size">
+                             onclick="openTimelapseFrame(this.src)" title="Click to view full size">
                     </div>
+                </div>
+
+                <!-- Spacer panel — fills remaining column height -->
+                <div class="sidebar-panel sidebar-panel-spacer" style="flex:1;">
+                    <span class="screw screw-tl"></span><span class="screw screw-tr"></span><span class="screw screw-bl"></span><span class="screw screw-br"></span>
                 </div>
 
             </div>
@@ -625,7 +633,8 @@
                 </div>
 
                 <!-- ALPACA Scope Telemetry -->
-                <div class="sidebar-panel alpaca-telemetry" id="alpacaTelemetryPanel" style="display:none;">
+                <div class="sidebar-panel alpaca-telemetry" id="alpacaTelemetryPanel">
+                    <span class="screw screw-tl"></span><span class="screw screw-tr"></span><span class="screw screw-bl"></span><span class="screw screw-br"></span>
                     <div class="alpaca-header">
                         <h3>SCOPE</h3>
                         <div class="alpaca-status-badge" id="alpacaStatusBadge">
@@ -659,23 +668,9 @@
                             </div>
                         </div>
                     </div>
-                    <div class="alpaca-state-row">
-                        <div class="alpaca-state-chip" id="alpacaTrackingChip" title="Sidereal tracking">
-                            <span class="alpaca-state-icon">&#9678;</span>
-                            <span id="alpacaTracking">TRK</span>
-                        </div>
-                        <div class="alpaca-state-chip" id="alpacaSlewingChip" title="Slewing">
-                            <span class="alpaca-state-icon">&#10148;</span>
-                            <span id="alpacaSlewing">SLW</span>
-                        </div>
-                        <div class="alpaca-state-chip" id="alpacaParkedChip" title="Parked">
-                            <span class="alpaca-state-icon">&#9632;</span>
-                            <span id="alpacaParked">PRK</span>
-                        </div>
-                    </div>
                     <div class="alpaca-device-name" id="alpacaDeviceName"></div>
                     <div class="button-grid-2x2" style="margin-top:4px;">
-                        <button class="btn btn-compact alpaca-btn-track btn-mode btn-toggle" onclick="alpacaToggleTracking()" id="alpacaTrackingBtn">Track</button>
+                        <button class="btn btn-secondary btn-compact alpaca-btn-track btn-mode btn-toggle" onclick="alpacaToggleTracking()" id="alpacaTrackingBtn">Track</button>
                         <button class="btn btn-compact btn-danger alpaca-btn-abort" onclick="alpacaAbortSlew()">Abort</button>
                     </div>
                 </div>
@@ -758,18 +753,19 @@
                     <!-- FOCUS cluster: step-size toggles + momentary In/Out -->
                     <div class="btn-cluster" style="margin-bottom:4px;">
                         <div class="btn-cluster-label">Focus Step</div>
-                        <div style="display:flex; align-items:center; gap:3px;">
-                            <button class="btn btn-secondary btn-compact" style="flex:none; padding:4px 6px;" onclick="focusStep(-_focusStepSize)">◀ In</button>
-                            <div class="focus-step-group" style="flex:1;">
+                        <div style="display:flex; align-items:center; justify-content:center; gap:3px;">
+                            <button class="btn btn-secondary btn-compact focus-step-btn" onclick="focusStep(-_focusStepSize)" title="Focus In">◀</button>
+                            <div class="focus-step-group">
                                 <button class="btn btn-secondary btn-compact focus-step-btn btn-toggle" data-steps="10" onclick="setFocusStepSize(10)">10</button>
                                 <button class="btn btn-secondary btn-compact focus-step-btn btn-toggle" data-steps="50" onclick="setFocusStepSize(50)">50</button>
                                 <button class="btn btn-secondary btn-compact focus-step-btn btn-toggle" data-steps="100" onclick="setFocusStepSize(100)">100</button>
                             </div>
-                            <button class="btn btn-secondary btn-compact" style="flex:none; padding:4px 6px;" onclick="focusStep(_focusStepSize)">Out ▶</button>
+                            <button class="btn btn-secondary btn-compact focus-step-btn" onclick="focusStep(_focusStepSize)" title="Focus Out">▶</button>
                         </div>
                     </div>
-                    <div style="font-size:0.68em; color:#6a7a85; font-family:'SF Mono',monospace; margin-bottom:4px;">
-                        Pos: <span id="focusPos" style="color:#b8e8ff; font-weight:600;">—</span>
+                    <div class="focus-odometer">
+                        <span class="focus-odometer-label">POS</span>
+                        <span class="focus-odometer-value" id="focusPos">——————</span>
                     </div>
                     <!-- Camera controls -->
                     <div style="display:flex; align-items:center; gap:6px; margin-bottom:4px;">
@@ -945,6 +941,17 @@
                     document.getElementById('nearMissContent').textContent = 'Failed to load transit log.';
                 });
         }
+
+        // Keyboard shortcuts: Ctrl/Cmd+M → Map, Ctrl/Cmd+S → Scope
+        document.addEventListener('keydown', function(e) {
+            if (!(e.metaKey || e.ctrlKey)) return;
+            const k = e.key.toLowerCase();
+            if (k === 'm') { e.preventDefault(); showPanel('map'); }
+            if (k === 's') {
+                const tag = document.activeElement ? document.activeElement.tagName : '';
+                if (tag !== 'INPUT' && tag !== 'TEXTAREA') { e.preventDefault(); showPanel('telescope'); }
+            }
+        });
 
         loadPosition();
 

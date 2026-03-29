@@ -71,6 +71,7 @@ class SeestarClient:
         self._connected = False
         self._recording = False
         self._recording_start_time: Optional[datetime] = None
+        self._focus_pos: Optional[int] = None
         self._viewing_mode: Optional[str] = (
             None  # Track current viewing mode (sun/moon/None)
         )
@@ -98,7 +99,6 @@ class SeestarClient:
             {}
         )  # id → {"event": Event, "result": ...}
         self._pending_lock = threading.Lock()
-
 
         logger.info(f"Initialized Seestar client for {host}:{port}")
 
@@ -605,6 +605,33 @@ class SeestarClient:
             logger.info(f"[Init] cli_name set to Flymoon/{cli_name}")
         except Exception as e:
             logger.debug(f"[Init] cli_name failed (non-fatal): {e}")
+
+        # 6. Seed focus position after a short delay (non-blocking)
+        #    move_focuser step=0 times out on this firmware; use get_view_state instead
+        import threading as _threading
+
+        def _seed_focus():
+            import time as _time
+
+            _time.sleep(3)
+            try:
+                r = self._send_command("get_view_state", quiet=True, timeout_override=5)
+                view = (r or {}).get("View") or (r or {})
+                focuser = view.get("Focuser") or {}
+                fp = (
+                    focuser.get("step")
+                    or view.get("focuser_step")
+                    or view.get("focus_pos")
+                )
+                if fp is not None:
+                    self._focus_pos = int(fp)
+                    logger.info(
+                        f"[Init] focus_pos seeded via view_state: {self._focus_pos}"
+                    )
+            except Exception as e:
+                logger.debug(f"[Init] focus_pos seed failed (non-fatal): {e}")
+
+        _threading.Thread(target=_seed_focus, daemon=True, name="focus-seed").start()
 
     def connect(self) -> bool:
         """
@@ -1220,10 +1247,22 @@ class SeestarClient:
 
     def move_step_focus(self, steps: int) -> dict:
         """Move focuser by the given number of steps (positive = out, negative = in)."""
+        # With ret_step=True the scope ACKs only after the move finishes; under load
+        # or large |step| this routinely exceeds the default RPC timeout (10–30s).
+        try:
+            foc_timeout = int(os.getenv("SEESTAR_FOCUS_TIMEOUT", "120"))
+        except ValueError:
+            foc_timeout = 120
         result = self._send_command(
-            "move_focuser", params={"step": steps, "ret_step": True}
+            "move_focuser",
+            params={"step": steps, "ret_step": True},
+            timeout_override=max(foc_timeout, 15),
         )
         logger.info(f"Focus step: {steps}")
+        if isinstance(result, dict):
+            fp = result.get("focus_pos")
+            if fp is not None:
+                self._focus_pos = int(fp)
         return result or {}
 
     def set_gain(self, gain: int) -> dict:
@@ -1340,6 +1379,16 @@ class SeestarClient:
                             # Deposit into pending waiter if someone is waiting
                             with self._pending_lock:
                                 waiter = self._pending_responses.get(resp_id)
+                                if waiter is None:
+                                    # Firmware sometimes echoes JSON-RPC id as str
+                                    if isinstance(resp_id, str) and resp_id.isdigit():
+                                        waiter = self._pending_responses.get(
+                                            int(resp_id)
+                                        )
+                                    elif isinstance(resp_id, int):
+                                        waiter = self._pending_responses.get(
+                                            str(resp_id)
+                                        )
                                 if waiter:
                                     waiter["result"] = msg
                                     waiter["event"].set()

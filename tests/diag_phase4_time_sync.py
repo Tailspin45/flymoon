@@ -90,7 +90,6 @@ def get_sun_radec():
 def run(host, port, output_path):
     pass
 
-
     # Build a minimal direct client to avoid importing the full app
     from src.seestar_client import SeestarClient
 

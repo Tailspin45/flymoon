@@ -134,6 +134,7 @@ if not wizard.validate(interactive=False):
 
 app = Flask(__name__)
 app.config["TEMPLATES_AUTO_RELOAD"] = True
+app.config["SEND_FILE_MAX_AGE_DEFAULT"] = 0  # never cache static files
 app.secret_key = os.environ.get("SECRET_KEY", os.urandom(24).hex())
 
 # Compute a stable app version from git commit hash for cache-busting static assets.

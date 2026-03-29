@@ -571,7 +571,10 @@ def telescope_goto():
 
     alpaca = get_alpaca_client()
     if not alpaca or not alpaca.is_connected():
-        return jsonify({"error": "ALPACA not connected — motor commands require ALPACA"}), 503
+        return (
+            jsonify({"error": "ALPACA not connected — motor commands require ALPACA"}),
+            503,
+        )
 
     # State machine: abort any active nudge before slewing
     global _ctrl_state, _pre_nudge_tracking
@@ -655,10 +658,14 @@ def telescope_goto():
                     try:
                         if resume == "sun":
                             client.start_solar_mode()
-                            logger.info("[GoTo] Resumed solar tracking after Alt/Az GoTo")
+                            logger.info(
+                                "[GoTo] Resumed solar tracking after Alt/Az GoTo"
+                            )
                         else:
                             client.start_lunar_mode()
-                            logger.info("[GoTo] Resumed lunar tracking after Alt/Az GoTo")
+                            logger.info(
+                                "[GoTo] Resumed lunar tracking after Alt/Az GoTo"
+                            )
                     except Exception as ex:
                         logger.warning(f"[GoTo] resume_tracking={resume} failed: {ex}")
                 with _ctrl_lock:
@@ -747,7 +754,10 @@ def telescope_nudge():
     global _ctrl_state, _pre_nudge_tracking
     alpaca = get_alpaca_client()
     if not alpaca or not alpaca.is_connected():
-        return jsonify({"error": "ALPACA not connected — motor commands require ALPACA"}), 503
+        return (
+            jsonify({"error": "ALPACA not connected — motor commands require ALPACA"}),
+            503,
+        )
 
     with _ctrl_lock:
         if _ctrl_state in (_CtrlState.SLEWING, _CtrlState.GOTO_RESUMING):
@@ -812,7 +822,17 @@ def telescope_nudge_stop():
                 logger.info("[NudgeStop] Tracking restored after nudge")
             except Exception as ex:
                 logger.warning(f"[NudgeStop] set_tracking(True) failed: {ex}")
-        return jsonify({"success": True, "message": "Motion stopped", "via": "ALPACA", "result": result}), 200
+        return (
+            jsonify(
+                {
+                    "success": True,
+                    "message": "Motion stopped",
+                    "via": "ALPACA",
+                    "result": result,
+                }
+            ),
+            200,
+        )
     except Exception as e:
         with _ctrl_lock:
             _pre_nudge_tracking = False
@@ -1429,6 +1449,7 @@ def get_telescope_status():
             "mock_mode": is_mock_mode(),
             "eclipse": _get_eclipse_data(),
             "alpaca": alpaca_status,
+            "focus_pos": getattr(client, "_focus_pos", None),
         }
         with _ctrl_lock:
             status["ctrl_state"] = _ctrl_state.value
