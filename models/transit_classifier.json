@@ -1,0 +1,13 @@
+{
+  "clip_t": 15,
+  "clip_h": 160,
+  "clip_w": 90,
+  "classes": [
+    "no_transit",
+    "transit"
+  ],
+  "val_accuracy": 98.91,
+  "best_val_loss": 0.02948,
+  "n_train": 1041,
+  "n_val": 183
+}

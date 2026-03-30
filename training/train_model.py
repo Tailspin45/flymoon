@@ -69,13 +69,13 @@ def build_model():
             self.bn2 = nn.BatchNorm3d(16)
             self.pool2 = nn.MaxPool3d(kernel_size=(2, 2, 2))
 
-            # Block 3 — → (B,32,1,5,3) after adaptive pool (= 480 features)
+            # Block 3 — → (B,32,1,5,2) after adaptive pool (= 320 features)
             self.conv3 = nn.Conv3d(16, 32, kernel_size=3, padding=1, bias=False)
             self.bn3 = nn.BatchNorm3d(32)
-            self.pool3 = nn.AdaptiveAvgPool3d((1, 5, 3))
+            self.pool3 = nn.AdaptiveAvgPool3d((1, 5, 2))
 
             self.drop = nn.Dropout(p=0.4)
-            self.fc1 = nn.Linear(32 * 1 * 5 * 3, 64)
+            self.fc1 = nn.Linear(32 * 1 * 5 * 2, 64)
             self.fc2 = nn.Linear(64, 2)
 
         def forward(self, x):

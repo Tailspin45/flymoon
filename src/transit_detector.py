@@ -1461,6 +1461,14 @@ class TransitDetector:
             target=self._enrich_event, args=(event,), name="detect-enrich", daemon=True
         ).start()
 
+        # Auto-extract CNN training clip (non-blocking)
+        threading.Thread(
+            target=self._save_training_clip,
+            args=(ts, confidence),
+            name="detect-clip",
+            daemon=True,
+        ).start()
+
         # Notify callbacks
         if self.on_detection:
             try:
@@ -1469,6 +1477,29 @@ class TransitDetector:
                 logger.error(f"[Detector] on_detection callback error: {e}")
 
         self._emit_status("transit_detected")
+
+    def _save_training_clip(self, ts: datetime, confidence: str) -> None:
+        """Save the current 15-frame CNN buffer as a training .npz clip.
+
+        Clips land in data/training/unlabeled/ and get moved to positives/
+        or negatives/ when the user labels them in the gallery.
+        """
+        try:
+            if len(self._cnn_buf) < 15:
+                return
+            clip = np.stack(list(self._cnn_buf)[-15:], axis=0)  # (15, H, W) uint8
+            # Resize to CNN training dimensions (160×90)
+            resized = np.stack(
+                [cv2.resize(f, (90, 160), interpolation=cv2.INTER_AREA) for f in clip],
+                axis=0,
+            )
+            out_dir = os.path.join("data", "training", "unlabeled")
+            os.makedirs(out_dir, exist_ok=True)
+            fname = f"det_{ts.strftime('%Y%m%d_%H%M%S')}_{confidence}.npz"
+            np.savez_compressed(os.path.join(out_dir, fname), clip=resized)
+            logger.info(f"[Detector] Training clip saved: {fname}")
+        except Exception as exc:
+            logger.debug(f"[Detector] Training clip save failed: {exc}")
 
     def _save_diagnostic_frames(self, event: DetectionEvent, ts: datetime) -> bool:
         """Save trigger frame and diff heatmap as diagnostic JPGs.

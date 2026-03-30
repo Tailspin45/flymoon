@@ -43,7 +43,10 @@ def predict_batch(session, clips: np.ndarray) -> np.ndarray:
     """clips: (N, T, H, W) float32 normalised → returns (N,) transit probabilities."""
     x = clips[:, np.newaxis, :, :, :]  # (N, 1, T, H, W)
     logits = session.run(None, {"frames": x})[0]
-    probs = 1.0 / (1.0 + np.exp(-logits[:, 1]))  # sigmoid of transit logit
+    # Softmax (2-class output requires softmax, not sigmoid on a single logit)
+    shifted = logits - logits.max(axis=1, keepdims=True)
+    exp_l = np.exp(shifted)
+    probs = exp_l[:, 1] / exp_l.sum(axis=1)
     return probs
 
 
