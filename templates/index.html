@@ -48,28 +48,20 @@
                 <div id="sunInfo" style="text-align:center;"></div>
                 <div id="moonInfo" style="text-align:center;"></div>
             </div>        </div>
-        <div style="display: flex; gap: 8px; align-items: center;">
-            <button class="btn-sm" onclick="showPanel('telescope')" title="Scope Control (Ctrl/Cmd+S)" style="position: relative;">
-                Scope
-                <span id="telescopeStatusLight" style="position: absolute; top: 2px; right: 2px; width: 8px; height: 8px; border-radius: 50%; background-color: #999;" title="Telescope disconnected"></span>
-            </button>
-        </div>
         <!-- Quadrant Min Altitude Control -->
-        <div style="display:flex; align-items:center; gap:4px;">
-            <div class="quadrant-circle">
-                <!-- Labels outside circle -->
-                <label class="quadrant-label quadrant-label-n" title="North quadrant minimum altitude">N</label>
-                <label class="quadrant-label quadrant-label-e" title="East quadrant minimum altitude">E</label>
-                <label class="quadrant-label quadrant-label-s" title="South quadrant minimum altitude">S</label>
-                <label class="quadrant-label quadrant-label-w" title="West quadrant minimum altitude">W</label>
-                <!-- Inputs inside quadrants -->
-                <input type="number" id="minAltN" class="quadrant-input quadrant-input-n" placeholder="30" min="0" max="90" title="Min altitude (°) for the north quadrant — set to your lowest clear line-of-sight above obstructions (trees, buildings) in that direction">
-                <input type="number" id="minAltE" class="quadrant-input quadrant-input-e" placeholder="30" min="0" max="90" title="Min altitude (°) for the east quadrant — set to your lowest clear line-of-sight above obstructions in that direction">
-                <input type="number" id="minAltS" class="quadrant-input quadrant-input-s" placeholder="30" min="0" max="90" title="Min altitude (°) for the south quadrant — set to your lowest clear line-of-sight above obstructions in that direction">
-                <input type="number" id="minAltW" class="quadrant-input quadrant-input-w" placeholder="30" min="0" max="90" title="Min altitude (°) for the west quadrant — set to your lowest clear line-of-sight above obstructions in that direction">
-                <div class="quadrant-center" onclick="resetQuadrantValues()" title="Click to reset all quadrant minimum altitudes to 0°">Min Angle</div>
-            </div>
-            <button class="btn-help" onclick="showInfo('min-angle')" title="Learn about quadrant min-angle obstruction masking" style="align-self:end; margin-bottom:2px; font-size:0.75em;">ℹ️</button>
+        <div class="quadrant-circle">
+            <!-- Labels outside circle -->
+            <label class="quadrant-label quadrant-label-n" title="North quadrant minimum altitude">N</label>
+            <label class="quadrant-label quadrant-label-e" title="East quadrant minimum altitude">E</label>
+            <label class="quadrant-label quadrant-label-s" title="South quadrant minimum altitude">S</label>
+            <label class="quadrant-label quadrant-label-w" title="West quadrant minimum altitude">W</label>
+            <!-- Inputs inside quadrants -->
+            <input type="number" id="minAltN" class="quadrant-input quadrant-input-n" placeholder="30" min="0" max="90" title="Min altitude (°) for the north quadrant — set to your lowest clear line-of-sight above obstructions (trees, buildings) in that direction">
+            <input type="number" id="minAltE" class="quadrant-input quadrant-input-e" placeholder="30" min="0" max="90" title="Min altitude (°) for the east quadrant — set to your lowest clear line-of-sight above obstructions in that direction">
+            <input type="number" id="minAltS" class="quadrant-input quadrant-input-s" placeholder="30" min="0" max="90" title="Min altitude (°) for the south quadrant — set to your lowest clear line-of-sight above obstructions in that direction">
+            <input type="number" id="minAltW" class="quadrant-input quadrant-input-w" placeholder="30" min="0" max="90" title="Min altitude (°) for the west quadrant — set to your lowest clear line-of-sight above obstructions in that direction">
+            <div class="quadrant-center" onclick="resetQuadrantValues()" title="Click to reset all quadrant minimum altitudes to 0°">Min Angle</div>
+            <button class="btn-help quadrant-info-btn" onclick="showInfo('min-angle')" title="Learn about quadrant min-angle obstruction masking">ℹ️</button>
         </div>
     </div>
 
@@ -180,9 +172,9 @@
             <strong>Legend:</strong>
             <span style="margin-left: 10px;"><span style="display: inline-block; width: 8px; height: 8px; background-color: #FF0000; border: 1px solid white; border-radius: 50%; box-shadow: 0 0 3px rgba(0,0,0,0.6); vertical-align: middle;"></span> Observer</span>
             <span style="margin-left: 10px;">✈️ Aircraft</span>
-            <span style="margin-left: 10px; color: #32CD32;">◆ High (≤1°)</span>
-            <span style="margin-left: 10px; color: #FF8C00;">◆ Medium (≤2°)</span>
-            <span style="margin-left: 10px; color: #808080;">◆ Low (≤3°)</span>
+            <span style="margin-left: 10px; color: #32CD32;">◆ High (≤2°)</span>
+            <span style="margin-left: 10px; color: #FF8C00;">◆ Medium (≤4°)</span>
+            <span style="margin-left: 10px; color: #808080;">◆ Low (≤12°)</span>
             <span style="margin-left: 10px;"><span style="display: inline-block; width: 20px; height: 4px; background: #FF4500; vertical-align: middle;"></span> Sun azimuth</span>
             <span style="margin-left: 10px;"><span style="display: inline-block; width: 20px; height: 4px; background: #4169E1; vertical-align: middle;"></span> Moon azimuth</span>
             <span style="margin-left: 10px;"><span style="display: inline-block; width: 20px; height: 3px; background: repeating-linear-gradient(90deg, #4169E1 0, #4169E1 10px, transparent 10px, transparent 20px); vertical-align: middle;"></span> Planned route</span>
@@ -279,6 +271,10 @@
 
     <audio id="alertSound" src="{{ url_for('static', filename='sounds/tissman-alert1-maximum-distortion.mp3') }}" preload="auto">
     </audio>
+    <button class="nav-toggle-btn" onclick="showPanel('telescope')" title="Scope Control (Ctrl/Cmd+S)">
+        Scope
+        <span id="telescopeStatusLight" style="display:inline-block; width:8px; height:8px; border-radius:50%; background-color:#999; margin-left:6px; vertical-align:middle;" title="Telescope disconnected"></span>
+    </button>
 </div><!-- #mapView -->
 
 <!-- Info / Help modal -->
@@ -324,7 +320,6 @@
             </div>
         <div style="display: flex; gap: 8px; align-items: center;">
             <button id="telegramMuteBtn" class="btn-sm" onclick="toggleTelegramMute()" title="Mute/unmute Telegram alerts">Notif</button>
-            <button class="btn-sm" onclick="showPanel('map')" title="Back to Map (Ctrl/Cmd+M)">Map</button>
         </div>
     </div>
 
@@ -356,7 +351,7 @@
                     <div id="eclipseCard" style="display:none"></div>
                     <h3>Upcoming Transits <span class="panel-subtitle">(Prediction)</span></h3>
                     <!-- Map-derived flight predictions (from injectMapTransits) -->
-                    <div id="upcomingTransitsList" style="font-size:0.78em;color:#80C888;margin-bottom:4px;min-height:0;"></div>
+                    <div id="upcomingTransitsList" style="color:#C0C4CA;margin-bottom:4px;min-height:0;"></div>
                     <!-- Live telescope transit tracking -->
                     <div id="transitList" class="transit-list">
                         <p class="empty-state">No transits detected</p>
@@ -428,6 +423,7 @@
 
             <!-- Center: Live Preview -->
             <div class="preview-area">
+                <span class="screw screw-tl"></span><span class="screw screw-tr"></span><span class="screw screw-bl"></span><span class="screw screw-br"></span>
                 <div class="preview-header">
                     <h2><span id="previewTitleIcon">⚫</span> Live Preview</h2>
                     <div class="preview-status" id="previewStatus">
@@ -436,14 +432,17 @@
                     </div>
                 </div>
                 <div class="preview-wrapper">
-                    <!-- Zoom Slider -->
-                    <div class="zoom-slider">
-                        <button class="zoom-btn" onclick="zoomIn()" title="Zoom In">+</button>
-                        <input type="range" id="zoomSlider" min="50" max="300" value="200" step="1" orient="vertical" oninput="setZoom(this.value)">
-                        <span id="zoomPercent" class="zoom-percent">200%</span>
-                        <button class="zoom-btn" onclick="zoomOut()" title="Zoom Out">−</button>
-                        <button class="zoom-btn" onclick="zoomFit()" title="Fit to Window">⊡</button>
+                    <!-- Zoom Buttons -->
+                    <div class="zoom-btn-bar" id="zoomBtnBar">
+                        <button class="zoom-preset" onclick="setZoomPreset(25)">25%</button>
+                        <button class="zoom-preset" onclick="setZoomPreset(50)">50%</button>
+                        <button class="zoom-preset" onclick="setZoomPreset(100)">100%</button>
+                        <button class="zoom-preset" onclick="setZoomPreset(150)">150%</button>
+                        <button class="zoom-preset active" onclick="setZoomPreset(200)">200%</button>
+                        <button class="zoom-preset" onclick="setZoomPreset(250)">250%</button>
+                        <button class="zoom-preset" onclick="setZoomPreset(300)">300%</button>
                     </div>
+                    <div class="preview-tube">
                     <div class="preview-container" id="previewContainer">
                         <img id="previewImage" src="" alt="Live Preview" style="display: none;">
                         <div class="preview-placeholder" id="previewPlaceholder">
@@ -466,6 +465,7 @@
                         <div id="simPlane" style="display:none; position:absolute; pointer-events:none; z-index:22; transition:none;">
                             <img src="/static/images/sim_plane.png" width="95" height="80" alt="">
                         </div>
+                    </div>
                     </div>
                 </div>
             </div>
@@ -667,8 +667,21 @@
                                 <span class="alpaca-coord-unit">&deg;</span>
                             </div>
                         </div>
+                        <div class="alpaca-coord-row">
+                            <div class="alpaca-coord-cell" style="grid-column: 1 / -1;">
+                                <span class="alpaca-coord-label">LST</span>
+                                <span class="alpaca-coord-value" id="alpacaLST">—</span>
+                                <span class="alpaca-coord-unit">h:m</span>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="alpaca-state-row">
+                        <div class="alpaca-state-chip" id="alpacaChipTrk"><span class="alpaca-state-dot" id="alpacaDotTrk"></span>TRK</div>
+                        <div class="alpaca-state-chip" id="alpacaChipSlw"><span class="alpaca-state-dot" id="alpacaDotSlw"></span>SLW</div>
+                        <div class="alpaca-state-chip" id="alpacaChipPrk"><span class="alpaca-state-dot" id="alpacaDotPrk"></span>PRK</div>
                     </div>
                     <div class="alpaca-device-name" id="alpacaDeviceName"></div>
+                    <div class="alpaca-device-name" id="alpacaDriverInfo" style="opacity:0.8;"></div>
                     <div class="button-grid-2x2" style="margin-top:4px;">
                         <button class="btn btn-secondary btn-compact alpaca-btn-track btn-mode btn-toggle" onclick="alpacaToggleTracking()" id="alpacaTrackingBtn">Track</button>
                         <button class="btn btn-compact btn-danger alpaca-btn-abort" onclick="alpacaAbortSlew()">Abort</button>
@@ -801,6 +814,13 @@
         <div class="filmstrip">
             <div class="filmstrip-header">
                 <span class="filmstrip-title">📁 Captured Files (<span id="fileCount">0</span>)</span>
+                <div class="filmstrip-nav">
+                    <button class="filmstrip-nav-btn" onclick="filmstripScrollTo('start')" title="Go to newest">|&laquo;</button>
+                    <button class="filmstrip-nav-btn" onclick="filmstripScroll(-1)" title="Scroll left">&lsaquo;</button>
+                    <button class="filmstrip-nav-btn" onclick="showPanel('map')" title="Back to Map (Ctrl/Cmd+M)">MAP</button>
+                    <button class="filmstrip-nav-btn" onclick="filmstripScroll(1)" title="Scroll right">&rsaquo;</button>
+                    <button class="filmstrip-nav-btn" onclick="filmstripScrollTo('end')" title="Go to oldest">&raquo;|</button>
+                </div>
                 <div class="filmstrip-controls">
                     <button id="refreshFilesBtn" class="btn-icon" onclick="refreshFiles()" disabled title="Refresh">🔄</button>
                     <button id="expandFilesBtn" class="btn-icon" onclick="toggleFilesModal()" disabled title="Show all files">⛶</button>

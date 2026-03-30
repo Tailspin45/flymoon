@@ -1,12 +1,13 @@
 /* Telescope Control Page Styles - Lightroom Layout */
 
 .telescope-container {
-    max-width: 100%;
+    width: 100vw;
+    margin-left: -8px;               /* bleed past body padding */
     height: calc(100vh - 140px);
-    margin: 0;
     padding: 0;
     display: flex;
     flex-direction: column;
+    overflow-x: hidden;              /* no horizontal scroll from vw rounding */
 }
 
 /* Main Layout: Sidebars + Center Preview */
@@ -100,26 +101,61 @@
 .preview-area {
     display: flex;
     flex-direction: column;
-    background: #000;
+    background: #50545C;
     position: relative;
     min-height: 0; /* Allow flex shrinking */
+    padding: 4px;
 }
 
 .preview-header {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    padding: 12px 16px;
-    background: #1a1a1a;
-    border-bottom: 1px solid #2a2a2a;
+    padding: 8px 16px;
+    background: #4C5058;
+    border-top: 1px solid #5A5E66;
+    border-bottom: 1px solid #40444C;
     flex-shrink: 0;
 }
 
 .preview-header h2 {
     margin: 0;
-    color: #039c9c;
-    font-size: 1.1em;
-    font-weight: 600;
+    color: #D8DCE2;
+    font-size: 0.63em;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 2.2px;
+    font-family: 'SF Mono', 'Menlo', 'Consolas', monospace;
+}
+
+/* Telescope tube bezel — decorative vignette over the preview */
+.preview-tube {
+    position: relative;
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    background: #000;
+    border: 3px solid #3A3E44;
+    border-radius: 6px;
+    box-shadow:
+        inset 0 0 40px 15px rgba(0,0,0,0.5),
+        0 0 0 1px #5A5E66,
+        0 0 0 3px #30343A;
+}
+/* Circular vignette overlay to simulate looking through a tube */
+.preview-tube::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    border-radius: 6px;
+    background: radial-gradient(ellipse at center,
+        transparent 55%,
+        rgba(0,0,0,0.3) 70%,
+        rgba(0,0,0,0.7) 85%,
+        rgba(0,0,0,0.92) 100%);
+    pointer-events: none;
+    z-index: 10;
 }
 
 .preview-wrapper {
@@ -129,7 +165,44 @@
     min-height: 0;
 }
 
-/* ── Zoom bar (horizontal, below preview) ── */
+/* ── Zoom preset button bar ── */
+.zoom-btn-bar {
+    display: flex;
+    align-items: center;
+    gap: 2px;
+    padding: 4px 8px;
+    background: #3A3E44;
+    border-bottom: 1px solid #30343A;
+    border-top: 1px solid #5A5E66;
+    flex-shrink: 0;
+}
+
+.zoom-preset {
+    padding: 3px 8px;
+    border: 1px solid #30343A;
+    border-radius: 3px;
+    background: #4C5058;
+    color: #8A9298;
+    font-family: 'SF Mono', 'Menlo', 'Consolas', monospace;
+    font-size: 0.62em;
+    font-weight: 600;
+    letter-spacing: 0.5px;
+    cursor: pointer;
+    transition: color 0.15s, border-color 0.15s;
+}
+
+.zoom-preset:hover {
+    color: #B0B8C0;
+    border-color: #5A5E66;
+}
+
+.zoom-preset.active {
+    color: #039c9c;
+    border-color: #039c9c;
+    box-shadow: 0 0 4px rgba(3, 156, 156, 0.25);
+}
+
+/* ── Legacy zoom bar (unused, kept for compat) ── */
 .preview-zoom-bar {
     display: flex;
     align-items: center;
@@ -1028,6 +1101,35 @@
     gap: 6px;
 }
 
+/* Filmstrip scroll navigation — centered, nav-toggle-btn style */
+.filmstrip-nav {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex: 1;
+    justify-content: center;
+}
+
+.filmstrip-nav-btn {
+    background: linear-gradient(180deg, #5A5E66 0%, #4C5058 40%, #42464E 100%);
+    border: 1px solid #30343A;
+    border-radius: 4px;
+    color: #D8DCE2;
+    font-family: 'SF Mono', 'Menlo', 'Consolas', monospace;
+    font-size: 0.72em;
+    font-weight: 700;
+    letter-spacing: 1.8px;
+    padding: 8px 14px;
+    cursor: pointer;
+    box-shadow: 0 2px 6px rgba(0,0,0,0.4), inset 0 1px 0 rgba(255,255,255,0.1);
+    transition: all 0.2s;
+}
+
+.filmstrip-nav-btn:hover {
+    background: linear-gradient(180deg, #686C74 0%, #5A5E66 40%, #4E525A 100%);
+    border-color: #039c9c;
+}
+
 .btn-icon {
     background: rgba(255, 255, 255, 0.05);
     border: 1px solid #333;
@@ -1058,6 +1160,11 @@
     gap: 8px;
     padding: 6px 16px;
     align-items: flex-start;
+    scroll-behavior: smooth;
+    scrollbar-width: none;            /* hide scrollbar — arrows handle scroll */
+}
+.filmstrip-list::-webkit-scrollbar {
+    display: none;
 }
 
 .filmstrip-item {
@@ -2384,30 +2491,30 @@ canvas.video-thumb-canvas {
     align-items: baseline;
     gap: 4px;
     padding: 3px 6px;
-    background: rgba(0,0,0,0.55);
+    background: #000 !important;
 }
 
 .alpaca-coord-label {
-    font-size: 0.6em;
+    font-size: 0.7em;
     font-weight: 700;
     letter-spacing: 1.5px;
-    color: #8a9ba8;
+    color: #fff !important;
     min-width: 22px;
     text-transform: uppercase;
 }
 
 .alpaca-coord-value {
-    font-size: 0.92em;
-    font-weight: 600;
-    color: #b8e8ff;
+    font-size: 1.1em;
+    font-weight: 700;
+    color: #fff !important;
     font-variant-numeric: tabular-nums;
     font-family: 'SF Mono', 'Menlo', 'Consolas', monospace;
-    text-shadow: 0 0 8px rgba(184,232,255,0.15);
+    text-shadow: none;
 }
 
 .alpaca-coord-unit {
-    font-size: 0.6em;
-    color: #7a8a95;
+    font-size: 0.65em;
+    color: #fff !important;
     font-weight: 500;
 }
 
@@ -2430,9 +2537,9 @@ canvas.video-thumb-canvas {
     font-weight: 700;
     letter-spacing: 1px;
     text-transform: uppercase;
-    color: #556068;
+    color: #8a9ba8;
     background: rgba(255,255,255,0.03);
-    border: 1px solid rgba(255,255,255,0.06);
+    border: 1px solid rgba(255,255,255,0.12);
     transition: all 0.3s ease;
 }
 
@@ -2460,6 +2567,25 @@ canvas.video-thumb-canvas {
     50%      { opacity: 0.6; }
 }
 
+.alpaca-state-dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: #cc4444;
+    box-shadow: 0 0 4px #cc4444;
+    display: inline-block;
+}
+
+.alpaca-state-chip.active .alpaca-state-dot {
+    background: #039c9c;
+    box-shadow: 0 0 6px #039c9c;
+}
+
+.alpaca-state-chip.warn .alpaca-state-dot {
+    background: #e8a020;
+    box-shadow: 0 0 6px #e8a020;
+}
+
 .alpaca-state-icon {
     font-size: 0.9em;
     line-height: 1;
@@ -2468,7 +2594,7 @@ canvas.video-thumb-canvas {
 /* ── Device Name ──────────────────────────────────── */
 .alpaca-device-name {
     font-size: 0.6em;
-    color: #6a7a85;
+    color: #cdd8e0;
     letter-spacing: 0.5px;
     text-align: center;
     padding: 2px 0 0;

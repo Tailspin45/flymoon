@@ -661,11 +661,13 @@ def telescope_goto():
                             logger.info(
                                 "[GoTo] Resumed solar tracking after Alt/Az GoTo"
                             )
+                            _maybe_auto_start_detector("sun")
                         else:
                             client.start_lunar_mode()
                             logger.info(
                                 "[GoTo] Resumed lunar tracking after Alt/Az GoTo"
                             )
+                            _maybe_auto_start_detector("moon")
                     except Exception as ex:
                         logger.warning(f"[GoTo] resume_tracking={resume} failed: {ex}")
                 with _ctrl_lock:
@@ -2679,6 +2681,7 @@ def switch_to_sun():
 
         # Switch to solar mode
         client.start_solar_mode()
+        _maybe_auto_start_detector("sun")
 
         logger.info("[Telescope] Switched to solar viewing mode")
         return (
@@ -2738,6 +2741,7 @@ def switch_to_moon():
 
         # Switch to lunar mode
         client.start_lunar_mode()
+        _maybe_auto_start_detector("moon")
 
         logger.info("[Telescope] Switched to lunar viewing mode")
         return (
@@ -3287,6 +3291,18 @@ def register_routes(app):
         get_transit_status,
         methods=["GET"],
     )
+    app.add_url_rule(
+        "/telescope/transit/check",
+        "telescope_transit_check",
+        transit_check,
+        methods=["POST"],
+    )
+    app.add_url_rule(
+        "/telescope/armed",
+        "telescope_armed_status",
+        get_armed_status,
+        methods=["GET"],
+    )
 
     # Simulation mode
     app.add_url_rule(
@@ -3575,6 +3591,7 @@ def _auto_connect_background():
                 import time as _t
 
                 _t.sleep(2)
+                _maybe_auto_start_detector("sun")
             except Exception as e:
                 logger.warning(
                     f"[Telescope] Auto-connect: could not start solar view: {e}"
@@ -3599,6 +3616,42 @@ def _auto_connect_background():
 # ---------------------------------------------------------------------------
 # Real-time Transit Detection Endpoints
 # ---------------------------------------------------------------------------
+
+
+def _maybe_auto_start_detector(target: str = "sun") -> None:
+    """Auto-start the transit detector when entering solar/lunar mode.
+
+    Called internally after every successful start_solar_mode() /
+    start_lunar_mode() call so detection is ALWAYS running when the scope is
+    pointed at the Sun or Moon — eliminating the silent-miss failure mode
+    where the user watches the preview but never clicks "Start Detection".
+
+    If the detector is already running this is a no-op.
+    """
+    try:
+        from src.transit_detector import get_detector, start_detector
+
+        det = get_detector()
+        if det and det.is_running:
+            logger.debug("[Telescope] Auto-detect: already running, skipping auto-start")
+            return
+
+        client = get_telescope_client()
+        if not client or not client.is_connected():
+            logger.debug("[Telescope] Auto-detect: scope not connected, skipping")
+            return
+
+        host = client.host
+        rtsp_port = int(os.getenv("SEESTAR_RTSP_PORT", "4554"))
+        rtsp_url = f"rtsp://{host}:{rtsp_port}/stream"
+
+        logger.info(
+            f"[Telescope] Auto-detect: starting detector for {target} target "
+            f"(RTSP {rtsp_url})"
+        )
+        start_detector(rtsp_url, record_on_detect=True)
+    except Exception as exc:
+        logger.warning(f"[Telescope] Auto-detect: failed to auto-start detector: {exc}")
 
 
 def start_detection():
@@ -3986,3 +4039,147 @@ def get_transit_status():
     except Exception as e:
         logger.error(f"[Telescope] Error getting transit status: {e}")
         return jsonify({"success": False, "error": str(e), "transits": []}), 500
+
+
+def get_armed_status():
+    """GET /telescope/armed - Return detection + recording armed state.
+
+    Used by the telescope page to show a warning banner when the scope is in
+    solar/lunar mode but the transit detector is NOT running.
+
+    Returns:
+        {
+          "scope_mode":      "sun" | "moon" | "scenery" | null,
+          "detector_running": bool,
+          "armed":            bool,   # True only when both conditions met
+          "warning":          str | null   # Human-readable warning message
+        }
+    """
+    try:
+        from src.transit_detector import get_detector
+
+        client = get_telescope_client()
+        scope_mode = None
+        if client and client.is_connected() and hasattr(client, "_viewing_mode"):
+            scope_mode = client._viewing_mode  # "sun", "moon", "scenery", or None
+
+        det = get_detector()
+        detector_running = bool(det and det.is_running)
+
+        solar_lunar = scope_mode in ("sun", "moon")
+        armed = solar_lunar and detector_running
+
+        warning = None
+        if solar_lunar and not detector_running:
+            target_label = "solar" if scope_mode == "sun" else "lunar"
+            warning = (
+                f"Scope is in {target_label} mode but transit detection is OFF. "
+                f"Any aircraft crossing the {'Sun' if scope_mode == 'sun' else 'Moon'} "
+                f"will NOT be captured. Click 'Start Detection' to arm."
+            )
+
+        return jsonify(
+            {
+                "scope_mode": scope_mode,
+                "detector_running": detector_running,
+                "armed": armed,
+                "warning": warning,
+            }
+        ), 200
+
+    except Exception as e:
+        logger.error(f"[Telescope] Error getting armed status: {e}")
+        return jsonify({"armed": False, "error": str(e)}), 500
+
+
+def transit_check():
+    """POST /telescope/transit/check - Background flight poll from telescope page.
+
+    When the user has ONLY the telescope page open (no map tab), the normal
+    /flights endpoint is never called and TransitRecorder timers are never
+    scheduled.  This endpoint replicates the critical server-side work:
+
+    1. Calls get_transits() for the current scope target (sun or moon).
+    2. Schedules TransitRecorder timers for any HIGH-probability flights.
+    3. Returns a lightweight summary so the telescope page can show an alert.
+
+    The telescope JS calls this every 90 seconds when scope is in solar/lunar
+    mode, regardless of whether the map tab is open.
+    """
+    logger.debug("[Telescope] POST /telescope/transit/check")
+
+    try:
+        from src.transit import get_transits
+        from src.constants import PossibilityLevel
+
+        client = get_telescope_client()
+        scope_mode = None
+        if client and client.is_connected() and hasattr(client, "_viewing_mode"):
+            scope_mode = client._viewing_mode
+
+        if scope_mode not in ("sun", "moon"):
+            return jsonify({"target": scope_mode, "high_transits": [], "checked": False}), 200
+
+        latitude, longitude, elevation = get_observer_coordinates()
+
+        transit_data = get_transits(
+            latitude=latitude,
+            longitude=longitude,
+            elevation=elevation,
+            target_name=scope_mode,
+            data_source="opensky-only",
+            enrich=False,
+        )
+
+        all_flights = transit_data.get("flights", [])
+        high_flights = [
+            f for f in all_flights
+            if f.get("possibility_level") == PossibilityLevel.HIGH.value
+        ]
+
+        # Schedule recordings for any HIGH transits (same logic as /flights)
+        # Import here to avoid circular import at module level
+        try:
+            from app import get_transit_recorder  # type: ignore[import]
+            recorder = get_transit_recorder()
+            if recorder:
+                for flight in high_flights:
+                    eta_seconds = flight.get("time", 0) * 60
+                    flight_id = flight.get("ident") or flight.get("id", "unknown")
+                    recorder.schedule_transit_recording(
+                        flight_id=flight_id,
+                        eta_seconds=eta_seconds,
+                        transit_duration_estimate=2.0,
+                        sep_deg=flight.get("angular_separation", 0.0),
+                    )
+                    logger.info(
+                        f"[TransitCheck] Scheduled recording for {flight_id} "
+                        f"ETA={eta_seconds:.0f}s via background telescope poll"
+                    )
+        except Exception as rec_exc:
+            logger.debug(f"[TransitCheck] Recorder scheduling skipped: {rec_exc}")
+
+        # Build compact summary for UI
+        summary = [
+            {
+                "id": f.get("ident") or f.get("id"),
+                "eta_min": round(f.get("time", 0), 1),
+                "sep_deg": round(f.get("angular_separation", 0), 2),
+                "alt_diff": round(f.get("alt_diff", 0), 2),
+                "az_diff": round(f.get("az_diff", 0), 2),
+            }
+            for f in high_flights
+        ]
+
+        return jsonify(
+            {
+                "target": scope_mode,
+                "high_transits": summary,
+                "total_flights": len(all_flights),
+                "checked": True,
+            }
+        ), 200
+
+    except Exception as e:
+        logger.error(f"[Telescope] transit_check error: {e}", exc_info=True)
+        return jsonify({"error": str(e), "checked": False}), 500

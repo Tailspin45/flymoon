@@ -1134,11 +1134,31 @@ function setZoom(value) {
     applyZoom();
 }
 
+function setZoomPreset(pct) {
+    currentZoom = pct / 100;
+    applyZoom();
+    // Highlight active button
+    const bar = document.getElementById('zoomBtnBar');
+    if (bar) {
+        bar.querySelectorAll('.zoom-preset').forEach(btn => {
+            btn.classList.toggle('active', btn.textContent.trim() === pct + '%');
+        });
+    }
+}
+
 function updateSlider() {
     const slider = document.getElementById('zoomSlider');
     const percent = document.getElementById('zoomPercent');
     if (slider) slider.value = Math.round(currentZoom * 100);
     if (percent) percent.textContent = Math.round(currentZoom * 100) + '%';
+    // Also update zoom preset button highlights
+    const bar = document.getElementById('zoomBtnBar');
+    if (bar) {
+        const pct = Math.round(currentZoom * 100);
+        bar.querySelectorAll('.zoom-preset').forEach(btn => {
+            btn.classList.toggle('active', btn.textContent.trim() === pct + '%');
+        });
+    }
 }
 
 function _getActiveMediaElement() {
@@ -1217,6 +1237,26 @@ function stopPreview() {
 }
 
 // ============================================================================
+// FILMSTRIP SCROLL NAVIGATION
+// ============================================================================
+
+function filmstripScroll(direction) {
+    const list = document.getElementById('filmstripList');
+    if (!list) return;
+    // Scroll by ~3 thumbnails (150px + 8px gap each)
+    list.scrollBy({ left: direction * 474, behavior: 'smooth' });
+}
+
+function filmstripScrollTo(pos) {
+    const list = document.getElementById('filmstripList');
+    if (!list) return;
+    if (pos === 'start') {
+        list.scrollTo({ left: 0, behavior: 'smooth' });
+    } else {
+        list.scrollTo({ left: list.scrollWidth, behavior: 'smooth' });
+    }
+}
+
 // FILE MANAGEMENT
 // ============================================================================
 
@@ -5561,6 +5601,7 @@ function ensureTuningUI() {
     if (document.getElementById('tuningBody')) return;
 
     const saved = _loadTuning();
+    const _radarTune = _loadRadarTuning();
 
     // Add compact TUNE keycap to the detect controls row
     const controls = document.getElementById('detectControls');
@@ -5596,6 +5637,17 @@ function ensureTuningUI() {
             'Minimum centroid displacement per frame to count as real directional motion. Set 0 to disable.')}
         ${_tuningSliderRow('tunTrackAgree', 'Track Agreement %', 0, 100, Math.round(saved.track_min_agree_frac * 100), 5,
             'Fraction of streak frames that must agree on direction before firing. Set 0 to disable.')}
+        <div style="border-top:1px solid rgba(255,255,255,0.08);margin:8px 0 6px;padding-top:6px;">
+            <span style="font-size:0.74em;color:#6A7A85;">Radar Tracking</span>
+        </div>
+        ${_tuningSliderRow('tunRadarAlpha', 'Filter Alpha', 0.05, 0.80, _radarTune.alpha, 0.05,
+            'Position weight. Higher = trust measurements more (responsive but jittery). Lower = smoother but laggier.')}
+        ${_tuningSliderRow('tunRadarBeta', 'Filter Beta', 0.01, 0.30, _radarTune.beta, 0.01,
+            'Velocity weight. Higher = velocity adapts faster to course changes. Lower = more stable heading.')}
+        ${_tuningSliderRow('tunRadarTailScale', 'Tail Scale (px/100kph)', 0.5, 20, _radarTune.tailScale, 0.5,
+            'Pixels of tail per 100 km/h. Higher = longer tails at speed.')}
+        ${_tuningSliderRow('tunRadarStaleGrace', 'Stale Grace (s)', 5, 60, _radarTune.staleGrace, 5,
+            'Seconds a track survives without updates before fading out.')}
         <button class="btn btn-secondary btn-compact" style="margin-top:4px;width:100%;" onclick="_resetTuning()">Reset to defaults</button>
     `;
 
@@ -5609,13 +5661,28 @@ function ensureTuningUI() {
         detectPanel.appendChild(body);
     }
 
-    // Wire up sliders
+    // Wire up detection sliders
     ['tunMargin', 'tunRatio', 'tunConsec', 'tunMFThresh', 'tunSensitivity', 'tunTrackMag', 'tunTrackAgree'].forEach(id => {
         const el = document.getElementById(id);
         if (!el) return;
         el.addEventListener('input', () => {
             _updateTuningLabel(id);
             _debouncedApplyTuning();
+        });
+    });
+    // Wire up radar tracking sliders (persist to localStorage on change)
+    const _radarSliderKeys = {
+        tunRadarAlpha:       'radar_alpha',
+        tunRadarBeta:        'radar_beta',
+        tunRadarTailScale:   'radar_tail_scale',
+        tunRadarStaleGrace:  'radar_stale_grace',
+    };
+    Object.entries(_radarSliderKeys).forEach(([sliderId, storageKey]) => {
+        const el = document.getElementById(sliderId);
+        if (!el) return;
+        el.addEventListener('input', () => {
+            _updateTuningLabel(sliderId);
+            localStorage.setItem(storageKey, el.value);
         });
     });
 }
@@ -5670,6 +5737,27 @@ function _resetTuning() {
     localStorage.removeItem('det_mf_thresh');
     _syncTuningSliders(TUNING_DEFAULTS);
     _applyDetectionSettings(TUNING_DEFAULTS);
+    // Reset radar tracking sliders
+    localStorage.removeItem('radar_alpha');
+    localStorage.removeItem('radar_beta');
+    localStorage.removeItem('radar_tail_scale');
+    localStorage.removeItem('radar_stale_grace');
+    localStorage.removeItem('radar_entry_margin');
+    _syncRadarTuningSliders(RADAR_TUNING_DEFAULTS);
+}
+
+function _syncRadarTuningSliders(d) {
+    const map = {
+        tunRadarAlpha:       d.radar_alpha,
+        tunRadarBeta:        d.radar_beta,
+        tunRadarTailScale:   d.radar_tail_scale,
+        tunRadarStaleGrace:  d.radar_stale_grace,
+        tunRadarEntryMargin: d.radar_entry_margin,
+    };
+    Object.entries(map).forEach(([id, val]) => {
+        const el = document.getElementById(id);
+        if (el) { el.value = val; _updateTuningLabel(id); }
+    });
 }
 
 function _tuningSliderRow(id, label, min, max, val, step, tooltip) {
@@ -6092,7 +6180,25 @@ const RADAR_DISC_DEG            = 0.53;    // solar/lunar disc radius (°)
 const RADAR_MAX_SEP_DEG         = 12;      // outer ring = 12° (full LOW range)
 const RADAR_HISTORY_MAX         = 50;      // trail length per blip
 const RADAR_SWEEP_RUN_AFTER_DETECT_S = 30; // seconds sweep stays on after detection
-const RADAR_FLYOFF_MS           = 120_000; // let dead-reckoning carry a track for 2 min before removal
+// ── radar tracking tuning (configurable via TUNE panel, persisted to localStorage) ──
+const RADAR_TUNING_DEFAULTS = {
+    radar_alpha:        0.30,   // α-β filter: position smoothing weight
+    radar_beta:         0.10,   // α-β filter: velocity smoothing weight
+    radar_tail_scale:   5,      // pixels of tail per 100 km/h of ADS-B speed
+    radar_stale_grace:  15,     // seconds before a stale track is removed
+    radar_entry_margin: 0,      // (deprecated — edge squares now handle far-away aircraft)
+};
+
+function _loadRadarTuning() {
+    const d = RADAR_TUNING_DEFAULTS;
+    return {
+        alpha:       parseFloat(localStorage.getItem('radar_alpha')        ?? d.radar_alpha),
+        beta:        parseFloat(localStorage.getItem('radar_beta')         ?? d.radar_beta),
+        tailScale:   parseFloat(localStorage.getItem('radar_tail_scale')   ?? d.radar_tail_scale),
+        staleGrace:  parseFloat(localStorage.getItem('radar_stale_grace')  ?? d.radar_stale_grace),
+        entryMargin: parseFloat(localStorage.getItem('radar_entry_margin') ?? d.radar_entry_margin),
+    };
+}
 
 // ── state ───────────────────────────────────────────────────────────────────
 const _radarTracks       = new Map();  // id → track object (see pushInterceptPoint)
@@ -6171,20 +6277,23 @@ function _radarDrawFrame(ts) {
     const R  = Math.min(cx, cy) - 8;
 
     const nowMs = Date.now();
-    // Dead-reckon stale tracks and remove ones that have flown off-screen
+    const tune  = _loadRadarTuning();
+    const staleGraceMs = tune.staleGrace * 1000;
+    // Dead-reckon stale tracks; remove when off-screen or past stale grace
     for (const [id, tr] of _radarTracks.entries()) {
         if (!tr.lastUpdateT) continue;
-        const ageSec = (nowMs - tr.lastUpdateT) / 1000;
-        // Beyond flyoff timeout with no updates — remove
-        if (ageSec * 1000 > RADAR_FLYOFF_MS) {
+        const ageSec   = (nowMs - tr.lastUpdateT) / 1000;
+        const staleSec = (nowMs - (tr.lastSeenT || tr.lastUpdateT)) / 1000;
+        // Past stale grace with no backend confirmation — remove
+        if (staleSec * 1000 > staleGraceMs) {
             _radarTracks.delete(id);
             continue;
         }
-        // Dead-reckon position if we have velocity and data is stale (> 1s)
-        if (ageSec > 1.0 && (Math.abs(tr.vAltD) > 0.0001 || Math.abs(tr.vAzD) > 0.0001)) {
+        // Dead-reckon position if we have velocity and data is stale (> 0.5s)
+        if (ageSec > 0.5 && (Math.abs(tr.vAltD) > 0.0001 || Math.abs(tr.vAzD) > 0.0001)) {
             const drAltD = tr.altD + tr.vAltD * ageSec;
             const drAzD  = tr.azD  + tr.vAzD  * ageSec;
-            // If dead-reckoned position is off-screen, let it fly off naturally
+            // Off-screen — remove
             if (Math.hypot(drAltD, drAzD) > RADAR_MAX_SEP_DEG * 1.3) {
                 _radarTracks.delete(id);
                 continue;
@@ -6196,6 +6305,8 @@ function _radarDrawFrame(ts) {
                 if (tr.points.length > RADAR_HISTORY_MAX) tr.points.shift();
             }
         }
+        // Compute stale opacity for rendering (1.0 → 0.2 over grace period)
+        tr._staleAlpha = staleSec > 2 ? Math.max(0.2, 1.0 - (staleSec / tune.staleGrace) * 0.8) : 1.0;
     }
 
     // derive active state from last-seen timestamp (no fixed timer)
@@ -6293,11 +6404,50 @@ function _radarDrawFrame(ts) {
     const sorted = [..._radarTracks.values()].sort((a,b) => a.level - b.level);
 
     sorted.forEach(track => {
-        if (!track.points.length) return;
-        const id   = track.id;
-        const color= track.color;
+        const id    = track.id;
+        const color = track.color;
+        const staleA = track._staleAlpha ?? 1.0;
+        const isEdge = (track.curSep ?? 0) > RADAR_MAX_SEP_DEG;
 
-        // Current display position: dead-reckon from last raw measurement
+        if (isEdge) {
+            // ── EDGE SQUARE: aircraft outside 12 deg — pinned on the rim ─
+            const ang = _radarPolar(track.altD, track.azD, R).ang;
+            const ex  = cx + R * Math.sin(ang);
+            const ey  = cy - R * Math.cos(ang);
+            const sqR = 5;
+            const alpha = 0.75 * staleA;
+
+            // Square marker
+            ctx.fillStyle = _hexToRgba(color, alpha);
+            ctx.fillRect(ex - sqR, ey - sqR, sqR * 2, sqR * 2);
+            ctx.strokeStyle = _hexToRgba(color, alpha * 0.6);
+            ctx.lineWidth = 1;
+            ctx.strokeRect(ex - sqR, ey - sqR, sqR * 2, sqR * 2);
+
+            // Label: registration + ETA
+            let lbl = track.label;
+            if (track.etaSec != null) {
+                const aged = track.etaSec - (nowMs - (track.etaBaseT || nowMs)) / 1000;
+                if (aged > 0) {
+                    const m = Math.floor(aged / 60);
+                    const s = Math.floor(aged % 60);
+                    lbl += ' ' + m + ':' + String(s).padStart(2, '0');
+                }
+            }
+            ctx.fillStyle = _hexToRgba(color, 0.8 * staleA);
+            ctx.font = '8px monospace';
+            const lx = cx + (R - 14) * Math.sin(ang);
+            const ly = cy - (R - 14) * Math.cos(ang);
+            ctx.textAlign = 'center';
+            ctx.fillText(lbl, lx, ly + 3);
+
+            _radarHitTest.push({id, x: ex, y: ey, r: sqR + 4});
+            return;
+        }
+
+        // ── DIAMOND BLIP: aircraft within 12 deg ─────────────────────────
+        if (!track.points.length) return;
+
         const ageSec = (nowMs - track.lastUpdateT) / 1000;
         const curAltD = track.altD + track.vAltD * Math.min(ageSec, 60);
         const curAzD  = track.azD  + track.vAzD  * Math.min(ageSec, 60);
@@ -6311,35 +6461,30 @@ function _radarDrawFrame(ts) {
                 const {x,y} = _radarBlipXY(p, cx, cy, R);
                 i === 0 ? ctx.moveTo(x,y) : ctx.lineTo(x,y);
             });
-            ctx.strokeStyle = _hexToRgba(color, 0.25);
+            ctx.strokeStyle = _hexToRgba(color, 0.25 * staleA);
             ctx.lineWidth = 1;
             ctx.stroke();
         }
 
-        // blip glow / brightness
         const curPt = { altD: curAltD, azD: curAzD };
         const {x, y} = _radarBlipXY(curPt, cx, cy, R);
         const dAng = _radarSweepActive
             ? ((sweepAng - _radarPolar(curAltD, curAzD, R).ang) % (Math.PI*2) + Math.PI*2) % (Math.PI*2)
             : 0;
         const lit   = !_radarSweepActive || dAng < beamHalf + 0.15;
-        const alpha = lit ? 1.0 : 0.82;
+        const alpha = (lit ? 1.0 : 0.82) * staleA;
         const blipR = track.level >= 3 ? 6 : track.level === 2 ? 5 : 4;
 
         // ── velocity / heading line (tadpole tail) ───────────────────────
         const speed2d = Math.hypot(track.vAltD, track.vAzD);
-        if (speed2d > 0.0001) {
-            const DIR_DT = 5;
-            const futPt  = {
-                altD: curAltD + track.vAltD * DIR_DT,
-                azD:  curAzD  + track.vAzD  * DIR_DT
-            };
-            const futXY  = _radarBlipXY(futPt, cx, cy, R);
-            const ang    = Math.atan2(futXY.y - y, futXY.x - x);
-            const speedKts = track.speedKmh != null
-                ? track.speedKmh / 1.852
-                : speed2d * 200;
-            const len = 6 + (speedKts / 100) * 3;
+        const speedKmh = track.speedKmh;
+        if (speed2d > 0.0005 && speedKmh != null && speedKmh > 0) {
+            const eps = 0.01;
+            const stepAlt = track.vAltD / speed2d * eps;
+            const stepAz  = track.vAzD  / speed2d * eps;
+            const refXY = _radarBlipXY({ altD: curAltD + stepAlt, azD: curAzD + stepAz }, cx, cy, R);
+            const ang = Math.atan2(refXY.y - y, refXY.x - x);
+            const len = Math.min(Math.max((speedKmh / 100) * tune.tailScale, 4), R * 0.5);
             ctx.save();
             ctx.strokeStyle = _hexToRgba(color, alpha * 0.9);
             ctx.lineWidth   = 1.5;
@@ -6464,48 +6609,79 @@ function _radarMarkTransitSeen() {
 // Call from outside when a transit is confirmed
 window.onTransitDetected = function() { _radarMarkTransitSeen(); };
 
-// Remove tracks for IDs no longer in the active set
+// Mark tracks not in the active set as stale (graceful fade-out instead of
+// instant deletion).  Actual removal happens in _radarDrawFrame when the
+// stale grace period expires.
 window.pruneRadarTracks = function(activeIds) {
     const testIds = new Set(_TEST_AIRCRAFT.map(a => a.id));
-    for (const id of _radarTracks.keys()) {
+    for (const [id, tr] of _radarTracks.entries()) {
         if (testIds.has(id)) continue; // never prune synthetic test tracks
-        if (!activeIds.has(id)) _radarTracks.delete(id);
+        if (activeIds.has(id)) {
+            tr.lastSeenT = Date.now();  // refresh
+        }
+        // Tracks not in activeIds simply don't get their lastSeenT refreshed,
+        // so they will fade and be removed by the stale grace logic in _radarDrawFrame.
     }
 };
 
 // ── pushInterceptPoint (public API for app.js) ───────────────────────────────
-// Stores raw alt_diff / az_diff from the backend — no smoothing or filtering.
-// Velocity is derived from the last two raw measurements for the heading line.
-// Dead-reckoning between updates happens in _radarDrawFrame.
+// Uses CURRENT position (where the aircraft is NOW relative to the target) for
+// radar blip placement, with an α-β filter for smooth motion.  Closest-approach
+// data is stored separately for ETA and edge-marker rendering.
 window.pushInterceptPoint = function(flight) {
     const id = String(flight.id || flight.name || '').trim().toUpperCase();
-    if (!id || flight.angular_separation == null) return;
+    if (!id) return;
     const level = parseInt(flight.possibility_level ?? 0);
     if (level < 1 || level > 3) return;
 
     const color = level >= 3 ? '#00FF00' : level === 2 ? '#FFFF00' : '#808080';
 
-    let measAltD = parseFloat(flight.alt_diff ?? 'NaN');
-    let measAzD  = parseFloat(flight.az_diff  ?? 'NaN');
+    // ── Current position: where the aircraft is NOW relative to the target ──
+    // Prefer backend current_signed_* fields; fall back to computing from altaz
+    let measAltD = parseFloat(flight.current_signed_alt_diff ?? 'NaN');
+    let measAzD  = parseFloat(flight.current_signed_az_diff  ?? 'NaN');
     if (!isFinite(measAltD) || !isFinite(measAzD)) {
-        const sep = parseFloat(flight.angular_separation);
-        measAltD = isFinite(sep) ? sep : 0;
-        measAzD  = 0;
+        // Fall back to closest-approach signed diffs (old backend)
+        measAltD = parseFloat(flight.signed_alt_diff ?? 'NaN');
+        measAzD  = parseFloat(flight.signed_az_diff  ?? 'NaN');
     }
+    if (!isFinite(measAltD) || !isFinite(measAzD)) {
+        const pAlt = parseFloat(flight.plane_alt  ?? 'NaN');
+        const tAlt = parseFloat(flight.target_alt ?? 'NaN');
+        const pAz  = parseFloat(flight.plane_az   ?? 'NaN');
+        const tAz  = parseFloat(flight.target_az  ?? 'NaN');
+        if (isFinite(pAlt) && isFinite(tAlt) && isFinite(pAz) && isFinite(tAz)) {
+            measAltD = pAlt - tAlt;
+            let dAz = pAz - tAz;
+            measAzD = ((dAz + 180) % 360) - 180;
+        } else {
+            measAltD = parseFloat(flight.alt_diff ?? 0);
+            measAzD  = parseFloat(flight.az_diff  ?? 0);
+        }
+    }
+    if (!isFinite(measAltD)) measAltD = 0;
+    if (!isFinite(measAzD))  measAzD  = 0;
 
-    const now = Date.now();
+    const curSep = parseFloat(flight.current_angular_separation ?? flight.angular_separation ?? 999);
+
+    // ETA in seconds (for edge-marker label)
+    const etaSec = flight.transit_eta_seconds != null
+        ? parseFloat(flight.transit_eta_seconds)
+        : (flight.time != null ? parseFloat(flight.time) * 60 : null);
+
+    const now  = Date.now();
+    const tune = _loadRadarTuning();
 
     if (!_radarTracks.has(id)) {
         _radarTracks.set(id, {
             id, points: [], color, level, label: id,
             altFt: null, speedKmh: null, heading: null,
-            // Raw position from last measurement
             altD: measAltD, azD: measAzD,
-            // Velocity (deg/s) derived from last two measurements
             vAltD: 0, vAzD: 0,
-            // Previous raw position for velocity computation
-            prevAltD: null, prevAzD: null, prevT: null,
             lastUpdateT: now,
+            lastSeenT: now,
+            // Current separation and ETA for edge-marker vs diamond decision
+            curSep, etaSec, etaBaseT: now,
         });
     }
 
@@ -6516,32 +6692,46 @@ window.pushInterceptPoint = function(flight) {
     track.altFt    = flight.altitude != null ? parseFloat(flight.altitude) : null;
     track.speedKmh = flight.speed    != null ? parseFloat(flight.speed)    : null;
     track.heading  = flight.heading  != null ? parseFloat(flight.heading)  : null;
+    track.lastSeenT = now;
+    track.curSep   = curSep;
+    track.etaSec   = etaSec;
+    track.etaBaseT = now;
 
-    // Compute velocity from previous raw position
-    if (track.lastUpdateT && track.lastUpdateT !== now) {
+    // α-β filter update (only for tracks within the radar field)
+    if (curSep <= RADAR_MAX_SEP_DEG) {
         const dt = (now - track.lastUpdateT) / 1000;
-        if (dt > 0.5 && dt < 120) {
-            track.vAltD = (measAltD - track.altD) / dt;
-            track.vAzD  = (measAzD  - track.azD)  / dt;
+        if (dt > 0.1 && dt < 120) {
+            const predAlt = track.altD + track.vAltD * dt;
+            const predAz  = track.azD  + track.vAzD  * dt;
+            const resAlt = measAltD - predAlt;
+            const resAz  = measAzD  - predAz;
+            track.altD  = predAlt + tune.alpha * resAlt;
+            track.azD   = predAz  + tune.alpha * resAz;
+            track.vAltD = track.vAltD + (tune.beta / dt) * resAlt;
+            track.vAzD  = track.vAzD  + (tune.beta / dt) * resAz;
+        } else {
+            track.altD = measAltD;
+            track.azD  = measAzD;
         }
-    }
+        track.lastUpdateT = now;
 
-    // Store previous position, update current
-    track.prevAltD = track.altD;
-    track.prevAzD  = track.azD;
-    track.prevT    = track.lastUpdateT;
-    track.altD     = measAltD;
-    track.azD      = measAzD;
-    track.lastUpdateT = now;
-
-    // Append to trail (raw position, min 1s gap)
-    const lastPt = track.points[track.points.length - 1];
-    if (!lastPt || now - lastPt.t >= 1000) {
-        track.points.push({ altD: measAltD, azD: measAzD, t: now });
-        if (track.points.length > RADAR_HISTORY_MAX) track.points.shift();
+        // Append filtered position to trail (min 1s gap)
+        const lastPt = track.points[track.points.length - 1];
+        if (!lastPt || now - lastPt.t >= 1000) {
+            track.points.push({ altD: track.altD, azD: track.azD, t: now });
+            if (track.points.length > RADAR_HISTORY_MAX) track.points.shift();
+        } else {
+            lastPt.altD = track.altD;
+            lastPt.azD  = track.azD;
+        }
     } else {
-        lastPt.altD = measAltD;
-        lastPt.azD  = measAzD;
+        // Outside radar field — update bearing for edge marker but don't filter
+        track.altD = measAltD;
+        track.azD  = measAzD;
+        track.vAltD = 0;
+        track.vAzD  = 0;
+        track.lastUpdateT = now;
+        track.points = [];
     }
 
     if (level >= 1) _radarMarkTransitSeen();
@@ -6566,6 +6756,8 @@ window.injectMapTransits = function(flights, opts = {}) {
             ts:    generatedAtMs, // backend compute time for consistent ETA aging
             level,
             target: f.target || 'sun',
+            track: f.direction != null ? Math.round(f.direction) : null,
+            speed: f.speed != null ? Math.round(f.speed * 0.539957) : null,
         });
     });
     _upcomingTransits.sort((a,b) => {
@@ -6599,22 +6791,26 @@ function _renderUpcomingTransits() {
         return a.liveEta - b.liveEta;
     });
     el.innerHTML = live.slice(0, 5).map(tr => {
-        const lvlCol = tr.level >= 3 ? '#00FF00' : tr.level === 2 ? '#FFFF00' : '#808080';
+        const lvlCol = tr.level >= 3 ? '#00FF00' : tr.level === 2 ? '#FFD700' : '#A0A0A0';
         const lvlStr = tr.level >= 3 ? 'HIGH' : tr.level === 2 ? 'MED' : 'LOW';
         let etaStr;
         if (tr.liveEta == null) {
-            etaStr = '—';
+            etaStr = '\u2014';
         } else if (tr.liveEta <= 0) {
-            etaStr = '<span style="color:#f44">NOW</span>';
+            etaStr = '<span style="color:#ff4444;font-weight:700">NOW</span>';
         } else {
             const m = Math.floor(tr.liveEta / 60), s = Math.floor(tr.liveEta % 60);
-            etaStr = m > 0 ? `T−${m}m${String(s).padStart(2,'0')}s` : `T−${s}s`;
+            etaStr = m > 0 ? `T\u2212${m}m${String(s).padStart(2,'0')}s` : `T\u2212${s}s`;
         }
-        return `<div style="display:flex;justify-content:space-between;align-items:center;
-                    padding:2px 0;border-bottom:1px solid rgba(255,255,255,0.05)">
-            <span style="font-weight:600;letter-spacing:.04em">${tr.id}</span>
-            <span style="color:${lvlCol};font-size:0.75em">${lvlStr}</span>
-            <span style="color:#778;font-size:0.75em">${etaStr}</span>
+        const trkStr = tr.track != null ? `${tr.track}\u00B0` : '\u2014';
+        const spdStr = tr.speed != null ? `${tr.speed}kt` : '\u2014';
+        return `<div style="display:grid;grid-template-columns:1fr auto auto auto auto;gap:6px;align-items:center;
+                    padding:3px 0;border-bottom:1px solid rgba(255,255,255,0.07);font-size:0.88em;">
+            <span style="font-weight:600;letter-spacing:.04em;color:#D8DCE2;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${tr.id}</span>
+            <span style="color:${lvlCol};font-weight:700;font-size:0.85em;min-width:32px;text-align:center">${lvlStr}</span>
+            <span style="color:#B0B4BC;font-size:0.85em;min-width:28px;text-align:right;font-variant-numeric:tabular-nums">${trkStr}</span>
+            <span style="color:#B0B4BC;font-size:0.85em;min-width:38px;text-align:right;font-variant-numeric:tabular-nums">${spdStr}</span>
+            <span style="color:#C8CCD2;font-size:0.85em;min-width:52px;text-align:right;font-family:'SF Mono','Menlo','Consolas',monospace;font-variant-numeric:tabular-nums">${etaStr}</span>
         </div>`;
     }).join('');
 }
@@ -6661,25 +6857,31 @@ function _startRadarTest(btn) {
             a._altD += a.vAlt;
             a._azD  += a.vAz;
 
-            // Wrap back to starting position when blip exits the disc
+            // Wrap back to starting position when blip exits the scope
             if (Math.hypot(a._altD, a._azD) > RADAR_MAX_SEP_DEG * 1.1) {
                 a._altD = a.altD;
                 a._azD  = a.azD;
-                const tr = _radarTracks.get(a.id);
-                if (tr) { tr.points = []; tr.vAltD = 0; tr.vAzD = 0; }
+                // Delete the track so pushInterceptPoint creates a fresh one
+                // (avoids filter artifacts from the position discontinuity)
+                _radarTracks.delete(a.id);
             }
 
             window.pushInterceptPoint({
                 id:                  a.id,
                 name:                a.id,
                 possibility_level:   String(a.level),
-                angular_separation:  String(Math.hypot(a._altD, a._azD).toFixed(3)),
-                alt_diff:            String(a._altD.toFixed(3)),
-                az_diff:             String(a._azD.toFixed(3)),
-                altitude:            String(a.altitude),
-                speed:               String(a.speed),
-                heading:             String(Math.atan2(a.vAz, a.vAlt) * 180 / Math.PI),
-                is_possible_transit: 1,
+                angular_separation:           String(Math.hypot(a._altD, a._azD).toFixed(3)),
+                current_angular_separation:   String(Math.hypot(a._altD, a._azD).toFixed(3)),
+                alt_diff:                     String(Math.abs(a._altD).toFixed(3)),
+                az_diff:                      String(Math.abs(a._azD).toFixed(3)),
+                current_signed_alt_diff:      String(a._altD.toFixed(3)),
+                current_signed_az_diff:       String(a._azD.toFixed(3)),
+                signed_alt_diff:              String(a._altD.toFixed(3)),
+                signed_az_diff:               String(a._azD.toFixed(3)),
+                altitude:                     String(a.altitude),
+                speed:                        String(a.speed),
+                heading:                      String(Math.atan2(a.vAz, a.vAlt) * 180 / Math.PI),
+                is_possible_transit:          1,
             });
         });
         _radarMarkTransitSeen();
@@ -6842,7 +7044,7 @@ function _updateAlpacaPanel(data) {
 
     if (!data || !data.connected) {
         // Show panel in disconnected/placeholder state — coords reset to dashes
-        ['alpacaRA','alpacaDec','alpacaAlt','alpacaAz'].forEach(id => {
+        ['alpacaRA','alpacaDec','alpacaAlt','alpacaAz','alpacaLST'].forEach(id => {
             const el = document.getElementById(id);
             if (el) el.textContent = '—';
         });
@@ -6854,6 +7056,12 @@ function _updateAlpacaPanel(data) {
         if (dot) dot.style.background = '#555';
         const name = document.getElementById('alpacaDeviceName');
         if (name) name.textContent = '';
+        const drvr = document.getElementById('alpacaDriverInfo');
+        if (drvr) drvr.textContent = '';
+        ['alpacaChipTrk','alpacaChipSlw','alpacaChipPrk'].forEach(id => {
+            const el = document.getElementById(id);
+            if (el) el.className = 'alpaca-state-chip';
+        });
         return;
     }
 
@@ -6873,6 +7081,14 @@ function _updateAlpacaPanel(data) {
     if (alt) alt.textContent = fmt(pos.alt, 2);
     if (az) az.textContent = fmt(pos.az, 2);
 
+    // Sidereal time (LST) — comes from state, display as HH:MM
+    const lst = document.getElementById('alpacaLST');
+    if (lst && state.sidereal_time != null) {
+        const h = Math.floor(state.sidereal_time);
+        const m = Math.floor((state.sidereal_time - h) * 60);
+        lst.textContent = String(h).padStart(2,'0') + ':' + String(m).padStart(2,'0');
+    }
+
     // Also update the GoTo pointing display with ALPACA data
     const scopeAlt = document.getElementById('scopeAlt');
     const scopeAz = document.getElementById('scopeAz');
@@ -6882,9 +7098,24 @@ function _updateAlpacaPanel(data) {
     // Tracking state
     _alpacaTracking = state.tracking || false;
 
+    // State chips — TRK / SLW / PRK
+    const chipTrk = document.getElementById('alpacaChipTrk');
+    const chipSlw = document.getElementById('alpacaChipSlw');
+    const chipPrk = document.getElementById('alpacaChipPrk');
+    if (chipTrk) chipTrk.className = 'alpaca-state-chip' + (state.tracking ? ' active' : '');
+    if (chipSlw) chipSlw.className = 'alpaca-state-chip' + (state.slewing ? ' warn' : '');
+    if (chipPrk) chipPrk.className = 'alpaca-state-chip' + (state.parked ? ' active' : '');
+
     // Device name
     const nameEl = document.getElementById('alpacaDeviceName');
     if (nameEl && info.name) nameEl.textContent = info.name;
+
+    // Driver info line
+    const driverEl = document.getElementById('alpacaDriverInfo');
+    if (driverEl && info.driverinfo) {
+        driverEl.textContent = info.driverinfo + (info.driverversion ? ' v' + info.driverversion : '');
+    }
+
 
     // Tracking button — teal = tracking on, white = tracking off
     const btn = document.getElementById('alpacaTrackingBtn');
@@ -6935,3 +7166,134 @@ updateStatus = async function() {
 };
 
 console.log('[Telescope] Module loaded (ALPACA support enabled)');
+
+// ============================================================================
+// ARMED STATUS BANNER + BACKGROUND TRANSIT CHECK
+// Prevents silent misses when only the telescope page is open (no map tab).
+//
+// Two complementary mechanisms:
+// 1. _pollArmedStatus() — every 10 s: checks /telescope/armed and shows a
+//    loud red banner if scope is in solar/lunar mode but detector is OFF.
+// 2. _bgTransitCheck()  — every 90 s: POSTs /telescope/transit/check so the
+//    server-side TransitRecorder schedules recordings for any HIGH transits
+//    even when the map tab is closed.
+// ============================================================================
+
+let _armedPollTimer   = null;
+let _transitCheckTimer = null;
+let _armedBannerShown = false;
+
+function _ensureArmedBanner() {
+    if (document.getElementById('armed-warning-banner')) return;
+    const banner = document.createElement('div');
+    banner.id = 'armed-warning-banner';
+    banner.style.cssText = [
+        'display:none',
+        'position:fixed',
+        'top:0',
+        'left:0',
+        'right:0',
+        'z-index:9999',
+        'background:#c0392b',
+        'color:#fff',
+        'font-weight:bold',
+        'font-size:15px',
+        'padding:10px 16px',
+        'text-align:center',
+        'cursor:pointer',
+        'box-shadow:0 3px 8px rgba(0,0,0,0.5)',
+        'animation:armed-pulse 1.5s ease-in-out infinite',
+    ].join(';');
+    banner.innerHTML = '⚠️ TRANSIT DETECTION IS OFF — aircraft crossing the Sun/Moon will NOT be captured. <u>Click to start detection.</u>';
+    banner.addEventListener('click', async () => {
+        try {
+            const res = await fetch('/telescope/detect/start', {method:'POST', headers:{'Content-Type':'application/json'}, body:'{}'});
+            if (res.ok) {
+                showStatus('Transit detection started ✓', 'success', 3000);
+                banner.style.display = 'none';
+                _armedBannerShown = false;
+            } else {
+                showStatus('Could not start detection — check console', 'error', 4000);
+            }
+        } catch(e) {
+            showStatus('Could not start detection: ' + e.message, 'error', 4000);
+        }
+    });
+    // Inject keyframe animation if not already present
+    if (!document.getElementById('armed-banner-style')) {
+        const style = document.createElement('style');
+        style.id = 'armed-banner-style';
+        style.textContent = '@keyframes armed-pulse{0%,100%{opacity:1}50%{opacity:.7}}';
+        document.head.appendChild(style);
+    }
+    document.body.prepend(banner);
+}
+
+async function _pollArmedStatus() {
+    try {
+        _ensureArmedBanner();
+        const res = await fetch('/telescope/armed', {cache:'no-store'});
+        if (!res.ok) return;
+        const data = await res.json();
+        const banner = document.getElementById('armed-warning-banner');
+        if (!banner) return;
+        if (data.warning) {
+            banner.style.display = 'block';
+            _armedBannerShown = true;
+        } else {
+            banner.style.display = 'none';
+            _armedBannerShown = false;
+        }
+    } catch (_) { /* non-fatal */ }
+}
+
+async function _bgTransitCheck() {
+    try {
+        const res = await fetch('/telescope/transit/check', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: '{}',
+            cache: 'no-store',
+        });
+        if (!res.ok) return;
+        const data = await res.json();
+        if (data.high_transits && data.high_transits.length > 0) {
+            const first = data.high_transits[0];
+            const eta   = first.eta_min < 1
+                ? `${Math.round(first.eta_min * 60)}s`
+                : `${first.eta_min.toFixed(1)} min`;
+            showStatus(
+                `🚨 HIGH transit: ${first.id || 'unknown'} — ETA ${eta} (sep ${first.sep_deg}°)`,
+                'warning',
+                8000
+            );
+            console.log('[TransitCheck] HIGH transits:', data.high_transits);
+        }
+    } catch (_) { /* non-fatal */ }
+}
+
+function _startArmedPolling() {
+    if (_armedPollTimer) return;
+    _pollArmedStatus();   // immediate first check
+    _armedPollTimer = setInterval(_pollArmedStatus, 10_000);     // every 10 s
+    _bgTransitCheck();    // immediate first check
+    _transitCheckTimer = setInterval(_bgTransitCheck, 90_000);   // every 90 s
+}
+
+function _stopArmedPolling() {
+    if (_armedPollTimer)   { clearInterval(_armedPollTimer);    _armedPollTimer   = null; }
+    if (_transitCheckTimer){ clearInterval(_transitCheckTimer); _transitCheckTimer = null; }
+    const banner = document.getElementById('armed-warning-banner');
+    if (banner) banner.style.display = 'none';
+}
+
+// Hook into the existing updateStatus wrapper so polling tracks connection state
+const _origUpdateStatus2 = updateStatus;
+updateStatus = async function() {
+    await _origUpdateStatus2();
+    if (isConnected && !_armedPollTimer) {
+        _startArmedPolling();
+    } else if (!isConnected && _armedPollTimer) {
+        _stopArmedPolling();
+    }
+};

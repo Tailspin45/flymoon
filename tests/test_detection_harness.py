@@ -54,7 +54,7 @@ from src.transit_analyzer import analyze_video
 DEFAULT_WIDTH = 1920
 DEFAULT_HEIGHT = 1080
 DEFAULT_FPS = 30.0
-DEFAULT_DURATION = 5.0  # seconds
+DEFAULT_DURATION = 10.0  # seconds (must be long enough for reference window + transit)
 DEFAULT_DISC_RADIUS = 300  # pixels
 DEFAULT_BLOB_SIZE = 12  # pixels (diameter)
 DEFAULT_BLOB_SPEED = 80  # pixels per second
@@ -307,8 +307,12 @@ def generate_test_video(
     start_frame = (
         int(params.start_offset * fps) if params.start_offset > 0 else int(fps * 1.5)
     )
-    # Ensure transit doesn't start during reference window warmup
-    start_frame = max(start_frame, int(fps * 1.2))
+    # Ensure transit doesn't start during reference window warmup.
+    # The analyzer uses min(REFERENCE_WINDOW, total_frames // 2) frames
+    # to build its baseline — any blob present in that window contaminates
+    # the reference and becomes invisible in the diff.
+    ref_window = min(90, max(10, total_frames // 2))  # match transit_analyzer.py
+    start_frame = max(start_frame, ref_window + 5)
 
     # Compute blob path
     path = _compute_transit_path(

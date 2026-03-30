@@ -648,7 +648,7 @@ class SeestarClient:
             If connection fails after all retry attempts
         """
         if self._connected:
-            logger.warning("Already connected")
+            logger.debug("Already connected")
             return True
 
         # Serialize concurrent connect() calls (e.g. background auto-connect

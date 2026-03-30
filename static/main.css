@@ -83,6 +83,30 @@ body {
     background: #5a7070;
 }
 
+/* Bottom-left nav toggle (Map/Scope switch) */
+.nav-toggle-btn {
+    position: fixed;
+    bottom: 16px;
+    left: 16px;
+    z-index: 1000;
+    background: linear-gradient(180deg, #5A5E66 0%, #4C5058 40%, #42464E 100%);
+    border: 1px solid #30343A;
+    border-radius: 4px;
+    color: #D8DCE2;
+    font-family: 'SF Mono', 'Menlo', 'Consolas', monospace;
+    font-size: 0.72em;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 1.8px;
+    padding: 8px 14px;
+    cursor: pointer;
+    box-shadow: 0 2px 6px rgba(0,0,0,0.4), inset 0 1px 0 rgba(255,255,255,0.1);
+}
+.nav-toggle-btn:hover {
+    background: linear-gradient(180deg, #686C74 0%, #5A5E66 40%, #4E525A 100%);
+    border-color: #039c9c;
+}
+
 .btn-help {
     background: none;
     border: none;
@@ -700,6 +724,21 @@ body {
 
 .quadrant-input[type=number] {
     -moz-appearance: textfield;
+}
+
+/* Info button positioned just below the quadrant circle */
+.quadrant-info-btn {
+    position: absolute;
+    bottom: -22px;
+    left: 50%;
+    transform: translateX(-50%);
+    font-size: 0.75em;
+    z-index: 15;
+    opacity: 0.7;
+    transition: opacity 0.15s;
+}
+.quadrant-info-btn:hover {
+    opacity: 1;
 }
 
 /* Position inputs diagonally from center, matching the visual in each pie quadrant */

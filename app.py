@@ -28,9 +28,27 @@ Environment Variables (see SETUP.md):
 @version 1.0
 """
 
+import os
+import sys
+from pathlib import Path
+
+# If a project venv exists, always run under it so deps (e.g. onnxruntime) match
+# `make setup` / requirements.txt — even when the shell forgot `source .venv/bin/activate`.
+_REPO = Path(__file__).resolve().parent
+_VENV_PY = (
+    _REPO / ".venv" / "Scripts" / "python.exe"
+    if os.name == "nt"
+    else _REPO / ".venv" / "bin" / "python"
+)
+if _VENV_PY.is_file():
+    try:
+        if Path(sys.executable).resolve() != _VENV_PY.resolve():
+            os.execv(str(_VENV_PY), [str(_VENV_PY)] + sys.argv)
+    except OSError:
+        pass
+
 import argparse
 import asyncio
-import os
 import time
 from concurrent.futures import ThreadPoolExecutor
 from datetime import date, datetime
@@ -138,23 +156,21 @@ app.config["SEND_FILE_MAX_AGE_DEFAULT"] = 0  # never cache static files
 app.secret_key = os.environ.get("SECRET_KEY", os.urandom(24).hex())
 
 # Compute a stable app version from git commit hash for cache-busting static assets.
-import os as _os
-import time as _time
 
 # Use the most recent mtime of any static asset so the cache busts on every
 # file save during development, even without a new commit.
-_static_dir = _os.path.join(_os.path.dirname(__file__), "static")
-_template_dir = _os.path.join(_os.path.dirname(__file__), "templates")
+_static_dir = os.path.join(os.path.dirname(__file__), "static")
+_template_dir = os.path.join(os.path.dirname(__file__), "templates")
 try:
     _mtimes = [
-        _os.path.getmtime(_os.path.join(d, f))
+        os.path.getmtime(os.path.join(d, f))
         for d in (_static_dir, _template_dir)
-        for f in _os.listdir(d)
+        for f in os.listdir(d)
         if f.endswith((".js", ".css", ".html"))
     ]
     APP_VERSION = str(int(max(_mtimes)))
 except Exception:
-    APP_VERSION = str(int(_time.time()))
+    APP_VERSION = str(int(time.time()))
 
 
 @app.context_processor

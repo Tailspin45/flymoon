@@ -256,8 +256,7 @@ async function _radarFastUpdate() {
         const activeIds = new Set();
         data.flights.forEach(f => {
             const lvl = parseInt(f.possibility_level ?? 0);
-            const sep = parseFloat(f.angular_separation ?? 999);
-            if ((lvl >= 1 || f.is_possible_transit === 1) && sep <= 12) {
+            if (lvl >= 1 || f.is_possible_transit === 1) {
                 window.pushInterceptPoint(f);
                 activeIds.add(String(f.id || f.name || '').trim().toUpperCase());
             }
@@ -859,8 +858,7 @@ async function softRefresh() {
             if (typeof window.pushInterceptPoint === 'function') {
                 recalcData.flights.forEach(f => {
                     const lvl = parseInt(f.possibility_level ?? 0);
-                    const sep = parseFloat(f.angular_separation ?? 999);
-                    if ((lvl >= 1 || f.is_possible_transit === 1) && sep <= 12) {
+                    if (lvl >= 1 || f.is_possible_transit === 1) {
                         window.pushInterceptPoint(f);
                     }
                 });
