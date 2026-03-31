@@ -182,14 +182,22 @@ def train(
         print("PyTorch is required for training.", file=sys.stderr)
         sys.exit(1)
 
-    # Apple MPS does not implement Conv3d — this 3D CNN must train on CUDA or CPU.
+    # MPS (Apple GPU) does not implement Conv3d — first forward throws at model(x).
     if device_str == "auto":
-        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        if torch.cuda.is_available():
+            device = torch.device("cuda")
+        else:
+            device = torch.device("cpu")
+            if torch.backends.mps.is_available():
+                print(
+                    "training.train_model: MPS skipped (Conv3d unsupported); using CPU.",
+                    file=sys.stderr,
+                )
     else:
         device = torch.device(device_str)
         if device.type == "mps":
             print(
-                "training.train_model: MPS does not support Conv3d; using CPU instead.",
+                "training.train_model: --device mps unsupported (Conv3d); using CPU.",
                 file=sys.stderr,
             )
             device = torch.device("cpu")
@@ -324,7 +332,11 @@ def main():
     ap.add_argument("--epochs", type=int, default=40)
     ap.add_argument("--batch", type=int, default=16)
     ap.add_argument("--lr", type=float, default=3e-4)
-    ap.add_argument("--device", default="auto", help="cpu | cuda | mps | auto")
+    ap.add_argument(
+        "--device",
+        default="auto",
+        help="cpu | cuda | auto (auto: cuda if available else cpu; mps not used — Conv3d)",
+    )
     args = ap.parse_args()
     train(
         data_dir=Path(args.data),

@@ -844,6 +844,7 @@
     <script src="{{ url_for('static', filename='leaflet-heat.js') }}"></script>
     <!-- OpenAIP key injected server-side to avoid async timing issues -->
     <script>window.OPENAIP_API_KEY = "{{ openaip_api_key|e }}";</script>
+    <script>window.FLYMOON_API_ORIGIN = {{ app_api_origin | tojson }};</script>
     <script src="{{ url_for('static', filename='telescope.js') }}?v={{ app_version }}" charset="utf-8"></script>
     <script src="{{ url_for('static', filename='map.js') }}?v={{ app_version }}" charset="utf-8"></script>
     <script src="{{ url_for('static', filename='app.js') }}?v={{ app_version }}" charset="utf-8"></script>

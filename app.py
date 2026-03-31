@@ -266,8 +266,15 @@ def calculate_adaptive_interval(flights: list) -> int:
 
 @app.route("/")
 def index():
+    # Lets the SPA build absolute API URLs (avoids broken relative fetch in odd embeds).
+    api_origin = request.host_url.rstrip("/")
+    script = (request.environ.get("SCRIPT_NAME") or "").rstrip("/")
+    if script:
+        api_origin = api_origin + script
     return render_template(
-        "index.html", openaip_api_key=os.getenv("OPENAIP_API_KEY", "")
+        "index.html",
+        openaip_api_key=os.getenv("OPENAIP_API_KEY", ""),
+        app_api_origin=api_origin,
     )
 
 
@@ -1167,7 +1174,18 @@ _cnn_retrain_lock = threading.Lock()
 @app.route("/api/cnn/retrain/status")
 def api_cnn_retrain_status():
     """Poll background CNN retrain job."""
-    return jsonify(dict(_cnn_retrain_state))
+    raw = dict(_cnn_retrain_state)
+    ls = raw.get("last_stats")
+    if isinstance(ls, dict):
+        try:
+            raw["last_stats"] = {str(k): int(v) for k, v in ls.items()}
+        except (TypeError, ValueError):
+            raw["last_stats"] = None
+    try:
+        return jsonify(raw)
+    except TypeError:
+        raw["last_stats"] = None
+        return jsonify(raw)
 
 
 @app.route("/api/cnn/retrain", methods=["POST"])

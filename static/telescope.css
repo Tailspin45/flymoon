@@ -2084,7 +2084,7 @@ canvas.video-thumb-canvas {
 .harness-mode-label { color: #2A2E34; font-size: 0.74em; }
 .harness-note       { color: #3A4048; font-size: 0.85em; }
 
-/* Live detection rows; collapsed when no rows (:empty) */
+/* Live detection rows; empty #detectEventLog hidden via :empty */
 .detect-event-log {
     max-height: 120px;
     overflow-y: auto;

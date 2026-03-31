@@ -6122,7 +6122,7 @@ let _detEventsPanel = null;
 
 /**
  * Build the detection-event-history panel inside detectPanel (always visible).
- * Fetches from /api/transit-events on first create; call _refreshDetectionEventHistory to reload.
+ * Loads /api/transit-events on first create; use _refreshDetectionEventHistory to reload.
  */
 async function ensureDetectionEventHistoryPanel() {
     const detectPanel = document.getElementById('detectPanel');
@@ -6164,6 +6164,9 @@ async function ensureDetectionEventHistoryPanel() {
     detectPanel.appendChild(_detEventsPanel);
     await _refreshDetectionEventHistory();
 }
+
+/** Legacy name — panel is always created from initTelescope; no-op if already present. */
+window.toggleDetectionEventHistory = ensureDetectionEventHistoryPanel;
 
 async function _refreshDetectionEventHistory() {
     const wrap = document.getElementById('detEventsTableWrap');
@@ -6341,6 +6344,21 @@ window._labelEventBtn = _labelEventBtn;
 
 let _cnnRetrainPollTimer = null;
 
+/** Absolute API URL (same tab origin, optional Flask SCRIPT_NAME / proxy base). */
+function _flymoonApiUrl(path) {
+    const p = path.startsWith('/') ? path : `/${path}`;
+    const base =
+        typeof window !== 'undefined' && window.FLYMOON_API_ORIGIN
+            ? String(window.FLYMOON_API_ORIGIN).replace(/\/$/, '')
+            : '';
+    if (base) return `${base}${p}`;
+    try {
+        return new URL(p, window.location.href).href;
+    } catch (_) {
+        return p;
+    }
+}
+
 async function _startCnnRetrain(btnEl) {
     if (btnEl && btnEl.disabled) return;
     const statusEl = document.getElementById('detEventsRetrainStatus');
@@ -6352,8 +6370,17 @@ async function _startCnnRetrain(btnEl) {
         statusEl.style.display = 'block';
         statusEl.textContent = 'Starting retrain…';
     }
+    const jsonHeaders = {
+        Accept: 'application/json',
+        'Content-Type': 'application/json',
+    };
     try {
-        const resp = await fetch('/api/cnn/retrain', { method: 'POST' });
+        const resp = await fetch(_flymoonApiUrl('/api/cnn/retrain'), {
+            method: 'POST',
+            headers: jsonHeaders,
+            body: '{}',
+            cache: 'no-store',
+        });
         const data = await resp.json().catch(() => ({}));
         if (!resp.ok) {
             if (statusEl) statusEl.textContent = data.error || resp.statusText || 'Failed to start';
@@ -6366,7 +6393,9 @@ async function _startCnnRetrain(btnEl) {
         if (_cnnRetrainPollTimer) clearInterval(_cnnRetrainPollTimer);
         _cnnRetrainPollTimer = setInterval(async () => {
             try {
-                const st = await fetch('/api/cnn/retrain/status');
+                const st = await fetch(_flymoonApiUrl('/api/cnn/retrain/status'), {
+                    cache: 'no-store',
+                });
                 if (!st.ok) return;
                 const s = await st.json();
                 if (statusEl) {
@@ -6390,8 +6419,12 @@ async function _startCnnRetrain(btnEl) {
         }, 1500);
     } catch (e) {
         console.error('[Retrain]', e);
+        const msg =
+            e instanceof TypeError && /fail|network|load/i.test(String(e.message || ''))
+                ? 'Cannot reach the Flymoon server. Check that it is running, then reload this page using the same host and port as in the address bar (e.g. 127.0.0.1 vs localhost must match how you opened the app).'
+                : String(e);
         if (statusEl) {
-            statusEl.textContent = String(e);
+            statusEl.textContent = msg;
             statusEl.style.color = '#e57373';
         }
         if (btnEl) {
