@@ -102,6 +102,7 @@ window.initTelescope = function() {
     ensureTuningUI();
     syncAlpacaPollSliderFromServer();
     ensureTransitRadar();
+    ensureDetectionEventHistoryPanel().catch(() => {});
 
     // Status polling (always poll while panel is open)
     statusPollInterval = setInterval(updateStatus, 2000);
@@ -5590,15 +5591,6 @@ function updateDetectionUI() {
     } else if (statsEl) {
         statsEl.style.display = 'none';
     }
-
-    // Update event log empty state when running with no detections
-    const log = document.getElementById('detectEventLog');
-    if (log) {
-        const empty = log.querySelector('.empty-state');
-        if (empty) {
-            empty.textContent = 'No detections yet';
-        }
-    }
 }
 
 /**
@@ -6127,21 +6119,15 @@ async function runHarnessValidate() {
 // ============================================================================
 
 let _detEventsPanel = null;
-let _detEventsFetched = false;
 
 /**
- * Create or toggle the detection-event-history panel inside detectPanel.
- * Fetches from /api/transit-events the first time it's opened.
+ * Build the detection-event-history panel inside detectPanel (always visible).
+ * Fetches from /api/transit-events on first create; call _refreshDetectionEventHistory to reload.
  */
-window.toggleDetectionEventHistory = async function() {
+async function ensureDetectionEventHistoryPanel() {
     const detectPanel = document.getElementById('detectPanel');
     if (!detectPanel) return;
-
-    if (_detEventsPanel) {
-        _detEventsPanel.style.display =
-            _detEventsPanel.style.display === 'none' ? '' : 'none';
-        return;
-    }
+    if (_detEventsPanel) return;
 
     _detEventsPanel = document.createElement('div');
     _detEventsPanel.id = 'detEventsPanel';
@@ -6152,7 +6138,7 @@ window.toggleDetectionEventHistory = async function() {
     header.className = 'det-events-header';
     const title = document.createElement('span');
     title.className = 'det-events-title';
-    title.textContent = '📋 Detection Event History (last 7 days)';
+    title.textContent = 'Detection Event History (last 7 days)';
     const retrainBtn = document.createElement('button');
     retrainBtn.type = 'button';
     retrainBtn.className = 'btn btn-secondary btn-compact det-events-retrain-btn';
@@ -6177,7 +6163,7 @@ window.toggleDetectionEventHistory = async function() {
 
     detectPanel.appendChild(_detEventsPanel);
     await _refreshDetectionEventHistory();
-};
+}
 
 async function _refreshDetectionEventHistory() {
     const wrap = document.getElementById('detEventsTableWrap');
@@ -6395,6 +6381,9 @@ async function _startCnnRetrain(btnEl) {
                     if (btnEl) {
                         btnEl.disabled = false;
                         btnEl.textContent = 'Retrain';
+                    }
+                    if (document.getElementById('detEventsTableWrap')) {
+                        _refreshDetectionEventHistory().catch(() => {});
                     }
                 }
             } catch (_) { /* ignore */ }

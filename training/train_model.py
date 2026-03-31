@@ -182,14 +182,17 @@ def train(
         print("PyTorch is required for training.", file=sys.stderr)
         sys.exit(1)
 
+    # Apple MPS does not implement Conv3d — this 3D CNN must train on CUDA or CPU.
     if device_str == "auto":
-        device = torch.device(
-            "mps"
-            if torch.backends.mps.is_available()
-            else "cuda" if torch.cuda.is_available() else "cpu"
-        )
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     else:
         device = torch.device(device_str)
+        if device.type == "mps":
+            print(
+                "training.train_model: MPS does not support Conv3d; using CPU instead.",
+                file=sys.stderr,
+            )
+            device = torch.device("cpu")
     print(f"Device: {device}")
 
     # Dataset

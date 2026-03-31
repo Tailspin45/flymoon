@@ -2084,10 +2084,15 @@ canvas.video-thumb-canvas {
 .harness-mode-label { color: #2A2E34; font-size: 0.74em; }
 .harness-note       { color: #3A4048; font-size: 0.85em; }
 
-/* Event log: shorter */
+/* Live detection rows; collapsed when no rows (:empty) */
 .detect-event-log {
-    max-height: 80px;
+    max-height: 120px;
+    overflow-y: auto;
+    font-size: 0.8em;
     margin-bottom: 4px;
+}
+.detect-event-log:empty {
+    display: none;
 }
 
 /* Detection event history panel — header + Retrain (Scope keycap styling) */
@@ -2365,12 +2370,6 @@ canvas.video-thumb-canvas {
     margin-bottom: 8px;
 }
 
-/* Detection event log */
-.detect-event-log {
-    max-height: 120px;
-    overflow-y: auto;
-    font-size: 0.8em;
-}
 .detect-event-row {
     display: flex;
     gap: 6px;

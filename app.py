@@ -663,6 +663,8 @@ def get_all_flights():
         # Run file-save and Telegram notification in a background thread so they
         # don't block the HTTP response.  Both are best-effort — failures are logged.
         def _background_tasks(flights_snapshot, send_notif):
+            if _bg_shutdown.is_set():
+                return
             if not test_mode:
                 try:
                     date_ = date.today().strftime("%Y%m%d")
@@ -685,6 +687,8 @@ def get_all_flights():
                 except Exception as e:
                     logger.error(f"Error saving possible transits: {e}")
             if send_notif:
+                if _bg_shutdown.is_set():
+                    return
                 try:
                     # Only send notifications for transits where the target is trackable
                     notifiable = [
@@ -700,6 +704,8 @@ def get_all_flights():
             if api_key:
                 now_ts = time.time()
                 for f in flights_snapshot:
+                    if _bg_shutdown.is_set():
+                        return
                     if f.get("possibility_level") != PossibilityLevel.HIGH.value:
                         continue
                     if f.get("target_below_min_alt"):
@@ -719,7 +725,10 @@ def get_all_flights():
                             "Accept": "application/json; charset=UTF-8",
                             "x-apikey": api_key,
                         }
-                        resp = _req.get(url=url, headers=headers, timeout=10)
+                        _http_timeout = 2 if _bg_shutdown.is_set() else 10
+                        resp = _req.get(
+                            url=url, headers=headers, timeout=_http_timeout
+                        )
                         if resp.status_code == 200:
                             track_json = resp.json()
                             from src.position import compute_track_velocity
@@ -1463,27 +1472,69 @@ if __name__ == "__main__":
     #
     # Do not call server.shutdown() directly inside the handler: on POSIX the
     # handler may run while the main thread is inside serve_forever(), which can
-    # deadlock.  Werkzeug also catches KeyboardInterrupt internally; a custom
-    # SIGINT handler that os._exit()s can interact badly with some terminals
-    # (e.g. IDE-integrated shells) where interrupt delivery looks "stuck".
+    # deadlock.  We spawn a helper thread that calls server.shutdown().
     #
-    # Spawning a short-lived thread to call shutdown() wakes serve_forever()
-    # reliably; then Werkzeug's finally block runs server_close().
+    # server.shutdown() blocks until serve_forever() exits. If the main thread is
+    # stuck in selector.select() (e.g. slow wake after SIGINT on some macOS /
+    # IDE terminals), closing the listening socket first unblocks the loop so
+    # shutdown() can complete.
     import os as _os_for_shutdown
 
+    _shutdown_n = [0]
+    _shutdown_watchdog_cancel = threading.Event()
+
     def _shutdown(_sig, _frame):
+        _shutdown_n[0] += 1
+        if _shutdown_n[0] >= 2 and _sig == signal.SIGINT:
+            try:
+                _os_for_shutdown.write(2, b"\nSecond interrupt -- forcing exit.\n")
+            except OSError:
+                pass
+            _os_for_shutdown._exit(1)
+
         _bg_shutdown.set()
+        try:
+            _bg_executor.shutdown(wait=False, cancel_futures=True)
+        except Exception:
+            pass
         try:
             _os_for_shutdown.write(2, b"\nShutting down...\n")
         except OSError:
             pass
 
+        _shutdown_watchdog_cancel.clear()
+
+        def _watchdog_exit():
+            if _shutdown_watchdog_cancel.wait(timeout=6.0):
+                return
+            try:
+                _os_for_shutdown.write(
+                    2, b"\nShutdown stalled -- forcing process exit.\n"
+                )
+            except OSError:
+                pass
+            _os_for_shutdown._exit(0)
+
         def _stop_server():
+            try:
+                sock = getattr(server, "socket", None)
+                if sock is not None:
+                    try:
+                        sock.close()
+                    except OSError:
+                        pass
+            except Exception:
+                pass
             try:
                 server.shutdown()
             except Exception:
                 pass
+            finally:
+                _shutdown_watchdog_cancel.set()
 
+        threading.Thread(
+            target=_watchdog_exit, name="flymoon-shutdown-watchdog", daemon=True
+        ).start()
         threading.Thread(target=_stop_server, name="flymoon-shutdown", daemon=True).start()
 
     signal.signal(signal.SIGINT, _shutdown)
@@ -1540,3 +1591,7 @@ if __name__ == "__main__":
         threading.Thread(target=_open_browser, daemon=True).start()
 
     server.serve_forever(poll_interval=0.5)
+    # Do not fall through to normal interpreter exit: CPython joins non-daemon
+    # ThreadPoolExecutor workers, which can sit in requests.get(timeout=10) for
+    # AeroAPI prefetch and delay return to the shell by ~10s after Ctrl-C.
+    os._exit(0)

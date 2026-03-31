@@ -130,10 +130,32 @@ def promote_labeled_unlabeled(repo_root: Path) -> Dict[str, int]:
 
 
 def promote_and_summarize(repo_root: Path) -> Tuple[Dict[str, int], str]:
+    unlabeled = repo_root / "data" / "training" / "unlabeled"
+    n_unlabeled_npz = (
+        len(list(unlabeled.glob("det_*.npz"))) if unlabeled.is_dir() else 0
+    )
+
     stats = promote_labeled_unlabeled(repo_root)
     msg = (
         f"+{stats['promoted_pos']} pos, +{stats['promoted_neg']} neg; "
         f"unlabeled skip {stats['skipped_no_label']}, "
         f"label fn/tn/skip {stats['skipped_unknown_label']}"
     )
+    # All zeros usually means no folder or no clips — not a failed match pass.
+    hints: list[str] = []
+    if not unlabeled.is_dir():
+        hints.append("create data/training/unlabeled for new clips")
+    elif n_unlabeled_npz == 0:
+        hints.append("no det_*.npz in unlabeled (clips save when detection runs)")
+    elif (
+        stats["promoted_pos"] == 0
+        and stats["promoted_neg"] == 0
+        and stats["skipped_unknown_label"] == 0
+        and stats["skipped_no_label"] > 0
+    ):
+        hints.append(
+            "clips present but no tp/fp label for that second in data/transit_labels.csv"
+        )
+    if hints:
+        msg = f"{msg} — {'; '.join(hints)}"
     return stats, msg
