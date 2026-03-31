@@ -68,6 +68,8 @@ TRANSIT_EVENTS_LOGFILENAME = "data/possible-transits/transit_events_{date_}.csv"
 TRANSIT_EVENTS_FIELDS = [
     "timestamp",  # ISO-8601 UTC datetime of the detection
     "detected_flight_id",  # callsign matched by enrichment (or empty)
+    "aircraft_type",  # from enrichment / same source as map table (or empty)
+    "origin_country",  # ADS-B origin country when available (matches map subtitle)
     "predicted_flight_id",  # callsign from prediction (empty until T08/T09 cross-link)
     "prediction_sep_deg",  # best predicted angular separation (° or empty)
     "detection_confirmed",  # 1 = enrichment found a nearby aircraft, 0 = unconfirmed

@@ -6199,11 +6199,23 @@ async function _refreshDetectionEventHistory() {
 
     const _LABEL_COLORS = { tp: '#4caf50', fp: '#f44336', fn: '#ff9800', tn: '#9e9e9e' };
     const _LABEL_ICONS  = { tp: '✅TP', fp: '❌FP', fn: '⚠️FN', tn: '⬜TN' };
+    const _LABEL_TITLES = {
+        tp: 'True positive — real aircraft transit; label as a correct detection for training.',
+        fp: 'False positive — not a real transit; trains the CNN to reject similar false alarms.',
+        fn: 'False negative — missed or mishandled transit; use when this row should count as a miss for training feedback.',
+    };
 
     const _escAttr = (s) => String(s)
         .replace(/&/g, '&amp;')
         .replace(/"/g, '&quot;')
         .replace(/</g, '&lt;');
+
+    const _normFlightId = (s) => {
+        if (typeof window !== 'undefined' && typeof window.normalizeAircraftDisplayId === 'function') {
+            return window.normalizeAircraftDisplayId(s);
+        }
+        return String(s || '').toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 7);
+    };
 
     /** YYYYMMDD_HHMMSS in *local* time — matches vid_* / det_* capture filenames (server uses datetime.now()). */
     const _captureFilenameStem = (v) => {
@@ -6232,10 +6244,24 @@ async function _refreshDetectionEventHistory() {
             });
             return `<span style="font-family:'SF Mono','Menlo','Consolas',monospace;font-size:0.92em;font-variant-numeric:tabular-nums;color:#c8e6ff" title="${_escAttr(tip)}">${stem}</span>`;
         }},
-        { key: 'detected_flight_id', label: 'Flight',       fmt: v => {
-            const t = (v && String(v).trim()) ? String(v).trim() : '';
-            if (!t) return '<span style="color:#777">—</span>';
-            return `<span style="font-weight:600;color:#e0e0e0">${_escAttr(t)}</span>`;
+        { key: 'detected_flight_id', label: 'Flight',       fmt: (v, ev) => {
+            const detected = _normFlightId(v || '');
+            const predicted = _normFlightId(ev.predicted_flight_id || '');
+            const typRaw = ev.aircraft_type != null ? String(ev.aircraft_type).trim() : '';
+            const typ = typRaw && typRaw !== 'N/A' ? typRaw : '';
+            const ctry = ev.origin_country != null ? String(ev.origin_country).trim() : '';
+            const primary = detected || predicted;
+            const subParts = [];
+            if (typ) subParts.push(typ);
+            if (ctry) subParts.push(ctry);
+            if (!primary && !subParts.length) return '<span style="color:#777">—</span>';
+            const gray = (parts) => parts.map((t) => `<span style="font-size:0.78em;color:#888">${_escAttr(t)}</span>`).join('');
+            if (!primary) {
+                const [a, ...rest] = subParts;
+                return `<span style="font-weight:600;color:#e0e0e0">${_escAttr(a)}</span>${rest.length ? `<br>${gray(rest)}` : ''}`;
+            }
+            const sub = subParts.length ? `<br>${gray(subParts)}` : '';
+            return `<span style="font-weight:600;color:#e0e0e0">${_escAttr(primary)}</span>${sub}`;
         }},
         { key: 'label',              label: 'Label',        fmt: (v, ev) => {
             const cur = v || '';
@@ -6245,7 +6271,9 @@ async function _refreshDetectionEventHistory() {
                 const active = cur === lbl;
                 const col = active ? _LABEL_COLORS[lbl] : '#333';
                 const bord = active ? _LABEL_COLORS[lbl] : '#444';
+                const tip = _escAttr(_LABEL_TITLES[lbl] || '');
                 return `<button type="button" data-ts="${tsA}" data-lbl="${lbl}" onclick="_labelEventBtn(this)"
+                    title="${tip}"
                     style="background:${col};border:1px solid ${bord};color:#fff;
                     padding:1px 5px;border-radius:3px;cursor:pointer;font-size:0.78em;
                     margin-right:2px;">${_LABEL_ICONS[lbl]}</button>`;

@@ -18,6 +18,15 @@ function trueToMagnetic(trueHeading, latitude, longitude) {
     }
 }
 
+/** Radar / log flight id: A–Z and 0–9 only, max 7 (matches backend). */
+function normalizeAircraftDisplayId(s) {
+    if (s == null || s === undefined) return '';
+    return String(s).toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 7);
+}
+if (typeof window !== 'undefined') {
+    window.normalizeAircraftDisplayId = normalizeAircraftDisplayId;
+}
+
 const COLUMN_NAMES = [
     "id",
     "aircraft_type",
@@ -197,7 +206,7 @@ function _radarUpdateBase(flights) {
     _radarBaseFlights = {};
     _radarBaseTs = Date.now();
     flights.forEach(f => {
-        const id = String(f.id || f.name || '').trim().toUpperCase();
+        const id = normalizeAircraftDisplayId(f.id || f.name || '');
         if (id) _radarBaseFlights[id] = {...f};
     });
 }
@@ -258,7 +267,7 @@ async function _radarFastUpdate() {
             const lvl = parseInt(f.possibility_level ?? 0);
             if (lvl >= 1 || f.is_possible_transit === 1) {
                 window.pushInterceptPoint(f);
-                activeIds.add(String(f.id || f.name || '').trim().toUpperCase());
+                activeIds.add(normalizeAircraftDisplayId(f.id || f.name || ''));
             }
         });
         // Only prune when the recalculation actually found some candidates to
@@ -503,7 +512,7 @@ function headingWord(deg) {
 
 function renderRichFlightRow(item, bodyTable) {
     const row = document.createElement('tr');
-    const normalizedId = String(item.id).trim().toUpperCase();
+    const normalizedId = normalizeAircraftDisplayId(item.id);
     const possibilityLevel = item.is_possible_transit === 1 ? parseInt(item.possibility_level) : 0;
     row.setAttribute('data-flight-id', normalizedId);
     row.setAttribute('data-possibility', possibilityLevel);
@@ -589,7 +598,7 @@ function renderRichFlightRow(item, bodyTable) {
     const type = (item.aircraft_type && item.aircraft_type !== 'N/A') ? item.aircraft_type : '';
     const country = item.origin_country || '';
     const acSub = [type, country].filter(Boolean).map(t => `<span style="font-size:0.78em;color:#888">${t}</span>`).join(' ');
-    acCell.innerHTML = `<strong style="color:#e0e0e0">${item.id}</strong>${acSub ? `<br>${acSub}` : ''}`;
+    acCell.innerHTML = `<strong style="color:#e0e0e0">${normalizeAircraftDisplayId(item.id)}</strong>${acSub ? `<br>${acSub}` : ''}`;
     row.appendChild(acCell);
 
     // Col 6 — Altitude
@@ -846,8 +855,8 @@ async function softRefresh() {
             // Merge recalculated transit candidates back into the full flight list
             // so non-transit aircraft remain visible on the map with updated positions
             const recalcById = {};
-            recalcData.flights.forEach(f => { recalcById[String(f.id).trim().toUpperCase()] = f; });
-            const mergedFlights = updatedFlights.map(f => recalcById[String(f.id).trim().toUpperCase()] || f);
+            recalcData.flights.forEach(f => { recalcById[normalizeAircraftDisplayId(f.id)] = f; });
+            const mergedFlights = updatedFlights.map(f => recalcById[normalizeAircraftDisplayId(f.id)] || f);
 
             // Update radar dead-reckoning base so fast updates continue from here.
             _radarUpdateBase(mergedFlights);
@@ -906,7 +915,7 @@ async function softRefresh() {
  */
 function updateFlightTable(flights) {
     flights.forEach(flight => {
-        const row = document.querySelector(`tr[data-flight-id="${flight.id}"]`);
+        const row = document.querySelector(`tr[data-flight-id="${normalizeAircraftDisplayId(flight.id)}"]`);
         if (row && flight.is_possible_transit === 1) {
             // Update time cell
             const timeCell = row.querySelector('td:nth-child(17)'); // Adjust column index if needed
@@ -926,7 +935,7 @@ function updateFlightTableFull(flights) {
     if (!bodyTable) return;
     
     flights.forEach(flight => {
-        const row = document.querySelector(`tr[data-flight-id="${flight.id}"]`);
+        const row = document.querySelector(`tr[data-flight-id="${normalizeAircraftDisplayId(flight.id)}"]`);
         if (!row) return; // Flight not in table
         
         // Update all relevant cells by column index
@@ -1255,7 +1264,7 @@ function updateTrackedFlight() {
     .then(data => {
         // Find the tracked flight in the response
         const trackedFlight = data.flights.find(f =>
-            String(f.id).trim().toUpperCase() === trackingFlightId
+            normalizeAircraftDisplayId(f.id) === trackingFlightId
         );
 
         if (!trackedFlight) {
@@ -1276,7 +1285,7 @@ function updateTrackedFlight() {
         }
 
         // Update radar base so fast update has fresh position for this flight
-        if (_radarBaseFlights) _radarBaseFlights[String(trackedFlight.id||'').trim().toUpperCase()] = {...trackedFlight};
+        if (_radarBaseFlights) _radarBaseFlights[normalizeAircraftDisplayId(trackedFlight.id||'')] = {...trackedFlight};
     })
     .catch(error => {
         console.error('Track mode update error:', error);
@@ -1297,7 +1306,7 @@ function updateFlightRow(row, flight) {
         if (value === null || value === undefined) {
             cell.textContent = "";
         } else if (column === "id") {
-            cell.textContent = value;
+            cell.textContent = normalizeAircraftDisplayId(value);
         } else if (column === "aircraft_type") {
             cell.textContent = value === "N/A" ? "" : value;
         } else if (column === "aircraft_elevation_feet") {
@@ -2255,8 +2264,8 @@ function fetchFlights() {
         // Deduplicate flights by ID for display (keep highest possibility level)
         const seenFlights = {};
         data.flights.forEach(flight => {
-            // Normalize ID (trim whitespace, consistent case)
-            const id = String(flight.id).trim().toUpperCase();
+            const id = normalizeAircraftDisplayId(flight.id);
+            if (!id) return;
             if (!seenFlights[id]) {
                 seenFlights[id] = flight;
             } else {
@@ -2271,7 +2280,10 @@ function fetchFlights() {
                 }
             }
         });
-        const filteredFlights = Object.values(seenFlights);
+        const filteredFlights = Object.entries(seenFlights).map(([id, flight]) => ({
+            ...flight,
+            id,
+        }));
         console.log(`Dedupe: ${data.flights.length} flights -> ${filteredFlights.length} unique`);
 
         // Radar base update — _radarFastUpdate handles ongoing pushInterceptPoint calls.
@@ -2359,7 +2371,7 @@ function fetchFlights() {
             const row = document.createElement('tr');
 
             // Store normalized flight ID, possibility level, and transit time for cross-referencing
-            const normalizedId = String(item.id).trim().toUpperCase();
+            const normalizedId = normalizeAircraftDisplayId(item.id);
             const possibilityLevel = item.is_possible_transit === 1 ? parseInt(item.possibility_level) : 0;
             row.setAttribute('data-flight-id', normalizedId);
             row.setAttribute('data-possibility', possibilityLevel);
@@ -2416,8 +2428,7 @@ function fetchFlights() {
                 if (value === null || value === undefined) {
                     val.textContent = "";
                 } else if (column === "id") {
-                    // Show just the ID
-                    val.textContent = value;
+                    val.textContent = normalizeAircraftDisplayId(value);
                 } else if (column === "aircraft_type") {
                     // Show aircraft type, hide "N/A"
                     val.textContent = value === "N/A" ? "" : value;
@@ -2662,7 +2673,7 @@ function updateAltitudeDisplay(flights) {
         });
 
         // Add click handler to flash aircraft on map
-        const normalizedId = String(flight.id).trim().toUpperCase();
+        const normalizedId = normalizeAircraftDisplayId(flight.id);
         line.addEventListener('click', () => {
             if (typeof flashAircraftMarker === 'function') {
                 flashAircraftMarker(normalizedId);

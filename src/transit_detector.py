@@ -45,6 +45,7 @@ import cv2
 import numpy as np
 
 from src import logger
+from src.flight_data import normalize_aircraft_display_id
 from src.constants import get_ffmpeg_path
 
 FFMPEG = get_ffmpeg_path() or "ffmpeg"
@@ -757,6 +758,11 @@ class TransitDetector:
         """
         import time as _time
 
+        flight_id = normalize_aircraft_display_id(flight_id)
+        if not flight_id:
+            logger.debug("[Detector] prime_for_event: empty id after normalize, skip")
+            return
+
         entry = {
             "flight_id": flight_id,
             "eta_s": eta_s,
@@ -1255,7 +1261,8 @@ class TransitDetector:
             return
         self._last_detection_time = now
 
-        predicted_fid = _active_prime["flight_id"] if _active_prime else None
+        _raw_prime = _active_prime["flight_id"] if _active_prime else ""
+        predicted_fid = normalize_aircraft_display_id(_raw_prime) or None
         self._ref_freeze_until = self._frame_idx + REF_FREEZE_FRAMES
 
         # Determine gate type for logging/sidecar
@@ -1451,14 +1458,12 @@ class TransitDetector:
         # Store event
         self.events.append(event)  # deque(maxlen=100) discards oldest automatically
 
-        # Write to transit event confirmation log (T05)
+        # Enrich then log in one thread so CSV sees flight_info (map-style id/type).
         threading.Thread(
-            target=self._log_event, args=(event,), name="detect-log", daemon=True
-        ).start()
-
-        # Enrich with flight data (async, non-blocking)
-        threading.Thread(
-            target=self._enrich_event, args=(event,), name="detect-enrich", daemon=True
+            target=self._enrich_then_log_event,
+            args=(event,),
+            name="detect-enrich-log",
+            daemon=True,
         ).start()
 
         # Auto-extract CNN training clip (non-blocking)
@@ -2001,6 +2006,14 @@ class TransitDetector:
     # Transit event log (T05)
     # ------------------------------------------------------------------
 
+    def _enrich_then_log_event(self, event: "DetectionEvent") -> None:
+        """Run flight enrichment, then append the event log row (avoids empty Flight column)."""
+        try:
+            self._enrich_event(event)
+        except Exception as exc:
+            logger.debug(f"[Detector] enrich-before-log: {exc}")
+        self._log_event(event)
+
     def _log_event(self, event: "DetectionEvent") -> None:
         """Write a detection event to the daily transit_events_*.csv log."""
         try:
@@ -2022,12 +2035,21 @@ class TransitDetector:
             _n_parts = []
             if pred_fid:
                 _n_parts.append("primed")
+            _atype = flight.get("aircraft_type", "") or ""
+            if _atype == "N/A":
+                _atype = ""
+            _country = (flight.get("origin_country") or "").strip()
+            _det_id = normalize_aircraft_display_id(flight.get("name", "") or "")
             row = {
                 "timestamp": event.timestamp.isoformat(),
-                "detected_flight_id": flight.get("name", ""),
-                "predicted_flight_id": pred_fid,
+                "detected_flight_id": _det_id,
+                "aircraft_type": _atype,
+                "origin_country": _country,
+                "predicted_flight_id": normalize_aircraft_display_id(pred_fid)
+                if pred_fid
+                else "",
                 "prediction_sep_deg": pred_sep,
-                "detection_confirmed": 1 if flight.get("name") else 0,
+                "detection_confirmed": 1 if _det_id else 0,
                 "confidence": event.confidence,
                 "confidence_score": getattr(event, "confidence_score", ""),  # D3
                 "signal_a": round(event.signal_a, 5),
@@ -2142,10 +2164,14 @@ class TransitDetector:
                             if sep < best_sep:
                                 best_sep = sep
                                 best = {
-                                    "name": flight.get("name", "Unknown"),
+                                    "name": normalize_aircraft_display_id(
+                                        flight.get("name", "") or ""
+                                    ),
                                     "aircraft_type": flight.get("aircraft_type", ""),
                                     "origin": flight.get("origin", ""),
                                     "destination": flight.get("destination", ""),
+                                    "origin_country": flight.get("origin_country")
+                                    or "",
                                     "elevation_feet": flight.get("elevation_feet", 0),
                                     "separation_deg": round(sep, 2),
                                     "target": target_name,
@@ -2190,7 +2216,7 @@ class TransitDetector:
                         continue
                     flights.append(
                         {
-                            "name": callsign.strip(),
+                            "name": normalize_aircraft_display_id(callsign),
                             "latitude": lat,
                             "longitude": lon,
                             "elevation": pos.get("altitude_m") or 10000,
@@ -2200,6 +2226,7 @@ class TransitDetector:
                             "aircraft_type": "",
                             "origin": "",
                             "destination": "",
+                            "origin_country": pos.get("origin_country") or "",
                         }
                     )
                 if flights:
@@ -2226,7 +2253,7 @@ class TransitDetector:
                         continue
                     flights.append(
                         {
-                            "name": callsign.strip(),
+                            "name": normalize_aircraft_display_id(callsign),
                             "latitude": lat,
                             "longitude": lon,
                             "elevation": pos.get("alt", 10000) or 10000,
@@ -2236,6 +2263,7 @@ class TransitDetector:
                             "aircraft_type": "",
                             "origin": "",
                             "destination": "",
+                            "origin_country": pos.get("origin_country") or "",
                         }
                     )
                 if flights:

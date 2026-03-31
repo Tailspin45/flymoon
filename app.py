@@ -96,7 +96,11 @@ from src.astro import CelestialObject, get_rise_set_times
 from src.config_wizard import ConfigWizard
 from src.constants import PossibilityLevel
 from src.flight_cache import get_cache
-from src.flight_data import save_possible_transits, sort_results
+from src.flight_data import (
+    normalize_aircraft_display_id,
+    save_possible_transits,
+    sort_results,
+)
 from src.position import compute_track_velocity, get_my_pos
 from src.seestar_client import TransitRecorder
 from src.telegram_notify import send_telegram_notification
@@ -568,8 +572,11 @@ def get_all_flights():
                     _fallback_bbox.long_upper_right,
                 )
                 for callsign, pos in combined_data.items():
+                    _fid = normalize_aircraft_display_id(callsign)
+                    if not _fid:
+                        continue
                     flight = {
-                        "id": callsign.strip(),
+                        "id": _fid,
                         "latitude": pos.get("latitude"),
                         "longitude": pos.get("longitude"),
                         "altitude": pos.get("altitude", 0),
@@ -607,7 +614,10 @@ def get_all_flights():
         # entry with the highest possibility_level for each flight ID.
         seen: dict = {}
         for f in all_flights:
-            fid = f.get("id") or f.get("name", "")
+            fid = normalize_aircraft_display_id(f.get("id") or f.get("name", ""))
+            if not fid:
+                continue
+            f["id"] = fid
             if fid not in seen or (f.get("possibility_level") or 0) > (
                 seen[fid].get("possibility_level") or 0
             ):
@@ -1052,6 +1062,8 @@ def api_transit_events():
                         {
                             "timestamp": row.get("timestamp", ""),
                             "detected_flight_id": row.get("detected_flight_id", ""),
+                            "aircraft_type": row.get("aircraft_type", ""),
+                            "origin_country": row.get("origin_country", ""),
                             "predicted_flight_id": row.get("predicted_flight_id", ""),
                             "prediction_sep_deg": row.get("prediction_sep_deg", ""),
                             "detection_confirmed": row.get("detection_confirmed", ""),

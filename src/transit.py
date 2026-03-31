@@ -28,7 +28,12 @@ from src.constants import (
     get_aeroapi_key,
 )
 from src.flight_cache import get_cache
-from src.flight_data import get_flight_data, load_existing_flight_data, parse_fligh_data
+from src.flight_data import (
+    get_flight_data,
+    load_existing_flight_data,
+    normalize_aircraft_display_id,
+    parse_fligh_data,
+)
 
 # ── FA enrichment cache ──────────────────────────────────────────────────────
 # Per-callsign metadata cache (aircraft type, airline, origin, destination).
@@ -52,6 +57,9 @@ def _enrich_from_fa(callsign: str, api_key: str) -> dict:
     FA_ENRICHMENT_TTL seconds so repeated HIGH-prob alerts incur no extra cost.
     Returns {} silently on any error.
     """
+    callsign = normalize_aircraft_display_id(callsign)
+    if not callsign:
+        return {}
     if not api_key:
         return {}
 
@@ -186,7 +194,7 @@ def _parse_opensky_flight(callsign: str, os_data: dict) -> dict:
             elev_change = "descending"
 
     return {
-        "name": callsign,
+        "name": normalize_aircraft_display_id(callsign),
         "aircraft_type": "N/A",  # filled by FA enrichment on HIGH transit
         "fa_flight_id": "",
         "origin": "N/A",
@@ -473,7 +481,9 @@ def check_transit(
             min_sep_seen = sep
             _min_sep_sigma_m = _step_sigma_m
             response = {
-                "id": flight.get("name") or flight.get("id", ""),
+                "id": normalize_aircraft_display_id(
+                    flight.get("name") or flight.get("id", "")
+                ),
                 "fa_flight_id": flight.get("fa_flight_id", ""),
                 "origin": flight.get("origin", ""),
                 "destination": flight.get("destination", ""),
@@ -546,7 +556,9 @@ def check_transit(
 
     # Return closest approach data even if threshold not met
     result = {
-        "id": flight.get("name") or flight.get("id", ""),
+        "id": normalize_aircraft_display_id(
+            flight.get("name") or flight.get("id", "")
+        ),
         "fa_flight_id": flight.get("fa_flight_id", ""),
         "origin": flight.get("origin", ""),
         "destination": flight.get("destination", ""),

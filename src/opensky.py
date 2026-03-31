@@ -27,6 +27,7 @@ import requests
 from dotenv import load_dotenv
 
 from src import logger
+from src.flight_data import normalize_aircraft_display_id
 
 load_dotenv()
 
@@ -207,6 +208,9 @@ def fetch_opensky_positions(
         callsign = (s[1] or "").strip()
         if not callsign or callsign.startswith("-") or not callsign.isprintable():
             continue
+        norm_id = normalize_aircraft_display_id(callsign)
+        if not norm_id:
+            continue
 
         last_contact = s[4]
         if last_contact is None or (now - last_contact) > MAX_POSITION_AGE:
@@ -226,7 +230,7 @@ def fetch_opensky_positions(
         vert_rate = s[11]  # m/s (may be None)
         on_ground = s[8]
 
-        result[callsign] = {
+        result[norm_id] = {
             "icao24": s[0],
             "lat": float(lat),
             "lon": float(lon),

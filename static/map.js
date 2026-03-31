@@ -12,6 +12,11 @@
  * @version 1.0
  */
 
+function normalizeAircraftDisplayId(s) {
+    if (s == null || s === undefined) return '';
+    return String(s).toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 7);
+}
+
 let map = null;
 let observerMarker = null;
 let boundingBoxLayer = null;
@@ -217,9 +222,10 @@ function flashAltitudeBar(flightId) {
     bars.forEach(bar => {
         const idLabel = bar.querySelector('.altitude-bar-id');
         if (idLabel) {
-            const barId = idLabel.textContent.trim().toUpperCase();
-            console.log('Checking bar:', barId, 'against', flightId.toUpperCase());
-            if (barId === flightId.toUpperCase()) {
+            const barId = normalizeAircraftDisplayId(idLabel.textContent);
+            const want = normalizeAircraftDisplayId(flightId);
+            console.log('Checking bar:', barId, 'against', want);
+            if (barId === want) {
                 console.log('Match found! Flashing bar for', flightId);
                 bar.classList.remove('flash-altitude-bar');
                 void bar.offsetWidth; // Trigger reflow
@@ -589,7 +595,7 @@ function addHeadingArrow(flight, flightId, color) {
 function updateSingleAircraftMarker(flight) {
     if (!map || !aircraftLayer) return;
 
-    const normalizedId = String(flight.id).trim().toUpperCase();
+    const normalizedId = normalizeAircraftDisplayId(flight.id);
 
     // Remove existing marker and heading arrow for this flight
     if (aircraftMarkers[normalizedId]) {
@@ -678,7 +684,7 @@ function updateAircraftMarkers(flights, observerLat, observerLon, isFullRefresh 
             // Keep track if flight still in data
             if (currentRouteLayer) {
                 const activeId = currentRouteLayer.flightId;
-                const stillPresent = flights.some(f => String(f.id).trim().toUpperCase() === activeId);
+                const stillPresent = flights.some(f => normalizeAircraftDisplayId(f.id) === activeId);
                 if (!stillPresent) {
                     map.removeLayer(currentRouteLayer);
                     currentRouteLayer = null;
@@ -704,7 +710,7 @@ function updateAircraftMarkers(flights, observerLat, observerLon, isFullRefresh 
         });
 
         // Remove ghost dots for aircraft no longer in the flight data
-        const activeIds = new Set(flights.map(f => String(f.id).trim().toUpperCase()));
+        const activeIds = new Set(flights.map(f => normalizeAircraftDisplayId(f.id)));
         Object.keys(ghostMarkers).forEach(id => {
             if (!activeIds.has(id)) {
                 ghostMarkers[id].forEach(dot => ghostLayer.removeLayer(dot));
@@ -755,7 +761,7 @@ function updateAircraftMarkers(flights, observerLat, observerLon, isFullRefresh 
             marker.getElement()?.style.setProperty('filter', `drop-shadow(0 0 8px ${color}) drop-shadow(0 0 4px rgba(0,0,0,0.8))`);
 
             // Store normalized ID for cross-referencing
-            const normalizedId = String(flightId).trim().toUpperCase();
+            const normalizedId = normalizeAircraftDisplayId(flightId);
             marker.flightId = normalizedId;
 
             // Click handler to show route/track and flash table row
@@ -875,7 +881,7 @@ function updateAltitudeOverlay(flights) {
 
         // Click to flash on map and table, and show route/track
         const clickHandler = () => {
-            const normalizedId = String(flight.id).trim().toUpperCase();
+            const normalizedId = normalizeAircraftDisplayId(flight.id);
 
             // Show route/track
             if (typeof toggleFlightRouteTrack === 'function' && flight.fa_flight_id) {

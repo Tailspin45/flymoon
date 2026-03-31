@@ -1,13 +1,26 @@
 import csv
 import json
 import os
+import string
 from datetime import datetime
 from http import HTTPStatus
-from typing import List
+from typing import List, Optional
 
 import requests
 
 from src.position import AreaBoundingBox
+
+# Display / radar flight ID: uppercase A–Z and digits only, max 7 (ICAO-style).
+_AIRCRAFT_ID_MAX_LEN = 7
+_AIRCRAFT_ID_CHARS = frozenset(string.ascii_uppercase + string.digits)
+
+
+def normalize_aircraft_display_id(raw: Optional[str]) -> str:
+    """Normalize callsign-style id for radar, logs, and cross-links."""
+    if raw is None:
+        return ""
+    s = "".join(c for c in str(raw).upper() if c in _AIRCRAFT_ID_CHARS)
+    return s[:_AIRCRAFT_ID_MAX_LEN]
 
 # Fixed log schema — stable across code changes; waypoints excluded (too large, not useful for analysis)
 TRANSIT_LOG_FIELDS = [
@@ -64,7 +77,7 @@ def parse_fligh_data(flight_data: dict):
     has_destination = isinstance(flight_data.get("destination"), dict)
 
     return {
-        "name": flight_data["ident"],
+        "name": normalize_aircraft_display_id(flight_data.get("ident", "")),
         "aircraft_type": flight_data.get("aircraft_type", "N/A"),
         "fa_flight_id": flight_data.get("fa_flight_id", ""),
         "origin": flight_data["origin"]["city"],

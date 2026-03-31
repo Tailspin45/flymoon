@@ -32,6 +32,7 @@ from typing import Dict, Optional
 import requests
 
 from src import logger
+from src.flight_data import normalize_aircraft_display_id
 
 # ---------------------------------------------------------------------------
 # Request configuration
@@ -557,15 +558,18 @@ def fetch_multi_source_positions(
 
             source_counts[name] = len(batch)
             for callsign, pos in batch.items():
-                existing = merged.get(callsign)
+                norm = normalize_aircraft_display_id(callsign)
+                if not norm:
+                    continue
+                existing = merged.get(norm)
                 if existing is None:
-                    merged[callsign] = pos
+                    merged[norm] = pos
                 else:
                     # Prefer the fresher position
                     if (pos.get("last_contact") or 0) > (
                         existing.get("last_contact") or 0
                     ):
-                        merged[callsign] = pos
+                        merged[norm] = pos
     except FuturesTimeoutError:
         completed = [n for f, n in futures.items() if f.done()]
         pending = [n for f, n in futures.items() if not f.done()]
