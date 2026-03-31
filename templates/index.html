@@ -137,7 +137,13 @@
 
     <div id="mapContainer" style="display: none;">
         <div style="display: flex; align-items: flex-start; gap: 0;">
-            <div id="map" style="height: 500px; flex: 1; margin: 20px 0;"></div>
+            <div class="map-pane-with-scope" style="position: relative; flex: 1; min-width: 0; margin: 20px 0;">
+                <div id="map" style="height: 500px; width: 100%;"></div>
+                <button type="button" class="nav-toggle-btn nav-toggle-on-map" onclick="showPanel('telescope')" title="Scope Control (Ctrl/Cmd+S)">
+                    Scope
+                    <span id="telescopeStatusLight" style="display:inline-block; width:8px; height:8px; border-radius:50%; background-color:#999; margin-left:6px; vertical-align:middle;" title="Telescope disconnected"></span>
+                </button>
+            </div>
             <!-- Altitude Overlay -->
             <div id="altitudeOverlay">
                 <div class="altitude-header">Aircraft Altitudes</div>
@@ -271,10 +277,6 @@
 
     <audio id="alertSound" src="{{ url_for('static', filename='sounds/tissman-alert1-maximum-distortion.mp3') }}" preload="auto">
     </audio>
-    <button class="nav-toggle-btn" onclick="showPanel('telescope')" title="Scope Control (Ctrl/Cmd+S)">
-        Scope
-        <span id="telescopeStatusLight" style="display:inline-block; width:8px; height:8px; border-radius:50%; background-color:#999; margin-left:6px; vertical-align:middle;" title="Telescope disconnected"></span>
-    </button>
 </div><!-- #mapView -->
 
 <!-- Info / Help modal -->
@@ -680,12 +682,6 @@
                         <div class="alpaca-state-chip" id="alpacaChipSlw"><span class="alpaca-state-dot" id="alpacaDotSlw"></span>SLW</div>
                         <div class="alpaca-state-chip" id="alpacaChipPrk"><span class="alpaca-state-dot" id="alpacaDotPrk"></span>PRK</div>
                     </div>
-                    <div class="alpaca-device-name" id="alpacaDeviceName"></div>
-                    <div class="alpaca-device-name" id="alpacaDriverInfo" style="opacity:0.8;"></div>
-                    <div class="button-grid-2x2" style="margin-top:4px;">
-                        <button class="btn btn-secondary btn-compact alpaca-btn-track btn-mode btn-toggle" onclick="alpacaToggleTracking()" id="alpacaTrackingBtn">Track</button>
-                        <button class="btn btn-compact btn-danger alpaca-btn-abort" onclick="alpacaAbortSlew()">Abort</button>
-                    </div>
                 </div>
 
                 <!-- GoTo + Slew combined -->
@@ -695,28 +691,15 @@
                     <div style="display:flex; gap:8px; align-items:flex-start;">
                         <!-- GoTo inputs — left side -->
                         <div style="flex:1; min-width:0;">
-                            <div style="font-size:0.68em; color:#6a7a85; margin-bottom:3px; display:flex; gap:8px; font-family:'SF Mono',monospace;">
-                                <span>ALT <span id="scopeAlt" style="color:#b8e8ff; font-weight:600;">—</span>&deg;</span>
-                                <span>AZ <span id="scopeAz" style="color:#b8e8ff; font-weight:600;">—</span>&deg;</span>
-                            </div>
+                            <input type="radio" name="gotoMode" id="gotoModeAltaz" value="altaz" checked style="display:none;">
                             <div class="input-row" style="margin-bottom:3px;">
-                                <label class="radio-label" style="font-size:0.72em;">
-                                    <input type="radio" name="gotoMode" id="gotoModeAltaz" value="altaz" checked onchange="gotoModeChanged()"> Alt/Az
-                                </label>
-                                <label class="radio-label" style="font-size:0.72em; margin-left:6px;">
-                                    <input type="radio" name="gotoMode" id="gotoModeRadec" value="radec" onchange="gotoModeChanged()"> RA/Dec
-                                </label>
-                            </div>
-                            <div id="gotoAltazInputs">
-                                <div class="input-row" style="margin-bottom:3px;">
-                                    <input type="number" id="gotoAlt" class="input-compact" placeholder="Alt°" step="0.1" min="-90" max="90" style="flex:1;">
-                                    <input type="number" id="gotoAz" class="input-compact" placeholder="Az°" step="0.1" min="0" max="360" style="flex:1;">
+                                <div style="flex:1; display:flex; flex-direction:column; gap:1px;">
+                                    <span style="font-size:0.58em; font-weight:700; color:#8A9298; letter-spacing:1.5px; text-transform:uppercase; font-family:'SF Mono','Menlo','Consolas',monospace;">ALT</span>
+                                    <input type="number" id="gotoAlt" class="input-compact" placeholder="Alt°" step="0.1" min="-90" max="90" style="width:100%;">
                                 </div>
-                            </div>
-                            <div id="gotoRadecInputs" style="display:none;">
-                                <div class="input-row" style="margin-bottom:3px;">
-                                    <input type="number" id="gotoRa" class="input-compact" placeholder="RA h" step="0.001" min="0" max="24" style="flex:1;">
-                                    <input type="number" id="gotoDec" class="input-compact" placeholder="Dec°" step="0.1" min="-90" max="90" style="flex:1;">
+                                <div style="flex:1; display:flex; flex-direction:column; gap:1px;">
+                                    <span style="font-size:0.58em; font-weight:700; color:#8A9298; letter-spacing:1.5px; text-transform:uppercase; font-family:'SF Mono','Menlo','Consolas',monospace;">AZ</span>
+                                    <input type="number" id="gotoAz" class="input-compact" placeholder="Az°" step="0.1" min="0" max="360" style="width:100%;">
                                 </div>
                             </div>
                             <button class="btn btn-primary btn-compact" style="width:100%; letter-spacing:1px;" onclick="gotoExecute()">Execute GoTo</button>
@@ -733,14 +716,6 @@
                             <button class="btn btn-secondary btn-dpad" onmousedown="nudgeStart(90)" onmouseup="nudgeStop()" onmouseleave="nudgeStop()" title="Down">▼</button>
                             <div></div>
                         </div>
-                    </div>
-                    <div style="display:flex; gap:6px; margin-top:3px; justify-content:flex-end;">
-                        <label class="radio-label" style="font-size:0.72em;">
-                            <input type="radio" name="nudgeSpeed" value="slow" checked> Slow
-                        </label>
-                        <label class="radio-label" style="font-size:0.72em;">
-                            <input type="radio" name="nudgeSpeed" value="fast"> Fast
-                        </label>
                     </div>
                 </div>
 
@@ -810,27 +785,6 @@
             </div>
         </div>
 
-        <!-- Bottom Filmstrip -->
-        <div class="filmstrip">
-            <div class="filmstrip-header">
-                <span class="filmstrip-title">📁 Captured Files (<span id="fileCount">0</span>)</span>
-                <div class="filmstrip-nav">
-                    <button class="filmstrip-nav-btn" onclick="filmstripScrollTo('start')" title="Go to newest">|&laquo;</button>
-                    <button class="filmstrip-nav-btn" onclick="filmstripScroll(-1)" title="Scroll left">&lsaquo;</button>
-                    <button class="filmstrip-nav-btn" onclick="showPanel('map')" title="Back to Map (Ctrl/Cmd+M)">MAP</button>
-                    <button class="filmstrip-nav-btn" onclick="filmstripScroll(1)" title="Scroll right">&rsaquo;</button>
-                    <button class="filmstrip-nav-btn" onclick="filmstripScrollTo('end')" title="Go to oldest">&raquo;|</button>
-                </div>
-                <div class="filmstrip-controls">
-                    <button id="refreshFilesBtn" class="btn-icon" onclick="refreshFiles()" disabled title="Refresh">🔄</button>
-                    <button id="expandFilesBtn" class="btn-icon" onclick="toggleFilesModal()" disabled title="Show all files">⛶</button>
-                </div>
-            </div>
-            <div id="filmstripList" class="filmstrip-list">
-                <p class="empty-state">No files captured yet</p>
-            </div>
-        </div>
-
         <!-- Full Files Modal -->
         <div id="filesModal" class="modal" style="display: none;">
             <div class="modal-content">
@@ -866,6 +820,27 @@
                 <div id="fileViewerBody" style="display: flex; align-items: center; justify-content: center; flex: 1; min-height: 0; overflow: auto; gap: 0;">
                 </div>
             </div>
+        </div>
+    </div>
+
+    <!-- Bottom filmstrip: sibling of .telescope-container so width is not tied to inner grid overflow -->
+    <div class="filmstrip">
+        <div class="filmstrip-header">
+            <span class="filmstrip-title">📁 Captured Files (<span id="fileCount">0</span>)</span>
+            <div class="filmstrip-nav">
+                <button class="filmstrip-nav-btn" onclick="filmstripScrollTo('start')" title="Go to newest">|&laquo;</button>
+                <button type="button" class="filmstrip-nav-btn" onpointerdown="filmstripNavDown(-1, event)" onkeydown="filmstripNavKey(event, -1)" title="Scroll left (hold to scan)">&lsaquo;</button>
+                <button class="filmstrip-nav-btn" onclick="showPanel('map')" title="Back to Map (Ctrl/Cmd+M)">MAP</button>
+                <button type="button" class="filmstrip-nav-btn" onpointerdown="filmstripNavDown(1, event)" onkeydown="filmstripNavKey(event, 1)" title="Scroll right (hold to scan)">&rsaquo;</button>
+                <button class="filmstrip-nav-btn" onclick="filmstripScrollTo('end')" title="Go to oldest">&raquo;|</button>
+            </div>
+            <div class="filmstrip-controls">
+                <button id="refreshFilesBtn" class="btn-icon" onclick="refreshFiles()" disabled title="Refresh">🔄</button>
+                <button id="expandFilesBtn" class="btn-icon" onclick="toggleFilesModal()" disabled title="Show all files">⛶</button>
+            </div>
+        </div>
+        <div id="filmstripList" class="filmstrip-list">
+            <p class="empty-state">No files captured yet</p>
         </div>
     </div>
 </div><!-- #telescopeView -->

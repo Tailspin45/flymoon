@@ -49,6 +49,7 @@ if _VENV_PY.is_file():
 
 import argparse
 import asyncio
+import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 from datetime import date, datetime
@@ -139,6 +140,9 @@ def _evict_expired_caches() -> None:
 # are queued by the executor's internal queue (also bounded in Python ≥3.12 but
 # effectively fine here since tasks complete in seconds).
 _bg_executor = ThreadPoolExecutor(max_workers=4, thread_name_prefix="flymoon-bg")
+# Set from SIGINT/SIGTERM handler so /flights skips submit during teardown (avoids
+# "cannot schedule new futures after shutdown" when a request outlives the server).
+_bg_shutdown = threading.Event()
 
 # Global test/demo mode flag
 test_mode = False
@@ -730,9 +734,14 @@ def get_all_flights():
                     except Exception as e:
                         logger.error(f"[BG] Track prefetch failed for {fid}: {e}")
 
-        _bg_executor.submit(
-            _background_tasks, list(data["flights"]), has_send_notification
-        )
+        if not _bg_shutdown.is_set():
+            try:
+                _bg_executor.submit(
+                    _background_tasks, list(data["flights"]), has_send_notification
+                )
+            except RuntimeError:
+                # Executor already shut down (interpreter exit or rare race).
+                pass
 
         # Schedule automatic recordings for high-probability transits
         transit_recorder = get_transit_recorder()
@@ -1358,17 +1367,32 @@ if __name__ == "__main__":
 
     server = ReusableWSGIServer("0.0.0.0", port, app, handler=WSGIRequestHandler)
 
-    # Capture `os` in the closure now — import inside a signal handler can
-    # block on the import lock if another thread is mid-import when Ctrl-C
-    # fires.  Similarly, print() acquires the stdout lock, so background
-    # threads printing at the same instant cause the handler to deadlock
-    # before reaching os._exit().  os.write() to fd 2 (stderr) is
-    # async-signal-safe and never blocks.
+    # Ctrl-C / SIGTERM: stop the WSGI server gracefully.
+    #
+    # Do not call server.shutdown() directly inside the handler: on POSIX the
+    # handler may run while the main thread is inside serve_forever(), which can
+    # deadlock.  Werkzeug also catches KeyboardInterrupt internally; a custom
+    # SIGINT handler that os._exit()s can interact badly with some terminals
+    # (e.g. IDE-integrated shells) where interrupt delivery looks "stuck".
+    #
+    # Spawning a short-lived thread to call shutdown() wakes serve_forever()
+    # reliably; then Werkzeug's finally block runs server_close().
     import os as _os_for_shutdown
 
-    def _shutdown(sig, frame):
-        _os_for_shutdown.write(2, b"\nShutting down...\n")
-        _os_for_shutdown._exit(0)
+    def _shutdown(_sig, _frame):
+        _bg_shutdown.set()
+        try:
+            _os_for_shutdown.write(2, b"\nShutting down...\n")
+        except OSError:
+            pass
+
+        def _stop_server():
+            try:
+                server.shutdown()
+            except Exception:
+                pass
+
+        threading.Thread(target=_stop_server, name="flymoon-shutdown", daemon=True).start()
 
     signal.signal(signal.SIGINT, _shutdown)
     signal.signal(signal.SIGTERM, _shutdown)
@@ -1423,4 +1447,4 @@ if __name__ == "__main__":
 
         threading.Thread(target=_open_browser, daemon=True).start()
 
-    server.serve_forever()
+    server.serve_forever(poll_interval=0.5)

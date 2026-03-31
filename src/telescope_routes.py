@@ -145,6 +145,7 @@ class MockSeestarClient:
         self._connected = False
         self._recording = False
         self._recording_start_time: Optional[datetime] = None
+        self._focus_pos: Optional[int] = 1670
         self._viewing_mode: Optional[str] = (
             None  # sun | moon | scenery — mirrors SeestarClient
         )
@@ -329,8 +330,16 @@ class MockSeestarClient:
         return {"result": "ok"}
 
     def move_step_focus(self, steps: int):
-        logger.info(f"[Mock] move_step_focus steps={steps}")
-        return {"result": "ok"}
+        base = self._focus_pos if self._focus_pos is not None else 1670
+        self._focus_pos = int(base) + int(steps)
+        logger.info(f"[Mock] move_step_focus steps={steps} -> {self._focus_pos}")
+        return {"focus_pos": self._focus_pos}
+
+    def get_focuser_position(self, use_fallbacks: bool = True) -> Optional[int]:
+        return self._focus_pos
+
+    def refresh_focus_throttled(self, min_interval_sec: float = 5.0) -> None:
+        pass
 
     def set_gain(self, gain):
         logger.info(f"[Mock] set_gain {gain}")
@@ -1434,6 +1443,13 @@ def get_telescope_status():
 
         backend_recording = bool(getattr(client, "_recording", False))
         recording_active = _recording_state["active"] or backend_recording
+
+        # Keep focus odometer fresh (Seestar: get_focuser_position), throttled on client.
+        if not is_mock_mode() and hasattr(client, "refresh_focus_throttled"):
+            try:
+                client.refresh_focus_throttled(min_interval_sec=3.0)
+            except Exception as _fe:
+                logger.debug(f"[Telescope] refresh_focus_throttled: {_fe}")
 
         # Merge ALPACA state if available
         alpaca = get_alpaca_client()
@@ -3084,6 +3100,52 @@ def alpaca_tracking():
         return handle_error(e)
 
 
+def alpaca_settings():
+    """GET/PATCH /telescope/alpaca/settings — telemetry poll interval (Tune panel)."""
+    alpaca = get_alpaca_client()
+    if request.method == "GET":
+        if not alpaca:
+            return (
+                jsonify(
+                    {
+                        "poll_interval_sec": 5.0,
+                        "alpaca_configured": False,
+                    }
+                ),
+                200,
+            )
+        return (
+            jsonify(
+                {
+                    "poll_interval_sec": alpaca.get_poll_interval(),
+                    "alpaca_configured": True,
+                }
+            ),
+            200,
+        )
+    # PATCH
+    if not alpaca:
+        return (
+            jsonify({"error": "ALPACA not enabled (set ENABLE_SEESTAR=true)"}),
+            503,
+        )
+    data = request.get_json(force=True, silent=True) or {}
+    if "poll_interval_sec" in data:
+        try:
+            alpaca.set_poll_interval(float(data["poll_interval_sec"]))
+        except (TypeError, ValueError):
+            return jsonify({"error": "invalid poll_interval_sec"}), 400
+    return (
+        jsonify(
+            {
+                "success": True,
+                "poll_interval_sec": alpaca.get_poll_interval(),
+            }
+        ),
+        200,
+    )
+
+
 def alpaca_abort_slew():
     """POST /telescope/alpaca/abort — abort any in-progress slew."""
     global _ctrl_state, _pre_nudge_tracking
@@ -3501,6 +3563,12 @@ def register_routes(app):
         "alpaca_abort_slew",
         alpaca_abort_slew,
         methods=["POST"],
+    )
+    app.add_url_rule(
+        "/telescope/alpaca/settings",
+        "alpaca_settings",
+        alpaca_settings,
+        methods=["GET", "PATCH"],
     )
 
     logger.info("[Telescope] Routes registered (ALPACA endpoints included)")

@@ -56,9 +56,33 @@ class AlpacaClient:
         # Polling thread for telemetry
         self._poll_thread: Optional[threading.Thread] = None
         self._poll_running = False
-        self._poll_interval = 2.0  # seconds
+        # Seestar ALPACA can stall if we hit it with many GETs too often (8+ per cycle).
+        _env_pi = os.getenv("SEESTAR_ALPACA_POLL_INTERVAL")
+        if _env_pi:
+            try:
+                self._poll_interval = max(2.0, min(120.0, float(_env_pi.strip())))
+            except ValueError:
+                self._poll_interval = 5.0
+        else:
+            self._poll_interval = 5.0
+        self._poll_cycle_failures = 0
         self._last_position: Dict[str, float] = {}
         self._last_state: Dict[str, Any] = {}
+
+    @staticmethod
+    def _alpaca_bool(v: Any) -> bool:
+        """Normalize ALPACA JSON Value to bool (some devices use 1/0 or strings)."""
+        if v is True or v == 1:
+            return True
+        if v is False or v == 0 or v is None:
+            return False
+        if isinstance(v, str):
+            s = v.strip().lower()
+            if s in ("true", "1", "yes"):
+                return True
+            if s in ("false", "0", "no", ""):
+                return False
+        return bool(v)
 
     # ── URL helpers ────────────────────────────────────────────────────
 
@@ -73,7 +97,13 @@ class AlpacaClient:
 
     # ── Low-level HTTP ─────────────────────────────────────────────────
 
-    def _get(self, endpoint: str, extra_params: Optional[Dict] = None) -> Dict:
+    def _get(
+        self,
+        endpoint: str,
+        extra_params: Optional[Dict] = None,
+        *,
+        quiet: bool = False,
+    ) -> Dict:
         """GET an ALPACA property.  Returns the parsed JSON response."""
         txn = self._next_txn()
         params = {
@@ -84,20 +114,26 @@ class AlpacaClient:
             params.update(extra_params)
         qs = urllib.parse.urlencode(params)
         url = f"{self._base_url}/{endpoint}?{qs}"
+        logfn = logger.debug if quiet else logger.warning
         try:
-            with urllib.request.urlopen(url, timeout=self.timeout) as resp:
-                data = json.loads(resp.read().decode())
+            req = urllib.request.Request(
+                url,
+                headers={"User-Agent": "Flymoon/1.0 (ASCOM Alpaca client)"},
+            )
+            with urllib.request.urlopen(req, timeout=self.timeout) as resp:
+                raw = resp.read().decode("utf-8-sig")
+                data = json.loads(raw)
                 err = data.get("ErrorNumber", 0)
                 if err:
-                    logger.warning(
+                    logfn(
                         f"ALPACA GET {endpoint}: error {err} — {data.get('ErrorMessage', '')}"
                     )
                 return data
         except urllib.error.URLError as e:
-            logger.warning(f"ALPACA GET {endpoint} failed: {e}")
+            logfn(f"ALPACA GET {endpoint} failed: {e}")
             return {"error": str(e)}
         except Exception as e:
-            logger.warning(f"ALPACA GET {endpoint} unexpected: {e}")
+            logfn(f"ALPACA GET {endpoint} unexpected: {e}")
             return {"error": str(e)}
 
     def _put(self, endpoint: str, params: Optional[Dict] = None) -> Dict:
@@ -113,6 +149,7 @@ class AlpacaClient:
         url = f"{self._base_url}/{endpoint}"
         req = urllib.request.Request(url, data=body, method="PUT")
         req.add_header("Content-Type", "application/x-www-form-urlencoded")
+        req.add_header("User-Agent", "Flymoon/1.0 (ASCOM Alpaca client)")
         try:
             with urllib.request.urlopen(req, timeout=self.timeout) as resp:
                 data = json.loads(resp.read().decode())
@@ -133,8 +170,12 @@ class AlpacaClient:
         """GET a management endpoint (outside /api/v1/telescope)."""
         url = f"http://{self.host}:{self.port}{path}"
         try:
-            with urllib.request.urlopen(url, timeout=self.timeout) as resp:
-                return json.loads(resp.read().decode())
+            req = urllib.request.Request(
+                url,
+                headers={"User-Agent": "Flymoon/1.0 (ASCOM Alpaca client)"},
+            )
+            with urllib.request.urlopen(req, timeout=self.timeout) as resp:
+                return json.loads(resp.read().decode("utf-8-sig"))
         except Exception as e:
             return {"error": str(e)}
 
@@ -177,11 +218,11 @@ class AlpacaClient:
         If host is empty, runs discovery first.
         Returns True on success.
         """
-        # Auto-discover if no host configured
+        self.host = (self.host or "").strip()
         if not self.host:
             ip = self.discover()
             if ip:
-                self.host = ip
+                self.host = ip.strip()
             else:
                 logger.error("ALPACA connect: no host and discovery failed")
                 return False
@@ -197,9 +238,8 @@ class AlpacaClient:
             self._connected = False
             return False
 
-        # Verify
         check = self._get("connected")
-        if check.get("Value") is True:
+        if self._alpaca_bool(check.get("Value")):
             self._connected = True
             logger.info(f"ALPACA connected to {self.host}:{self.port}")
             self._load_capabilities()
@@ -254,9 +294,9 @@ class AlpacaClient:
         ]
         for prop in props_plain:
             r = self._get(prop)
-            self._capabilities[prop] = r.get("Value", False)
+            self._capabilities[prop] = self._alpaca_bool(r.get("Value"))
         r = self._get("canmoveaxis", {"Axis": "0"})
-        self._capabilities["canmoveaxis"] = r.get("Value", False)
+        self._capabilities["canmoveaxis"] = self._alpaca_bool(r.get("Value"))
         logger.info(f"ALPACA capabilities: {self._capabilities}")
 
     def _load_device_info(self):
@@ -409,7 +449,7 @@ class AlpacaClient:
     def is_slewing(self) -> bool:
         """Check if the scope is currently slewing."""
         r = self._get("slewing")
-        return r.get("Value", False) is True
+        return self._alpaca_bool(r.get("Value"))
 
     def abort_slew(self) -> Dict:
         """Abort any in-progress slew."""
@@ -428,7 +468,7 @@ class AlpacaClient:
 
     def get_tracking(self) -> bool:
         r = self._get("tracking")
-        return r.get("Value", False) is True
+        return self._alpaca_bool(r.get("Value"))
 
     # ── Park / Unpark ──────────────────────────────────────────────────
 
@@ -452,7 +492,7 @@ class AlpacaClient:
 
     def is_parked(self) -> bool:
         r = self._get("atpark")
-        return r.get("Value", False) is True
+        return self._alpaca_bool(r.get("Value"))
 
     # ── Telemetry polling ──────────────────────────────────────────────
 
@@ -460,6 +500,7 @@ class AlpacaClient:
         """Start background thread that polls position + state."""
         if self._poll_running:
             return
+        self._poll_cycle_failures = 0
         self._poll_running = True
         self._poll_thread = threading.Thread(
             target=self._poll_loop, daemon=True, name="alpaca-poll"
@@ -474,12 +515,34 @@ class AlpacaClient:
             self._poll_thread = None
 
     def _poll_loop(self):
-        while self._poll_running and self._connected:
+        while True:
+            if not self._poll_running or not self._connected:
+                break
             try:
                 self._poll_once()
             except Exception as e:
                 logger.debug(f"ALPACA poll error: {e}")
+            if not self._poll_running or not self._connected:
+                break
             time.sleep(self._poll_interval)
+
+    @staticmethod
+    def _get_network_error(r: Dict) -> bool:
+        """True if _get failed before reaching the device (timeout, refused, etc.)."""
+        return "error" in r and "Value" not in r
+
+    def _abort_poll_after_failures(self, detail: str) -> None:
+        """Stop hammering a dead or overloaded ALPACA server."""
+        self._poll_cycle_failures += 1
+        if self._poll_cycle_failures == 1:
+            logger.warning(f"ALPACA telemetry: {detail}")
+        if self._poll_cycle_failures >= 2:
+            logger.warning(
+                "ALPACA telemetry polling stopped after repeated failures — "
+                "motor panel disabled until you disconnect and reconnect the telescope."
+            )
+            self._connected = False
+            self._poll_running = False
 
     def _poll_once(self):
         """Single poll cycle: position + state flags."""
@@ -490,9 +553,17 @@ class AlpacaClient:
             ("alt", "altitude"),
             ("az", "azimuth"),
         ]:
-            r = self._get(endpoint)
-            if "Value" in r:
-                pos[key] = float(r["Value"])
+            r = self._get(endpoint, quiet=True)
+            if self._get_network_error(r):
+                self._abort_poll_after_failures(
+                    f"{endpoint} unreachable ({r.get('error', '')})"
+                )
+                return
+            if "Value" in r and r["Value"] is not None:
+                try:
+                    pos[key] = float(r["Value"])
+                except (TypeError, ValueError):
+                    pass
         self._last_position = pos
 
         state: Dict[str, Any] = {}
@@ -501,14 +572,27 @@ class AlpacaClient:
             ("slewing", "slewing"),
             ("parked", "atpark"),
         ]:
-            r = self._get(endpoint)
-            if "Value" in r:
-                state[key] = r["Value"]
-        # Sidereal time
-        r = self._get("siderealtime")
-        if "Value" in r:
-            state["sidereal_time"] = float(r["Value"])
+            r = self._get(endpoint, quiet=True)
+            if self._get_network_error(r):
+                self._abort_poll_after_failures(
+                    f"{endpoint} unreachable ({r.get('error', '')})"
+                )
+                return
+            if "Value" in r and r["Value"] is not None:
+                state[key] = self._alpaca_bool(r["Value"])
+        r = self._get("siderealtime", quiet=True)
+        if self._get_network_error(r):
+            self._abort_poll_after_failures(
+                f"siderealtime unreachable ({r.get('error', '')})"
+            )
+            return
+        if "Value" in r and r["Value"] is not None:
+            try:
+                state["sidereal_time"] = float(r["Value"])
+            except (TypeError, ValueError):
+                pass
         self._last_state = state
+        self._poll_cycle_failures = 0
 
     def get_cached_state(self) -> Dict[str, Any]:
         """Return most recent polled state (no HTTP call)."""
@@ -573,6 +657,16 @@ class AlpacaClient:
             "maxrate": self._capabilities.get("maxrate"),
         }
 
+    def get_poll_interval(self) -> float:
+        """Seconds between full ALPACA telemetry poll cycles."""
+        return float(self._poll_interval)
+
+    def set_poll_interval(self, seconds: float) -> float:
+        """Clamp and apply poll spacing (reduces load on the Seestar HTTP server)."""
+        s = max(2.0, min(120.0, float(seconds)))
+        self._poll_interval = s
+        return s
+
 
 class MockAlpacaClient:
     """Drop-in mock for testing without hardware."""
@@ -608,6 +702,14 @@ class MockAlpacaClient:
         }
         self._last_position: Dict[str, float] = {}
         self._last_state: Dict[str, Any] = {}
+        _env_pi = os.getenv("SEESTAR_ALPACA_POLL_INTERVAL")
+        if _env_pi:
+            try:
+                self._poll_interval = max(2.0, min(120.0, float(_env_pi.strip())))
+            except ValueError:
+                self._poll_interval = 5.0
+        else:
+            self._poll_interval = 5.0
 
     def discover(self, timeout: float = 3.0) -> Optional[str]:
         logger.debug("MockAlpaca: discover → mock")
@@ -721,6 +823,14 @@ class MockAlpacaClient:
             "maxrate": 6.0,
         }
 
+    def get_poll_interval(self) -> float:
+        return float(self._poll_interval)
+
+    def set_poll_interval(self, seconds: float) -> float:
+        s = max(2.0, min(120.0, float(seconds)))
+        self._poll_interval = s
+        return s
+
     def _update_cached(self):
         self._last_position = {
             "ra": self._ra,
@@ -741,8 +851,9 @@ def create_alpaca_client_from_env():
     Env vars:
         ENABLE_SEESTAR       — must be 'true' (shared with JSON-RPC client)
         SEESTAR_HOST         — IP (shared; auto-discovery if empty)
-        SEESTAR_ALPACA_PORT  — default 32323
-        MOCK_TELESCOPE        — 'true' to use MockAlpacaClient
+        SEESTAR_ALPACA_PORT       — default 32323
+        SEESTAR_ALPACA_POLL_INTERVAL — seconds between telemetry poll cycles (2–120, default 5)
+        MOCK_TELESCOPE            — 'true' to use MockAlpacaClient
     """
     if os.getenv("ENABLE_SEESTAR", "false").lower() != "true":
         logger.info("ALPACA client disabled (ENABLE_SEESTAR=false)")

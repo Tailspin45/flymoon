@@ -1,23 +1,66 @@
 /* Telescope Control Page Styles - Lightroom Layout */
 
-.telescope-container {
+/* Scope page: full viewport width + column flex so filmstrip is a sibling of .telescope-container. */
+#telescopeView {
+    box-sizing: border-box;
+    display: flex;
+    flex-direction: column;
+    /* Definite height so flex:1 main area and bottom filmstrip split the viewport (min-height alone leaves flex distribution undefined). */
+    height: min(100dvh, 100vh);
+    min-height: min(100dvh, 100vh);
     width: 100vw;
-    margin-left: -8px;               /* bleed past body padding */
-    height: calc(100vh - 140px);
+    max-width: none;
+    margin-left: calc(50% - 50vw);
+    margin-right: calc(50% - 50vw);
+    overflow-x: hidden;
+    overflow-y: hidden;
+}
+
+#telescopeView > .eclipse-banner,
+#telescopeView > #mismatchBanner,
+#telescopeView > .header-row {
+    flex-shrink: 0;
+}
+
+#telescopeView > .telescope-container {
+    flex: 1 1 0;
+    min-height: 0;
+    overflow: hidden;
+}
+
+#telescopeView > .filmstrip {
+    flex: 0 0 auto;
+    width: 100%;
+    max-width: 100%;
+}
+
+.telescope-container {
+    width: 100%;
+    max-width: 100%;
+    min-width: 0;
+    height: auto;
     padding: 0;
     display: flex;
     flex-direction: column;
-    overflow-x: hidden;              /* no horizontal scroll from vw rounding */
+    box-sizing: border-box;
 }
 
-/* Main Layout: Sidebars + Center Preview */
+/* Main Layout: Sidebars + Center Preview — min-width:0 avoids grid min-content blowout clipping the right edge. */
 .telescope-layout {
     display: grid;
     grid-template-columns: 20% 40% 20% 20%;
     gap: 0;
     flex: 1;
+    min-width: 0;
+    min-height: 0;
     overflow: hidden;
     background: #0a0a0a;
+}
+
+.telescope-layout > .sidebar,
+.telescope-layout > .preview-area,
+.telescope-layout > .sidebar-alp {
+    min-width: 0;
 }
 
 /* Sidebar Common Styles */
@@ -169,6 +212,7 @@
 .zoom-btn-bar {
     display: flex;
     align-items: center;
+    justify-content: center;
     gap: 2px;
     padding: 4px 8px;
     background: #3A3E44;
@@ -1071,7 +1115,7 @@
     color: #FFA500;
 }
 
-/* Bottom Filmstrip */
+/* Bottom Filmstrip — must not overflow parent (overflow-x on #telescopeView clips excess → “short” strip). */
 .filmstrip {
     background: #111114;
     border-top: 1px solid #1e1e24;
@@ -1080,34 +1124,55 @@
     flex-shrink: 0;
     display: flex;
     flex-direction: column;
+    width: 100%;
+    max-width: 100%;
+    min-width: 0;
+    box-sizing: border-box;
 }
 
 .filmstrip-header {
-    display: flex;
+    /* Same 20:40:20:20 intent as .telescope-layout — use fr + minmax(0,…) so gap fits *inside* 100%
+       (20%+40%+20%+20% + column-gap overflows and was getting clipped on the right). */
+    display: grid;
+    grid-template-columns: minmax(0, 2fr) minmax(0, 4fr) minmax(0, 2fr) minmax(0, 2fr);
+    column-gap: 8px;
     align-items: center;
-    justify-content: space-between;
-    padding: 4px 16px;
+    padding: 4px 12px;
     border-bottom: 1px solid #2a2a2a;
+    width: 100%;
+    max-width: 100%;
+    box-sizing: border-box;
 }
 
 .filmstrip-title {
     font-size: 0.85em;
     font-weight: 600;
     color: #039c9c;
+    justify-self: start;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
 }
 
 .filmstrip-controls {
     display: flex;
     gap: 6px;
+    justify-self: end;
+    grid-column: 4;
+    min-width: 0;
+    flex-shrink: 0;
 }
 
-/* Filmstrip scroll navigation — centered, nav-toggle-btn style */
+/* Filmstrip scroll navigation — centered in preview column */
 .filmstrip-nav {
     display: flex;
     align-items: center;
-    gap: 6px;
-    flex: 1;
     justify-content: center;
+    flex-wrap: wrap;
+    gap: 6px;
+    grid-column: 2;
+    min-width: 0;
 }
 
 .filmstrip-nav-btn {
@@ -1123,6 +1188,8 @@
     cursor: pointer;
     box-shadow: 0 2px 6px rgba(0,0,0,0.4), inset 0 1px 0 rgba(255,255,255,0.1);
     transition: all 0.2s;
+    touch-action: manipulation;
+    user-select: none;
 }
 
 .filmstrip-nav-btn:hover {
@@ -1153,12 +1220,18 @@
 }
 
 .filmstrip-list {
-    flex: 1;
+    /* One horizontal row of thumbs — do not flex-grow vertically (was stealing most of the column). */
+    flex: 0 0 auto;
+    min-width: 0;
+    width: 100%;
+    max-width: 100%;
+    box-sizing: border-box;
     overflow-x: auto;
     overflow-y: hidden;
     display: flex;
     gap: 8px;
-    padding: 6px 16px;
+    /* Left inset only; right flush so the strip reads edge-to-edge (no fake “missing slides”). */
+    padding: 6px 0 6px 12px;
     align-items: flex-start;
     scroll-behavior: smooth;
     scrollbar-width: none;            /* hide scrollbar — arrows handle scroll */
@@ -1667,6 +1740,31 @@ canvas.video-thumb-canvas {
     .preview-controls {
         flex-wrap: wrap;
     }
+
+    .filmstrip-header {
+        display: flex;
+        flex-wrap: wrap;
+        justify-content: space-between;
+        gap: 6px;
+    }
+
+    .filmstrip-title {
+        justify-self: auto;
+    }
+
+    .filmstrip-nav {
+        grid-column: auto;
+        order: 3;
+        flex: 1 1 100%;
+        justify-content: center;
+    }
+
+    .filmstrip-controls {
+        grid-column: auto;
+        order: 2;
+        justify-self: auto;
+    }
+
 }
 
 /* ═══════════════════════════════════════════════════════════════

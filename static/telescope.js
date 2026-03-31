@@ -100,6 +100,7 @@ window.initTelescope = function() {
     destroyTelescope(); // clear any existing intervals
     ensureHarnessUI();
     ensureTuningUI();
+    syncAlpacaPollSliderFromServer();
     ensureTransitRadar();
 
     // Status polling (always poll while panel is open)
@@ -209,6 +210,7 @@ async function connect() {
 
         // Eagerly resolve ALPACA state so nudge uses the correct path immediately
         await pollAlpacaTelemetry();
+        syncAlpacaPollSliderFromServer();
 
         // Start status polling
         if (statusPollInterval) clearInterval(statusPollInterval);
@@ -394,10 +396,10 @@ async function updateStatus() {
             _lastConnectedStatus = { viewing_mode: result.viewing_mode, recording: result.recording, host: result.host };
         }
 
-        // Update focus odometer from last known position
-        if (result.focus_pos != null) {
+        // Update focus odometer (server polls get_focuser_position periodically)
+        if (result.focus_pos != null && result.focus_pos !== '') {
             const focEl = document.getElementById('focusPos');
-            if (focEl) focEl.textContent = result.focus_pos;
+            if (focEl) focEl.textContent = String(result.focus_pos);
         }
         _prevConnected = isConnected;
 
@@ -1240,11 +1242,81 @@ function stopPreview() {
 // FILMSTRIP SCROLL NAVIGATION
 // ============================================================================
 
-function filmstripScroll(direction) {
+const FILMSTRIP_REPEAT_INITIAL_MS = 480;
+const FILMSTRIP_REPEAT_INTERVAL_MS = 320;
+
+let _filmstripRepeatTimer = null;
+let _filmstripRepeatInterval = null;
+let _filmstripPointerRelease = null;
+
+function filmstripSlideStepPx(list) {
+    const el = list || document.getElementById('filmstripList');
+    if (!el) return 158;
+    const item = el.querySelector('.filmstrip-item');
+    if (!item) return 158;
+    const g = parseFloat(getComputedStyle(el).gap) || 8;
+    return item.getBoundingClientRect().width + g;
+}
+
+function filmstripClearRepeatTimers() {
+    if (_filmstripRepeatTimer) {
+        clearTimeout(_filmstripRepeatTimer);
+        _filmstripRepeatTimer = null;
+    }
+    if (_filmstripRepeatInterval) {
+        clearInterval(_filmstripRepeatInterval);
+        _filmstripRepeatInterval = null;
+    }
+}
+
+/** Call when pointer is released (anywhere) or navigation should stop. */
+function filmstripNavUp() {
+    filmstripClearRepeatTimers();
+    if (_filmstripPointerRelease) {
+        document.removeEventListener('pointerup', _filmstripPointerRelease);
+        document.removeEventListener('pointercancel', _filmstripPointerRelease);
+        _filmstripPointerRelease = null;
+    }
+}
+
+/**
+ * One slide per activation; hold to repeat after FILMSTRIP_REPEAT_INITIAL_MS, then every FILMSTRIP_REPEAT_INTERVAL_MS.
+ * direction: -1 = newer (scroll left), +1 = older (scroll right).
+ */
+function filmstripNavDown(direction, ev) {
+    if (ev && ev.pointerType === 'mouse' && ev.button !== 0) return;
+    if (ev && typeof ev.preventDefault === 'function') ev.preventDefault();
+
+    filmstripNavUp();
+
     const list = document.getElementById('filmstripList');
     if (!list) return;
-    // Scroll by ~3 thumbnails (150px + 8px gap each)
-    list.scrollBy({ left: direction * 474, behavior: 'smooth' });
+
+    const stepOnce = () => {
+        const step = filmstripSlideStepPx(list);
+        list.scrollBy({ left: direction * step, behavior: 'auto' });
+    };
+    stepOnce();
+
+    _filmstripPointerRelease = () => {
+        filmstripNavUp();
+    };
+    document.addEventListener('pointerup', _filmstripPointerRelease);
+    document.addEventListener('pointercancel', _filmstripPointerRelease);
+
+    _filmstripRepeatTimer = setTimeout(() => {
+        _filmstripRepeatTimer = null;
+        _filmstripRepeatInterval = setInterval(stepOnce, FILMSTRIP_REPEAT_INTERVAL_MS);
+    }, FILMSTRIP_REPEAT_INITIAL_MS);
+}
+
+/** Keyboard: one slide per key event (Enter / Space); OS key-repeat gives a steady scan when held. */
+function filmstripNavKey(event, direction) {
+    if (event.key !== 'Enter' && event.key !== ' ') return;
+    event.preventDefault();
+    const list = document.getElementById('filmstripList');
+    if (!list) return;
+    list.scrollBy({ left: direction * filmstripSlideStepPx(list), behavior: 'auto' });
 }
 
 function filmstripScrollTo(pos) {
@@ -1253,7 +1325,8 @@ function filmstripScrollTo(pos) {
     if (pos === 'start') {
         list.scrollTo({ left: 0, behavior: 'smooth' });
     } else {
-        list.scrollTo({ left: list.scrollWidth, behavior: 'smooth' });
+        const maxLeft = Math.max(0, list.scrollWidth - list.clientWidth);
+        list.scrollTo({ left: maxLeft, behavior: 'smooth' });
     }
 }
 
@@ -1403,25 +1476,35 @@ function _formatApiError(data, status) {
     return fallback;
 }
 
-async function apiCall(endpoint, method = 'GET', body = null) {
+async function apiCall(endpoint, method = 'GET', body = null, options = {}) {
+    const silent = options.silent === true;
     try {
-        const options = {
+        const fetchOpts = {
             method: method,
-            headers: {
-                'Content-Type': 'application/json'
-            }
+            headers: {}
         };
-
         if (body) {
-            options.body = JSON.stringify(body);
+            fetchOpts.headers['Content-Type'] = 'application/json';
+            fetchOpts.body = JSON.stringify(body);
         }
 
-        const response = await fetch(endpoint, options);
-        const contentType = response.headers.get('content-type') || '';
-        if (!contentType.includes('application/json')) {
-            throw new Error(`HTTP ${response.status}: unexpected response`);
+        const response = await fetch(endpoint, fetchOpts);
+        const contentType = (response.headers.get('content-type') || '').toLowerCase();
+        const looksJson =
+            contentType.includes('application/json') ||
+            contentType.includes('text/json') ||
+            contentType.includes('+json');
+        let data;
+        if (looksJson) {
+            data = await response.json();
+        } else {
+            const text = await response.text();
+            try {
+                data = text ? JSON.parse(text) : {};
+            } catch (_) {
+                throw new Error(`HTTP ${response.status}: expected JSON, got ${contentType || 'unknown type'}`);
+            }
         }
-        const data = await response.json();
 
         if (!response.ok) {
             throw new Error(_formatApiError(data, response.status));
@@ -1431,7 +1514,9 @@ async function apiCall(endpoint, method = 'GET', body = null) {
 
     } catch (error) {
         console.error(`[Telescope] API call failed: ${endpoint}`, error);
-        showStatus(`Error: ${error.message}`, 'error');
+        if (!silent) {
+            showStatus(`Error: ${error.message}`, 'error');
+        }
         return null;
     }
 }
@@ -1712,14 +1797,27 @@ function setFocusStepSize(size) {
     });
 }
 
+function _focusPosFromRpcPayload(payload) {
+    if (payload == null) return null;
+    if (typeof payload === 'number' && Number.isFinite(payload)) return Math.round(payload);
+    if (typeof payload === 'string' && /^-?\d+$/.test(payload.trim())) return parseInt(payload.trim(), 10);
+    if (typeof payload === 'object') {
+        for (const k of ['focus_pos', 'step', 'FocusPos', 'Step', 'position', 'result']) {
+            const v = payload[k];
+            const n = _focusPosFromRpcPayload(v);
+            if (n != null) return n;
+        }
+    }
+    return null;
+}
+
 async function focusStep(steps) {
     const result = await apiCall('/telescope/focus/step', 'POST', { steps });
     if (result) {
-        const pos = result.result && result.result.focus_pos != null
-            ? result.result.focus_pos : null;
+        const pos = _focusPosFromRpcPayload(result.result);
         if (pos != null) {
             const el = document.getElementById('focusPos');
-            if (el) el.textContent = pos;
+            if (el) el.textContent = String(pos);
         }
     }
 }
@@ -2430,7 +2528,8 @@ function updateFilmstrip(files) {
     const filmstrip = document.getElementById('filmstripList');
     if (!filmstrip) return;
 
-    filmstripFiles = files.slice(0, 10);
+    /* Show all files in the strip; scroll horizontally (no arbitrary cap). */
+    filmstripFiles = Array.isArray(files) ? [...files] : [];
     const stripPathSet = new Set(filmstripFiles.map(f => f.path));
     for (const p of filmstripSelection.selected) {
         if (!stripPathSet.has(p)) filmstripSelection.selected.delete(p);
@@ -5602,6 +5701,7 @@ function ensureTuningUI() {
 
     const saved = _loadTuning();
     const _radarTune = _loadRadarTuning();
+    const _alpacaPollSec = _loadAlpacaPollInterval();
 
     // Add compact TUNE keycap to the detect controls row
     const controls = document.getElementById('detectControls');
@@ -5648,6 +5748,11 @@ function ensureTuningUI() {
             'Pixels of tail per 100 km/h. Higher = longer tails at speed.')}
         ${_tuningSliderRow('tunRadarStaleGrace', 'Stale Grace (s)', 5, 60, _radarTune.staleGrace, 5,
             'Seconds a track survives without updates before fading out.')}
+        <div style="border-top:1px solid rgba(255,255,255,0.08);margin:8px 0 6px;padding-top:6px;">
+            <span style="font-size:0.74em;color:#6A7A85;">ALPACA telemetry</span>
+        </div>
+        ${_tuningSliderRow('tunAlpacaPoll', 'Poll interval (s)', 2, 60, _alpacaPollSec, 1,
+            'Seconds between full ALPACA poll cycles (many GETs per cycle). Increase if the scope times out or refuses connections. Also set SEESTAR_ALPACA_POLL_INTERVAL in .env (2–120 s).')}
         <button class="btn btn-secondary btn-compact" style="margin-top:4px;width:100%;" onclick="_resetTuning()">Reset to defaults</button>
     `;
 
@@ -5685,6 +5790,16 @@ function ensureTuningUI() {
             localStorage.setItem(storageKey, el.value);
         });
     });
+
+    const tunAp = document.getElementById('tunAlpacaPoll');
+    if (tunAp) {
+        const apLbl = document.getElementById('tunAlpacaPollVal');
+        if (apLbl) apLbl.textContent = tunAp.value + ' s';
+        tunAp.addEventListener('input', () => {
+            if (apLbl) apLbl.textContent = tunAp.value + ' s';
+            _debouncedApplyAlpacaPoll();
+        });
+    }
 }
 
 function _toggleTuningBody() {
@@ -5744,6 +5859,18 @@ function _resetTuning() {
     localStorage.removeItem('radar_stale_grace');
     localStorage.removeItem('radar_entry_margin');
     _syncRadarTuningSliders(RADAR_TUNING_DEFAULTS);
+    localStorage.removeItem('alpaca_poll_interval_sec');
+    const tunAp = document.getElementById('tunAlpacaPoll');
+    const apLbl = document.getElementById('tunAlpacaPollVal');
+    if (tunAp) {
+        tunAp.value = String(ALPACA_POLL_DEFAULT_SEC);
+        if (apLbl) apLbl.textContent = ALPACA_POLL_DEFAULT_SEC + ' s';
+    }
+    fetch('/telescope/alpaca/settings', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ poll_interval_sec: ALPACA_POLL_DEFAULT_SEC }),
+    }).catch(() => {});
 }
 
 function _syncRadarTuningSliders(d) {
@@ -6198,6 +6325,51 @@ function _loadRadarTuning() {
         staleGrace:  parseFloat(localStorage.getItem('radar_stale_grace')  ?? d.radar_stale_grace),
         entryMargin: parseFloat(localStorage.getItem('radar_entry_margin') ?? d.radar_entry_margin),
     };
+}
+
+const ALPACA_POLL_DEFAULT_SEC = 5;
+
+/** Seconds between ALPACA telemetry poll cycles (TUNE panel + localStorage). */
+function _loadAlpacaPollInterval() {
+    const raw = localStorage.getItem('alpaca_poll_interval_sec');
+    const n = raw != null ? parseFloat(raw) : ALPACA_POLL_DEFAULT_SEC;
+    const v = Math.round(Number.isFinite(n) ? n : ALPACA_POLL_DEFAULT_SEC);
+    return Math.min(60, Math.max(2, v));
+}
+
+async function syncAlpacaPollSliderFromServer() {
+    const el = document.getElementById('tunAlpacaPoll');
+    if (!el) return;
+    try {
+        const r = await fetch('/telescope/alpaca/settings');
+        if (!r.ok) return;
+        const j = await r.json();
+        if (typeof j.poll_interval_sec !== 'number' || !Number.isFinite(j.poll_interval_sec)) return;
+        const s = Math.round(Math.min(60, Math.max(2, j.poll_interval_sec)));
+        el.value = String(s);
+        const lbl = document.getElementById('tunAlpacaPollVal');
+        if (lbl) lbl.textContent = s + ' s';
+        localStorage.setItem('alpaca_poll_interval_sec', String(s));
+    } catch (_) { /* offline or ALPACA disabled */ }
+}
+
+let _alpacaPollDebounceTimer = null;
+function _debouncedApplyAlpacaPoll() {
+    clearTimeout(_alpacaPollDebounceTimer);
+    _alpacaPollDebounceTimer = setTimeout(async () => {
+        const el = document.getElementById('tunAlpacaPoll');
+        if (!el) return;
+        const sec = Math.round(parseFloat(el.value)) || ALPACA_POLL_DEFAULT_SEC;
+        const clamped = Math.min(60, Math.max(2, sec));
+        localStorage.setItem('alpaca_poll_interval_sec', String(clamped));
+        try {
+            await fetch('/telescope/alpaca/settings', {
+                method: 'PATCH',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ poll_interval_sec: clamped }),
+            });
+        } catch (_) {}
+    }, 400);
 }
 
 // ── state ───────────────────────────────────────────────────────────────────
@@ -7022,7 +7194,7 @@ let _alpacaTracking = false;
 
 async function pollAlpacaTelemetry() {
     try {
-        const data = await apiCall('/telescope/alpaca/telemetry', 'GET');
+        const data = await apiCall('/telescope/alpaca/telemetry', 'GET', null, { silent: true });
         if (!data || !data.connected) {
             _alpacaConnected = false;
             _updateAlpacaPanel(null);

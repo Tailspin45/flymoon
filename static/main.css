@@ -83,7 +83,7 @@ body {
     background: #5a7070;
 }
 
-/* Bottom-left nav toggle (Map/Scope switch) */
+/* Bottom-left nav toggle (Map/Scope switch) — fixed when not on map; map uses .nav-toggle-on-map */
 .nav-toggle-btn {
     position: fixed;
     bottom: 16px;
@@ -105,6 +105,14 @@ body {
 .nav-toggle-btn:hover {
     background: linear-gradient(180deg, #686C74 0%, #5A5E66 40%, #4E525A 100%);
     border-color: #039c9c;
+}
+
+/* Scope button anchored to map pane (not viewport) */
+.nav-toggle-btn.nav-toggle-on-map {
+    position: absolute;
+    bottom: 14px;
+    left: 14px;
+    z-index: 1100;
 }
 
 .btn-help {

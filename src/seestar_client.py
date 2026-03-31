@@ -21,6 +21,109 @@ from src import logger
 from src.site_context import get_observer_coordinates
 
 
+def _coerce_focus_value(value: Any) -> Optional[int]:
+    """Normalize focuser step from JSON-RPC payloads (int, str, or dict variants)."""
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float)):
+        return int(round(value))
+    if isinstance(value, str):
+        s = value.strip()
+        if s.lstrip("-").isdigit():
+            return int(s)
+        return None
+    if isinstance(value, (list, tuple)):
+        for item in value:
+            inner = _coerce_focus_value(item)
+            if inner is not None:
+                return inner
+        return None
+    if isinstance(value, dict):
+        for k in (
+            "focus_pos",
+            "step",
+            "position",
+            "Step",
+            "FocusPos",
+            "pos",
+            "value",
+            "result",
+            "data",
+            "Data",
+            "current",
+            "cur_step",
+            "focuser_step",
+        ):
+            if k in value and value[k] is not None:
+                inner = _coerce_focus_value(value[k])
+                if inner is not None:
+                    return inner
+    return None
+
+
+def _parse_focus_from_view_dict(view: Any) -> Optional[int]:
+    """Pull focuser step from get_view_state-style View dict (or whole payload)."""
+    if view is None:
+        return None
+    if not isinstance(view, dict):
+        return _coerce_focus_value(view)
+    inner = (view.get("View") or view.get("view"))
+    if isinstance(inner, dict):
+        v = _parse_focus_from_view_dict(inner)
+        if v is not None:
+            return v
+    focuser = (
+        view.get("Focuser")
+        or view.get("focuser")
+        or view.get("FOCUSER")
+        or {}
+    )
+    if isinstance(focuser, dict):
+        raw = (
+            focuser.get("step")
+            or focuser.get("Step")
+            or focuser.get("position")
+        )
+        v = _coerce_focus_value(raw)
+        if v is not None:
+            return v
+    for k in ("focuser_step", "focus_pos", "FocuserStep", "focuserStep"):
+        if k in view:
+            v = _coerce_focus_value(view.get(k))
+            if v is not None:
+                return v
+    return None
+
+
+def _parse_focus_from_device_state(payload: Any) -> Optional[int]:
+    """Best-effort focuser step from get_device_state result."""
+    if payload is None or not isinstance(payload, dict):
+        return _coerce_focus_value(payload)
+    for path in (
+        ("focuser",),
+        ("Focuser",),
+        ("device", "focuser"),
+        ("device", "Focuser"),
+        ("Device", "Focuser"),
+    ):
+        d: Any = payload
+        ok = True
+        for k in path:
+            if not isinstance(d, dict) or k not in d:
+                ok = False
+                break
+            d = d[k]
+        if ok and isinstance(d, dict):
+            v = _coerce_focus_value(
+                d.get("step") or d.get("Step") or d.get("position") or d.get("focus_pos")
+            )
+            if v is not None:
+                return v
+    return None
+
+
 class SeestarClient:
     """Direct TCP client for Seestar telescope using JSON-RPC 2.0 protocol."""
 
@@ -72,6 +175,7 @@ class SeestarClient:
         self._recording = False
         self._recording_start_time: Optional[datetime] = None
         self._focus_pos: Optional[int] = None
+        self._last_focus_poll_mono: float = 0.0
         self._viewing_mode: Optional[str] = (
             None  # Track current viewing mode (sun/moon/None)
         )
@@ -615,19 +719,15 @@ class SeestarClient:
 
             _time.sleep(3)
             try:
-                r = self._send_command("get_view_state", quiet=True, timeout_override=5)
-                view = (r or {}).get("View") or (r or {})
-                focuser = view.get("Focuser") or {}
-                fp = (
-                    focuser.get("step")
-                    or view.get("focuser_step")
-                    or view.get("focus_pos")
-                )
+                fp = self.get_focuser_position()
                 if fp is not None:
-                    self._focus_pos = int(fp)
-                    logger.info(
-                        f"[Init] focus_pos seeded via view_state: {self._focus_pos}"
-                    )
+                    logger.info(f"[Init] focus_pos seeded: {fp}")
+                    return
+                r = self._send_command("get_view_state", quiet=True, timeout_override=5)
+                fp2 = _parse_focus_from_view_dict((r or {}).get("View") or r)
+                if fp2 is not None:
+                    self._focus_pos = fp2
+                    logger.info(f"[Init] focus_pos from view_state: {self._focus_pos}")
             except Exception as e:
                 logger.debug(f"[Init] focus_pos seed failed (non-fatal): {e}")
 
@@ -1215,6 +1315,85 @@ class SeestarClient:
         logger.info("Autofocus triggered")
         return result or {}
 
+    def get_focuser_position(self, use_fallbacks: bool = True) -> Optional[int]:
+        """
+        Read absolute focuser step (same RPC as seestar_alp get_focuser_position).
+
+        Tries ``get_focuser_position`` with ``params={{}}`` first (omits top-level
+        ``verify``, which some firmware rejects on this method), then with
+        ``params=None`` (adds verify). Optional fallbacks (slow): ``get_view_state``,
+        ``get_device_state`` — used from init / focus moves, not every status poll.
+
+        Parameters
+        ----------
+        use_fallbacks
+            If False, only the fast ``get_focuser_position`` attempts (for throttled
+            status refresh).
+
+        Returns
+        -------
+        int or None
+            Current step, or None if unavailable.
+        """
+        if not self._connected:
+            return None
+
+        def _store(fp: Optional[int]) -> Optional[int]:
+            if fp is not None:
+                self._focus_pos = fp
+            return fp
+
+        for attempt_params in ({}, None):
+            try:
+                r = self._send_command(
+                    "get_focuser_position",
+                    params=attempt_params,
+                    quiet=True,
+                    timeout_override=12,
+                )
+                fp = _coerce_focus_value(r) or _parse_focus_from_view_dict(r)
+                if fp is not None:
+                    return _store(fp)
+            except Exception as e:
+                logger.debug(
+                    "get_focuser_position params=%s: %s", attempt_params, e
+                )
+
+        if not use_fallbacks:
+            return None
+
+        try:
+            r = self._send_command(
+                "get_view_state", quiet=True, timeout_override=10
+            )
+            fp = _parse_focus_from_view_dict((r or {}).get("View") or r)
+            if fp is not None:
+                return _store(fp)
+        except Exception as e:
+            logger.debug(f"get_view_state (focus): {e}")
+
+        try:
+            r = self._send_command(
+                "get_device_state", params={}, quiet=True, timeout_override=12
+            )
+            fp = _parse_focus_from_device_state(r)
+            if fp is not None:
+                return _store(fp)
+        except Exception as e:
+            logger.debug(f"get_device_state (focus): {e}")
+
+        return None
+
+    def refresh_focus_throttled(self, min_interval_sec: float = 5.0) -> None:
+        """Poll focuser position at most once per min_interval_sec (for /telescope/status)."""
+        if not self._connected:
+            return
+        now = time.monotonic()
+        if (now - self._last_focus_poll_mono) < float(min_interval_sec):
+            return
+        self._last_focus_poll_mono = now
+        self.get_focuser_position(use_fallbacks=False)
+
     def shutdown(self) -> bool:
         """Shutdown the Seestar (parks first, then powers off)."""
         self._send_command("pi_shutdown", expect_response=False)
@@ -1223,23 +1402,46 @@ class SeestarClient:
         return True
 
     def move_step_focus(self, steps: int) -> dict:
-        """Move focuser by the given number of steps (positive = out, negative = in)."""
+        """Move focuser by the given number of steps (positive = out, negative = in).
+
+        Seestar firmware expects an absolute step in ``move_focuser`` (see seestar_alp
+        ``adjust_focus``). When the current position is unknown we fall back to passing
+        ``step`` as before (relative / firmware-dependent).
+        """
         # With ret_step=True the scope ACKs only after the move finishes; under load
         # or large |step| this routinely exceeds the default RPC timeout (10–30s).
         try:
             foc_timeout = int(os.getenv("SEESTAR_FOCUS_TIMEOUT", "120"))
         except ValueError:
             foc_timeout = 120
+
+        current: Optional[int] = self._focus_pos
+        if current is None:
+            current = self.get_focuser_position(use_fallbacks=True)
+        if current is not None:
+            target = int(current) + int(steps)
+            params: Dict[str, Any] = {"step": target, "ret_step": True}
+        else:
+            logger.warning(
+                "move_focuser: unknown current position — using relative step only"
+            )
+            params = {"step": int(steps), "ret_step": True}
+
         result = self._send_command(
             "move_focuser",
-            params={"step": steps, "ret_step": True},
+            params=params,
             timeout_override=max(foc_timeout, 15),
         )
-        logger.info(f"Focus step: {steps}")
-        if isinstance(result, dict):
-            fp = result.get("focus_pos")
-            if fp is not None:
-                self._focus_pos = int(fp)
+        logger.info(f"Focus step: delta={steps} target_param={params.get('step')}")
+        fp = _coerce_focus_value(result)
+        if fp is None and isinstance(result, dict):
+            fp = _coerce_focus_value(result.get("focus_pos"))
+            if fp is None:
+                fp = _coerce_focus_value(result.get("result"))
+        if fp is not None:
+            self._focus_pos = fp
+        else:
+            self.get_focuser_position(use_fallbacks=True)
         return result or {}
 
     def set_gain(self, gain: int) -> dict:
