@@ -11,6 +11,8 @@ Covers:
 """
 
 import sys
+import threading
+import time as time_module
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -53,9 +55,15 @@ class TestMaybeAutoStartDetector:
     def _run(self, client, detector):
         from src import telescope_routes
         with patch.object(telescope_routes, "get_telescope_client", return_value=client), \
+             patch.object(telescope_routes, "_probe_rtsp_stream", return_value=True), \
+             patch.object(telescope_routes.time, "sleep", lambda *_a, **_k: None), \
              patch("src.transit_detector.get_detector", return_value=detector), \
              patch("src.transit_detector.start_detector") as mock_start:
             telescope_routes._maybe_auto_start_detector("sun")
+            for t in threading.enumerate():
+                if t.name == "auto-detect-rtsp-wait":
+                    t.join(timeout=2.0)
+                    break
             return mock_start
 
     def test_starts_when_not_running(self):
@@ -79,7 +87,17 @@ class TestMaybeAutoStartDetector:
         """Should not attempt to start when scope is offline."""
         client = _make_mock_client(connected=False)
         detector = _make_mock_detector(running=False)
-        mock_start = self._run(client, detector)
+        from src import telescope_routes
+        with patch.object(telescope_routes, "get_telescope_client", return_value=client), \
+             patch.object(telescope_routes, "_probe_rtsp_stream", return_value=True), \
+             patch.object(telescope_routes.time, "sleep", lambda *_a, **_k: None), \
+             patch("src.transit_detector.get_detector", return_value=detector), \
+             patch("src.transit_detector.start_detector") as mock_start:
+            telescope_routes._maybe_auto_start_detector("sun")
+            for t in threading.enumerate():
+                if t.name == "auto-detect-rtsp-wait":
+                    t.join(timeout=2.0)
+                    break
         mock_start.assert_not_called()
 
 

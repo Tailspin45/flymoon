@@ -241,6 +241,7 @@ class AlpacaClient:
         check = self._get("connected")
         if self._alpaca_bool(check.get("Value")):
             self._connected = True
+            self._poll_cycle_failures = 0
             logger.info(f"ALPACA connected to {self.host}:{self.port}")
             self._load_capabilities()
             self._load_device_info()
@@ -536,7 +537,7 @@ class AlpacaClient:
         self._poll_cycle_failures += 1
         if self._poll_cycle_failures == 1:
             logger.warning(f"ALPACA telemetry: {detail}")
-        if self._poll_cycle_failures >= 2:
+        if self._poll_cycle_failures >= 6:
             logger.warning(
                 "ALPACA telemetry polling stopped after repeated failures — "
                 "motor panel disabled until you disconnect and reconnect the telescope."

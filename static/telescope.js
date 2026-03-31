@@ -86,6 +86,10 @@ let isDetecting = false;
 let detectionPollInterval = null;
 let detectionStats = { fps: 0, detections: 0, elapsed_seconds: 0 };
 let _ctrlState = 'idle';
+/** ALPACA GET slewing — used with ctrl_state for GoTo button Stop vs Execute */
+let _lastAlpacaSlewing = false;
+/** D-pad: active pointer + element (pointer capture) so slew stays on until release */
+let _nudgePointerActive = null;
 
 // Eclipse state
 let eclipseData = null;         // populated from /telescope/status
@@ -163,16 +167,16 @@ window.initTelescope = function() {
         }
     }, 1000);
 
-    // Load auto-capture preference
+    // Load auto-capture preference (default ON if never set)
+    const acT = document.getElementById('autoCaptureToggle');
     const autoCapture = localStorage.getItem('autoCaptureTransits');
-    if (autoCapture !== null) {
-        const isOn = autoCapture === 'true';
-        document.getElementById('autoCaptureToggle').checked = isOn;
-        const autoCaptureBtn = document.getElementById('autoCaptureBtn');
-        if (autoCaptureBtn) {
-            autoCaptureBtn.classList.toggle('is-active', isOn);
-        }
+    if (autoCapture === null || autoCapture === '') {
+        if (acT) acT.checked = true;
+        localStorage.setItem('autoCaptureTransits', 'true');
+    } else if (acT) {
+        acT.checked = autoCapture === 'true';
     }
+    syncAutoCaptureToggleUi();
 
     // Mouse-wheel zoom on preview container
     const previewContainer = document.getElementById('previewContainer');
@@ -350,6 +354,9 @@ async function updateStatus() {
         isConnected = result.connected || false;
         currentViewingMode = result.viewing_mode || null;
         _ctrlState = result.ctrl_state || 'idle';
+        if (result.alpaca && typeof result.alpaca.slewing === 'boolean') {
+            _lastAlpacaSlewing = result.alpaca.slewing;
+        }
         // Sync recording state from server — server is authoritative.
         // Only preserve local state if we're mid-recording AND server agrees it's active.
         const serverRecording = result.recording || false;
@@ -398,9 +405,33 @@ async function updateStatus() {
         }
 
         // Update focus odometer (server polls get_focuser_position periodically)
-        if (result.focus_pos != null && result.focus_pos !== '') {
-            const focEl = document.getElementById('focusPos');
-            if (focEl) focEl.textContent = String(result.focus_pos);
+        const focEl = document.getElementById('focusPos');
+        const fplEl = document.getElementById('focusPosLabel');
+        if (!isConnected && focEl) {
+            focEl.textContent = '——————';
+            if (fplEl) fplEl.textContent = 'Relative Focus Steps';
+        } else if (focEl) {
+            let _fp = result.focus_pos;
+            if (typeof _fp === 'bigint') _fp = Number(_fp);
+            const n = _fp == null || _fp === '' ? NaN : Number(_fp);
+            if (fplEl) {
+                fplEl.textContent =
+                    result.focus_pos_source === 'absolute'
+                        ? 'Focus position'
+                        : 'Relative Focus Steps';
+            }
+            if (Number.isFinite(n)) {
+                focEl.textContent = String(Math.round(n));
+                if (result.focus_pos_source === 'relative') {
+                    focEl.title =
+                        'Δ steps from first focus nudge (hardware did not report absolute position)';
+                } else {
+                    focEl.removeAttribute('title');
+                }
+            } else {
+                focEl.textContent = '——————';
+                focEl.removeAttribute('title');
+            }
         }
         _prevConnected = isConnected;
 
@@ -423,6 +454,8 @@ async function updateStatus() {
                 timestamp.dataset.lastUpdate = date.getTime();
             }
         }
+
+        updateGotoExecuteButton();
     }
 }
 
@@ -1528,6 +1561,7 @@ async function apiCall(endpoint, method = 'GET', body = null, options = {}) {
 
 function initControlPanel() {
     loadSavedLocations();
+    updateGotoExecuteButton();
 }
 
 // -- Live position readout (scope_get_horiz_coord) --
@@ -1591,11 +1625,77 @@ function gotoModeChanged() {
     document.getElementById('gotoRadecInputs').style.display = isAltaz ? 'none' : '';
 }
 
+function isScopeSlewingForGotoBtn() {
+    if (!isConnected || !_alpacaConnected) return false;
+    return (
+        _ctrlState === 'slewing' ||
+        _ctrlState === 'goto_resuming' ||
+        _lastAlpacaSlewing
+    );
+}
+
+function updateGotoExecuteButton() {
+    const btn = document.getElementById('gotoExecuteBtn');
+    if (!btn) return;
+    const canMotor = isConnected && _alpacaConnected;
+    const busy = isScopeSlewingForGotoBtn();
+    btn.disabled = !isConnected;
+    btn.style.width = '100%';
+    btn.style.letterSpacing = '1px';
+    if (!canMotor) {
+        btn.textContent = 'Execute GoTo';
+        btn.className = 'btn btn-primary btn-compact';
+        return;
+    }
+    if (busy) {
+        btn.textContent = 'Stop slew';
+        btn.className = 'btn btn-danger btn-compact';
+    } else {
+        btn.textContent = 'Execute GoTo';
+        btn.className = 'btn btn-primary btn-compact';
+    }
+}
+
+async function gotoExecuteOrStop() {
+    if (!isConnected) return;
+    if (isScopeSlewingForGotoBtn()) {
+        const r = await apiCall('/telescope/alpaca/abort', 'POST', {});
+        if (r && r.error == null && r.success !== false) {
+            showStatus('Slew stopped', 'warning', 2500);
+            _ctrlState = 'idle';
+            _lastAlpacaSlewing = false;
+            updateGotoExecuteButton();
+            await updateStatus();
+        }
+        return;
+    }
+    await gotoExecute();
+}
+
 // -- GoTo execute --
 
-// -- Manual Slew (Joystick) --
+// -- Manual Slew (Joystick) — ALPACA MoveAxis: one non-zero rate runs until stop (continuous) --
 
-function nudgeStart(angle) {
+function _releaseNudgePointerCapture() {
+    if (!_nudgePointerActive) return;
+    const { pointerId, el } = _nudgePointerActive;
+    _nudgePointerActive = null;
+    try {
+        if (el && typeof el.releasePointerCapture === 'function') {
+            el.releasePointerCapture(pointerId);
+        }
+    } catch (_) {
+        /* already released */
+    }
+}
+
+/**
+ * Pointer handlers for D-pad: capture pointer so leaving the small button does not
+ * fire spurious stop (old mouseleave+nudgeStop broke continuous slew).
+ */
+function nudgePointerDown(ev, angle) {
+    if (ev.pointerType === 'mouse' && ev.button !== 0) return;
+    ev.preventDefault();
     if (!_alpacaConnected) {
         showStatus('Motor control requires ALPACA connection', 'error', 3000);
         return;
@@ -1604,7 +1704,27 @@ function nudgeStart(angle) {
         showStatus(`Cannot nudge while ${_ctrlState.replace('_', ' ')}`, 'warning', 3000);
         return;
     }
-    // ALPACA: send once — backend holds the rate until nudge/stop
+    if (_nudgePointerActive) {
+        if (_nudgePointerActive.pointerId === ev.pointerId) return;
+        nudgeStop();
+    }
+    _nudgePointerActive = { pointerId: ev.pointerId, el: ev.currentTarget };
+    try {
+        ev.currentTarget.setPointerCapture(ev.pointerId);
+    } catch (_) {
+        /* ignore */
+    }
+    nudgeStart(angle);
+}
+
+function nudgePointerUp(ev) {
+    if (!_nudgePointerActive || ev.pointerId !== _nudgePointerActive.pointerId) return;
+    _releaseNudgePointerCapture();
+    nudgeStop();
+}
+
+function nudgeStart(angle) {
+    // Preconditions: nudgePointerDown already checked ALPACA + ctrl_state
     // angle: 0=left, 90=down, 180=right, 270=up (legacy convention)
     const fast = document.querySelector('input[name="nudgeSpeed"]:checked')?.value === 'fast';
     const rate = fast ? 3.0 : 1.0;
@@ -1617,6 +1737,7 @@ function nudgeStart(angle) {
 }
 
 function nudgeStop() {
+    _releaseNudgePointerCapture();
     apiCall('/telescope/nudge/stop', 'POST', {});
 }
 
@@ -1670,6 +1791,9 @@ async function gotoExecute(overrideAlt, overrideAz) {
             } else {
                 showStatus(msg, 'success', 5000);
             }
+            _ctrlState = 'slewing';
+            _lastAlpacaSlewing = true;
+            updateGotoExecuteButton();
         }
         // Clear user-edited flag so GoTo fields can be updated again
         ['gotoAlt','gotoAz','gotoRa','gotoDec'].forEach(id => {
@@ -2442,12 +2566,31 @@ function dismissTransit(flight) {
     updateTransitList();
 }
 
+function syncAutoCaptureToggleUi() {
+    const cb = document.getElementById('autoCaptureToggle');
+    const btn = document.getElementById('autoCaptureBtn');
+    if (!cb || !btn) return;
+    const on = cb.checked;
+    btn.classList.toggle('is-active', on);
+    // Not live CV detection — that is detectToggleBtn / /telescope/armed banner.
+    btn.textContent = on ? 'AUTO ON' : 'AUTO OFF';
+    btn.setAttribute('aria-pressed', on ? 'true' : 'false');
+}
+
 // One-time UI event listeners — set up once at module load
 (function() {
     const toggle = document.getElementById('autoCaptureToggle');
+    const acBtn = document.getElementById('autoCaptureBtn');
     if (toggle) {
         toggle.addEventListener('change', (e) => {
-            localStorage.setItem('autoCaptureTransits', e.target.checked);
+            localStorage.setItem('autoCaptureTransits', String(e.target.checked));
+            syncAutoCaptureToggleUi();
+        });
+    }
+    if (toggle && acBtn) {
+        acBtn.addEventListener('click', () => {
+            toggle.checked = !toggle.checked;
+            toggle.dispatchEvent(new Event('change'));
         });
     }
     document.addEventListener('keydown', (e) => {
@@ -2486,6 +2629,7 @@ function dismissTransit(flight) {
             }
         }
     });
+    syncAutoCaptureToggleUi();
 })();
 
 // ============================================================================
@@ -5266,6 +5410,8 @@ function fireSimTransitDuringEclipse() {
     if (autoCapture && !autoCapture.checked) {
         showStatus('ℹ️ Auto-capture is off — enabling it for this demo', 'info', 3000);
         autoCapture.checked = true;
+        localStorage.setItem('autoCaptureTransits', 'true');
+        syncAutoCaptureToggleUi();
     }
 
     // Inject transit 8s away (handled=false so checkAutoCapture picks it up)
@@ -7398,6 +7544,8 @@ function _updateAlpacaPanel(data) {
             const el = document.getElementById(id);
             if (el) el.className = 'alpaca-state-chip';
         });
+        _lastAlpacaSlewing = false;
+        updateGotoExecuteButton();
         return;
     }
 
@@ -7441,6 +7589,9 @@ function _updateAlpacaPanel(data) {
     if (chipTrk) chipTrk.className = 'alpaca-state-chip' + (state.tracking ? ' active' : '');
     if (chipSlw) chipSlw.className = 'alpaca-state-chip' + (state.slewing ? ' warn' : '');
     if (chipPrk) chipPrk.className = 'alpaca-state-chip' + (state.parked ? ' active' : '');
+
+    _lastAlpacaSlewing = !!state.slewing;
+    updateGotoExecuteButton();
 
     // Device name
     const nameEl = document.getElementById('alpacaDeviceName');

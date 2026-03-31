@@ -107,11 +107,13 @@ body {
     border-color: #039c9c;
 }
 
-/* Scope button anchored to map pane (not viewport) */
+/* Scope button — center bottom of map pane, small gap above map bottom edge */
 .nav-toggle-btn.nav-toggle-on-map {
     position: absolute;
-    bottom: 14px;
-    left: 14px;
+    left: 50%;
+    right: auto;
+    transform: translateX(-50%);
+    bottom: 2px;
     z-index: 1100;
 }
 
