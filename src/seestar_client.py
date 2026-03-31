@@ -15,7 +15,7 @@ import socket
 import threading
 import time
 from datetime import datetime
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, Tuple
 
 from src import logger
 from src.site_context import get_observer_coordinates
@@ -204,6 +204,15 @@ class SeestarClient:
         )  # id → {"event": Event, "result": ...}
         self._pending_lock = threading.Lock()
 
+        # Heartbeat reconnect backoff (after TCP drop while heartbeat is running)
+        self._reconnect_backoff_sec: float = 5.0
+        self._reconnect_next_try_mono: Optional[float] = None
+        self._reconnect_failures: int = 0
+        self._reconnect_gave_up: bool = False
+        # After one full failed connect() (all TCP retries exhausted), reduce log noise
+        # for subsequent attempts (e.g. startup auto-connect loop).
+        self._failed_full_connect_cycles: int = 0
+
         logger.info(f"Initialized Seestar client for {host}:{port}")
 
     def _get_next_id(self) -> int:
@@ -329,7 +338,7 @@ class SeestarClient:
             else:
                 logger.warning(f"Socket error in _send_command: {e}")
             if e.errno in (54, 104):  # ECONNRESET
-                self._connected = False
+                self._note_tcp_drop()
             raise RuntimeError(f"Communication failed: {e}")
 
         if not expect_response:
@@ -411,10 +420,74 @@ class SeestarClient:
         else:
             logger.debug(f"[Event] {name} (no handler) keys={list(event.keys())}")
 
-    def _reconnect(self) -> bool:
+    @staticmethod
+    def _reconnect_policy() -> Tuple[float, float, int, float]:
+        """initial_backoff_sec, max_backoff_sec, max_failures_before_giveup, backoff_mult."""
+        try:
+            max_backoff = float(os.getenv("SEESTAR_RECONNECT_MAX_BACKOFF_SEC", "600"))
+        except ValueError:
+            max_backoff = 600.0
+        try:
+            max_failures = int(os.getenv("SEESTAR_RECONNECT_MAX_FAILURES", "15"))
+        except ValueError:
+            max_failures = 15
+        try:
+            initial = float(os.getenv("SEESTAR_RECONNECT_INITIAL_BACKOFF_SEC", "5"))
+        except ValueError:
+            initial = 5.0
+        try:
+            mult = float(os.getenv("SEESTAR_RECONNECT_BACKOFF_MULT", "1.5"))
+        except ValueError:
+            mult = 1.5
+        mult = max(mult, 1.05)
+        max_failures = max(max_failures, 1)
+        initial = max(initial, 1.0)
+        max_backoff = max(max_backoff, initial)
+        return initial, max_backoff, max_failures, mult
+
+    def _clear_reconnect_suppression(self) -> None:
+        """Reset heartbeat reconnect give-up state before any connect() attempt.
+
+        Does not reset `_failed_full_connect_cycles` — that is only cleared on a
+        successful TCP session or via `reset_connect_log_verbosity()` (UI Connect).
+        """
+        self._reconnect_gave_up = False
+        self._reconnect_failures = 0
+        initial, _, _, _ = self._reconnect_policy()
+        self._reconnect_backoff_sec = initial
+        self._reconnect_next_try_mono = None
+
+    def reset_connect_log_verbosity(self) -> None:
+        """Next connect() logs at normal detail (use from POST /telescope/connect)."""
+        self._failed_full_connect_cycles = 0
+
+    def _reset_reconnect_backoff_on_success(self) -> None:
+        initial, _, _, _ = self._reconnect_policy()
+        self._reconnect_failures = 0
+        self._reconnect_backoff_sec = initial
+        self._reconnect_next_try_mono = None
+        self._reconnect_gave_up = False
+
+    def _note_tcp_drop(self) -> None:
+        """Mark disconnected; if heartbeat is active, start a fresh reconnect episode."""
+        self._connected = False
+        if self._heartbeat_running:
+            self._reconnect_gave_up = False
+            self._reconnect_failures = 0
+            initial, _, _, _ = self._reconnect_policy()
+            self._reconnect_backoff_sec = initial
+            self._reconnect_next_try_mono = None
+
+    def _reconnect(self, quiet: bool = False) -> bool:
         """Attempt to re-establish the TCP connection without starting a new heartbeat thread.
         Called from within the heartbeat thread after a drop is detected.
         Runs auto-discovery when the configured host fails (e.g. scope got new DHCP lease).
+
+        Parameters
+        ----------
+        quiet : bool
+            If True, log connection failures at DEBUG to avoid duplicate lines with the
+            heartbeat loop (which logs one summary line per attempt).
         """
         if self.socket:
             try:
@@ -429,7 +502,7 @@ class SeestarClient:
                 self.socket.settimeout(self.timeout)
                 self.socket.connect((self.host, self.port))
                 self._connected = True
-                logger.warning("Reconnected to Seestar")
+                logger.info("Reconnected to Seestar")
 
                 # Run init sequence on reconnect (claims master, syncs time/location)
                 try:
@@ -451,6 +524,7 @@ class SeestarClient:
                     self._reader_thread.start()
 
                 self._notify_scope_online()
+                self._reset_reconnect_backoff_on_success()
                 return True
             except socket.error as e:
                 if self.socket:
@@ -460,26 +534,29 @@ class SeestarClient:
                         pass
                     self.socket = None
                 if attempt == 0:
-                    discovered = self._auto_discover()
+                    discovered = self._auto_discover(quiet=quiet)
                     if discovered and discovered != self.host:
-                        logger.warning(
+                        msg = (
                             f"[Seestar] Reconnect: discovered at {discovered} "
                             f"(was {self.host}). Updating."
                         )
+                        (logger.debug if quiet else logger.warning)(msg)
                         self.host = discovered
                         self._persist_host_to_env(discovered)
                         continue
-                logger.warning(f"Reconnect attempt failed: {e}")
+                if quiet:
+                    logger.debug(f"Reconnect attempt failed: {e}")
+                else:
+                    logger.warning(f"Reconnect attempt failed: {e}")
                 return False
         return False
 
     def _heartbeat_loop(self):
         """Background thread: sends periodic keepalive pings and auto-reconnects on drop."""
-        RECONNECT_INTERVAL = 5  # seconds between reconnect attempts
         HARD_FAIL_THRESHOLD = 3  # consecutive hard socket errors → disconnect
-        reconnect_wait = 0
         hard_fail_count = 0
         _timeout_logged = False  # log timeout once, not every 3 seconds
+        initial_b, max_b, max_fails, mult = self._reconnect_policy()
 
         while self._heartbeat_running:
             # Auto-reconnect when connection has dropped
@@ -493,17 +570,49 @@ class SeestarClient:
                             continue
                     except Exception:
                         pass  # fail open
-                reconnect_wait += 1
-                if reconnect_wait >= RECONNECT_INTERVAL:
-                    reconnect_wait = 0
-                    logger.info("Heartbeat: connection lost — attempting reconnect...")
-                    if self._reconnect():  # sets _connected = True on success
-                        hard_fail_count = 0
-                        _timeout_logged = False
+
+                if self._reconnect_gave_up:
+                    time.sleep(60)
+                    continue
+
+                now = time.monotonic()
+                if self._reconnect_next_try_mono is None:
+                    self._reconnect_next_try_mono = now + initial_b
+                if now < self._reconnect_next_try_mono:
+                    time.sleep(min(1.0, self._reconnect_next_try_mono - now))
+                    continue
+
+                logger.info(
+                    "Heartbeat: Seestar reconnect attempt %d/%d (next wait up to %.0fs if this fails)",
+                    self._reconnect_failures + 1,
+                    max_fails,
+                    min(max_b, max(initial_b, self._reconnect_backoff_sec * mult)),
+                )
+                if self._reconnect(quiet=True):  # sets _connected = True on success
+                    hard_fail_count = 0
+                    _timeout_logged = False
+                else:
+                    self._reconnect_failures += 1
+                    self._reconnect_backoff_sec = min(
+                        max_b,
+                        max(initial_b, self._reconnect_backoff_sec * mult),
+                    )
+                    self._reconnect_next_try_mono = (
+                        time.monotonic() + self._reconnect_backoff_sec
+                    )
+                    if self._reconnect_failures >= max_fails:
+                        self._reconnect_gave_up = True
+                        logger.warning(
+                            "Heartbeat: automatic Seestar reconnect stopped after %d failed "
+                            "attempts (backoff up to %.0fs). Use Connect on the telescope page "
+                            "to try again.",
+                            max_fails,
+                            max_b,
+                        )
                 time.sleep(1)
                 continue
 
-            reconnect_wait = 0  # reset backoff once connected
+            initial_b, max_b, max_fails, mult = self._reconnect_policy()
 
             # Skip heartbeat if a multi-step command sequence holds the lock
             if not self._cmd_seq_lock.acquire(blocking=False):
@@ -534,10 +643,8 @@ class SeestarClient:
                             f"Heartbeat: {hard_fail_count} consecutive hard errors — marking disconnected: {e}"
                         )
                         if self._connected:
-                            self._connected = False
                             self._notify_scope_offline()
-                        else:
-                            self._connected = False
+                        self._note_tcp_drop()
                     else:
                         logger.warning(
                             f"Heartbeat: hard error ({hard_fail_count}/{HARD_FAIL_THRESHOLD}): {e}"
@@ -762,18 +869,22 @@ class SeestarClient:
                 )
                 return True
 
+            self._clear_reconnect_suppression()
             return self._do_connect()
 
     def _do_connect(self) -> bool:
         """Inner connect implementation — must be called with _connect_lock held."""
+        repeat = self._failed_full_connect_cycles > 0
+        log = logger.debug if repeat else logger.info
+
         # Fast pre-check: if the configured host doesn't respond quickly,
         # run auto-discover before the slow retry loop.
         if not self._quick_reachable(self.host):
-            logger.info(
+            log(
                 f"[Seestar] {self.host}:{self.port} not immediately reachable, "
                 "scanning subnet for Seestar…"
             )
-            discovered = self._auto_discover()
+            discovered = self._auto_discover(quiet=repeat)
             if discovered:
                 if discovered != self.host:
                     logger.warning(
@@ -783,7 +894,7 @@ class SeestarClient:
                     self.host = discovered
                     self._persist_host_to_env(discovered)
             else:
-                logger.warning(
+                log(
                     "[Seestar] Auto-discover found nothing; trying configured host anyway."
                 )
 
@@ -793,7 +904,7 @@ class SeestarClient:
         for attempt in range(1, self.retry_attempts + 1):
             try:
                 if attempt > 1:
-                    logger.info(
+                    log(
                         f"[Seestar] Connection attempt {attempt}/{self.retry_attempts} "
                         f"(after {delay}s delay)"
                     )
@@ -815,33 +926,34 @@ class SeestarClient:
                         + "\r\n"
                     )
                     _usock.sendto(_udp_msg.encode(), ("255.255.255.255", 4720))
-                    logger.warning("[Init] UDP scan_iscope broadcast sent on port 4720")
+                    logger.debug("[Init] UDP scan_iscope broadcast sent on port 4720")
                     # Wait for scope to reply — this is the handshake
                     try:
                         data, addr = _usock.recvfrom(1024)
-                        logger.warning(
+                        logger.debug(
                             f"[Init] UDP scan_iscope reply from {addr[0]}: {data[:200]}"
                         )
                     except socket.timeout:
-                        logger.warning(
+                        logger.debug(
                             "[Init] UDP scan_iscope: no reply (2s timeout) — TCP may be ghost connection"
                         )
                     _usock.close()
                 except Exception as _ue:
-                    logger.warning(f"[Init] UDP handshake failed: {_ue}")
+                    logger.debug(f"[Init] UDP handshake failed: {_ue}")
 
                 # Create TCP socket
                 self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
                 self.socket.settimeout(self.timeout)
 
                 # Connect to Seestar
-                logger.info(
+                log(
                     f"Connecting to Seestar at {self.host}:{self.port} "
                     f"(attempt {attempt}/{self.retry_attempts})..."
                 )
                 self.socket.connect((self.host, self.port))
                 self._connected = True
                 self._device_state_consecutive_fails = 0
+                self._failed_full_connect_cycles = 0
                 logger.info("Connected to Seestar")
 
                 # Start reader thread immediately to drain incoming data
@@ -868,7 +980,18 @@ class SeestarClient:
 
             except Exception as e:
                 last_error = e
-                logger.warning(f"[Seestar] Connection attempt {attempt} failed: {e}")
+                if repeat:
+                    logger.debug(
+                        f"[Seestar] Connection attempt {attempt}/{self.retry_attempts} failed: {e}"
+                    )
+                elif attempt < self.retry_attempts:
+                    logger.info(
+                        f"[Seestar] Connection attempt {attempt}/{self.retry_attempts} failed: {e}"
+                    )
+                else:
+                    logger.warning(
+                        f"[Seestar] Connection attempt {attempt}/{self.retry_attempts} failed: {e}"
+                    )
 
                 # Always clean up the socket on ANY failure — not just
                 # socket.error.  Leaked sockets consume one of the Seestar's
@@ -885,12 +1008,13 @@ class SeestarClient:
                 # Don't re-scan on every failure — just retry with backoff.
 
         # All retries exhausted
+        self._failed_full_connect_cycles += 1
         error_msg = f"Connection failed after {self.retry_attempts} attempts"
         if last_error:
             error_msg += f": {last_error}"
         raise RuntimeError(error_msg)
 
-    def _udp_discover(self, timeout: float = 2.0) -> Optional[str]:
+    def _udp_discover(self, timeout: float = 2.0, quiet: bool = False) -> Optional[str]:
         """
         Send a UDP broadcast scan_iscope on port 4720 (ALP protocol).
 
@@ -913,7 +1037,8 @@ class SeestarClient:
             sock.settimeout(timeout)
             sock.bind(("", 0))
             sock.sendto(payload, ("255.255.255.255", UDP_PORT))
-            logger.info(f"[Seestar] UDP scan_iscope broadcast sent on port {UDP_PORT}")
+            log = logger.debug if quiet else logger.info
+            log(f"[Seestar] UDP scan_iscope broadcast sent on port {UDP_PORT}")
 
             deadline = time.time() + timeout
             while time.time() < deadline:
@@ -922,7 +1047,7 @@ class SeestarClient:
                     responder_ip = addr[0]
                     # Ignore our own loopback
                     if not responder_ip.startswith("127."):
-                        logger.info(
+                        log(
                             f"[Seestar] UDP discovery: scope replied from {responder_ip}"
                         )
                         return responder_ip
@@ -938,7 +1063,7 @@ class SeestarClient:
                     pass
         return None
 
-    def _auto_discover(self) -> str:
+    def _auto_discover(self, quiet: bool = False) -> Optional[str]:
         """
         Discover the Seestar on the local network.
 
@@ -952,13 +1077,12 @@ class SeestarClient:
         # --- Pass 1: UDP broadcast (ALP scan_iscope protocol) ---
         # This reaches the scope even if it is on its own AP subnet (192.168.7.x)
         # because the broadcast goes out on all interfaces at L2.
-        udp_ip = self._udp_discover(timeout=2.0)
+        udp_ip = self._udp_discover(timeout=2.0, quiet=quiet)
         if udp_ip:
             return udp_ip
 
-        logger.info(
-            "[Seestar] UDP discovery found nothing; falling back to TCP subnet scan…"
-        )
+        log = logger.debug if quiet else logger.info
+        log("[Seestar] UDP discovery found nothing; falling back to TCP subnet scan…")
 
         # --- Pass 2: TCP /24 port scan on all local interface subnets ---
         # Collect all unique /24 prefixes from local interfaces.
@@ -999,15 +1123,18 @@ class SeestarClient:
                 return None
 
         for base in bases:
-            logger.info(f"[Seestar] Scanning {base}.0/24 for port {self.port}…")
+            log(f"[Seestar] Scanning {base}.0/24 for port {self.port}…")
             hosts = [f"{base}.{i}" for i in range(1, 255)]
             with concurrent.futures.ThreadPoolExecutor(max_workers=64) as pool:
                 for ip in pool.map(_probe, hosts):
                     if ip:
-                        logger.info(f"[Seestar] Found at {ip}")
+                        log(f"[Seestar] Found at {ip}")
                         return ip
 
-        logger.warning("[Seestar] Auto-discover: no host found on any local subnet")
+        if quiet:
+            logger.debug("[Seestar] Auto-discover: no host found on any local subnet")
+        else:
+            logger.info("[Seestar] Auto-discover: no host found on any local subnet")
         return None
 
     def disconnect(self) -> bool:
@@ -1534,7 +1661,7 @@ class SeestarClient:
                     logger.debug(f"[Reader] << {len(chunk)} bytes: {chunk[:200]}")
                 if not chunk:
                     logger.warning("[Reader] Socket closed by scope")
-                    self._connected = False
+                    self._note_tcp_drop()
                     break
                 buf += chunk.decode("utf-8", errors="replace")
                 while "\r\n" in buf:
@@ -1580,7 +1707,7 @@ class SeestarClient:
             except socket.error as e:
                 if self._reader_running and self._connected:
                     logger.warning(f"[Reader] Socket error: {e}")
-                    self._connected = False
+                    self._note_tcp_drop()
                 break
             except Exception as e:
                 if self._reader_running:

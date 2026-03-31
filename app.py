@@ -49,6 +49,7 @@ if _VENV_PY.is_file():
 
 import argparse
 import asyncio
+import subprocess
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -1129,6 +1130,85 @@ def _load_transit_labels() -> dict:
             pass
     _load_transit_labels.cache = labels  # type: ignore[attr-defined]
     return labels
+
+
+# CNN retrain (promote unlabeled .npz by TP/FP labels, then training.train_model)
+_cnn_retrain_state: dict = {
+    "running": False,
+    "message": "",
+    "error": None,
+    "finished_at": None,
+    "last_stats": None,
+}
+_cnn_retrain_lock = threading.Lock()
+
+
+@app.route("/api/cnn/retrain/status")
+def api_cnn_retrain_status():
+    """Poll background CNN retrain job."""
+    return jsonify(dict(_cnn_retrain_state))
+
+
+@app.route("/api/cnn/retrain", methods=["POST"])
+def api_cnn_retrain():
+    """Promote labeled unlabeled clips, run training.train_model, reload ONNX."""
+    global _cnn_retrain_state
+    with _cnn_retrain_lock:
+        if _cnn_retrain_state["running"]:
+            return jsonify({"error": "Retrain already in progress"}), 409
+        _cnn_retrain_state["running"] = True
+        _cnn_retrain_state["message"] = "Starting…"
+        _cnn_retrain_state["error"] = None
+        _cnn_retrain_state["finished_at"] = None
+        _cnn_retrain_state["last_stats"] = None
+
+    repo = Path(__file__).resolve().parent
+
+    def _job() -> None:
+        global _cnn_retrain_state
+        from datetime import datetime as _dt
+        from datetime import timezone as _tz
+
+        try:
+            from training.promote_unlabeled import promote_and_summarize
+
+            _cnn_retrain_state["message"] = "Promoting labeled clips…"
+            stats, summ = promote_and_summarize(repo)
+            _cnn_retrain_state["last_stats"] = stats
+            _cnn_retrain_state["message"] = f"{summ} — running training.train_model…"
+
+            r = subprocess.run(
+                [sys.executable, "-m", "training.train_model"],
+                cwd=str(repo),
+                timeout=7200,
+                capture_output=True,
+                text=True,
+            )
+            if r.returncode != 0:
+                tail = (r.stderr or r.stdout or "")[-4000:]
+                _cnn_retrain_state["error"] = tail or f"exit code {r.returncode}"
+                _cnn_retrain_state["message"] = "Training failed — see error"
+            else:
+                _cnn_retrain_state["message"] = "Done — reloading model"
+                try:
+                    from src.transit_classifier import get_classifier
+
+                    get_classifier().reload()
+                    _cnn_retrain_state["message"] = "Done — model reloaded"
+                except Exception as ex:
+                    _cnn_retrain_state["message"] = f"Trained OK; reload failed: {ex}"
+        except subprocess.TimeoutExpired:
+            _cnn_retrain_state["error"] = "training.train_model exceeded 2 h timeout"
+            _cnn_retrain_state["message"] = "Timeout"
+        except Exception as ex:
+            _cnn_retrain_state["error"] = str(ex)
+            _cnn_retrain_state["message"] = "Failed"
+        finally:
+            _cnn_retrain_state["running"] = False
+            _cnn_retrain_state["finished_at"] = _dt.now(_tz.utc).isoformat()
+
+    threading.Thread(target=_job, name="cnn-retrain", daemon=True).start()
+    return jsonify({"ok": True, "started": True})
 
 
 @app.route("/transit-log")

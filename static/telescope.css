@@ -2090,6 +2090,43 @@ canvas.video-thumb-canvas {
     margin-bottom: 4px;
 }
 
+/* Detection event history panel — header + Retrain (Scope keycap styling) */
+.det-events-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    flex-wrap: wrap;
+    margin-bottom: 6px;
+}
+.det-events-title {
+    font-weight: 600;
+    font-size: 0.85em;
+    color: #90caf9;
+    flex: 1;
+    min-width: 0;
+}
+.det-events-retrain-btn {
+    flex-shrink: 0;
+    font-size: 0.72em !important;
+    padding: 4px 10px !important;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    font-family: 'SF Mono', 'Menlo', 'Consolas', monospace;
+    font-weight: 700;
+}
+.det-events-retrain-btn:disabled {
+    opacity: 0.55;
+    cursor: wait;
+}
+.det-events-retrain-status {
+    font-size: 0.72em;
+    color: #9cd9ff;
+    margin: 0 0 6px 0;
+    line-height: 1.35;
+    word-break: break-word;
+}
+
 /* Transition panel subtitle */
 .panel-subtitle { color: #9AA0A8; }
 

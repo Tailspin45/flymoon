@@ -1270,6 +1270,8 @@ def connect_telescope():
                 400,
             )
 
+        if hasattr(client, "reset_connect_log_verbosity"):
+            client.reset_connect_log_verbosity()
         client.connect()
 
         # Also connect ALPACA for motor control (firmware 3.0+)

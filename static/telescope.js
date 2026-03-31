@@ -6146,12 +6146,28 @@ window.toggleDetectionEventHistory = async function() {
     _detEventsPanel = document.createElement('div');
     _detEventsPanel.id = 'detEventsPanel';
     _detEventsPanel.style.cssText =
-        'margin:8px 0;background:#1a1a2e;border:1px solid #2a2a4a;border-radius:6px;padding:8px;';
+        'margin:8px;background:#1a1a2e;border:1px solid #2a2a4a;border-radius:6px;padding:8px;';
 
-    const title = document.createElement('div');
-    title.style.cssText = 'font-weight:600;font-size:0.85em;color:#90caf9;margin-bottom:6px;';
+    const header = document.createElement('div');
+    header.className = 'det-events-header';
+    const title = document.createElement('span');
+    title.className = 'det-events-title';
     title.textContent = '📋 Detection Event History (last 7 days)';
-    _detEventsPanel.appendChild(title);
+    const retrainBtn = document.createElement('button');
+    retrainBtn.type = 'button';
+    retrainBtn.className = 'btn btn-secondary btn-compact det-events-retrain-btn';
+    retrainBtn.textContent = 'Retrain';
+    retrainBtn.title = 'Promote TP/FP-labeled clips from unlabeled, then retrain CNN and reload model (runs in background; may take several minutes)';
+    retrainBtn.onclick = () => _startCnnRetrain(retrainBtn);
+    header.appendChild(title);
+    header.appendChild(retrainBtn);
+    _detEventsPanel.appendChild(header);
+
+    const retrainStatus = document.createElement('div');
+    retrainStatus.id = 'detEventsRetrainStatus';
+    retrainStatus.className = 'det-events-retrain-status';
+    retrainStatus.style.display = 'none';
+    _detEventsPanel.appendChild(retrainStatus);
 
     const tableWrap = document.createElement('div');
     tableWrap.id = 'detEventsTableWrap';
@@ -6184,10 +6200,58 @@ async function _refreshDetectionEventHistory() {
     const _LABEL_COLORS = { tp: '#4caf50', fp: '#f44336', fn: '#ff9800', tn: '#9e9e9e' };
     const _LABEL_ICONS  = { tp: '✅TP', fp: '❌FP', fn: '⚠️FN', tn: '⬜TN' };
 
+    const _escAttr = (s) => String(s)
+        .replace(/&/g, '&amp;')
+        .replace(/"/g, '&quot;')
+        .replace(/</g, '&lt;');
+
+    /** YYYYMMDD_HHMMSS in *local* time — matches vid_* / det_* capture filenames (server uses datetime.now()). */
+    const _captureFilenameStem = (v) => {
+        if (!v) return null;
+        const d = new Date(v);
+        if (Number.isNaN(d.getTime())) return null;
+        const p = (n) => String(n).padStart(2, '0');
+        const y = d.getFullYear();
+        const mo = p(d.getMonth() + 1);
+        const da = p(d.getDate());
+        const h = p(d.getHours());
+        const mi = p(d.getMinutes());
+        const s = p(d.getSeconds());
+        return `${y}${mo}${da}_${h}${mi}${s}`;
+    };
+
     const cols = [
-        { key: 'timestamp',          label: 'Time',         fmt: v => v ? new Date(v).toLocaleString('en-US', {month:'short',day:'numeric',hour:'2-digit',minute:'2-digit',second:'2-digit',hour12:false}) : '—' },
-        { key: 'detected_flight_id', label: 'Flight',       fmt: v => v || '<span style="color:#555">unconfirmed</span>' },
-        { key: 'predicted_flight_id',label: 'Predicted',    fmt: v => v || '—' },
+        { key: 'timestamp',          label: 'Time (as in filename)', fmt: v => {
+            if (!v) return '<span style="color:#888">—</span>';
+            const stem = _captureFilenameStem(v);
+            if (!stem) return `<span style="color:#e57373" title="Bad timestamp">${_escAttr(String(v))}</span>`;
+            const d = new Date(v);
+            const tip = d.toLocaleString(undefined, {
+                weekday: 'short', year: 'numeric', month: 'short', day: 'numeric',
+                hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false,
+            });
+            return `<span style="font-family:'SF Mono','Menlo','Consolas',monospace;font-size:0.92em;font-variant-numeric:tabular-nums;color:#c8e6ff" title="${_escAttr(tip)}">${stem}</span>`;
+        }},
+        { key: 'detected_flight_id', label: 'Flight',       fmt: v => {
+            const t = (v && String(v).trim()) ? String(v).trim() : '';
+            if (!t) return '<span style="color:#777">—</span>';
+            return `<span style="font-weight:600;color:#e0e0e0">${_escAttr(t)}</span>`;
+        }},
+        { key: 'label',              label: 'Label',        fmt: (v, ev) => {
+            const cur = v || '';
+            const ts = ev.timestamp || '';
+            const tsA = _escAttr(ts);
+            const btns = ['tp','fp','fn'].map(lbl => {
+                const active = cur === lbl;
+                const col = active ? _LABEL_COLORS[lbl] : '#333';
+                const bord = active ? _LABEL_COLORS[lbl] : '#444';
+                return `<button type="button" data-ts="${tsA}" data-lbl="${lbl}" onclick="_labelEventBtn(this)"
+                    style="background:${col};border:1px solid ${bord};color:#fff;
+                    padding:1px 5px;border-radius:3px;cursor:pointer;font-size:0.78em;
+                    margin-right:2px;">${_LABEL_ICONS[lbl]}</button>`;
+            }).join('');
+            return `<span style="display:inline-flex;align-items:center;">${btns}</span>`;
+        }},
         { key: 'confidence_score',   label: 'Score',        fmt: v => {
             const n = parseFloat(v);
             if (isNaN(n)) return '—';
@@ -6198,22 +6262,8 @@ async function _refreshDetectionEventHistory() {
             ? '<span style="color:#4caf50">strong</span>'
             : '<span style="color:#9e9e9e">weak</span>' },
         { key: 'notes',              label: 'Notes',        fmt: v => v
-            ? `<span style="color:#90caf9;font-size:0.82em">${v}</span>`
+            ? `<span style="color:#90caf9;font-size:0.82em">${String(v).replace(/</g, '&lt;')}</span>`
             : '' },
-        { key: 'label',              label: 'Label',        fmt: (v, ev) => {
-            const cur = v || '';
-            const ts = (ev.timestamp || '').replace(/"/g, '&quot;');
-            const btns = ['tp','fp','fn'].map(lbl => {
-                const active = cur === lbl;
-                const col = active ? _LABEL_COLORS[lbl] : '#333';
-                const bord = active ? _LABEL_COLORS[lbl] : '#444';
-                return `<button onclick="_labelEvent('${ts}','${lbl}',this)"
-                    style="background:${col};border:1px solid ${bord};color:#fff;
-                    padding:1px 5px;border-radius:3px;cursor:pointer;font-size:0.78em;
-                    margin-right:2px;">${_LABEL_ICONS[lbl]}</button>`;
-            }).join('');
-            return `<span style="display:inline-flex;align-items:center;">${btns}</span>`;
-        }},
     ];
 
     const tbl = document.createElement('table');
@@ -6235,7 +6285,8 @@ async function _refreshDetectionEventHistory() {
         tr.onmouseleave = () => tr.style.background = '';
         cols.forEach(c => {
             const td = tr.insertCell();
-            td.style.cssText = 'padding:3px 6px;white-space:nowrap;';
+            const nowrap = c.key === 'timestamp' ? '' : 'white-space:nowrap;';
+            td.style.cssText = `padding:3px 6px;${nowrap}`;
             td.innerHTML = c.fmt(ev[c.key] ?? '', ev);
         });
     });
@@ -6245,7 +6296,10 @@ async function _refreshDetectionEventHistory() {
 }
 
 /** T23 — Send a TP/FP/FN label for a detection event to the backend. */
-async function _labelEvent(timestamp, label, btnEl) {
+async function _labelEventBtn(btnEl) {
+    const timestamp = btnEl.getAttribute('data-ts');
+    const label = btnEl.getAttribute('data-lbl');
+    if (!timestamp || !label) return;
     try {
         const resp = await fetch('/api/transit-events/label', {
             method: 'POST',
@@ -6254,12 +6308,11 @@ async function _labelEvent(timestamp, label, btnEl) {
         });
         if (!resp.ok) throw new Error(await resp.text());
 
-        // Visual feedback: highlight the active button in its row
+        const _LABEL_COLORS_JS = { tp: '#4caf50', fp: '#f44336', fn: '#ff9800' };
         const row = btnEl.closest('tr');
         if (row) {
-            row.querySelectorAll('button').forEach(b => {
-                const lbl = b.textContent.toLowerCase().replace(/[^a-z]/g, '').slice(0, 2);
-                const _LABEL_COLORS_JS = { tp: '#4caf50', fp: '#f44336', fn: '#ff9800' };
+            row.querySelectorAll('button[data-lbl]').forEach(b => {
+                const lbl = b.getAttribute('data-lbl');
                 const active = lbl === label;
                 b.style.background = active ? (_LABEL_COLORS_JS[lbl] || '#555') : '#333';
                 b.style.borderColor = active ? (_LABEL_COLORS_JS[lbl] || '#666') : '#444';
@@ -6267,6 +6320,67 @@ async function _labelEvent(timestamp, label, btnEl) {
         }
     } catch (e) {
         console.error('[Label]', e);
+    }
+}
+
+window._labelEventBtn = _labelEventBtn;
+
+let _cnnRetrainPollTimer = null;
+
+async function _startCnnRetrain(btnEl) {
+    if (btnEl && btnEl.disabled) return;
+    const statusEl = document.getElementById('detEventsRetrainStatus');
+    if (btnEl) {
+        btnEl.disabled = true;
+        btnEl.textContent = '…';
+    }
+    if (statusEl) {
+        statusEl.style.display = 'block';
+        statusEl.textContent = 'Starting retrain…';
+    }
+    try {
+        const resp = await fetch('/api/cnn/retrain', { method: 'POST' });
+        const data = await resp.json().catch(() => ({}));
+        if (!resp.ok) {
+            if (statusEl) statusEl.textContent = data.error || resp.statusText || 'Failed to start';
+            if (btnEl) {
+                btnEl.disabled = false;
+                btnEl.textContent = 'Retrain';
+            }
+            return;
+        }
+        if (_cnnRetrainPollTimer) clearInterval(_cnnRetrainPollTimer);
+        _cnnRetrainPollTimer = setInterval(async () => {
+            try {
+                const st = await fetch('/api/cnn/retrain/status');
+                if (!st.ok) return;
+                const s = await st.json();
+                if (statusEl) {
+                    let t = s.message || '';
+                    if (s.error) t += (t ? ' — ' : '') + s.error;
+                    statusEl.textContent = t || (s.running ? 'Working…' : 'Idle');
+                    statusEl.style.color = s.error ? '#e57373' : '#9cd9ff';
+                }
+                if (!s.running) {
+                    clearInterval(_cnnRetrainPollTimer);
+                    _cnnRetrainPollTimer = null;
+                    if (btnEl) {
+                        btnEl.disabled = false;
+                        btnEl.textContent = 'Retrain';
+                    }
+                }
+            } catch (_) { /* ignore */ }
+        }, 1500);
+    } catch (e) {
+        console.error('[Retrain]', e);
+        if (statusEl) {
+            statusEl.textContent = String(e);
+            statusEl.style.color = '#e57373';
+        }
+        if (btnEl) {
+            btnEl.disabled = false;
+            btnEl.textContent = 'Retrain';
+        }
     }
 }
 
