@@ -38,6 +38,89 @@ EARTH = ASTRO_EPHEMERIS["earth"]
 SPOT_COLOR = (140, 140, 140)
 
 
+def seestar_rtsp_port_probe_order(primary: int) -> list:
+    """Ordered TCP ports for Seestar S50 RTSP.
+
+    ZWO documents **4554**. ``SEESTAR_RTSP_PORT`` is often wrongly set to **554** (classic
+    RTSP); we always try **4554 before** the env port so timelapse/probe still work.
+    """
+    primary = int(primary)
+    ordered = (4554, primary, 8554, 554)
+    seen = set()
+    out = []
+    for p in ordered:
+        if p not in seen:
+            seen.add(p)
+            out.append(p)
+    return out
+
+
+def _rtsp_candidate_ports(primary: int) -> list:
+    """Same as :func:`seestar_rtsp_port_probe_order` (internal alias)."""
+    return seestar_rtsp_port_probe_order(primary)
+
+
+def _parse_seestar_rtsp_path_env() -> str:
+    """Return normalized path (always starts with /). Default ``/stream``.
+
+    Strips quotes, inline ``#`` comments, and fixes common typos (``str`` → ``stream``).
+    """
+    v = os.getenv("SEESTAR_RTSP_PATH")
+    if not v or not str(v).strip():
+        return "/stream"
+    v = str(v).split("#", 1)[0].strip().strip('"').strip("'")
+    if not v:
+        return "/stream"
+    if not v.startswith("/"):
+        v = "/" + v
+    # Truncated .env lines or typos produce rtsp://host:port/str — invalid on Seestar.
+    if v in ("/str", "/stre", "/st", "/s") or v == "str":
+        logger.warning(
+            "[Timelapse] SEESTAR_RTSP_PATH env looks wrong (%r) — using /stream",
+            os.getenv("SEESTAR_RTSP_PATH"),
+        )
+        return "/stream"
+    return v
+
+
+def _rtsp_path_candidates() -> list:
+    """URL path on the RTSP server. Default **only** ``/stream`` (Seestar).
+
+    Set ``SEESTAR_RTSP_PATH`` for a non-default path; that path is tried first, then
+    ``/stream`` as fallback. Set ``SEESTAR_RTSP_TRY_ROOT=true`` to also try ``/``.
+    """
+    raw = _parse_seestar_rtsp_path_env()
+    out = []
+    if raw == "/stream":
+        out.append("/stream")
+    else:
+        for p in (raw, "/stream"):
+            if p not in out:
+                out.append(p)
+    if os.getenv("SEESTAR_RTSP_TRY_ROOT", "").strip().lower() in (
+        "1",
+        "true",
+        "yes",
+        "on",
+    ):
+        if "/" not in out:
+            out.append("/")
+    return out
+
+
+def _rtsp_grab_urls(host: str, primary_port: int) -> list:
+    """(port, path, full_url) tuples — primary port paths first, then other ports."""
+    triples = []
+    seen_url = set()
+    for port in _rtsp_candidate_ports(primary_port):
+        for path in _rtsp_path_candidates():
+            url = f"rtsp://{host}:{port}{path}"
+            if url not in seen_url:
+                seen_url.add(url)
+                triples.append((port, path, url))
+    return triples
+
+
 def _detect_disk(frame: np.ndarray):
     """Return (cx, cy, radius) of the solar disk, or None.
 
@@ -662,29 +745,29 @@ class SolarTimelapse:
         filename = f"frame_{seq:05d}.jpg"
         filepath = os.path.join(self._frames_dir, filename)
 
-        # Try primary port first, then fallbacks if connection refused
-        # Port scan suggests 4500, 4700, 4800 are open. 4554 is standard but closed here.
-        candidate_ports = [self._rtsp_port]
-        if self._rtsp_port != 4500:
-            candidate_ports.append(4500)
-        if self._rtsp_port != 8554:
-            candidate_ports.append(8554)
-        if self._rtsp_port != 554:
-            candidate_ports.append(554)
+        tries = _rtsp_grab_urls(self._host, self._rtsp_port)
+        # Log probe order (not sorted) — sorted([554,4554,8554]) wrongly implied .env used 554.
+        probe_ports = seestar_rtsp_port_probe_order(self._rtsp_port)
+        env_port = os.getenv("SEESTAR_RTSP_PORT", "4554")
 
         last_err = ""
         success = False
 
-        for port in candidate_ports:
-            rtsp_url = f"rtsp://{self._host}:{port}/stream"
-
-            # Build command
+        for idx, (port, path, rtsp_url) in enumerate(tries):
+            # Match TransitDetector: longer socket timeout; probe size for slow handshakes.
             cmd = [
                 FFMPEG,
+                "-hide_banner",
+                "-loglevel",
+                "error",
                 "-rtsp_transport",
                 "tcp",
                 "-timeout",
-                "3000000",
+                "10000000",
+                "-analyzeduration",
+                "10000000",
+                "-probesize",
+                "10000000",
                 "-i",
                 rtsp_url,
                 "-frames:v",
@@ -699,27 +782,38 @@ class SolarTimelapse:
 
             try:
                 result = subprocess.run(
-                    cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, timeout=8
+                    cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, timeout=22
                 )
 
                 if result.returncode != 0:
-                    stderr_tail = result.stderr.decode(errors="replace")[-200:].strip()
-                    if (
-                        "Connection refused" in stderr_tail
-                        or "Input/output error" in stderr_tail
-                    ):
-                        last_err = f"Port {port} failed: {stderr_tail}"
-                        continue  # Try next port
+                    stderr_tail = result.stderr.decode(errors="replace")[-280:].strip()
+                    last_err = f"{rtsp_url}: {stderr_tail}"
+                    more = idx < len(tries) - 1
+                    if more:
+                        logger.debug(
+                            "[Timelapse] RTSP try failed (%s) — %s",
+                            rtsp_url,
+                            stderr_tail[:140],
+                        )
                     else:
                         logger.warning(
-                            f"[Timelapse] Frame grab failed on port {port}: {stderr_tail}"
+                            "[Timelapse] RTSP failed after %d URL tries "
+                            "(port order %s, SEESTAR_RTSP_PORT=%s, path=%s). "
+                            "Confirm Sun/Moon live view on the scope; pause preview/detector if needed. "
+                            "Last: %s",
+                            len(tries),
+                            probe_ports,
+                            env_port,
+                            _parse_seestar_rtsp_path_env(),
+                            stderr_tail[:220],
                         )
-                        last_err = f"FFmpeg error: {stderr_tail}"
-                        continue
+                    continue
 
                 if not os.path.exists(filepath) or os.path.getsize(filepath) < 100:
                     logger.warning(
-                        f"[Timelapse] Frame too small or missing on port {port}: {filepath}"
+                        "[Timelapse] Frame too small or missing for %s: %s",
+                        rtsp_url,
+                        filepath,
                     )
                     last_err = "Frame too small or missing"
                     continue
@@ -727,18 +821,21 @@ class SolarTimelapse:
                 # Success!
                 if port != self._rtsp_port:
                     logger.info(
-                        f"[Timelapse] Found working RTSP stream on port {port} (was {self._rtsp_port})"
+                        "[Timelapse] Using RTSP port %s path %s (was port %s)",
+                        port,
+                        path,
+                        self._rtsp_port,
                     )
-                    self._rtsp_port = port  # Remember working port
+                    self._rtsp_port = port
 
                 success = True
                 break
 
             except subprocess.TimeoutExpired:
-                logger.warning(f"[Timelapse] Frame grab timed out on port {port}")
-                last_err = "RTSP timeout"
+                logger.debug("[Timelapse] RTSP try timed out: %s", rtsp_url)
+                last_err = f"timeout: {rtsp_url}"
             except Exception as e:
-                logger.warning(f"[Timelapse] Frame grab error on port {port}: {e}")
+                logger.debug("[Timelapse] RTSP try error %s: %s", rtsp_url, e)
                 last_err = str(e)
 
         if not success:

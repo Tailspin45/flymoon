@@ -554,6 +554,7 @@ async function switchToMoon() {
         showStatus('Switched to Lunar mode', 'success', 5000);
         currentViewingMode = 'moon';
         updateModeButtons();    // immediately light Lunar keycap
+        _pollTimelapseStatus();
         stopPreview();
         _previewLastError = 0;
         setTimeout(startPreview, 3000);
@@ -574,6 +575,7 @@ async function switchToScenery() {
         showStatus('Scenery mode active — no tracking, manual positioning enabled', 'success', 5000);
         currentViewingMode = 'scenery';
         updateModeButtons();    // immediately light Scene keycap
+        _pollTimelapseStatus();
         stopPreview();
         _previewLastError = 0;
         setTimeout(startPreview, 3000);
@@ -1733,7 +1735,9 @@ function nudgeStart(angle) {
     else if (angle === 90)  { axis = 1; dir = -1; } // down = Dec/Alt -
     else if (angle === 180) { axis = 0; dir =  1; } // right = RA/Az +
     else                    { axis = 0; dir = -1; } // left = RA/Az -
-    apiCall('/telescope/nudge', 'POST', { axis, rate: rate * dir });
+    apiCall('/telescope/nudge', 'POST', { axis, rate: rate * dir }).then(() => {
+        _pollTimelapseStatus();
+    });
 }
 
 function nudgeStop() {
@@ -1794,6 +1798,7 @@ async function gotoExecute(overrideAlt, overrideAz) {
             _ctrlState = 'slewing';
             _lastAlpacaSlewing = true;
             updateGotoExecuteButton();
+            _pollTimelapseStatus();
         }
         // Clear user-edited flag so GoTo fields can be updated again
         ['gotoAlt','gotoAz','gotoRa','gotoDec'].forEach(id => {

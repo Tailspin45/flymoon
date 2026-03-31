@@ -35,7 +35,7 @@ from src.site_context import (
     observer_snapshot_for_api,
     set_observer_from_browser,
 )
-from src.solar_timelapse import get_timelapse
+from src.solar_timelapse import get_timelapse, seestar_rtsp_port_probe_order
 
 # Get EARTH reference for position calculations
 EARTH = ASTRO_EPHEMERIS["earth"]
@@ -68,31 +68,42 @@ _user_settings: dict = {
 
 
 def _probe_rtsp_stream(host: str, timeout_seconds: int = 5) -> bool:
-    """Return True when an RTSP frame can be read from the scope quickly."""
-    rtsp_port = int(os.getenv("SEESTAR_RTSP_PORT", "4554"))
-    rtsp_url = f"rtsp://{host}:{rtsp_port}/stream"
-    cmd = [
-        FFMPEG,
-        "-rtsp_transport",
-        "tcp",
-        "-i",
-        rtsp_url,
-        "-frames:v",
-        "1",
-        "-f",
-        "null",
-        "-",
-    ]
-    try:
-        result = subprocess.run(
-            cmd,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            timeout=timeout_seconds,
-        )
-        return result.returncode == 0
-    except (subprocess.TimeoutExpired, OSError):
-        return False
+    """Return True when an RTSP frame can be read from the scope quickly.
+
+    Tries ports in :func:`seestar_rtsp_port_probe_order` (4554 before ``SEESTAR_RTSP_PORT``).
+    """
+    primary = int(os.getenv("SEESTAR_RTSP_PORT", "4554"))
+    for port in seestar_rtsp_port_probe_order(primary):
+        rtsp_url = f"rtsp://{host}:{port}/stream"
+        cmd = [
+            FFMPEG,
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-rtsp_transport",
+            "tcp",
+            "-timeout",
+            "8000000",
+            "-i",
+            rtsp_url,
+            "-frames:v",
+            "1",
+            "-f",
+            "null",
+            "-",
+        ]
+        try:
+            result = subprocess.run(
+                cmd,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                timeout=timeout_seconds,
+            )
+            if result.returncode == 0:
+                return True
+        except (subprocess.TimeoutExpired, OSError):
+            continue
+    return False
 
 
 def _ensure_rtsp_ready(client) -> bool:
@@ -102,6 +113,18 @@ def _ensure_rtsp_ready(client) -> bool:
         mode = getattr(client, "_viewing_mode", None)
         logger.warning(f"[RTSP] Probe failed (mode={mode})")
     return ok
+
+
+def _stop_timelapse_if_running(reason: str) -> None:
+    """End timelapse capture so ffmpeg RTSP grabs do not run during slews or mode changes."""
+    try:
+        tl = get_timelapse()
+        if not tl.is_running:
+            return
+        logger.info(f"[Timelapse] Auto-stop — {reason}")
+        tl.stop(assemble=True)
+    except Exception as ex:
+        logger.warning(f"[Timelapse] Auto-stop failed ({reason}): {ex}")
 
 
 # Mock Telescope Client for Testing
@@ -639,6 +662,8 @@ def telescope_goto():
             503,
         )
 
+    _stop_timelapse_if_running("GoTo slew")
+
     # State machine: abort any active nudge before slewing
     global _ctrl_state, _pre_nudge_tracking
     with _ctrl_lock:
@@ -800,6 +825,8 @@ def telescope_nudge():
         rate = float(data.get("rate", 1.0))
         if axis not in (0, 1):
             return jsonify({"error": "axis must be 0 or 1"}), 400
+        if abs(rate) > 1e-9:
+            _stop_timelapse_if_running("manual slew (nudge)")
         max_rate = float(alpaca.get_max_move_rate(axis))
         if max_rate <= 0:
             max_rate = 6.0
@@ -907,6 +934,7 @@ def telescope_open_arm():
 
 def telescope_park():
     """POST /telescope/park — park the telescope."""
+    _stop_timelapse_if_running("park")
     alpaca = get_alpaca_client()
     if alpaca and alpaca.is_connected():
         try:
@@ -2790,6 +2818,8 @@ def switch_to_moon():
                 400,
             )
 
+        _stop_timelapse_if_running("switch to lunar mode")
+
         # Switch to lunar mode
         client.start_lunar_mode()
         _maybe_auto_start_detector("moon")
@@ -2821,6 +2851,8 @@ def switch_to_scenery():
         client = get_telescope_client()
         if not client or not client.is_connected():
             return jsonify({"error": "Not connected to telescope"}), 400
+
+        _stop_timelapse_if_running("switch to scenery mode")
 
         client.start_scenery_mode()
 
