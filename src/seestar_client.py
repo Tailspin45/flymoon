@@ -69,23 +69,14 @@ def _parse_focus_from_view_dict(view: Any) -> Optional[int]:
         return None
     if not isinstance(view, dict):
         return _coerce_focus_value(view)
-    inner = (view.get("View") or view.get("view"))
+    inner = view.get("View") or view.get("view")
     if isinstance(inner, dict):
         v = _parse_focus_from_view_dict(inner)
         if v is not None:
             return v
-    focuser = (
-        view.get("Focuser")
-        or view.get("focuser")
-        or view.get("FOCUSER")
-        or {}
-    )
+    focuser = view.get("Focuser") or view.get("focuser") or view.get("FOCUSER") or {}
     if isinstance(focuser, dict):
-        raw = (
-            focuser.get("step")
-            or focuser.get("Step")
-            or focuser.get("position")
-        )
+        raw = focuser.get("step") or focuser.get("Step") or focuser.get("position")
         v = _coerce_focus_value(raw)
         if v is not None:
             return v
@@ -117,7 +108,10 @@ def _parse_focus_from_device_state(payload: Any) -> Optional[int]:
             d = d[k]
         if ok and isinstance(d, dict):
             v = _coerce_focus_value(
-                d.get("step") or d.get("Step") or d.get("position") or d.get("focus_pos")
+                d.get("step")
+                or d.get("Step")
+                or d.get("position")
+                or d.get("focus_pos")
             )
             if v is not None:
                 return v
@@ -833,7 +827,9 @@ class SeestarClient:
 
             _time.sleep(3)
             if not self._query_rpc_enabled:
-                logger.debug("[Init] focus seed skipped (JSON-RPC query probes disabled)")
+                logger.debug(
+                    "[Init] focus seed skipped (JSON-RPC query probes disabled)"
+                )
                 return
             try:
                 fp = self.get_focuser_position()
@@ -1499,17 +1495,13 @@ class SeestarClient:
                 if fp is not None:
                     return _store(fp)
             except Exception as e:
-                logger.debug(
-                    "get_focuser_position params=%s: %s", attempt_params, e
-                )
+                logger.debug("get_focuser_position params=%s: %s", attempt_params, e)
 
         if not use_fallbacks:
             return None
 
         try:
-            r = self._send_command(
-                "get_view_state", quiet=True, timeout_override=10
-            )
+            r = self._send_command("get_view_state", quiet=True, timeout_override=10)
             fp = _parse_focus_from_view_dict((r or {}).get("View") or r)
             if fp is not None:
                 return _store(fp)
@@ -1578,9 +1570,17 @@ class SeestarClient:
             params: Dict[str, Any] = {"step": target, "ret_step": True}
         else:
             logger.warning(
-                "move_focuser: unknown current position — using relative step only"
+                "move_focuser skipped: unknown absolute position; refusing unsafe move"
             )
-            params = {"step": int(steps), "ret_step": True}
+            return {
+                "sent": False,
+                "delta": int(steps),
+                "provider": "jsonrpc",
+                "focus_confirmed": False,
+                "focus_source": "relative",
+                "reason": "unknown_absolute_focus_position",
+                "suggestion": "Focus move blocked for safety: absolute position is unavailable.",
+            }
 
         result = self._send_command(
             "move_focuser",

@@ -630,7 +630,18 @@ def telescope_goto():
                 {"ra": ra, "dec": dec, "result_type": type(result).__name__},
             )
             # endregion
-            return jsonify({"success": True, "result": result, "via": "ALPACA", "provider": "alpaca", "provider_ready": True}), 200
+            return (
+                jsonify(
+                    {
+                        "success": True,
+                        "result": result,
+                        "via": "ALPACA",
+                        "provider": "alpaca",
+                        "provider_ready": True,
+                    }
+                ),
+                200,
+            )
         elif mode == "altaz":
             alt = float(data["alt"])
             az = float(data["az"])
@@ -942,7 +953,17 @@ def telescope_autofocus():
         return jsonify({"error": "Telescope not connected"}), 503
     try:
         result = client.autofocus()
-        return jsonify({"success": True, "result": result, "provider": "jsonrpc", "provider_ready": True}), 200
+        return (
+            jsonify(
+                {
+                    "success": True,
+                    "result": result,
+                    "provider": "jsonrpc",
+                    "provider_ready": True,
+                }
+            ),
+            200,
+        )
     except Exception as e:
         return handle_error(e)
 
@@ -1007,6 +1028,7 @@ def telescope_position():
         ),
         200,
     )
+
 
 def telescope_focus_step():
     """POST /telescope/focus/step — move focuser by N steps."""
@@ -3727,7 +3749,9 @@ def _maybe_auto_start_detector(target: str = "sun") -> None:
 
         det = get_detector()
         if det and det.is_running:
-            logger.debug("[Telescope] Auto-detect: already running, skipping auto-start")
+            logger.debug(
+                "[Telescope] Auto-detect: already running, skipping auto-start"
+            )
             return
 
         client = get_telescope_client()
@@ -4172,14 +4196,17 @@ def get_armed_status():
                 f"will NOT be captured. Click 'Start Detection' to arm."
             )
 
-        return jsonify(
-            {
-                "scope_mode": scope_mode,
-                "detector_running": detector_running,
-                "armed": armed,
-                "warning": warning,
-            }
-        ), 200
+        return (
+            jsonify(
+                {
+                    "scope_mode": scope_mode,
+                    "detector_running": detector_running,
+                    "armed": armed,
+                    "warning": warning,
+                }
+            ),
+            200,
+        )
 
     except Exception as e:
         logger.error(f"[Telescope] Error getting armed status: {e}")
@@ -4203,8 +4230,8 @@ def transit_check():
     logger.debug("[Telescope] POST /telescope/transit/check")
 
     try:
-        from src.transit import get_transits
         from src.constants import PossibilityLevel
+        from src.transit import get_transits
 
         client = get_telescope_client()
         scope_mode = None
@@ -4212,7 +4239,10 @@ def transit_check():
             scope_mode = client._viewing_mode
 
         if scope_mode not in ("sun", "moon"):
-            return jsonify({"target": scope_mode, "high_transits": [], "checked": False}), 200
+            return (
+                jsonify({"target": scope_mode, "high_transits": [], "checked": False}),
+                200,
+            )
 
         latitude, longitude, elevation = get_observer_coordinates()
 
@@ -4227,7 +4257,8 @@ def transit_check():
 
         all_flights = transit_data.get("flights", [])
         high_flights = [
-            f for f in all_flights
+            f
+            for f in all_flights
             if f.get("possibility_level") == PossibilityLevel.HIGH.value
         ]
 
@@ -4235,6 +4266,7 @@ def transit_check():
         # Import here to avoid circular import at module level
         try:
             from app import get_transit_recorder  # type: ignore[import]
+
             recorder = get_transit_recorder()
             if recorder:
                 for flight in high_flights:
@@ -4265,14 +4297,17 @@ def transit_check():
             for f in high_flights
         ]
 
-        return jsonify(
-            {
-                "target": scope_mode,
-                "high_transits": summary,
-                "total_flights": len(all_flights),
-                "checked": True,
-            }
-        ), 200
+        return (
+            jsonify(
+                {
+                    "target": scope_mode,
+                    "high_transits": summary,
+                    "total_flights": len(all_flights),
+                    "checked": True,
+                }
+            ),
+            200,
+        )
 
     except Exception as e:
         logger.error(f"[Telescope] transit_check error: {e}", exc_info=True)

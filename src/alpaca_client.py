@@ -121,7 +121,12 @@ class AlpacaClient:
                 url,
                 headers={"User-Agent": "Flymoon/1.0 (ASCOM Alpaca client)"},
             )
-            with urllib.request.urlopen(req, timeout=(timeout_override if timeout_override is not None else self.timeout)) as resp:
+            with urllib.request.urlopen(
+                req,
+                timeout=(
+                    timeout_override if timeout_override is not None else self.timeout
+                ),
+            ) as resp:
                 raw = resp.read().decode("utf-8-sig")
                 data = json.loads(raw)
                 err = data.get("ErrorNumber", 0)
@@ -160,7 +165,12 @@ class AlpacaClient:
         req.add_header("User-Agent", "Flymoon/1.0 (ASCOM Alpaca client)")
         logfn = logger.debug if quiet else logger.warning
         try:
-            with urllib.request.urlopen(req, timeout=(timeout_override if timeout_override is not None else self.timeout)) as resp:
+            with urllib.request.urlopen(
+                req,
+                timeout=(
+                    timeout_override if timeout_override is not None else self.timeout
+                ),
+            ) as resp:
                 data = json.loads(resp.read().decode())
                 err = data.get("ErrorNumber", 0)
                 if err:
@@ -360,7 +370,9 @@ class AlpacaClient:
 
     # ── Motor control: MoveAxis ────────────────────────────────────────
 
-    def move_axis(self, axis: int, rate: float, timeout_sec: Optional[float] = 2.0) -> Dict:
+    def move_axis(
+        self, axis: int, rate: float, timeout_sec: Optional[float] = 2.0
+    ) -> Dict:
         """Start moving an axis at the given rate (degrees/sec).
 
         axis: 0 = RA/Az (primary), 1 = Dec/Alt (secondary)
@@ -368,7 +380,9 @@ class AlpacaClient:
         """
         if not self._connected:
             return {"error": "not connected"}
-        result = self._put("moveaxis", {"Axis": axis, "Rate": rate}, timeout_override=timeout_sec)
+        result = self._put(
+            "moveaxis", {"Axis": axis, "Rate": rate}, timeout_override=timeout_sec
+        )
         if "error" not in result:
             logger.debug(f"ALPACA moveaxis: axis={axis} rate={rate}")
         return result
@@ -442,7 +456,9 @@ class AlpacaClient:
             logger.info(f"ALPACA GoTo: RA={ra_hours:.4f}h Dec={dec_degrees:.4f}°")
         return result
 
-    def goto_altaz(self, alt: float, az: float, timeout_sec: Optional[float] = 3.0) -> Dict:
+    def goto_altaz(
+        self, alt: float, az: float, timeout_sec: Optional[float] = 3.0
+    ) -> Dict:
         """Slew to Alt/Az by converting to RA/Dec first.
 
         The Seestar ALPACA server reports canslewaltaz=False,
