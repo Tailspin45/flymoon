@@ -398,9 +398,37 @@ async function updateStatus() {
         }
 
         // Update focus odometer (server polls get_focuser_position periodically)
-        if (result.focus_pos != null && result.focus_pos !== '') {
-            const focEl = document.getElementById('focusPos');
-            if (focEl) focEl.textContent = String(result.focus_pos);
+        const focEl = document.getElementById('focusPos');
+        const fplEl = document.getElementById('focusPosLabel');
+        if (!isConnected && focEl) {
+            focEl.textContent = '——————';
+            if (fplEl) fplEl.textContent = 'Relative Focus Steps';
+        } else if (focEl) {
+            let _fp = result.focus_pos;
+            if (typeof _fp === 'bigint') _fp = Number(_fp);
+            const n = _fp == null || _fp === '' ? NaN : Number(_fp);
+            if (fplEl) {
+                if (result.mock_mode) {
+                    fplEl.textContent = 'Simulated focus steps';
+                } else {
+                    fplEl.textContent =
+                        result.focus_pos_source === 'absolute'
+                            ? 'Focus position'
+                            : 'Relative Focus Steps';
+                }
+            }
+            if (Number.isFinite(n)) {
+                focEl.textContent = String(Math.round(n));
+                if (!result.mock_mode && result.focus_pos_source === 'relative') {
+                    focEl.title =
+                        'Δ steps from first focus nudge (hardware did not report absolute position)';
+                } else {
+                    focEl.removeAttribute('title');
+                }
+            } else {
+                focEl.textContent = '——————';
+                focEl.removeAttribute('title');
+            }
         }
         _prevConnected = isConnected;
 

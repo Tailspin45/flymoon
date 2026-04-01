@@ -175,6 +175,8 @@ class SeestarClient:
         self._recording = False
         self._recording_start_time: Optional[datetime] = None
         self._focus_pos: Optional[int] = None
+        # When hardware never returns absolute step, accumulate deltas from move_focuser.
+        self._focus_relative_odometer: Optional[int] = None
         self._last_focus_poll_mono: float = 0.0
         self._viewing_mode: Optional[str] = (
             None  # Track current viewing mode (sun/moon/None)
@@ -471,6 +473,7 @@ class SeestarClient:
     def _note_tcp_drop(self) -> None:
         """Mark disconnected; if heartbeat is active, start a fresh reconnect episode."""
         self._connected = False
+        self._focus_relative_odometer = None
         if self._heartbeat_running:
             self._reconnect_gave_up = False
             self._reconnect_failures = 0
@@ -502,6 +505,7 @@ class SeestarClient:
                 self.socket.settimeout(self.timeout)
                 self.socket.connect((self.host, self.port))
                 self._connected = True
+                self._focus_relative_odometer = None
                 logger.info("Reconnected to Seestar")
 
                 # Run init sequence on reconnect (claims master, syncs time/location)
@@ -952,6 +956,7 @@ class SeestarClient:
                 )
                 self.socket.connect((self.host, self.port))
                 self._connected = True
+                self._focus_relative_odometer = None
                 self._device_state_consecutive_fails = 0
                 self._failed_full_connect_cycles = 0
                 logger.info("Connected to Seestar")
@@ -997,6 +1002,7 @@ class SeestarClient:
                 # socket.error.  Leaked sockets consume one of the Seestar's
                 # 8 connection slots and are never recovered.
                 self._connected = False
+                self._focus_relative_odometer = None
                 if self.socket:
                     try:
                         self.socket.close()
@@ -1184,6 +1190,7 @@ class SeestarClient:
                 except Exception:
                     pass
                 self.socket = None
+            self._focus_relative_odometer = None
 
     def is_connected(self) -> bool:
         """
@@ -1468,6 +1475,7 @@ class SeestarClient:
         def _store(fp: Optional[int]) -> Optional[int]:
             if fp is not None:
                 self._focus_pos = fp
+                self._focus_relative_odometer = None
             return fp
 
         for attempt_params in ({}, None):
@@ -1526,6 +1534,8 @@ class SeestarClient:
         self._send_command("pi_shutdown", expect_response=False)
         logger.info("Shutdown command sent")
         self._connected = False
+        self._focus_pos = None
+        self._focus_relative_odometer = None
         return True
 
     def move_step_focus(self, steps: int) -> dict:
@@ -1567,8 +1577,14 @@ class SeestarClient:
                 fp = _coerce_focus_value(result.get("result"))
         if fp is not None:
             self._focus_pos = fp
+            self._focus_relative_odometer = None
         else:
             self.get_focuser_position(use_fallbacks=True)
+        if self._focus_pos is None:
+            if self._focus_relative_odometer is None:
+                self._focus_relative_odometer = int(steps)
+            else:
+                self._focus_relative_odometer += int(steps)
         return result or {}
 
     def set_gain(self, gain: int) -> dict:

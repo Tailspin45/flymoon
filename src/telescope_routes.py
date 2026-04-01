@@ -145,7 +145,7 @@ class MockSeestarClient:
         self._connected = False
         self._recording = False
         self._recording_start_time: Optional[datetime] = None
-        self._focus_pos: Optional[int] = 1670
+        self._focus_pos: Optional[int] = None
         self._viewing_mode: Optional[str] = (
             None  # sun | moon | scenery — mirrors SeestarClient
         )
@@ -330,7 +330,7 @@ class MockSeestarClient:
         return {"result": "ok"}
 
     def move_step_focus(self, steps: int):
-        base = self._focus_pos if self._focus_pos is not None else 1670
+        base = self._focus_pos if self._focus_pos is not None else 0
         self._focus_pos = int(base) + int(steps)
         logger.info(f"[Mock] move_step_focus steps={steps} -> {self._focus_pos}")
         return {"focus_pos": self._focus_pos}
@@ -1459,6 +1459,19 @@ def get_telescope_status():
         if alpaca and alpaca.is_connected():
             alpaca_status = alpaca.get_status()
 
+        abs_fp = getattr(client, "_focus_pos", None)
+        rel_fp = getattr(client, "_focus_relative_odometer", None)
+        _raw_fp = abs_fp if abs_fp is not None else rel_fp
+        try:
+            _fp_json = int(_raw_fp) if _raw_fp is not None else None
+        except (TypeError, ValueError):
+            _fp_json = None
+        _focus_src = (
+            "absolute"
+            if abs_fp is not None
+            else ("relative" if rel_fp is not None else None)
+        )
+
         status = {
             "connected": client.is_connected(),
             "recording": recording_active,
@@ -1469,7 +1482,8 @@ def get_telescope_status():
             "mock_mode": is_mock_mode(),
             "eclipse": _get_eclipse_data(),
             "alpaca": alpaca_status,
-            "focus_pos": getattr(client, "_focus_pos", None),
+            "focus_pos": _fp_json,
+            "focus_pos_source": _focus_src,
         }
         with _ctrl_lock:
             status["ctrl_state"] = _ctrl_state.value
