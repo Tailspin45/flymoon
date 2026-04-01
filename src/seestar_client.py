@@ -214,6 +214,9 @@ class SeestarClient:
         # After one full failed connect() (all TCP retries exhausted), reduce log noise
         # for subsequent attempts (e.g. startup auto-connect loop).
         self._failed_full_connect_cycles: int = 0
+        # Firmware path: focus absolute readback is not available in current setup.
+        # Keep query probes disabled to avoid repeated timeout overhead.
+        self._query_rpc_enabled: bool = False
 
         logger.info(f"Initialized Seestar client for {host}:{port}")
 
@@ -829,6 +832,9 @@ class SeestarClient:
             import time as _time
 
             _time.sleep(3)
+            if not self._query_rpc_enabled:
+                logger.debug("[Init] focus seed skipped (JSON-RPC query probes disabled)")
+                return
             try:
                 fp = self.get_focuser_position()
                 if fp is not None:
@@ -1445,9 +1451,9 @@ class SeestarClient:
 
     def autofocus(self) -> dict:
         """Trigger autofocus. Note: firmware method is 'start_auto_focuse' (sic)."""
-        result = self._send_command("start_auto_focuse", timeout_override=60)
-        logger.info("Autofocus triggered")
-        return result or {}
+        result = self._send_command("start_auto_focuse", expect_response=False)
+        logger.info("Autofocus triggered (fire-and-forget)")
+        return {"sent": True, "provider": "jsonrpc", "confirmed": False}
 
     def get_focuser_position(self, use_fallbacks: bool = True) -> Optional[int]:
         """
@@ -1470,6 +1476,9 @@ class SeestarClient:
             Current step, or None if unavailable.
         """
         if not self._connected:
+            return None
+        if not self._query_rpc_enabled:
+            # Known encrypted/blocked query path on modern firmware.
             return None
 
         def _store(fp: Optional[int]) -> Optional[int]:
@@ -1523,6 +1532,8 @@ class SeestarClient:
         """Poll focuser position at most once per min_interval_sec (for /telescope/status)."""
         if not self._connected:
             return
+        if not self._query_rpc_enabled:
+            return
         now = time.monotonic()
         if (now - self._last_focus_poll_mono) < float(min_interval_sec):
             return
@@ -1556,7 +1567,7 @@ class SeestarClient:
             foc_timeout = 120
 
         current: Optional[int] = self._focus_pos
-        if current is None:
+        if current is None and self._query_rpc_enabled:
             try:
                 current = self.get_focuser_position(use_fallbacks=True)
             except Exception as e:
@@ -1606,11 +1617,23 @@ class SeestarClient:
             "sent": True,
             "delta": int(steps),
             "target_param": params.get("step"),
+            "provider": "jsonrpc",
+            "query_probe_enabled": False,
         }
         if self._focus_pos is not None:
             payload["focus_pos"] = self._focus_pos
+            payload["focus_confirmed"] = True
+            payload["focus_source"] = "absolute"
         elif self._focus_relative_odometer is not None:
             payload["focus_pos"] = self._focus_relative_odometer
+            payload["focus_confirmed"] = False
+            payload["focus_source"] = "relative"
+            payload["suggestion"] = (
+                "Absolute focus readback unavailable; relative focus steps only."
+            )
+        else:
+            payload["focus_confirmed"] = False
+            payload["focus_source"] = None
         return payload
 
     def set_gain(self, gain: int) -> dict:

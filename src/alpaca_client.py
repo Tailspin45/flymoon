@@ -103,6 +103,7 @@ class AlpacaClient:
         extra_params: Optional[Dict] = None,
         *,
         quiet: bool = False,
+        timeout_override: Optional[float] = None,
     ) -> Dict:
         """GET an ALPACA property.  Returns the parsed JSON response."""
         txn = self._next_txn()
@@ -120,7 +121,7 @@ class AlpacaClient:
                 url,
                 headers={"User-Agent": "Flymoon/1.0 (ASCOM Alpaca client)"},
             )
-            with urllib.request.urlopen(req, timeout=self.timeout) as resp:
+            with urllib.request.urlopen(req, timeout=(timeout_override if timeout_override is not None else self.timeout)) as resp:
                 raw = resp.read().decode("utf-8-sig")
                 data = json.loads(raw)
                 err = data.get("ErrorNumber", 0)
@@ -136,7 +137,9 @@ class AlpacaClient:
             logfn(f"ALPACA GET {endpoint} unexpected: {e}")
             return {"error": str(e)}
 
-    def _put(self, endpoint: str, params: Optional[Dict] = None) -> Dict:
+    def _put(
+        self, endpoint: str, params: Optional[Dict] = None, timeout_override: Optional[float] = None
+    ) -> Dict:
         """PUT an ALPACA command.  Returns the parsed JSON response."""
         txn = self._next_txn()
         form: Dict[str, str] = {
@@ -151,7 +154,7 @@ class AlpacaClient:
         req.add_header("Content-Type", "application/x-www-form-urlencoded")
         req.add_header("User-Agent", "Flymoon/1.0 (ASCOM Alpaca client)")
         try:
-            with urllib.request.urlopen(req, timeout=self.timeout) as resp:
+            with urllib.request.urlopen(req, timeout=(timeout_override if timeout_override is not None else self.timeout)) as resp:
                 data = json.loads(resp.read().decode())
                 err = data.get("ErrorNumber", 0)
                 if err:
@@ -351,7 +354,7 @@ class AlpacaClient:
 
     # ── Motor control: MoveAxis ────────────────────────────────────────
 
-    def move_axis(self, axis: int, rate: float) -> Dict:
+    def move_axis(self, axis: int, rate: float, timeout_sec: Optional[float] = 2.0) -> Dict:
         """Start moving an axis at the given rate (degrees/sec).
 
         axis: 0 = RA/Az (primary), 1 = Dec/Alt (secondary)
@@ -359,7 +362,7 @@ class AlpacaClient:
         """
         if not self._connected:
             return {"error": "not connected"}
-        result = self._put("moveaxis", {"Axis": axis, "Rate": rate})
+        result = self._put("moveaxis", {"Axis": axis, "Rate": rate}, timeout_override=timeout_sec)
         if "error" not in result:
             logger.debug(f"ALPACA moveaxis: axis={axis} rate={rate}")
         return result
@@ -403,10 +406,10 @@ class AlpacaClient:
             self._capabilities["maxrate"] = max_rate
         return max_rate
 
-    def stop_axes(self) -> Dict:
+    def stop_axes(self, timeout_sec: Optional[float] = 2.0) -> Dict:
         """Stop motion on both axes."""
-        r0 = self.move_axis(0, 0)
-        r1 = self.move_axis(1, 0)
+        r0 = self.move_axis(0, 0, timeout_sec=timeout_sec)
+        r1 = self.move_axis(1, 0, timeout_sec=timeout_sec)
         logger.info("ALPACA: stopped both axes")
         errs = [r.get("error") for r in [r0, r1] if r.get("error")]
         if errs:
@@ -415,7 +418,9 @@ class AlpacaClient:
 
     # ── GoTo ───────────────────────────────────────────────────────────
 
-    def goto_radec(self, ra_hours: float, dec_degrees: float) -> Dict:
+    def goto_radec(
+        self, ra_hours: float, dec_degrees: float, timeout_sec: Optional[float] = 3.0
+    ) -> Dict:
         """Async slew to RA/Dec.  RA in hours [0,24), Dec in degrees."""
         if not self._connected:
             return {"error": "not connected"}
@@ -425,12 +430,13 @@ class AlpacaClient:
                 "RightAscension": ra_hours,
                 "Declination": dec_degrees,
             },
+            timeout_override=timeout_sec,
         )
         if "error" not in result:
             logger.info(f"ALPACA GoTo: RA={ra_hours:.4f}h Dec={dec_degrees:.4f}°")
         return result
 
-    def goto_altaz(self, alt: float, az: float) -> Dict:
+    def goto_altaz(self, alt: float, az: float, timeout_sec: Optional[float] = 3.0) -> Dict:
         """Slew to Alt/Az by converting to RA/Dec first.
 
         The Seestar ALPACA server reports canslewaltaz=False,
@@ -444,31 +450,35 @@ class AlpacaClient:
         logger.info(
             f"ALPACA AltAz ({alt:.2f}°, {az:.2f}°) → RA {ra_h:.4f}h Dec {dec_d:.4f}°"
         )
-        return self.goto_radec(ra_h, dec_d)
+        return self.goto_radec(ra_h, dec_d, timeout_sec=timeout_sec)
 
-    def is_slewing(self) -> bool:
+    def is_slewing(self, timeout_sec: Optional[float] = 1.2) -> bool:
         """Check if the scope is currently slewing."""
-        r = self._get("slewing")
-        return self._alpaca_bool(r.get("Value"))
+        r = self._get("slewing", quiet=True, timeout_override=timeout_sec)
+        if "Value" in r:
+            return self._alpaca_bool(r.get("Value"))
+        return bool(self._last_state.get("slewing", False))
 
     def abort_slew(self) -> Dict:
         """Abort any in-progress slew."""
-        return self._put("abortslew")
+        return self._put("abortslew", timeout_override=2.0)
 
     # ── Tracking ───────────────────────────────────────────────────────
 
-    def set_tracking(self, enabled: bool) -> Dict:
+    def set_tracking(self, enabled: bool, timeout_sec: Optional[float] = 2.0) -> Dict:
         """Enable or disable sidereal tracking."""
         if not self._connected:
             return {"error": "not connected"}
-        result = self._put("tracking", {"Tracking": str(enabled).lower()})
+        result = self._put("tracking", {"Tracking": str(enabled).lower()}, timeout_override=timeout_sec)
         if "error" not in result:
             logger.info(f"ALPACA tracking: {'on' if enabled else 'off'}")
         return result
 
-    def get_tracking(self) -> bool:
-        r = self._get("tracking")
-        return self._alpaca_bool(r.get("Value"))
+    def get_tracking(self, timeout_sec: Optional[float] = 1.2) -> bool:
+        r = self._get("tracking", quiet=True, timeout_override=timeout_sec)
+        if "Value" in r:
+            return self._alpaca_bool(r.get("Value"))
+        return bool(self._last_state.get("tracking", False))
 
     # ── Park / Unpark ──────────────────────────────────────────────────
 
