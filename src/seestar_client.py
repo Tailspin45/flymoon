@@ -1544,9 +1544,12 @@ class SeestarClient:
         Seestar firmware expects an absolute step in ``move_focuser`` (see seestar_alp
         ``adjust_focus``). When the current position is unknown we fall back to passing
         ``step`` as before (relative / firmware-dependent).
+
+        Firmware 3.0+ often does not send a JSON-RPC result for ``move_focuser`` even
+        when the move succeeds; waiting would always time out. We send with
+        ``expect_response=False`` and refresh position best-effort, then update the
+        relative odometer if absolute position remains unknown.
         """
-        # With ret_step=True the scope ACKs only after the move finishes; under load
-        # or large |step| this routinely exceeds the default RPC timeout (10–30s).
         try:
             foc_timeout = int(os.getenv("SEESTAR_FOCUS_TIMEOUT", "120"))
         except ValueError:
@@ -1554,7 +1557,11 @@ class SeestarClient:
 
         current: Optional[int] = self._focus_pos
         if current is None:
-            current = self.get_focuser_position(use_fallbacks=True)
+            try:
+                current = self.get_focuser_position(use_fallbacks=True)
+            except Exception as e:
+                logger.debug(f"Focus step: pre-move get_focuser_position: {e}")
+                current = None
         if current is not None:
             target = int(current) + int(steps)
             params: Dict[str, Any] = {"step": target, "ret_step": True}
@@ -1568,24 +1575,43 @@ class SeestarClient:
             "move_focuser",
             params=params,
             timeout_override=max(foc_timeout, 15),
+            expect_response=False,
         )
-        logger.info(f"Focus step: delta={steps} target_param={params.get('step')}")
-        fp = _coerce_focus_value(result)
-        if fp is None and isinstance(result, dict):
-            fp = _coerce_focus_value(result.get("focus_pos"))
-            if fp is None:
-                fp = _coerce_focus_value(result.get("result"))
+        logger.info(
+            f"Focus step: delta={steps} target_param={params.get('step')} "
+            f"(sent without waiting for JSON-RPC ack)"
+        )
+        fp: Optional[int] = None
+        if result is not None:
+            fp = _coerce_focus_value(result)
+            if fp is None and isinstance(result, dict):
+                fp = _coerce_focus_value(result.get("focus_pos"))
+                if fp is None:
+                    fp = _coerce_focus_value(result.get("result"))
         if fp is not None:
             self._focus_pos = fp
             self._focus_relative_odometer = None
         else:
-            self.get_focuser_position(use_fallbacks=True)
+            try:
+                self.get_focuser_position(use_fallbacks=False)
+            except Exception as e:
+                logger.debug(f"Focus step: post-move position poll skipped: {e}")
         if self._focus_pos is None:
             if self._focus_relative_odometer is None:
                 self._focus_relative_odometer = int(steps)
             else:
                 self._focus_relative_odometer += int(steps)
-        return result or {}
+
+        payload: Dict[str, Any] = {
+            "sent": True,
+            "delta": int(steps),
+            "target_param": params.get("step"),
+        }
+        if self._focus_pos is not None:
+            payload["focus_pos"] = self._focus_pos
+        elif self._focus_relative_odometer is not None:
+            payload["focus_pos"] = self._focus_relative_odometer
+        return payload
 
     def set_gain(self, gain: int) -> dict:
         """Set camera gain (0–120, default 80)."""

@@ -1831,7 +1831,7 @@ function _focusPosFromRpcPayload(payload) {
     if (typeof payload === 'number' && Number.isFinite(payload)) return Math.round(payload);
     if (typeof payload === 'string' && /^-?\d+$/.test(payload.trim())) return parseInt(payload.trim(), 10);
     if (typeof payload === 'object') {
-        for (const k of ['focus_pos', 'step', 'FocusPos', 'Step', 'position', 'result']) {
+        for (const k of ['focus_pos', 'step', 'target_param', 'FocusPos', 'Step', 'position', 'result']) {
             const v = payload[k];
             const n = _focusPosFromRpcPayload(v);
             if (n != null) return n;
