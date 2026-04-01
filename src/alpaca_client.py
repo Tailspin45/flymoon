@@ -138,7 +138,12 @@ class AlpacaClient:
             return {"error": str(e)}
 
     def _put(
-        self, endpoint: str, params: Optional[Dict] = None, timeout_override: Optional[float] = None
+        self,
+        endpoint: str,
+        params: Optional[Dict] = None,
+        timeout_override: Optional[float] = None,
+        *,
+        quiet: bool = False,
     ) -> Dict:
         """PUT an ALPACA command.  Returns the parsed JSON response."""
         txn = self._next_txn()
@@ -153,20 +158,21 @@ class AlpacaClient:
         req = urllib.request.Request(url, data=body, method="PUT")
         req.add_header("Content-Type", "application/x-www-form-urlencoded")
         req.add_header("User-Agent", "Flymoon/1.0 (ASCOM Alpaca client)")
+        logfn = logger.debug if quiet else logger.warning
         try:
             with urllib.request.urlopen(req, timeout=(timeout_override if timeout_override is not None else self.timeout)) as resp:
                 data = json.loads(resp.read().decode())
                 err = data.get("ErrorNumber", 0)
                 if err:
-                    logger.warning(
+                    logfn(
                         f"ALPACA PUT {endpoint}: error {err} — {data.get('ErrorMessage', '')}"
                     )
                 return data
         except urllib.error.URLError as e:
-            logger.error(f"ALPACA PUT {endpoint} failed: {e}")
+            logfn(f"ALPACA PUT {endpoint} failed: {e}")
             return {"error": str(e)}
         except Exception as e:
-            logger.error(f"ALPACA PUT {endpoint} unexpected: {e}")
+            logfn(f"ALPACA PUT {endpoint} unexpected: {e}")
             return {"error": str(e)}
 
     def _mgmt_get(self, path: str) -> Dict:
@@ -469,8 +475,18 @@ class AlpacaClient:
         """Enable or disable sidereal tracking."""
         if not self._connected:
             return {"error": "not connected"}
-        result = self._put("tracking", {"Tracking": str(enabled).lower()}, timeout_override=timeout_sec)
-        if "error" not in result:
+        result = self._put(
+            "tracking",
+            {"Tracking": str(enabled).lower()},
+            timeout_override=timeout_sec,
+            quiet=True,
+        )
+        err = result.get("ErrorNumber")
+        msg = str(result.get("ErrorMessage", "")).lower()
+        if err == 1279 and "below the horizon" in msg:
+            logger.info("ALPACA tracking change skipped: scope below horizon")
+            return {"ignored": True, "reason": "below_horizon", **result}
+        if "error" not in result and not err:
             logger.info(f"ALPACA tracking: {'on' if enabled else 'off'}")
         return result
 

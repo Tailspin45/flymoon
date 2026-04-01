@@ -401,7 +401,7 @@ async function updateStatus() {
         const focEl = document.getElementById('focusPos');
         const fplEl = document.getElementById('focusPosLabel');
         if (!isConnected && focEl) {
-            focEl.textContent = '——————';
+            focEl.textContent = '0';
             if (fplEl) fplEl.textContent = 'Relative Focus Steps';
         } else if (focEl) {
             let _fp = result.focus_pos;
@@ -424,7 +424,7 @@ async function updateStatus() {
                     focEl.removeAttribute('title');
                 }
             } else {
-                focEl.textContent = '——————';
+                focEl.textContent = '0';
                 focEl.removeAttribute('title');
             }
         }

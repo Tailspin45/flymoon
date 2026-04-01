@@ -2802,8 +2802,10 @@ canvas.video-thumb-canvas {
 /* ── Focus odometer readout ──────────────────────────────── */
 .focus-odometer {
     display: flex;
+    flex-direction: column;
     align-items: center;
-    gap: 6px;
+    justify-content: center;
+    gap: 2px;
     margin: 4px 0 6px;
     background: #080a0e;
     border: 1px solid #1e2830;
@@ -2818,9 +2820,11 @@ canvas.video-thumb-canvas {
     color: #5a7080;
     font-family: 'SF Mono', 'Menlo', 'Consolas', monospace;
     text-transform: uppercase;
-    flex-shrink: 0;
+    text-align: center;
 }
 .focus-odometer-value {
+    display: block;
+    width: 100%;
     font-family: 'SF Mono', 'Menlo', 'Consolas', monospace;
     font-size: 1.05em;
     font-weight: 700;
@@ -2828,8 +2832,7 @@ canvas.video-thumb-canvas {
     letter-spacing: 3px;
     font-variant-numeric: tabular-nums;
     text-shadow: 0 0 8px rgba(0,212,255,0.5);
-    flex: 1;
-    text-align: right;
+    text-align: center;
 }
 
 /* Camera checkbox labels — dark on aluminum */
