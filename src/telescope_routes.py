@@ -11,6 +11,7 @@ import os
 import subprocess
 import threading
 import time
+import urllib.parse
 from datetime import datetime
 from enum import Enum
 from typing import Any, Dict, Optional
@@ -56,6 +57,9 @@ _ctrl_lock = threading.Lock()
 # Whether the active nudge was started while solar/lunar tracking was on.
 # Used to decide whether to re-enable ALPACA tracking after nudge/stop.
 _pre_nudge_tracking: bool = False
+# Viewing mode active before a nudge started (None | 'sun' | 'moon').
+# Used to restore solar/lunar mode after nudge/stop.
+_pre_nudge_viewing_mode: Optional[str] = None
 
 # ──────────────────────────────────────────────────────────────────────────
 
@@ -66,9 +70,45 @@ _user_settings: dict = {
     "min_reconnect_altitude": None,  # degrees; None → fall back to env var
 }
 
+# Cache last-known working RTSP port per host to avoid repeatedly probing on
+# every capture/preview endpoint call.
+_rtsp_port_cache: dict[str, int] = {}
+
 # NDJSON agent log — only written when FLYMOON_AGENT_DEBUG_LOG is set (file path).
 _DEBUG_LOG_PATH = os.getenv("FLYMOON_AGENT_DEBUG_LOG", "").strip()
 _DEBUG_SESSION_ID = os.getenv("FLYMOON_AGENT_DEBUG_SESSION", "flymoon")
+
+
+def sync_ip_to_subsystems(new_ip: str) -> None:
+    """Sync newly discovered IP to ALPACA client and clear stale RTSP cache.
+
+    Called when SeestarClient discovers a new IP via UDP/TCP scan.
+    Ensures all subsystems (ALPACA motor control, RTSP preview) use the updated IP.
+    """
+    global _alpaca_client, _rtsp_port_cache
+
+    if not new_ip or not new_ip.strip():
+        return
+
+    new_ip = new_ip.strip()
+    logger.info(f"[Telescope] Syncing discovered IP to subsystems: {new_ip}")
+
+    # Update ALPACA client if it exists
+    if _alpaca_client is not None:
+        old_host = _alpaca_client.host
+        if old_host != new_ip:
+            success = _alpaca_client.update_host(new_ip)
+            if success:
+                logger.info(f"[Telescope] ALPACA host updated: {old_host} → {new_ip}")
+                # Clear stale RTSP port cache for old IP
+                if old_host in _rtsp_port_cache:
+                    logger.debug(f"[Telescope] Cleared RTSP cache for old IP: {old_host}")
+                    _rtsp_port_cache.pop(old_host, None)
+            else:
+                logger.warning(
+                    f"[Telescope] ALPACA host update failed (unreachable): {new_ip}"
+                )
+
 
 
 def _agent_debug_log(
@@ -95,8 +135,9 @@ def _agent_debug_log(
 
 def _probe_rtsp_stream(host: str, timeout_seconds: int = 5) -> bool:
     """Return True when an RTSP frame can be read from the scope quickly."""
-    rtsp_port = int(os.getenv("SEESTAR_RTSP_PORT", "4554"))
-    rtsp_url = f"rtsp://{host}:{rtsp_port}/stream"
+    rtsp_url = _resolve_rtsp_url(host, probe=True)
+    if not rtsp_url:
+        return False
     cmd = [
         FFMPEG,
         "-rtsp_transport",
@@ -121,13 +162,102 @@ def _probe_rtsp_stream(host: str, timeout_seconds: int = 5) -> bool:
         return False
 
 
+def _candidate_rtsp_ports(host: str) -> list[int]:
+    """Return RTSP port candidates with host cache + env/default first."""
+    ports: list[int] = []
+
+    cached = _rtsp_port_cache.get(host)
+    if cached:
+        ports.append(cached)
+
+    env_port = int(os.getenv("SEESTAR_RTSP_PORT", "4554"))
+    # Empirical fallbacks observed across firmware/network setups.
+    # Keep 4500 last; some setups expose a non-RTSP service there.
+    preferred = (4554, 4700, 4800, 8554, 554, 4500)
+
+    if env_port != 4500 and env_port not in ports:
+        ports.append(env_port)
+
+    for p in preferred:
+        if p not in ports:
+            ports.append(p)
+
+    if env_port == 4500 and env_port not in ports:
+        ports.append(env_port)
+
+    return ports
+
+
+def _resolve_rtsp_url(
+    host: str, timeout_seconds: int = 4, probe: bool = False
+) -> Optional[str]:
+    """Return a working RTSP URL and cache port; None when no candidate works.
+
+    When probe=False, returns best-known URL without active probing.
+    """
+    ports = _candidate_rtsp_ports(host)
+    if not probe:
+        return f"rtsp://{host}:{ports[0]}/stream"
+
+    for port in ports:
+        rtsp_url = f"rtsp://{host}:{port}/stream"
+        cmd = [
+            FFMPEG,
+            "-rtsp_transport",
+            "tcp",
+            "-i",
+            rtsp_url,
+            "-frames:v",
+            "1",
+            "-f",
+            "null",
+            "-",
+        ]
+        try:
+            result = subprocess.run(
+                cmd,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                timeout=timeout_seconds,
+            )
+            if result.returncode == 0:
+                if _rtsp_port_cache.get(host) != port:
+                    logger.info(f"[RTSP] Using port {port} for host {host}")
+                _rtsp_port_cache[host] = port
+                return rtsp_url
+        except (subprocess.TimeoutExpired, OSError):
+            continue
+
+    return None
+
+
+def _extract_rtsp_port(rtsp_url: str) -> Optional[int]:
+    """Parse port from RTSP URL. Returns None on parse failure."""
+    try:
+        parsed = urllib.parse.urlparse(rtsp_url)
+        return int(parsed.port) if parsed.port is not None else None
+    except Exception:
+        return None
+
+
 def _ensure_rtsp_ready(client) -> bool:
-    """Check whether the scope is streaming RTSP — never change scope mode here."""
+    """Check whether the scope is streaming RTSP. Start solar mode if idle."""
     ok = _probe_rtsp_stream(client.host)
-    if not ok:
-        mode = getattr(client, "_viewing_mode", None)
-        logger.warning(f"[RTSP] Probe failed (mode={mode})")
-    return ok
+    if ok:
+        return True
+
+    mode = getattr(client, "_viewing_mode", None)
+    if mode == "sun":
+        return False  # Already in sun mode but RTSP not responding
+
+    # Scope is idle — start solar mode to enable RTSP
+    logger.info("[Telescope] RTSP not ready; starting solar mode")
+    try:
+        client.start_solar_mode()
+        return _probe_rtsp_stream(client.host)
+    except Exception as e:
+        logger.warning(f"[Telescope] Failed to start solar mode: {e}")
+        return False
 
 
 # Mock Telescope Client for Testing
@@ -465,6 +595,10 @@ def get_telescope_client() -> Optional[SeestarClient]:
                 retry_attempts=retry_attempts,
                 retry_initial_delay=retry_delay,
             )
+
+            # Register callback to sync IP changes to ALPACA & RTSP subsystems
+            _telescope_client.on_host_change = sync_ip_to_subsystems
+
             # Gate reconnect attempts: only reconnect when the selected target
             # is at or above the minimum altitude the user set in the UI quadrant.
             try:
@@ -586,7 +720,7 @@ def telescope_goto():
         )
 
     # State machine: abort any active nudge before slewing
-    global _ctrl_state, _pre_nudge_tracking
+    global _ctrl_state, _pre_nudge_tracking, _pre_nudge_viewing_mode
     with _ctrl_lock:
         if _ctrl_state == _CtrlState.NUDGING:
             logger.info("[GoTo] Aborting active nudge before slew")
@@ -595,11 +729,21 @@ def telescope_goto():
                 if _pre_nudge_tracking:
                     alpaca.set_tracking(True, timeout_sec=2.0)
                     _pre_nudge_tracking = False
+                _pre_nudge_viewing_mode = None
             except Exception as ex:
                 logger.warning(f"[GoTo] nudge abort failed: {ex}")
         if _recording_state["active"]:
             return jsonify({"error": "Cannot GoTo while recording is active"}), 409
         _ctrl_state = _CtrlState.SLEWING
+
+    # Stop solar/lunar view mode so firmware releases motor control
+    _pre_goto_viewing_mode = getattr(client, "_viewing_mode", None)
+    if _pre_goto_viewing_mode in ("sun", "moon"):
+        logger.info(f"[GoTo] Stopping {_pre_goto_viewing_mode} mode before slew")
+        try:
+            client.stop_view_mode()
+        except Exception as ex:
+            logger.warning(f"[GoTo] stop_view_mode failed: {ex}")
 
     try:
         if mode == "radec":
@@ -617,6 +761,16 @@ def telescope_goto():
                     except Exception:
                         break
                     time.sleep(0.5)
+                # Restore solar/lunar mode if it was active before GoTo
+                if _pre_goto_viewing_mode in ("sun", "moon"):
+                    try:
+                        if _pre_goto_viewing_mode == "sun":
+                            client.start_solar_mode()
+                        else:
+                            client.start_lunar_mode()
+                        logger.info(f"[GoTo] Restored {_pre_goto_viewing_mode} mode after RA/Dec slew")
+                    except Exception as ex:
+                        logger.warning(f"[GoTo] mode restore failed: {ex}")
                 with _ctrl_lock:
                     _ctrl_state = _CtrlState.IDLE
 
@@ -775,7 +929,7 @@ def telescope_nudge():
     Body: {"axis": 0, "rate": 1.0}
       axis: 0=RA/Az, 1=Dec/Alt.  rate: deg/sec (negative=reverse), 0=stop.
     """
-    global _ctrl_state, _pre_nudge_tracking
+    global _ctrl_state, _pre_nudge_tracking, _pre_nudge_viewing_mode
     alpaca = get_alpaca_client()
     if not alpaca or not alpaca.is_connected():
         return (
@@ -803,9 +957,17 @@ def telescope_nudge():
             )
             rate = clamped
 
-        # Disable ALPACA tracking before MoveAxis (required by firmware — Finding A)
+        # Stop solar/lunar view mode so firmware releases motor control
         client = get_telescope_client()
         viewing_mode = getattr(client, "_viewing_mode", None) if client else None
+        if viewing_mode in ("sun", "moon"):
+            logger.info(f"[Nudge] Stopping {viewing_mode} mode before MoveAxis")
+            try:
+                client.stop_view_mode()
+            except Exception as ex:
+                logger.warning(f"[Nudge] stop_view_mode failed: {ex}")
+
+        # Disable ALPACA tracking before MoveAxis (required by firmware — Finding A)
         try:
             pre_tracking = bool(alpaca.get_tracking(timeout_sec=1.2))
         except Exception:
@@ -819,6 +981,7 @@ def telescope_nudge():
 
         with _ctrl_lock:
             _pre_nudge_tracking = pre_tracking
+            _pre_nudge_viewing_mode = viewing_mode
             _ctrl_state = _CtrlState.NUDGING
         return jsonify({"success": True, "result": result, "via": "ALPACA"}), 200
     except Exception as e:
@@ -829,18 +992,31 @@ def telescope_nudge():
 
 def telescope_nudge_stop():
     """POST /telescope/nudge/stop — stop all motion via ALPACA."""
-    global _ctrl_state, _pre_nudge_tracking
+    global _ctrl_state, _pre_nudge_tracking, _pre_nudge_viewing_mode
     alpaca = get_alpaca_client()
     if not alpaca or not alpaca.is_connected():
         return jsonify({"error": "ALPACA not connected"}), 503
     try:
         result = alpaca.stop_axes(timeout_sec=2.0)
-        # Restore tracking if it was on before the nudge started
+        # Restore mode/tracking that was active before the nudge started
         with _ctrl_lock:
             restore = _pre_nudge_tracking
+            prior_mode = _pre_nudge_viewing_mode
             _pre_nudge_tracking = False
+            _pre_nudge_viewing_mode = None
             _ctrl_state = _CtrlState.IDLE
-        if restore:
+        if prior_mode in ("sun", "moon"):
+            client = get_telescope_client()
+            if client:
+                try:
+                    if prior_mode == "sun":
+                        client.start_solar_mode()
+                    else:
+                        client.start_lunar_mode()
+                    logger.info(f"[NudgeStop] Restored {prior_mode} mode after nudge")
+                except Exception as ex:
+                    logger.warning(f"[NudgeStop] mode restore failed: {ex}")
+        elif restore:
             try:
                 alpaca.set_tracking(True, timeout_sec=2.0)
                 logger.info("[NudgeStop] Tracking restored after nudge")
@@ -1409,6 +1585,33 @@ _eclipse_cache: dict = {"data": None, "ts": 0.0}
 _ECLIPSE_CACHE_TTL = 60.0  # seconds
 
 
+def _sync_viewing_mode(client) -> Optional[str]:
+    """Query scope's actual viewing mode and sync cached state."""
+    try:
+        result = client._send_command("get_view_state", quiet=True, timeout_override=3)
+        if result and isinstance(result, dict):
+            view = result.get("View") or result.get("result", {})
+            if isinstance(view, dict):
+                target_name = view.get("target_name", "").lower()
+                logger.debug(f"[Telescope] Synced viewing mode: target_name='{target_name}'")
+                if "sun" in target_name:
+                    client._viewing_mode = "sun"
+                    return "sun"
+                elif "moon" in target_name:
+                    client._viewing_mode = "moon"
+                    return "moon"
+                elif target_name:
+                    client._viewing_mode = "scenery"
+                    return "scenery"
+            else:
+                logger.debug(f"[Telescope] get_view_state returned non-dict View: {view}")
+        else:
+            logger.debug(f"[Telescope] get_view_state failed or invalid: {result}")
+    except Exception as e:
+        logger.debug(f"[Telescope] _sync_viewing_mode error: {e}")
+    return getattr(client, "_viewing_mode", None)
+
+
 def get_telescope_status():
     """GET /telescope/status - Get current telescope status."""
     logger.debug("[Telescope] GET /telescope/status")
@@ -1488,16 +1691,22 @@ def get_telescope_status():
             _fp_json = int(_raw_fp) if _raw_fp is not None else None
         except (TypeError, ValueError):
             _fp_json = None
+
+        # Sync actual viewing mode from scope (fixes stale cached state)
+        viewing_mode = _sync_viewing_mode(client)
         _focus_src = (
             "absolute"
             if abs_fp is not None
             else ("relative" if rel_fp is not None else None)
         )
 
+        # Sync actual viewing mode from scope (fixes stale cached state)
+        viewing_mode = _sync_viewing_mode(client)
+
         status = {
             "connected": client.is_connected(),
             "recording": recording_active,
-            "viewing_mode": getattr(client, "_viewing_mode", None),
+            "viewing_mode": viewing_mode,
             "host": client.host,
             "port": client.port,
             "enabled": is_enabled(),
@@ -1597,9 +1806,8 @@ def start_recording():
             duration = int(request.json.get("duration", 30))
             interval = float(request.json.get("interval", 0))
 
-        # Get RTSP stream URL
-        rtsp_port = int(os.getenv("SEESTAR_RTSP_PORT", "4554"))
-        rtsp_url = f"rtsp://{client.host}:{rtsp_port}/stream"
+        # Use discovered/cached working RTSP port.
+        rtsp_url = _resolve_rtsp_url(client.host) or f"rtsp://{client.host}:4554/stream"
 
         # Generate filename with timestamp
         from datetime import datetime
@@ -1853,7 +2061,21 @@ def start_timelapse():
         interval = float(data.get("interval", 120))
 
         tl = get_timelapse()
-        result = tl.start(host=client.host, interval=interval)
+        rtsp_url = _resolve_rtsp_url(client.host, probe=True)
+        if not rtsp_url:
+            return (
+                jsonify(
+                    {
+                        "error": "No working RTSP stream found for timelapse. Check scope stream mode/port."
+                    }
+                ),
+                503,
+            )
+        result = tl.start(
+            host=client.host,
+            interval=interval,
+            rtsp_port=_extract_rtsp_port(rtsp_url),
+        )
         if "error" in result:
             return jsonify(result), 400
         return jsonify(result), 200
@@ -1890,7 +2112,13 @@ def get_timelapse_status():
                         resume_interval = float(interval_raw)
                     except ValueError:
                         resume_interval = 120.0
-                    tl.resume_today(host=client.host, interval=resume_interval)
+                    rtsp_url = _resolve_rtsp_url(client.host, probe=True)
+                    if rtsp_url:
+                        tl.resume_today(
+                            host=client.host,
+                            interval=resume_interval,
+                            rtsp_port=_extract_rtsp_port(rtsp_url),
+                        )
         return jsonify(tl.status()), 200
     except Exception as e:
         return handle_error(e)
@@ -2556,9 +2784,8 @@ def capture_photo():
                 503,
             )
 
-        # Get RTSP stream URL
-        rtsp_port = int(os.getenv("SEESTAR_RTSP_PORT", "4554"))
-        rtsp_url = f"rtsp://{client.host}:{rtsp_port}/stream"
+        # Use discovered/cached working RTSP port.
+        rtsp_url = _resolve_rtsp_url(client.host) or f"rtsp://{client.host}:4554/stream"
 
         # Generate filename with timestamp
         from datetime import datetime
@@ -2867,9 +3094,8 @@ def telescope_preview_stream():
         if not client or not client.is_connected():
             return jsonify({"error": "Not connected to telescope"}), 400
 
-        # Get RTSP stream URL
-        rtsp_port = int(os.getenv("SEESTAR_RTSP_PORT", "4554"))
-        rtsp_url = f"rtsp://{client.host}:{rtsp_port}/stream"
+        # Use discovered/cached working RTSP port.
+        rtsp_url = _resolve_rtsp_url(client.host) or f"rtsp://{client.host}:4554/stream"
 
         logger.info(f"[Telescope] Transcoding RTSP stream: {rtsp_url}")
 
@@ -3196,7 +3422,7 @@ def alpaca_settings():
 
 def alpaca_abort_slew():
     """POST /telescope/alpaca/abort — abort any in-progress slew."""
-    global _ctrl_state, _pre_nudge_tracking
+    global _ctrl_state, _pre_nudge_tracking, _pre_nudge_viewing_mode
     alpaca = get_alpaca_client()
     if not alpaca or not alpaca.is_connected():
         return jsonify({"error": "ALPACA not connected"}), 503
@@ -3206,6 +3432,7 @@ def alpaca_abort_slew():
         with _ctrl_lock:
             _ctrl_state = _CtrlState.IDLE
             _pre_nudge_tracking = False
+            _pre_nudge_viewing_mode = None
         return jsonify({"success": True, "result": result}), 200
     except Exception as e:
         with _ctrl_lock:
@@ -3718,12 +3945,18 @@ def _auto_connect_background():
         auto_resume = os.getenv("SOLAR_TIMELAPSE_AUTO_RESUME", "true").strip().lower()
         if auto_resume in ("1", "true", "yes", "on"):
             tl = get_timelapse()
-            if not tl.is_running and tl.has_frames_today():
+            if not tl.is_running and tl.has_today_frames():
                 try:
                     interval = float(os.getenv("SOLAR_TIMELAPSE_INTERVAL", "120"))
                 except ValueError:
                     interval = 120.0
-                tl.resume_today(host=client.host, interval=interval)
+                rtsp_url = _resolve_rtsp_url(client.host, probe=True)
+                if rtsp_url:
+                    tl.resume_today(
+                        host=client.host,
+                        interval=interval,
+                        rtsp_port=_extract_rtsp_port(rtsp_url),
+                    )
 
     t = threading.Thread(target=_worker, name="seestar-auto-connect", daemon=True)
     t.start()
@@ -3760,8 +3993,12 @@ def _maybe_auto_start_detector(target: str = "sun") -> None:
             return
 
         host = client.host
-        rtsp_port = int(os.getenv("SEESTAR_RTSP_PORT", "4554"))
-        rtsp_url = f"rtsp://{host}:{rtsp_port}/stream"
+        rtsp_url = _resolve_rtsp_url(host, probe=True)
+        if not rtsp_url:
+            logger.warning(
+                f"[Telescope] Auto-detect: no working RTSP stream for host {host}; skipping auto-start"
+            )
+            return
 
         logger.info(
             f"[Telescope] Auto-detect: starting detector for {target} target "
@@ -3796,8 +4033,17 @@ def start_detection():
         if not host:
             return jsonify({"error": "No telescope host configured"}), 400
 
-        rtsp_port = int(os.getenv("SEESTAR_RTSP_PORT", "4554"))
-        rtsp_url = f"rtsp://{host}:{rtsp_port}/stream"
+        # Probe once on explicit detector start and fail fast if unavailable.
+        rtsp_url = _resolve_rtsp_url(host, probe=True)
+        if not rtsp_url:
+            return (
+                jsonify(
+                    {
+                        "error": "No working RTSP stream found for detection. Check scope stream mode/port."
+                    }
+                ),
+                503,
+            )
 
         # Optional params
         record = True

@@ -69,12 +69,19 @@ const _PREVIEW_BACKOFF_MS = 5000; // 5s between retry attempts after stream fail
 let _previewCheckTimer = null;
 let _lastPreviewRefreshMs = 0;
 const _PREVIEW_REFRESH_INTERVAL_MS = Infinity; // never restart a healthy stream — onerror handles failures
+let _previewRetryAttempt = 0; // Current retry count (max 1 per error)
 let isSimulating = false;
 let simulationVideo = null;
 let disconnectedPollCount = 0; // consecutive disconnected polls before stopping preview
 let simulationFiles = []; // Track temporary simulation files
 let filmstripFiles = []; // current files rendered in the horizontal filmstrip
+// Track modifier key state independently — event.metaKey is unreliable on Cmd+click in some browsers
+let _modifierKeyDown = false;
+document.addEventListener('keydown', e => { if (e.key === 'Meta' || e.key === 'Control') _modifierKeyDown = true; });
+document.addEventListener('keyup',   e => { if (e.key === 'Meta' || e.key === 'Control') _modifierKeyDown = false; });
+window.addEventListener('blur', () => { _modifierKeyDown = false; });
 let _lastDiscoveredSeestarIp = null; // last discovered scope IP
+let _previewStalledSince = null; // timestamp when preview became stalled (naturalWidth==0 while connected)
 
 const filmstripSelection = {
     selected: new Set(),   // set of file paths selected in filmstrip
@@ -520,7 +527,7 @@ async function updateTargetVisibility() {
 
 async function switchToSun() {
     console.log('[Telescope] Switching to Sun');
-    showStatus('Switching to Solar mode...', 'info');
+    showStatus('Switching to Solar mode...', 'info', 8000);
 
     const result = await apiCall('/telescope/target/sun', 'POST');
     if (result && result.success) {
@@ -540,7 +547,7 @@ async function switchToSun() {
 
 async function switchToMoon() {
     console.log('[Telescope] Switching to Moon');
-    showStatus('Switching to Lunar mode...', 'info');
+    showStatus('Switching to Lunar mode...', 'info', 8000);
 
     const result = await apiCall('/telescope/target/moon', 'POST');
     if (result && result.success) {
@@ -560,16 +567,18 @@ async function switchToMoon() {
 
 async function switchToScenery() {
     console.log('[Telescope] Switching to Scenery');
-    showStatus('Switching to Scenery mode...', 'info');
+    showStatus('Switching to Scenery mode...', 'info', 8000);
 
     const result = await apiCall('/telescope/mode/scenery', 'POST');
     if (result && result.success) {
         showStatus('Scenery mode active — no tracking, manual positioning enabled', 'success', 5000);
         currentViewingMode = 'scenery';
-        updateModeButtons();    // immediately light Scene keycap
+        updateModeButtons();
         stopPreview();
         _previewLastError = 0;
         setTimeout(startPreview, 3000);
+    } else if (result) {
+        showStatus(`Scenery mode error: ${result.error || JSON.stringify(result)}`, 'error', 8000);
     }
 }
 
@@ -1124,17 +1133,31 @@ function startPreview(forceRefresh = false) {
     };
     setTimeout(checkStream, 2000);
 
-    // Error handler — reset state so the guard above doesn't block retries
+    // Error handler with auto-retry
     previewImage.onerror = () => {
-        const backoffSecs = (_PREVIEW_BACKOFF_MS / 1000).toFixed(0);
-        console.warn(`[Preview] Stream failed (scope connected=${isConnected}, backoff=${backoffSecs}s) — ${streamUrl}`);
+        console.warn(`[Preview] Stream failed (attempt ${_previewRetryAttempt+1}, connected=${isConnected})`);
         _previewLastError = Date.now();
-        previewImage.removeAttribute('src'); // avoid empty-src triggering another error
+        previewImage.removeAttribute('src');
         previewImage.style.display = 'none';
         if (previewPlaceholder) previewPlaceholder.style.display = 'flex';
-        if (previewStatusDot) previewStatusDot.className = 'status-dot disconnected';
-        if (previewStatusText) previewStatusText.textContent = 'Stream unavailable';
-        if (previewTitleIcon) previewTitleIcon.textContent = '🔴';
+
+        // Auto-retry once after 3s
+        if (_previewRetryAttempt === 0 && isConnected) {
+            _previewRetryAttempt = 1;
+            if (previewStatusDot) previewStatusDot.className = 'status-dot';
+            if (previewStatusText) previewStatusText.textContent = '🔄 Reconnecting...';
+            if (previewTitleIcon) previewTitleIcon.textContent = '🟡';
+            setTimeout(() => {
+                console.log('[Preview] Retry attempt 1/1');
+                startPreview(true);
+            }, 3000);
+        } else {
+            // Retry exhausted
+            _previewRetryAttempt = 0;
+            if (previewStatusDot) previewStatusDot.className = 'status-dot disconnected';
+            if (previewStatusText) previewStatusText.textContent = 'Stream unavailable — try reconnect';
+            if (previewTitleIcon) previewTitleIcon.textContent = '🔴';
+        }
     };
 }
 
@@ -1439,6 +1462,7 @@ async function deleteFile(url, filename, skipConfirm) {
 // UI HELPERS
 // ============================================================================
 
+let _statusToastTimer = null;
 function showStatus(message, type = 'info', autohide = 0) {
     // Use a fixed-position toast so it's visible above modals
     let toast = document.getElementById('statusToast');
@@ -1447,12 +1471,14 @@ function showStatus(message, type = 'info', autohide = 0) {
         toast.id = 'statusToast';
         document.body.appendChild(toast);
     }
+    if (_statusToastTimer) { clearTimeout(_statusToastTimer); _statusToastTimer = null; }
     toast.textContent = message;
     toast.className = `status-toast status-toast-${type}`;
     toast.style.display = 'block';
     if (autohide > 0) {
-        setTimeout(() => {
+        _statusToastTimer = setTimeout(() => {
             toast.style.display = 'none';
+            _statusToastTimer = null;
         }, autohide);
     }
 }
@@ -2481,7 +2507,7 @@ function dismissTransit(flight) {
         const tag = document.activeElement ? document.activeElement.tagName : '';
         const inInput = tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT'
             || document.activeElement?.isContentEditable;
-        // CMD/Ctrl + Delete: delete without confirmation in any context
+        // CMD/Ctrl + Delete/Backspace: delete without confirmation in any context
         if ((e.key === 'Delete' || e.key === 'Backspace') && (e.metaKey || e.ctrlKey)) {
             // 1. File viewer lightbox is open
             const viewer = document.getElementById('fileViewer');
@@ -2511,7 +2537,7 @@ function dismissTransit(flight) {
                 filmstripDeleteSelectedSkipConfirm();
             }
         }
-    });
+    }, true);
 })();
 
 // ============================================================================
@@ -2603,7 +2629,7 @@ function updateFilmstrip(files) {
                 <div class="filmstrip-actions">
                     <button class="btn-icon btn-fav" data-fav-path="${file.path}" onclick="toggleFavorite('${file.path}', event)" title="${getFavorites().has(file.path) ? 'Unfavorite' : 'Favorite'}">${getFavorites().has(file.path) ? '❤️' : '🤍'}</button>
                     <button class="btn-icon" onclick="event.stopPropagation(); downloadFile('${file.path}', '${file.name}')" title="Download" ${isTemp ? 'disabled' : ''}>⬇️</button>
-                    <button class="btn-icon btn-danger" onclick="event.stopPropagation(); deleteFile('${file.path}', '${file.name}', event.metaKey || event.ctrlKey)" title="${getFavorites().has(file.path) ? 'Remove favorite first' : 'Delete (⌘/Ctrl+click to skip confirm)'}" ${isTemp || getFavorites().has(file.path) ? 'disabled' : ''}>🗑️</button>
+                    <button class="btn-icon btn-danger" onclick="event.stopPropagation(); filmstripDeleteItem('${file.path}', '${file.name}', _modifierKeyDown || event.metaKey || event.ctrlKey)" title="${getFavorites().has(file.path) ? 'Remove favorite first' : 'Delete (⌘/Ctrl+click to skip confirm)'}" ${isTemp || getFavorites().has(file.path) ? 'disabled' : ''}>🗑️</button>
                 </div>
             </div>
         </div>
@@ -2625,7 +2651,7 @@ function _syncFilmstripSelectionUI() {
 
 function filmstripSelectItem(index, path, event) {
     event.stopPropagation();
-    if ((event.ctrlKey || event.metaKey) && event.shiftKey && filmstripSelection.lastClicked !== null) {
+    if (event.shiftKey && filmstripSelection.lastClicked !== null) {
         const lo = Math.min(filmstripSelection.lastClicked, index);
         const hi = Math.max(filmstripSelection.lastClicked, index);
         for (let i = lo; i <= hi; i++) {
@@ -2645,6 +2671,14 @@ function filmstripSelectItem(index, path, event) {
     }
     filmstripSelection.lastClicked = index;
     _syncFilmstripSelectionUI();
+}
+
+async function filmstripDeleteItem(path, name, skipConfirm) {
+    // If this file is part of a multi-selection, delete the whole selection
+    if (filmstripSelection.selected.size > 1 && filmstripSelection.selected.has(path)) {
+        return filmstripDeleteSelectedSkipConfirm();
+    }
+    return deleteFile(path, name, skipConfirm);
 }
 
 async function filmstripDeleteSelectedSkipConfirm() {
@@ -2728,7 +2762,7 @@ async function gridDeleteSelected(e) {
     const paths = [...gridSelection.selected];
     const n = paths.length;
     if (n === 0) return;
-    const skipConfirm = e && (e.metaKey || e.ctrlKey);
+    const skipConfirm = _modifierKeyDown || (e && (e.metaKey || e.ctrlKey));
     const favs = getFavorites();
     const protected_ = paths.filter(p => favs.has(p));
     const deletable = paths.filter(p => !favs.has(p));
@@ -2964,7 +2998,7 @@ function updateFilesGrid() {
                 <div class="file-actions">
                     <button class="btn-icon btn-fav" data-fav-path="${file.path}" onclick="toggleFavorite('${file.path}', event)" title="${getFavorites().has(file.path) ? 'Unfavorite' : 'Favorite'}">${getFavorites().has(file.path) ? '❤️' : '🤍'}</button>
                     <button class="btn-icon" onclick="event.stopPropagation(); downloadFile('${file.path}', '${file.name}')" title="Download">⬇️</button>
-                    <button class="btn-icon btn-danger" onclick="event.stopPropagation(); deleteFile('${file.path}', '${file.name}', event.metaKey || event.ctrlKey)" title="${getFavorites().has(file.path) ? 'Remove favorite first' : 'Delete (⌘/Ctrl+click to skip confirm)'}" ${getFavorites().has(file.path) ? 'disabled' : ''}>🗑️</button>
+                    <button class="btn-icon btn-danger" onclick="event.stopPropagation(); deleteFile('${file.path}', '${file.name}', _modifierKeyDown || event.metaKey || event.ctrlKey)" title="${getFavorites().has(file.path) ? 'Remove favorite first' : 'Delete (⌘/Ctrl+click to skip confirm)'}" ${getFavorites().has(file.path) ? 'disabled' : ''}>🗑️</button>
                 </div>
             </div>
             ${thumbnail}
@@ -3862,7 +3896,7 @@ async function viewerDelete(e) {
         showStatus('Remove favorite ❤️ first before deleting', 'warning', 3000);
         return;
     }
-    const skipConfirm = e && (e.metaKey || e.ctrlKey);
+    const skipConfirm = _modifierKeyDown || (e && (e.metaKey || e.ctrlKey));
     if (!skipConfirm && !confirm(`Delete ${f.name}?`)) return;
 
     try {
@@ -7387,7 +7421,7 @@ function _updateAlpacaPanel(data) {
         if (name) name.textContent = '';
         const drvr = document.getElementById('alpacaDriverInfo');
         if (drvr) drvr.textContent = '';
-        ['alpacaChipTrk','alpacaChipSlw','alpacaChipPrk'].forEach(id => {
+        ['alpacaChipTrk','alpacaChipSlw','alpacaChipPrk','alpacaChipClk'].forEach(id => {
             const el = document.getElementById(id);
             if (el) el.className = 'alpaca-state-chip';
         });
@@ -7410,12 +7444,14 @@ function _updateAlpacaPanel(data) {
     if (alt) alt.textContent = fmt(pos.alt, 2);
     if (az) az.textContent = fmt(pos.az, 2);
 
-    // Sidereal time (LST) — comes from state, display as HH:MM
+    // Display local system time so panel matches real-world wall clock.
     const lst = document.getElementById('alpacaLST');
-    if (lst && state.sidereal_time != null) {
-        const h = Math.floor(state.sidereal_time);
-        const m = Math.floor((state.sidereal_time - h) * 60);
-        lst.textContent = String(h).padStart(2,'0') + ':' + String(m).padStart(2,'0');
+    if (lst) {
+        const now = new Date();
+        lst.textContent =
+            String(now.getHours()).padStart(2, '0') +
+            ':' +
+            String(now.getMinutes()).padStart(2, '0');
     }
 
     // Also update the GoTo pointing display with ALPACA data
@@ -7431,9 +7467,16 @@ function _updateAlpacaPanel(data) {
     const chipTrk = document.getElementById('alpacaChipTrk');
     const chipSlw = document.getElementById('alpacaChipSlw');
     const chipPrk = document.getElementById('alpacaChipPrk');
+    const chipClk = document.getElementById('alpacaChipClk');
     if (chipTrk) chipTrk.className = 'alpaca-state-chip' + (state.tracking ? ' active' : '');
     if (chipSlw) chipSlw.className = 'alpaca-state-chip' + (state.slewing ? ' warn' : '');
     if (chipPrk) chipPrk.className = 'alpaca-state-chip' + (state.parked ? ' active' : '');
+    const driftSec = Number(state.sidereal_drift_seconds || 0);
+    if (chipClk) {
+        const driftAbs = Math.abs(driftSec);
+        chipClk.className = 'alpaca-state-chip' + (driftAbs > 120 ? ' alert' : (driftAbs > 30 ? ' warn' : ' active'));
+        chipClk.title = 'Sidereal drift: ' + driftSec.toFixed(1) + 's';
+    }
 
     // Device name
     const nameEl = document.getElementById('alpacaDeviceName');

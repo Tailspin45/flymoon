@@ -212,6 +212,9 @@ class SeestarClient:
         # Keep query probes disabled to avoid repeated timeout overhead.
         self._query_rpc_enabled: bool = False
 
+        # Callback invoked when host IP changes (e.g., after discovery)
+        self.on_host_change: Optional[callable] = None
+
         logger.info(f"Initialized Seestar client for {host}:{port}")
 
     def _get_next_id(self) -> int:
@@ -246,6 +249,14 @@ class SeestarClient:
             logger.info(
                 f"[Seestar] Persisted discovered host to {env_path}: {new_host}"
             )
+
+            # Notify subsystems (ALPACA, RTSP) of IP change
+            if self.on_host_change:
+                try:
+                    self.on_host_change(new_host)
+                except Exception as e:
+                    logger.warning(f"[Seestar] on_host_change callback failed: {e}")
+
         except OSError as e:
             logger.warning(f"[Seestar] Failed to persist SEESTAR_HOST to .env: {e}")
 
@@ -1357,8 +1368,6 @@ class SeestarClient:
             )
             self._viewing_mode = "sun"
             logger.info("Started solar viewing mode (async)")
-            # Give telescope time to process the command
-            time.sleep(1)
             return True
         except Exception as e:
             logger.error(f"Failed to start solar mode: {e}")
@@ -1386,8 +1395,6 @@ class SeestarClient:
             )
             self._viewing_mode = "moon"
             logger.info("Started lunar viewing mode (async)")
-            # Give telescope time to process the command
-            time.sleep(1)
             return True
         except Exception as e:
             logger.error(f"Failed to start lunar mode: {e}")
@@ -1401,7 +1408,6 @@ class SeestarClient:
             )
             self._viewing_mode = "scenery"
             logger.info("Started scenery viewing mode (async)")
-            time.sleep(1)
             return True
         except Exception as e:
             logger.error(f"Failed to start scenery mode: {e}")
@@ -1413,14 +1419,12 @@ class SeestarClient:
 
         try:
             self._send_command("iscope_stop_view", expect_response=False)
-            _time.sleep(0.3)
         except Exception:
             pass
         try:
             self._send_command(
                 "iscope_stop_view", params={"stage": "Stack"}, expect_response=False
             )
-            _time.sleep(1.0)
             self._viewing_mode = None
             logger.info("Stopped viewing mode")
             return True
