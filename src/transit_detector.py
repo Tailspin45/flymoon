@@ -38,6 +38,7 @@ import os
 import subprocess
 import threading
 import time
+import urllib.parse
 from datetime import datetime
 from typing import Any, Callable, Deque, Dict, List, Optional
 
@@ -835,25 +836,65 @@ class TransitDetector:
 
     def _reader_loop(self) -> None:
         """Unified reader: single 320×180 @ 30fps stream for detection + recording buffer."""
-        cmd = [
-            FFMPEG,
-            "-rtsp_transport",
-            "tcp",
-            "-timeout",
-            "10000000",  # 10 s socket timeout (µs)
-            "-i",
-            self.rtsp_url,
-            "-vf",
-            f"scale={ANALYSIS_WIDTH}:{ANALYSIS_HEIGHT}",
-            "-r",
-            str(ANALYSIS_FPS),
-            "-f",
-            "rawvideo",
-            "-pix_fmt",
-            "rgb24",
-            "-an",
-            "pipe:1",
-        ]
+        def _build_cmd(rtsp_url: str) -> List[str]:
+            return [
+                FFMPEG,
+                "-rtsp_transport",
+                "tcp",
+                "-timeout",
+                "10000000",  # 10 s socket timeout (µs)
+                "-i",
+                rtsp_url,
+                "-vf",
+                f"scale={ANALYSIS_WIDTH}:{ANALYSIS_HEIGHT}",
+                "-r",
+                str(ANALYSIS_FPS),
+                "-f",
+                "rawvideo",
+                "-pix_fmt",
+                "rgb24",
+                "-an",
+                "pipe:1",
+            ]
+
+        def _candidate_rtsp_urls(current_url: str) -> List[str]:
+            parsed = urllib.parse.urlparse(current_url)
+            host = parsed.hostname
+            if not host:
+                return [current_url]
+            env_port = int(os.getenv("SEESTAR_RTSP_PORT", "4554"))
+            current_port = parsed.port
+            ports: List[int] = []
+            for p in [current_port, env_port, 4554, 4700, 4800, 8554, 554, 4500]:
+                if p is None:
+                    continue
+                if p not in ports:
+                    ports.append(int(p))
+            return [f"rtsp://{host}:{p}/stream" for p in ports]
+
+        def _probe_rtsp_url(url: str, timeout_s: int = 4) -> bool:
+            probe_cmd = [
+                FFMPEG,
+                "-rtsp_transport",
+                "tcp",
+                "-i",
+                url,
+                "-frames:v",
+                "1",
+                "-f",
+                "null",
+                "-",
+            ]
+            try:
+                r = subprocess.run(
+                    probe_cmd,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    timeout=timeout_s,
+                )
+                return r.returncode == 0
+            except (subprocess.TimeoutExpired, OSError):
+                return False
 
         reconnect_delay = 2
         max_reconnect_delay = 30
@@ -864,6 +905,7 @@ class TransitDetector:
 
         while self._running:
             try:
+                cmd = _build_cmd(self.rtsp_url)
                 logger.info(f"[Detector] Launching ffmpeg: {' '.join(cmd)}")
                 self._process = subprocess.Popen(
                     cmd,
@@ -931,6 +973,17 @@ class TransitDetector:
                 self._emit_status("disconnected")
                 self._running = False
                 break
+
+            # Re-probe alternates before each reconnect so we don't retry a dead URL.
+            for candidate in _candidate_rtsp_urls(self.rtsp_url):
+                if candidate == self.rtsp_url:
+                    continue
+                if _probe_rtsp_url(candidate, timeout_s=4):
+                    logger.warning(
+                        f"[Detector] Switched RTSP source from {self.rtsp_url} to {candidate}"
+                    )
+                    self.rtsp_url = candidate
+                    break
 
             now_ = time.time()
             if now_ - _last_stream_lost_warn >= 60:

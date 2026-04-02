@@ -6,14 +6,14 @@
     display: flex;
     flex-direction: column;
     /* Definite height so flex:1 main area and bottom filmstrip split the viewport (min-height alone leaves flex distribution undefined). */
-    height: min(100dvh, 100vh);
-    min-height: min(100dvh, 100vh);
+    height: 100vh;
+    min-height: 100vh;
+    max-height: 100vh;
     width: 100vw;
-    max-width: none;
+    max-width: 100vw;
     margin-left: calc(50% - 50vw);
     margin-right: calc(50% - 50vw);
-    overflow-x: hidden;
-    overflow-y: hidden;
+    overflow: hidden;
 }
 
 #telescopeView > .eclipse-banner,

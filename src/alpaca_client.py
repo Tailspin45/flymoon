@@ -22,6 +22,7 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+from datetime import datetime, timezone
 from typing import Any, Dict, Optional, Tuple
 
 from src import logger
@@ -261,6 +262,7 @@ class AlpacaClient:
         if self._alpaca_bool(check.get("Value")):
             self._connected = True
             logger.info(f"ALPACA connected to {self.host}:{self.port}")
+            self._sync_scope_utc_clock()
             self._load_capabilities()
             self._load_device_info()
             self._start_polling()
@@ -287,6 +289,35 @@ class AlpacaClient:
 
     def is_connected(self) -> bool:
         return self._connected
+
+    def update_host(self, new_host: str) -> bool:
+        """Update host IP without full reconnect (e.g., after discovery updates).
+
+        Validates new IP is reachable on port 32323 before updating.
+        Returns True if successful, False if new host unreachable.
+        """
+        new_host = new_host.strip()
+        if not new_host:
+            logger.warning("ALPACA update_host: empty host ignored")
+            return False
+
+        if new_host == self.host:
+            return True  # No change needed
+
+        old_host = self.host
+        self.host = new_host
+
+        # Validate new host is reachable
+        if not self._tcp_reachable(timeout=2.0):
+            logger.warning(
+                f"ALPACA update_host: {new_host}:{self.port} not reachable, "
+                f"reverting to {old_host}"
+            )
+            self.host = old_host
+            return False
+
+        logger.info(f"ALPACA host updated: {old_host} → {new_host}")
+        return True
 
     def _tcp_reachable(self, timeout: float = 2.0) -> bool:
         try:
@@ -622,17 +653,31 @@ class AlpacaClient:
                 return
             if "Value" in r and r["Value"] is not None:
                 state[key] = self._alpaca_bool(r["Value"])
+        # Seestar firmware can report stale/wrong siderealtime when its RTC drifts.
+        # Keep the raw value (when available) but publish a locally computed LST
+        # based on current time + effective observer longitude for UI reliability.
         r = self._get("siderealtime", quiet=True)
         if self._get_network_error(r):
             self._abort_poll_after_failures(
                 f"siderealtime unreachable ({r.get('error', '')})"
             )
             return
+        raw_sidereal_time: Optional[float] = None
         if "Value" in r and r["Value"] is not None:
             try:
-                state["sidereal_time"] = float(r["Value"])
+                raw_sidereal_time = float(r["Value"])
+                state["sidereal_time_raw"] = raw_sidereal_time
             except (TypeError, ValueError):
                 pass
+        try:
+            _lat, lon, _elev = get_observer_coordinates()
+            state["sidereal_time"] = self._current_local_sidereal_time(lon)
+            if raw_sidereal_time is not None:
+                drift_h = ((raw_sidereal_time - state["sidereal_time"] + 12.0) % 24.0) - 12.0
+                state["sidereal_drift_seconds"] = drift_h * 3600.0
+        except Exception:
+            if raw_sidereal_time is not None:
+                state["sidereal_time"] = raw_sidereal_time
         self._last_state = state
         self._poll_cycle_failures = 0
 
@@ -653,6 +698,33 @@ class AlpacaClient:
     # ── Alt/Az → RA/Dec conversion ─────────────────────────────────────
 
     @staticmethod
+    def _current_local_sidereal_time(lon_deg: float) -> float:
+        """Local sidereal time in decimal hours for observer longitude."""
+        from src.constants import EARTH_TIMESCALE
+
+        t = EARTH_TIMESCALE.now()
+        return (t.gast + lon_deg / 15.0) % 24
+
+    def _sync_scope_utc_clock(self) -> None:
+        """Best-effort ALPACA clock sync so scope-side sidereal math stays sane."""
+        payload = {
+            "UTCDate": datetime.now(timezone.utc)
+            .replace(microsecond=0)
+            .isoformat()
+            .replace("+00:00", "Z")
+        }
+        result = self._put("utcdate", payload, quiet=True, timeout_override=2.0)
+        if "error" in result:
+            logger.warning(f"ALPACA utcdate sync failed: {result['error']}")
+            return
+        if result.get("ErrorNumber"):
+            logger.warning(
+                f"ALPACA utcdate sync rejected: {result.get('ErrorMessage', '')}"
+            )
+            return
+        logger.info(f"ALPACA utcdate synced: {payload['UTCDate']}")
+
+    @staticmethod
     def _altaz_to_radec(
         alt: float, az: float, lat: float, lon: float
     ) -> Tuple[float, float]:
@@ -660,9 +732,6 @@ class AlpacaClient:
 
         Uses the same spherical trig as SeestarClient.goto_altaz.
         """
-        from src.constants import EARTH_TIMESCALE
-
-        t = EARTH_TIMESCALE.now()
         lat_r = math.radians(lat)
         alt_r = math.radians(alt)
         az_r = math.radians(az)
@@ -679,7 +748,7 @@ class AlpacaClient:
         if math.sin(az_r) > 0:
             ha_r = 2 * math.pi - ha_r
 
-        lst = (t.gast + lon / 15.0) % 24
+        lst = AlpacaClient._current_local_sidereal_time(lon)
         ra_h = (lst - ha_r * 12 / math.pi) % 24
         dec_d = math.degrees(dec_r)
         return ra_h, dec_d
@@ -770,6 +839,13 @@ class MockAlpacaClient:
 
     def is_connected(self) -> bool:
         return self._connected
+
+    def update_host(self, new_host: str) -> bool:
+        """Mock implementation: always accepts new host."""
+        old = self.host
+        self.host = new_host.strip()
+        logger.debug(f"MockAlpaca: host updated {old} → {self.host}")
+        return True
 
     def get_position(self) -> Dict[str, float]:
         pos = {"ra": self._ra, "dec": self._dec, "alt": self._alt, "az": self._az}

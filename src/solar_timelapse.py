@@ -258,7 +258,9 @@ class SolarTimelapse:
         frames_dir, _ = self._today_paths(datetime.now())
         return self._existing_frame_count(frames_dir) > 0
 
-    def start(self, host: str, interval: float = 120.0) -> dict:
+    def start(
+        self, host: str, interval: float = 120.0, rtsp_port: Optional[int] = None
+    ) -> dict:
         with self._lock:
             if self._running:
                 return self.status()
@@ -267,10 +269,16 @@ class SolarTimelapse:
             now = datetime.now()
             frames_dir, _ = self._today_paths(now)
             if self._existing_frame_count(frames_dir) > 0:
-                return self.resume_today(host=host, interval=interval)
+                return self.resume_today(
+                    host=host, interval=interval, rtsp_port=rtsp_port
+                )
 
             self._host = host
-            self._rtsp_port = int(os.getenv("SEESTAR_RTSP_PORT", "4554"))
+            self._rtsp_port = (
+                int(rtsp_port)
+                if rtsp_port is not None
+                else int(os.getenv("SEESTAR_RTSP_PORT", "4554"))
+            )
             self._interval = max(10.0, interval)
             self._stabilize_enabled = os.getenv(
                 "SOLAR_TIMELAPSE_STABILIZE", "true"
@@ -310,7 +318,9 @@ class SolarTimelapse:
             )
             return self.status()
 
-    def resume_today(self, host: str, interval: float = 120.0) -> dict:
+    def resume_today(
+        self, host: str, interval: float = 120.0, rtsp_port: Optional[int] = None
+    ) -> dict:
         """Resume today's timelapse from existing frames after restart/crash."""
         with self._lock:
             if self._running:
@@ -322,7 +332,11 @@ class SolarTimelapse:
             existing_count = self._existing_frame_count(frames_dir)
 
             self._host = host
-            self._rtsp_port = int(os.getenv("SEESTAR_RTSP_PORT", "4554"))
+            self._rtsp_port = (
+                int(rtsp_port)
+                if rtsp_port is not None
+                else int(os.getenv("SEESTAR_RTSP_PORT", "4554"))
+            )
             self._interval = max(10.0, interval)
             self._stabilize_enabled = os.getenv(
                 "SOLAR_TIMELAPSE_STABILIZE", "true"
@@ -662,15 +676,13 @@ class SolarTimelapse:
         filename = f"frame_{seq:05d}.jpg"
         filepath = os.path.join(self._frames_dir, filename)
 
-        # Try primary port first, then fallbacks if connection refused
-        # Port scan suggests 4500, 4700, 4800 are open. 4554 is standard but closed here.
-        candidate_ports = [self._rtsp_port]
-        if self._rtsp_port != 4500:
-            candidate_ports.append(4500)
-        if self._rtsp_port != 8554:
-            candidate_ports.append(8554)
-        if self._rtsp_port != 554:
-            candidate_ports.append(554)
+        # Try primary port first, then robust fallbacks.
+        # Include env/default + known Seestar alternates to avoid getting stuck
+        # on a single stale/bad port (e.g. 4500 returning non-RTSP payloads).
+        env_port = int(os.getenv("SEESTAR_RTSP_PORT", "4554"))
+        candidate_ports = [self._rtsp_port, env_port, 4554, 4700, 4800, 4500, 8554, 554]
+        seen = set()
+        candidate_ports = [p for p in candidate_ports if not (p in seen or seen.add(p))]
 
         last_err = ""
         success = False
