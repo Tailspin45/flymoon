@@ -1339,7 +1339,11 @@ class TransitDetector:
         arr = np.array(scores)
         med = float(np.median(arr))
         mad = float(np.median(np.abs(arr - med)))
-        return med + max(3.0 * mad, 0.5 * med)
+        # Floor prevents threshold reaching zero when the stream delivers duplicate
+        # frames (static/paused RTSP): all score_a values become 0, median=0, MAD=0,
+        # threshold=0, and the spike gate fires on any compression artifact.
+        # 0.5 intensity units is below any real atmospheric signal (~2-5 units).
+        return max(0.5, med + max(3.0 * mad, 0.5 * med))
 
     # ------------------------------------------------------------------
     # Internal: detection event handling
