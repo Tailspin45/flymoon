@@ -91,10 +91,36 @@ def _wavelet_detrend(buf: "collections.deque") -> float:
 
 
 # D2: Matched-filter gate template durations (frames at 30fps)
-# Covers 0.2 s (fast crossing) → 2.0 s (large aircraft near limb)
-_MF_TEMPLATES: tuple = (6, 10, 15, 24, 40, 60)
-# Fraction of template frames that must be "triggered" for a match
-_MF_THRESHOLD_FRAC: float = 0.70
+# Covers 0.2 s (fast crossing) → 4.0 s (pattern-altitude aircraft with seeing gaps)
+# 90 and 120 frame templates added for slow aircraft (70-100 frames) where atmospheric
+# seeing causes the signal to appear in only ~45-50% of frames.
+_MF_TEMPLATES: tuple = (6, 10, 15, 24, 40, 60, 90, 120)
+# Graduated hit-rate thresholds: tighter for short templates (noise immunity),
+# looser for long templates (tolerates seeing-induced gaps without missing real transits).
+# n<=15: 70%, n<=40: 60%, n<=60: 50%, n>60: 45%
+_MF_THRESHOLD_FRAC: float = 0.70  # used for n<=15 (default); see _mf_hit_required()
+
+
+def _mf_hit_required(n: int) -> int:
+    """Minimum number of 'triggered' frames to pass the matched-filter gate.
+
+    Graduated thresholds tolerate atmospheric seeing gaps in long transits
+    while keeping short templates noise-resistant:
+      n<=15:  70%  — fast aircraft, few frames, must be mostly above-threshold
+      n<=40:  60%  — medium transit, some seeing gaps expected
+      n<=60:  50%  — slow transit with significant gaps
+      n> 60:  45%  — pattern-altitude aircraft with heavy seeing (70-100 frame span)
+    """
+    if n <= 15:
+        frac = 0.70
+    elif n <= 40:
+        frac = 0.60
+    elif n <= 60:
+        frac = 0.50
+    else:
+        frac = 0.45
+    return max(3, int(frac * n))
+
 
 # ---------------------------------------------------------------------------
 # Detection parameters
@@ -113,7 +139,7 @@ BG_HISTORY_SECONDS = 60
 BG_HISTORY_SIZE = ANALYSIS_FPS * BG_HISTORY_SECONDS  # ~1800 frames
 
 # Cooldown between detections (seconds) — configurable via DETECTION_COOLDOWN env var
-DETECTION_COOLDOWN = int(os.getenv("DETECTION_COOLDOWN", "30"))
+DETECTION_COOLDOWN = int(os.getenv("DETECTION_COOLDOWN", "15"))
 
 # Recording duration when transit detected (seconds)
 DETECTION_RECORD_DURATION = 10
@@ -121,7 +147,7 @@ DETECTION_RECORD_DURATION = 10
 # Pre-buffer: seconds of video to keep BEFORE detection trigger
 PRE_BUFFER_SECONDS = int(os.getenv("DETECTION_PRE_BUFFER", "3"))
 # Post-buffer: seconds of video to keep AFTER detection trigger
-POST_BUFFER_SECONDS = int(os.getenv("DETECTION_POST_BUFFER", "4"))
+POST_BUFFER_SECONDS = int(os.getenv("DETECTION_POST_BUFFER", "6"))
 
 # --- Phase 1 algorithm parameters ---
 # Consecutive frames both signals must exceed threshold before firing.
@@ -1186,7 +1212,11 @@ class TransitDetector:
         # --- Spike detector: single-frame extreme amplitude → immediate fire ---
         spike_a = score_a > thresh_a * SPIKE_THRESHOLD_MULTIPLIER
         spike_b = score_b > thresh_b * SPIKE_THRESHOLD_MULTIPLIER
-        spike_gate = (spike_a or spike_b) and self._disk_detected
+        # Use disc_ok (includes 3-second grace period) rather than the raw
+        # disk_detected flag.  A large low-altitude aircraft crossing the disk
+        # can disrupt Hough circle detection for 1-3 frames — exactly when the
+        # amplitude spike is strongest and when we most need the spike gate.
+        spike_gate = (spike_a or spike_b) and disc_ok
 
         # --- Consecutive-frame confirmation ---
         # OR logic: fire if EITHER signal exceeds threshold (within disc).
@@ -1200,6 +1230,10 @@ class TransitDetector:
             self._track_agree_count = 0
 
         # D2 — Matched-filter gate
+        # Templates are checked shortest-first; first match wins.
+        # Hit-rate thresholds are graduated via _mf_hit_required() so that
+        # long-template slots tolerate atmospheric seeing gaps without lowering
+        # the bar for short noisy bursts.
         self._triggered_buf.append(triggered)
         mf_gate = False
         mf_duration_f = 0
@@ -1207,7 +1241,7 @@ class TransitDetector:
         for _n in _MF_TEMPLATES:
             if len(buf_list) >= _n:
                 _n_hit = sum(buf_list[-_n:])
-                if _n_hit >= max(3, int(self.mf_threshold_frac * _n)):
+                if _n_hit >= _mf_hit_required(_n):
                     mf_gate = True
                     mf_duration_f = _n
                     break
@@ -1255,9 +1289,17 @@ class TransitDetector:
         if mf_gate or spike_gate:
             self._triggered_buf.clear()
 
-        # Cooldown
+        # Cooldown — log suppressed triggers so missed transits leave forensic evidence
         now = time.time()
         if now - self._last_detection_time < DETECTION_COOLDOWN:
+            logger.warning(
+                "[Detector] COOLDOWN suppressed trigger "
+                "(gate=%s score_a=%.4f thresh_a=%.4f score_b=%.4f thresh_b=%.4f "
+                "since_last=%.1fs cooldown=%ds)",
+                "spike" if spike_gate else ("consec" if consec_gate else "mf"),
+                score_a, thresh_a, score_b, thresh_b,
+                now - self._last_detection_time, DETECTION_COOLDOWN,
+            )
             return
         self._last_detection_time = now
 
@@ -1658,10 +1700,8 @@ class TransitDetector:
         filepath = os.path.join(year_month, filename)
         self._rec_file = filepath
 
-        PRE_TIGHT_SECS = 1
-        _tight_pre = int(PRE_TIGHT_SECS * ANALYSIS_FPS)
         _all_pre = list(self._frame_buffer)
-        pre_frames = _all_pre[-_tight_pre:] if len(_all_pre) > _tight_pre else _all_pre
+        pre_frames = _all_pre  # use full 3-second circular buffer
         pre_count = len(pre_frames)
 
         logger.info(

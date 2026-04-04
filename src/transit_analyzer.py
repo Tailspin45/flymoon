@@ -474,6 +474,24 @@ def analyze_video(
     while True:
         ok, frame = cap.read()
         if not ok:
+            # Stream ended — if reference never built (OpenCV over-reports frame count
+            # or clip is shorter than ref_window), force-build from whatever we have.
+            if reference is None and len(ref_buffer) >= 5:
+                logger.warning(
+                    f"[Analyzer] Stream ended before reference window filled "
+                    f"({len(ref_buffer)}/{ref_window} frames). "
+                    f"Building reference from partial buffer."
+                )
+                reference = np.median(np.stack(ref_buffer), axis=0).astype(np.uint8)
+                ref_gray_f32 = reference.astype(np.float32)
+                ref_bgr_frame = list(ref_buffer_bgr)[len(ref_buffer_bgr) // 2].copy()
+                if not is_moon:
+                    for ri, ref_gray_frame in enumerate(ref_buffer):
+                        detections.extend(_detect_blobs_in_frame(ref_gray_frame, ri))
+                else:
+                    last_ref = ref_buffer[-1]
+                    last_s, _ = _stabilize_frame(last_ref, ref_gray_f32)
+                    prev_blur_ftf = cv2.GaussianBlur(last_s, (5, 5), 0)
             break
 
         gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
