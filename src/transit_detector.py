@@ -1209,6 +1209,14 @@ class TransitDetector:
         # Centre ratio is SOFT — affects confidence, never blocks trigger
         ratio_ok = centre_ratio >= self.centre_ratio_min
 
+        # Hard inner-disc guard: score_a must clear its own threshold before
+        # score_b alone can drive consec/MF accumulation.  score_b tracks an EMA
+        # diff that is prone to limb scintillation; without this guard a sub-
+        # threshold score_a (e.g. 0.38 vs thresh 0.51) combined with a score_b
+        # barely above its floor (0.5 floor) fires a false cooldown that then
+        # blocks the real transit detection that follows.
+        inner_active = score_a >= thresh_a
+
         # --- Spike detector: single-frame extreme amplitude → immediate fire ---
         spike_a = score_a > thresh_a * SPIKE_THRESHOLD_MULTIPLIER
         spike_b = score_b > thresh_b * SPIKE_THRESHOLD_MULTIPLIER
@@ -1216,14 +1224,14 @@ class TransitDetector:
         # disk_detected flag.  A large low-altitude aircraft crossing the disk
         # can disrupt Hough circle detection for 1-3 frames — exactly when the
         # amplitude spike is strongest and when we most need the spike gate.
-        spike_gate = (spike_a or spike_b) and disc_ok
+        spike_gate = (spike_a or spike_b) and disc_ok and inner_active
 
         # --- Consecutive-frame confirmation ---
         # OR logic: fire if EITHER signal exceeds threshold (within disc).
         # Centre ratio is a soft confidence modifier, not a trigger gate.
         triggered = score_a > thresh_a or score_b > thresh_b
 
-        if triggered:
+        if triggered and inner_active:
             self._consec_above += 1
         else:
             self._consec_above = 0
@@ -1234,7 +1242,7 @@ class TransitDetector:
         # Hit-rate thresholds are graduated via _mf_hit_required() so that
         # long-template slots tolerate atmospheric seeing gaps without lowering
         # the bar for short noisy bursts.
-        self._triggered_buf.append(triggered)
+        self._triggered_buf.append(triggered and inner_active)
         mf_gate = False
         mf_duration_f = 0
         buf_list = list(self._triggered_buf)
