@@ -139,7 +139,7 @@ BG_HISTORY_SECONDS = 60
 BG_HISTORY_SIZE = ANALYSIS_FPS * BG_HISTORY_SECONDS  # ~1800 frames
 
 # Cooldown between detections (seconds) — configurable via DETECTION_COOLDOWN env var
-DETECTION_COOLDOWN = int(os.getenv("DETECTION_COOLDOWN", "15"))
+DETECTION_COOLDOWN = int(os.getenv("DETECTION_COOLDOWN", "6"))
 
 # Recording duration when transit detected (seconds)
 DETECTION_RECORD_DURATION = 10
@@ -1269,6 +1269,21 @@ class TransitDetector:
         should_fire = spike_gate or consec_gate or mf_gate
         if not should_fire:
             return
+
+        # Hard centre-ratio gate for long MF templates only (n > 60 frames).
+        # Sustained limb scintillation can accumulate enough triggered frames to
+        # pass a 90- or 120-frame template at 45% hit rate.  A genuine transit
+        # always produces inner-disk signal stronger than limb signal (ratio > 1.0);
+        # sustained limb shimmer produces the opposite.  The spike and consec gates
+        # are exempt — their own amplitude requirements are already discriminating.
+        if mf_gate and not consec_gate and not spike_gate and mf_duration_f > 60:
+            if centre_ratio < 1.0:
+                logger.info(
+                    "[Detector] Long-MF hard centre-ratio gate rejected "
+                    "(ratio=%.2f < 1.0, n=%d frames) — likely limb scintillation",
+                    centre_ratio, mf_duration_f,
+                )
+                return
 
         # Track gate is now SOFT: it affects confidence, never blocks recording.
         min_agree = int(effective_consec * self.track_min_agree_frac)
