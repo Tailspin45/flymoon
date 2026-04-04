@@ -3718,7 +3718,7 @@ def _auto_connect_background():
         auto_resume = os.getenv("SOLAR_TIMELAPSE_AUTO_RESUME", "true").strip().lower()
         if auto_resume in ("1", "true", "yes", "on"):
             tl = get_timelapse()
-            if not tl.is_running and tl.has_frames_today():
+            if not tl.is_running and tl.has_today_frames():
                 try:
                     interval = float(os.getenv("SOLAR_TIMELAPSE_INTERVAL", "120"))
                 except ValueError:

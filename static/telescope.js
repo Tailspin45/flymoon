@@ -7373,7 +7373,7 @@ function _updateAlpacaPanel(data) {
 
     if (!data || !data.connected) {
         // Show panel in disconnected/placeholder state — coords reset to dashes
-        ['alpacaRA','alpacaDec','alpacaAlt','alpacaAz','alpacaLST'].forEach(id => {
+        ['alpacaRA','alpacaDec','alpacaAlt','alpacaAz','alpacaLST','alpacaGMT'].forEach(id => {
             const el = document.getElementById(id);
             if (el) el.textContent = '—';
         });
@@ -7410,12 +7410,22 @@ function _updateAlpacaPanel(data) {
     if (alt) alt.textContent = fmt(pos.alt, 2);
     if (az) az.textContent = fmt(pos.az, 2);
 
-    // Sidereal time (LST) — comes from state, display as HH:MM
+    // Local time — from system clock
     const lst = document.getElementById('alpacaLST');
-    if (lst && state.sidereal_time != null) {
-        const h = Math.floor(state.sidereal_time);
-        const m = Math.floor((state.sidereal_time - h) * 60);
+    if (lst) {
+        const now = new Date();
+        const h = now.getHours();
+        const m = now.getMinutes();
         lst.textContent = String(h).padStart(2,'0') + ':' + String(m).padStart(2,'0');
+    }
+
+    // GMT/UTC time — use UTC methods to avoid timezone/DST issues
+    const gmt = document.getElementById('alpacaGMT');
+    if (gmt) {
+        const now = new Date();
+        const h = now.getUTCHours();
+        const m = now.getUTCMinutes();
+        gmt.textContent = String(h).padStart(2,'0') + ':' + String(m).padStart(2,'0');
     }
 
     // Also update the GoTo pointing display with ALPACA data

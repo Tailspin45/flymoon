@@ -110,8 +110,18 @@ body {
 /* Scope button anchored to map pane (not viewport) */
 .nav-toggle-btn.nav-toggle-on-map {
     position: absolute;
-    bottom: 14px;
-    left: 14px;
+    bottom: 2px;
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 1100;
+}
+
+/* MAP button anchored to telescope container (same position as scope button on map) */
+.nav-toggle-btn.nav-toggle-on-telescope {
+    position: absolute;
+    bottom: 2px;
+    left: 50%;
+    transform: translateX(-50%);
     z-index: 1100;
 }
 
