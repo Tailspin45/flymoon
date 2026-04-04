@@ -102,10 +102,10 @@ function getQuadrantMinAltitudes() {
     return { min_alt_n: v('minAltN'), min_alt_e: v('minAltE'), min_alt_s: v('minAltS'), min_alt_w: v('minAltW') };
 }
 
-// Track last alerted transit to avoid spamming alerts
+// Track if we've already shown transit alerts (once per session)
 let lastAlertedTransits = {
-    sun: null,
-    moon: null
+    sun: false,
+    moon: false
 };
 
 // Check for transits and alert user about filter changes
@@ -127,12 +127,11 @@ function checkAndAlertFilterChange(flights, targetCoordinates) {
     
     // Moon transit detected
     if (moonTransits.length > 0) {
-        const moonTransit = moonTransits[0]; // First one
-        const transitId = moonTransit.id;
-        
-        // Only alert if this is a new transit (not already alerted)
-        if (lastAlertedTransits.moon !== transitId) {
-            lastAlertedTransits.moon = transitId;
+        // Only alert once per session, regardless of flight ID
+        if (!lastAlertedTransits.moon) {
+            lastAlertedTransits.moon = true;
+            
+            const moonTransit = moonTransits[0]; // First one
             
             if (sunIsUp) {
                 // Sun is up - need to remove solar filter for moon
@@ -149,25 +148,18 @@ function checkAndAlertFilterChange(flights, targetCoordinates) {
                       `Transit ETA: ${moonTransit.time ? moonTransit.time.toFixed(1) : 'N/A'} minutes`);
             }
         }
-    } else {
-        // No moon transits - clear the alert memory
-        lastAlertedTransits.moon = null;
     }
+    // Note: Never reset lastAlertedTransits.moon — only one alert per session
     
     // Solar transit detected
     if (sunTransits.length > 0) {
-        const sunTransit = sunTransits[0]; // First one
-        const transitId = sunTransit.id;
-        
-        // Only alert if this is a new transit (not already alerted)
-        if (lastAlertedTransits.sun !== transitId) {
-            lastAlertedTransits.sun = transitId;
+        // Only alert once per session, regardless of flight ID
+        if (!lastAlertedTransits.sun) {
+            lastAlertedTransits.sun = true;
             // Solar transit alert removed per user request
         }
-    } else {
-        // No sun transits - clear the alert memory
-        lastAlertedTransits.sun = null;
     }
+    // Note: Never reset lastAlertedTransits.sun — only one alert per session
 }
 
 var alertsEnabled = localStorage.getItem('alertsEnabled') === 'true' || false;

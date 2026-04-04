@@ -35,7 +35,7 @@ from src.site_context import (
     observer_snapshot_for_api,
     set_observer_from_browser,
 )
-from src.solar_timelapse import get_timelapse, seestar_rtsp_port_probe_order
+from src.solar_timelapse import get_timelapse
 
 # Get EARTH reference for position calculations
 EARTH = ASTRO_EPHEMERIS["earth"]
@@ -66,44 +66,59 @@ _user_settings: dict = {
     "min_reconnect_altitude": None,  # degrees; None → fall back to env var
 }
 
+# NDJSON agent log — only written when FLYMOON_AGENT_DEBUG_LOG is set (file path).
+_DEBUG_LOG_PATH = os.getenv("FLYMOON_AGENT_DEBUG_LOG", "").strip()
+_DEBUG_SESSION_ID = os.getenv("FLYMOON_AGENT_DEBUG_SESSION", "flymoon")
+
+
+def _agent_debug_log(
+    run_id: str, hypothesis_id: str, location: str, message: str, data: dict
+) -> None:
+    if not _DEBUG_LOG_PATH:
+        return
+    try:
+        payload = {
+            "sessionId": _DEBUG_SESSION_ID,
+            "id": f"log_{int(time.time() * 1000)}_{threading.get_ident()}",
+            "timestamp": int(time.time() * 1000),
+            "location": location,
+            "message": message,
+            "data": data,
+            "runId": run_id,
+            "hypothesisId": hypothesis_id,
+        }
+        with open(_DEBUG_LOG_PATH, "a", encoding="utf-8") as fh:
+            fh.write(json.dumps(payload, separators=(",", ":")) + "\n")
+    except Exception:
+        pass
+
 
 def _probe_rtsp_stream(host: str, timeout_seconds: int = 5) -> bool:
-    """Return True when an RTSP frame can be read from the scope quickly.
-
-    Tries ports in :func:`seestar_rtsp_port_probe_order` (4554 before ``SEESTAR_RTSP_PORT``).
-    """
-    primary = int(os.getenv("SEESTAR_RTSP_PORT", "4554"))
-    for port in seestar_rtsp_port_probe_order(primary):
-        rtsp_url = f"rtsp://{host}:{port}/stream"
-        cmd = [
-            FFMPEG,
-            "-hide_banner",
-            "-loglevel",
-            "error",
-            "-rtsp_transport",
-            "tcp",
-            "-timeout",
-            "8000000",
-            "-i",
-            rtsp_url,
-            "-frames:v",
-            "1",
-            "-f",
-            "null",
-            "-",
-        ]
-        try:
-            result = subprocess.run(
-                cmd,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-                timeout=timeout_seconds,
-            )
-            if result.returncode == 0:
-                return True
-        except (subprocess.TimeoutExpired, OSError):
-            continue
-    return False
+    """Return True when an RTSP frame can be read from the scope quickly."""
+    rtsp_port = int(os.getenv("SEESTAR_RTSP_PORT", "4554"))
+    rtsp_url = f"rtsp://{host}:{rtsp_port}/stream"
+    cmd = [
+        FFMPEG,
+        "-rtsp_transport",
+        "tcp",
+        "-i",
+        rtsp_url,
+        "-frames:v",
+        "1",
+        "-f",
+        "null",
+        "-",
+    ]
+    try:
+        result = subprocess.run(
+            cmd,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            timeout=timeout_seconds,
+        )
+        return result.returncode == 0
+    except (subprocess.TimeoutExpired, OSError):
+        return False
 
 
 def _ensure_rtsp_ready(client) -> bool:
@@ -113,18 +128,6 @@ def _ensure_rtsp_ready(client) -> bool:
         mode = getattr(client, "_viewing_mode", None)
         logger.warning(f"[RTSP] Probe failed (mode={mode})")
     return ok
-
-
-def _stop_timelapse_if_running(reason: str) -> None:
-    """End timelapse capture so ffmpeg RTSP grabs do not run during slews or mode changes."""
-    try:
-        tl = get_timelapse()
-        if not tl.is_running:
-            return
-        logger.info(f"[Timelapse] Auto-stop — {reason}")
-        tl.stop(assemble=True)
-    except Exception as ex:
-        logger.warning(f"[Timelapse] Auto-stop failed ({reason}): {ex}")
 
 
 # Mock Telescope Client for Testing
@@ -142,7 +145,7 @@ class MockSeestarClient:
         self._connected = False
         self._recording = False
         self._recording_start_time: Optional[datetime] = None
-        self._focus_pos: Optional[int] = 1670
+        self._focus_pos: Optional[int] = None
         self._viewing_mode: Optional[str] = (
             None  # sun | moon | scenery — mirrors SeestarClient
         )
@@ -327,7 +330,7 @@ class MockSeestarClient:
         return {"result": "ok"}
 
     def move_step_focus(self, steps: int):
-        base = self._focus_pos if self._focus_pos is not None else 1670
+        base = self._focus_pos if self._focus_pos is not None else 0
         self._focus_pos = int(base) + int(steps)
         logger.info(f"[Mock] move_step_focus steps={steps} -> {self._focus_pos}")
         return {"focus_pos": self._focus_pos}
@@ -504,108 +507,6 @@ def get_alpaca_client():
     return _alpaca_client
 
 
-def _sync_alpaca_host_to_jsonrpc_client(client) -> None:
-    """Use the same IP as the live JSON-RPC session for ALPACA HTTP.
-
-    SeestarClient may auto-discover and update ``client.host`` while
-    ``AlpacaClient`` still holds a stale ``SEESTAR_HOST`` from .env. Both
-    services run on the unit; motor telemetry on the wrong IP yields
-    ``ALPACA connect: ... not reachable`` even when TCP 4700 works.
-    """
-    alpaca = get_alpaca_client()
-    if not alpaca or not client:
-        return
-    host = getattr(client, "host", None)
-    if not host or not str(host).strip():
-        return
-    host = str(host).strip()
-    if alpaca.host == host:
-        return
-    if alpaca.is_connected():
-        try:
-            alpaca.disconnect()
-        except Exception as ex:
-            logger.debug(f"[Telescope] ALPACA disconnect before host sync: {ex}")
-    logger.info(
-        f"[Telescope] ALPACA host aligned with JSON-RPC: {alpaca.host!r} → {host!r}"
-    )
-    alpaca.host = host
-
-
-_alpaca_soft_reconnect_last_mono: float = 0.0
-_ALPACA_SOFT_RECONNECT_MIN_SEC = 12.0
-
-
-def _try_alpaca_soft_reconnect(client) -> None:
-    """If JSON-RPC is up but ALPACA dropped (e.g. wrong IP or boot storm), retry periodically."""
-    global _alpaca_soft_reconnect_last_mono
-    alpaca = get_alpaca_client()
-    if not alpaca or not client or not client.is_connected():
-        return
-    now = time.monotonic()
-    if now - _alpaca_soft_reconnect_last_mono < _ALPACA_SOFT_RECONNECT_MIN_SEC:
-        return
-    _alpaca_soft_reconnect_last_mono = now
-    try:
-        _sync_alpaca_host_to_jsonrpc_client(client)
-        if alpaca.is_connected():
-            return
-        if alpaca.connect():
-            logger.info("[Telescope] ALPACA soft-reconnected (status poll)")
-    except Exception as ex:
-        logger.debug(f"[Telescope] ALPACA soft-reconnect skipped: {ex}")
-
-
-def _restore_scope_after_manual_move(
-    client: Any, had_tracking: bool, *, before_slew: bool = False
-) -> None:
-    """Re-enable drive after nudge / nudge-abort.
-
-    Seestar ALPACA ``tracking=True`` is sidereal and often returns **1279** (fail to
-    operate; firmware cites below-horizon) while the scope is in **solar/lunar**
-    imaging mode. Use JSON-RPC ``start_solar_mode`` / ``start_lunar_mode`` instead.
-
-    When ``before_slew=True`` (GoTo cancelling a nudge), do **not** call solar/lunar
-    resume — that would fight the upcoming slew. Skip ALPACA tracking restore in
-    sun/moon; for scenery, try sidereal restore only.
-    """
-    if not had_tracking:
-        return
-    if not client or not client.is_connected():
-        return
-    mode = getattr(client, "_viewing_mode", None)
-    alpaca = get_alpaca_client()
-
-    if mode in ("sun", "moon"):
-        if before_slew:
-            logger.debug(
-                "[Motor] Skip tracking/view restore before slew (solar/lunar mode)"
-            )
-            return
-        try:
-            if mode == "sun":
-                client.start_solar_mode()
-                logger.info("[Motor] Resumed solar view after manual move")
-            else:
-                client.start_lunar_mode()
-                logger.info("[Motor] Resumed lunar view after manual move")
-            _maybe_auto_start_detector("sun" if mode == "sun" else "moon")
-        except Exception as ex:
-            logger.warning(f"[Motor] Resume solar/lunar view failed: {ex}")
-        return
-
-    if alpaca and alpaca.is_connected():
-        try:
-            r = alpaca.set_tracking(True)
-            if isinstance(r, dict) and r.get("ErrorNumber"):
-                logger.warning(
-                    f"[Motor] ALPACA set_tracking(True) ErrorNumber="
-                    f"{r.get('ErrorNumber')} — {r.get('ErrorMessage', '')}"
-                )
-        except Exception as ex:
-            logger.warning(f"[Motor] ALPACA set_tracking(True) failed: {ex}")
-
-
 def handle_error(e: Exception, default_code: int = 500) -> tuple:
     """
     Map exceptions to HTTP responses.
@@ -648,12 +549,34 @@ def telescope_goto():
 
     Body: {mode: "radec"|"altaz", ra?, dec?, alt?, az?}
     """
+    run_id = f"goto_{int(time.time() * 1000)}"
     client = get_telescope_client()
+    # region agent log
+    _agent_debug_log(
+        run_id,
+        "H9_H10",
+        "src/telescope_routes.py:telescope_goto:entry",
+        "GoTo route invoked",
+        {
+            "client_exists": bool(client),
+            "connected": bool(client and client.is_connected()),
+        },
+    )
+    # endregion
     if not client or not client.is_connected():
         return jsonify({"error": "Telescope not connected"}), 503
 
     data = request.get_json(force=True, silent=True) or {}
     mode = data.get("mode", "altaz")
+    # region agent log
+    _agent_debug_log(
+        run_id,
+        "H9_H10",
+        "src/telescope_routes.py:telescope_goto:payload",
+        "GoTo payload parsed",
+        {"mode": mode, "keys": sorted(list(data.keys()))},
+    )
+    # endregion
 
     alpaca = get_alpaca_client()
     if not alpaca or not alpaca.is_connected():
@@ -662,19 +585,15 @@ def telescope_goto():
             503,
         )
 
-    _stop_timelapse_if_running("GoTo slew")
-
     # State machine: abort any active nudge before slewing
     global _ctrl_state, _pre_nudge_tracking
     with _ctrl_lock:
         if _ctrl_state == _CtrlState.NUDGING:
             logger.info("[GoTo] Aborting active nudge before slew")
             try:
-                alpaca.stop_axes()
+                alpaca.stop_axes(timeout_sec=2.0)
                 if _pre_nudge_tracking:
-                    _restore_scope_after_manual_move(
-                        client, _pre_nudge_tracking, before_slew=True
-                    )
+                    alpaca.set_tracking(True, timeout_sec=2.0)
                     _pre_nudge_tracking = False
             except Exception as ex:
                 logger.warning(f"[GoTo] nudge abort failed: {ex}")
@@ -686,14 +605,14 @@ def telescope_goto():
         if mode == "radec":
             ra = float(data["ra"])
             dec = float(data["dec"])
-            result = alpaca.goto_radec(ra, dec)
+            result = alpaca.goto_radec(ra, dec, timeout_sec=3.0)
 
             def _wait_radec_complete():
                 global _ctrl_state
                 deadline = time.time() + 60
                 while time.time() < deadline:
                     try:
-                        if not alpaca.is_slewing():
+                        if not alpaca.is_slewing(timeout_sec=1.2):
                             break
                     except Exception:
                         break
@@ -702,10 +621,39 @@ def telescope_goto():
                     _ctrl_state = _CtrlState.IDLE
 
             threading.Thread(target=_wait_radec_complete, daemon=True).start()
-            return jsonify({"success": True, "result": result, "via": "ALPACA"}), 200
+            # region agent log
+            _agent_debug_log(
+                run_id,
+                "H10",
+                "src/telescope_routes.py:telescope_goto:radec_ok",
+                "GoTo RA/Dec command succeeded via ALPACA",
+                {"ra": ra, "dec": dec, "result_type": type(result).__name__},
+            )
+            # endregion
+            return (
+                jsonify(
+                    {
+                        "success": True,
+                        "result": result,
+                        "via": "ALPACA",
+                        "provider": "alpaca",
+                        "provider_ready": True,
+                    }
+                ),
+                200,
+            )
         elif mode == "altaz":
             alt = float(data["alt"])
             az = float(data["az"])
+            # region agent log
+            _agent_debug_log(
+                run_id,
+                "H10",
+                "src/telescope_routes.py:telescope_goto:altaz_begin",
+                "GoTo Alt/Az command begin",
+                {"alt": alt, "az": az},
+            )
+            # endregion
             logger.info(f"[GoTo] Alt/Az GoTo to alt={alt:.1f}° az={az:.1f}°")
             resume = (data.get("resume_tracking") or "").strip().lower()
             if resume not in ("", "sun", "moon"):
@@ -713,7 +661,7 @@ def telescope_goto():
 
             def _goto_then_resume():
                 global _ctrl_state
-                result = alpaca.goto_altaz(alt, az)
+                result = alpaca.goto_altaz(alt, az, timeout_sec=3.0)
                 logger.info(f"[GoTo] ALPACA goto_altaz dispatched: {result!r}")
                 if resume in ("sun", "moon"):
                     # Wait for slew to complete instead of a fixed sleep
@@ -722,7 +670,7 @@ def telescope_goto():
                     deadline = time.time() + 60
                     while time.time() < deadline:
                         try:
-                            if not alpaca.is_slewing():
+                            if not alpaca.is_slewing(timeout_sec=1.2):
                                 break
                         except Exception:
                             break
@@ -761,6 +709,8 @@ def telescope_goto():
                             "Pass resume_tracking: 'sun' or 'moon' to switch mode after slew."
                         ),
                         "resume_tracking": resume or None,
+                        "provider": "alpaca",
+                        "provider_ready": True,
                     }
                 ),
                 200,
@@ -771,10 +721,28 @@ def telescope_goto():
     except (KeyError, ValueError) as e:
         with _ctrl_lock:
             _ctrl_state = _CtrlState.IDLE
+        # region agent log
+        _agent_debug_log(
+            run_id,
+            "H9",
+            "src/telescope_routes.py:telescope_goto:bad_request",
+            "GoTo payload invalid",
+            {"error": str(e)},
+        )
+        # endregion
         return jsonify({"error": f"Invalid parameters: {e}"}), 400
     except Exception as e:
         with _ctrl_lock:
             _ctrl_state = _CtrlState.IDLE
+        # region agent log
+        _agent_debug_log(
+            run_id,
+            "H10",
+            "src/telescope_routes.py:telescope_goto:exception",
+            "GoTo route exception",
+            {"error": str(e), "type": type(e).__name__},
+        )
+        # endregion
         return handle_error(e)
 
 
@@ -825,8 +793,6 @@ def telescope_nudge():
         rate = float(data.get("rate", 1.0))
         if axis not in (0, 1):
             return jsonify({"error": "axis must be 0 or 1"}), 400
-        if abs(rate) > 1e-9:
-            _stop_timelapse_if_running("manual slew (nudge)")
         max_rate = float(alpaca.get_max_move_rate(axis))
         if max_rate <= 0:
             max_rate = 6.0
@@ -841,15 +807,15 @@ def telescope_nudge():
         client = get_telescope_client()
         viewing_mode = getattr(client, "_viewing_mode", None) if client else None
         try:
-            pre_tracking = bool(alpaca.get_tracking())
+            pre_tracking = bool(alpaca.get_tracking(timeout_sec=1.2))
         except Exception:
             pre_tracking = viewing_mode in ("sun", "moon")
         try:
-            alpaca.set_tracking(False)
+            alpaca.set_tracking(False, timeout_sec=2.0)
         except Exception as ex:
             logger.warning(f"[Nudge] set_tracking(False) failed: {ex}")
 
-        result = alpaca.move_axis(axis, rate)
+        result = alpaca.move_axis(axis, rate, timeout_sec=2.0)
 
         with _ctrl_lock:
             _pre_nudge_tracking = pre_tracking
@@ -868,17 +834,18 @@ def telescope_nudge_stop():
     if not alpaca or not alpaca.is_connected():
         return jsonify({"error": "ALPACA not connected"}), 503
     try:
-        result = alpaca.stop_axes()
+        result = alpaca.stop_axes(timeout_sec=2.0)
         # Restore tracking if it was on before the nudge started
         with _ctrl_lock:
             restore = _pre_nudge_tracking
             _pre_nudge_tracking = False
             _ctrl_state = _CtrlState.IDLE
         if restore:
-            _restore_scope_after_manual_move(
-                get_telescope_client(), restore, before_slew=False
-            )
-            logger.info("[NudgeStop] Drive restore after nudge completed")
+            try:
+                alpaca.set_tracking(True, timeout_sec=2.0)
+                logger.info("[NudgeStop] Tracking restored after nudge")
+            except Exception as ex:
+                logger.warning(f"[NudgeStop] set_tracking(True) failed: {ex}")
         return (
             jsonify(
                 {
@@ -934,7 +901,6 @@ def telescope_open_arm():
 
 def telescope_park():
     """POST /telescope/park — park the telescope."""
-    _stop_timelapse_if_running("park")
     alpaca = get_alpaca_client()
     if alpaca and alpaca.is_connected():
         try:
@@ -987,7 +953,17 @@ def telescope_autofocus():
         return jsonify({"error": "Telescope not connected"}), 503
     try:
         result = client.autofocus()
-        return jsonify({"success": True, "result": result}), 200
+        return (
+            jsonify(
+                {
+                    "success": True,
+                    "result": result,
+                    "provider": "jsonrpc",
+                    "provider_ready": True,
+                }
+            ),
+            200,
+        )
     except Exception as e:
         return handle_error(e)
 
@@ -995,10 +971,9 @@ def telescope_autofocus():
 def telescope_position():
     """GET /telescope/position — current pointing Alt/Az.
 
-    Prefers ALPACA position readout (works in any mode).
-    Falls back to Skyfield calculation in Sun/Moon tracking mode.
+    Returns ALPACA-backed scope telemetry when available.
+    Does not present computed Sun/Moon coordinates as scope pointing.
     """
-    # Try ALPACA first — gives real scope position in any mode
     alpaca = get_alpaca_client()
     if alpaca and alpaca.is_connected():
         pos = alpaca.get_cached_position()
@@ -1010,56 +985,49 @@ def telescope_position():
                         "az": pos.get("az"),
                         "ra": pos.get("ra"),
                         "dec": pos.get("dec"),
-                        "source": "ALPACA",
+                        "provider": "alpaca",
+                        "provider_ready": True,
+                        "source": "scope_telemetry",
                     }
                 ),
                 200,
             )
-
-    # Fallback: Skyfield calculation (only works in sun/moon tracking)
-    client = get_telescope_client()
-    if not client or not client.is_connected():
-        return jsonify({"error": "Telescope not connected"}), 503
-
-    mode = getattr(client, "_viewing_mode", None)
-    if mode not in ("sun", "moon"):
         return (
             jsonify(
                 {
-                    "error": "Pointing only available in Sun/Moon tracking mode or with ALPACA connected",
                     "alt": None,
                     "az": None,
+                    "ra": None,
+                    "dec": None,
+                    "provider": "alpaca",
+                    "provider_ready": False,
+                    "provider_error": "No cached ALPACA telemetry yet",
+                    "suggestion": "Wait for telemetry poll or reconnect telescope",
                 }
             ),
             200,
         )
 
-    try:
-        from datetime import datetime, timezone
-
-        from skyfield.api import wgs84
-
-        from src.astro import CelestialObject
-        from src.constants import ASTRO_EPHEMERIS
-
-        lat, lon, elev = get_observer_coordinates()
-        observer = ASTRO_EPHEMERIS["earth"] + wgs84.latlon(lat, lon, elevation_m=elev)
-        body_name = "sun" if mode == "sun" else "moon"
-        obj = CelestialObject(body_name, observer)
-        obj.update_position(datetime.now(timezone.utc))
-        coords = obj.get_coordinates(precision=2)
-        return (
-            jsonify(
-                {
-                    "alt": coords["altitude"],
-                    "az": coords["azimuthal"],
-                    "source": body_name,
-                }
-            ),
-            200,
-        )
-    except Exception as e:
-        return handle_error(e)
+    client = get_telescope_client()
+    connected = bool(client and client.is_connected())
+    mode = getattr(client, "_viewing_mode", None) if client else None
+    return (
+        jsonify(
+            {
+                "alt": None,
+                "az": None,
+                "ra": None,
+                "dec": None,
+                "provider": "none",
+                "provider_ready": False,
+                "provider_error": "ALPACA not connected",
+                "connected": connected,
+                "viewing_mode": mode,
+                "suggestion": "Connect ALPACA for real scope pointing telemetry",
+            }
+        ),
+        200,
+    )
 
 
 def telescope_focus_step():
@@ -1325,7 +1293,9 @@ def connect_telescope():
         alpaca = get_alpaca_client()
         alpaca_ok = False
         if alpaca:
-            _sync_alpaca_host_to_jsonrpc_client(client)
+            # Share the discovered host if JSON-RPC found it
+            if not alpaca.host and client.host:
+                alpaca.host = client.host
             try:
                 alpaca_ok = alpaca.connect()
                 if alpaca_ok:
@@ -1483,6 +1453,9 @@ def get_telescope_status():
                         "port": int(os.getenv("SEESTAR_PORT", "4700")),
                         "ctrl_state": ctrl_state,
                         "eclipse": _get_eclipse_data(),
+                        "provider": "none",
+                        "provider_ready": False,
+                        "provider_error": "JSON-RPC client not connected",
                     }
                 ),
                 200,
@@ -1491,15 +1464,16 @@ def get_telescope_status():
         backend_recording = bool(getattr(client, "_recording", False))
         recording_active = _recording_state["active"] or backend_recording
 
-        # Focuser: background thread on SeestarClient (non-blocking). Ensure it is running.
-        if not is_mock_mode() and hasattr(client, "refresh_focus_throttled"):
+        # Keep focus odometer fresh only when JSON-RPC query probes are explicitly enabled.
+        if (
+            not is_mock_mode()
+            and getattr(client, "_query_rpc_enabled", False)
+            and hasattr(client, "refresh_focus_throttled")
+        ):
             try:
                 client.refresh_focus_throttled(min_interval_sec=3.0)
             except Exception as _fe:
                 logger.debug(f"[Telescope] refresh_focus_throttled: {_fe}")
-
-        _sync_alpaca_host_to_jsonrpc_client(client)
-        _try_alpaca_soft_reconnect(client)
 
         # Merge ALPACA state if available
         alpaca = get_alpaca_client()
@@ -1519,6 +1493,7 @@ def get_telescope_status():
             if abs_fp is not None
             else ("relative" if rel_fp is not None else None)
         )
+
         status = {
             "connected": client.is_connected(),
             "recording": recording_active,
@@ -1531,6 +1506,14 @@ def get_telescope_status():
             "alpaca": alpaca_status,
             "focus_pos": _fp_json,
             "focus_pos_source": _focus_src,
+            "provider": "alpaca" if alpaca_status else "jsonrpc",
+            "provider_ready": bool(alpaca_status) or bool(client.is_connected()),
+            "provider_error": (
+                None
+                if alpaca_status
+                else "ALPACA not connected — motor telemetry unavailable"
+            ),
+            "jsonrpc_query_enabled": bool(getattr(client, "_query_rpc_enabled", False)),
         }
         with _ctrl_lock:
             status["ctrl_state"] = _ctrl_state.value
@@ -1552,6 +1535,8 @@ def get_telescope_status():
                     "enabled": is_enabled(),
                     "error": str(e),
                     "eclipse": None,
+                    "provider": "none",
+                    "provider_ready": False,
                 }
             ),
             200,
@@ -2818,8 +2803,6 @@ def switch_to_moon():
                 400,
             )
 
-        _stop_timelapse_if_running("switch to lunar mode")
-
         # Switch to lunar mode
         client.start_lunar_mode()
         _maybe_auto_start_detector("moon")
@@ -2851,8 +2834,6 @@ def switch_to_scenery():
         client = get_telescope_client()
         if not client or not client.is_connected():
             return jsonify({"error": "Not connected to telescope"}), 400
-
-        _stop_timelapse_if_running("switch to scenery mode")
 
         client.start_scenery_mode()
 
@@ -3151,39 +3132,12 @@ def alpaca_tracking():
     """POST /telescope/alpaca/tracking — enable or disable sidereal tracking.
 
     Body: {"enabled": true|false}
-
-    In **solar/lunar** imaging mode, ASCOM sidereal ``tracking=True`` often fails
-    (Error 1279). When enabling tracking in that mode, resume via JSON-RPC view mode
-    instead.
     """
     alpaca = get_alpaca_client()
     if not alpaca or not alpaca.is_connected():
         return jsonify({"error": "ALPACA not connected"}), 503
     data = request.get_json(force=True, silent=True) or {}
     enabled = data.get("enabled", True)
-    client = get_telescope_client()
-    if bool(enabled) and client and client.is_connected():
-        mode = getattr(client, "_viewing_mode", None)
-        if mode in ("sun", "moon"):
-            try:
-                if mode == "sun":
-                    client.start_solar_mode()
-                else:
-                    client.start_lunar_mode()
-                _maybe_auto_start_detector("sun" if mode == "sun" else "moon")
-                return (
-                    jsonify(
-                        {
-                            "success": True,
-                            "tracking": True,
-                            "via": "jsonrpc_view",
-                            "view_mode": mode,
-                        }
-                    ),
-                    200,
-                )
-            except Exception as e:
-                return handle_error(e)
     try:
         result = alpaca.set_tracking(bool(enabled))
         return (
@@ -3732,7 +3686,8 @@ def _auto_connect_background():
         # Connect ALPACA for motor control
         alpaca = get_alpaca_client()
         if alpaca and not alpaca.is_connected():
-            _sync_alpaca_host_to_jsonrpc_client(client)
+            if not alpaca.host and client.host:
+                alpaca.host = client.host
             try:
                 if alpaca.connect():
                     logger.info(
@@ -3789,54 +3744,32 @@ def _maybe_auto_start_detector(target: str = "sun") -> None:
 
     If the detector is already running this is a no-op.
     """
-    def _delayed_start() -> None:
-        """RTSP often lags solar/lunar mode by several seconds — avoid 5 fast failures."""
-        time.sleep(5.0)
-        try:
-            from src.transit_detector import get_detector, start_detector
-
-            det = get_detector()
-            if det and det.is_running:
-                return
-
-            client = get_telescope_client()
-            if not client or not client.is_connected():
-                logger.debug("[Telescope] Auto-detect: scope disconnected before start")
-                return
-
-            host = client.host
-            if not _probe_rtsp_stream(host, timeout_seconds=4):
-                logger.warning(
-                    "[Telescope] Auto-detect: RTSP not ready after 5s — retry in 8s"
-                )
-                time.sleep(8.0)
-                client = get_telescope_client()
-                if not client or not client.is_connected():
-                    return
-                host = client.host
-                if not _probe_rtsp_stream(host, timeout_seconds=4):
-                    logger.warning(
-                        "[Telescope] Auto-detect: RTSP still unavailable — "
-                        "start detection manually when preview works"
-                    )
-                    return
-
-            rtsp_port = int(os.getenv("SEESTAR_RTSP_PORT", "4554"))
-            rtsp_url = f"rtsp://{host}:{rtsp_port}/stream"
-            logger.info(
-                f"[Telescope] Auto-detect: starting detector for {target} "
-                f"(RTSP {rtsp_url})"
-            )
-            start_detector(rtsp_url, record_on_detect=True)
-        except Exception as exc:
-            logger.warning(f"[Telescope] Auto-detect: failed to auto-start detector: {exc}")
-
     try:
-        threading.Thread(
-            target=_delayed_start, daemon=True, name="auto-detect-rtsp-wait"
-        ).start()
+        from src.transit_detector import get_detector, start_detector
+
+        det = get_detector()
+        if det and det.is_running:
+            logger.debug(
+                "[Telescope] Auto-detect: already running, skipping auto-start"
+            )
+            return
+
+        client = get_telescope_client()
+        if not client or not client.is_connected():
+            logger.debug("[Telescope] Auto-detect: scope not connected, skipping")
+            return
+
+        host = client.host
+        rtsp_port = int(os.getenv("SEESTAR_RTSP_PORT", "4554"))
+        rtsp_url = f"rtsp://{host}:{rtsp_port}/stream"
+
+        logger.info(
+            f"[Telescope] Auto-detect: starting detector for {target} target "
+            f"(RTSP {rtsp_url})"
+        )
+        start_detector(rtsp_url, record_on_detect=True)
     except Exception as exc:
-        logger.warning(f"[Telescope] Auto-detect: failed to schedule detector: {exc}")
+        logger.warning(f"[Telescope] Auto-detect: failed to auto-start detector: {exc}")
 
 
 def start_detection():
@@ -4263,14 +4196,17 @@ def get_armed_status():
                 f"will NOT be captured. Click 'Start Detection' to arm."
             )
 
-        return jsonify(
-            {
-                "scope_mode": scope_mode,
-                "detector_running": detector_running,
-                "armed": armed,
-                "warning": warning,
-            }
-        ), 200
+        return (
+            jsonify(
+                {
+                    "scope_mode": scope_mode,
+                    "detector_running": detector_running,
+                    "armed": armed,
+                    "warning": warning,
+                }
+            ),
+            200,
+        )
 
     except Exception as e:
         logger.error(f"[Telescope] Error getting armed status: {e}")
@@ -4294,8 +4230,8 @@ def transit_check():
     logger.debug("[Telescope] POST /telescope/transit/check")
 
     try:
-        from src.transit import get_transits
         from src.constants import PossibilityLevel
+        from src.transit import get_transits
 
         client = get_telescope_client()
         scope_mode = None
@@ -4303,7 +4239,10 @@ def transit_check():
             scope_mode = client._viewing_mode
 
         if scope_mode not in ("sun", "moon"):
-            return jsonify({"target": scope_mode, "high_transits": [], "checked": False}), 200
+            return (
+                jsonify({"target": scope_mode, "high_transits": [], "checked": False}),
+                200,
+            )
 
         latitude, longitude, elevation = get_observer_coordinates()
 
@@ -4318,7 +4257,8 @@ def transit_check():
 
         all_flights = transit_data.get("flights", [])
         high_flights = [
-            f for f in all_flights
+            f
+            for f in all_flights
             if f.get("possibility_level") == PossibilityLevel.HIGH.value
         ]
 
@@ -4326,6 +4266,7 @@ def transit_check():
         # Import here to avoid circular import at module level
         try:
             from app import get_transit_recorder  # type: ignore[import]
+
             recorder = get_transit_recorder()
             if recorder:
                 for flight in high_flights:
@@ -4356,14 +4297,17 @@ def transit_check():
             for f in high_flights
         ]
 
-        return jsonify(
-            {
-                "target": scope_mode,
-                "high_transits": summary,
-                "total_flights": len(all_flights),
-                "checked": True,
-            }
-        ), 200
+        return (
+            jsonify(
+                {
+                    "target": scope_mode,
+                    "high_transits": summary,
+                    "total_flights": len(all_flights),
+                    "checked": True,
+                }
+            ),
+            200,
+        )
 
     except Exception as e:
         logger.error(f"[Telescope] transit_check error: {e}", exc_info=True)

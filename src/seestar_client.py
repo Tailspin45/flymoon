@@ -11,7 +11,6 @@ https://github.com/smart-underworld/seestar_alp/blob/main/device/seestar_device.
 
 import json
 import os
-import re
 import socket
 import threading
 import time
@@ -20,11 +19,6 @@ from typing import Any, Dict, Optional, Tuple
 
 from src import logger
 from src.site_context import get_observer_coordinates
-
-
-def _is_plausible_focuser_step(n: int) -> bool:
-    """Reject obvious non-focuser integers from deep JSON walks."""
-    return -50_000 <= n <= 500_000
 
 
 def _coerce_focus_value(value: Any) -> Optional[int]:
@@ -37,17 +31,9 @@ def _coerce_focus_value(value: Any) -> Optional[int]:
         return int(round(value))
     if isinstance(value, str):
         s = value.strip()
-        if s.startswith("{") or s.startswith("["):
-            try:
-                return _coerce_focus_value(json.loads(s))
-            except (json.JSONDecodeError, TypeError, ValueError):
-                pass
         if s.lstrip("-").isdigit():
             return int(s)
-        try:
-            return int(round(float(s)))
-        except ValueError:
-            return None
+        return None
     if isinstance(value, (list, tuple)):
         for item in value:
             inner = _coerce_focus_value(item)
@@ -63,18 +49,12 @@ def _coerce_focus_value(value: Any) -> Optional[int]:
             "FocusPos",
             "pos",
             "value",
-            "Value",
             "result",
             "data",
             "Data",
             "current",
             "cur_step",
             "focuser_step",
-            "ret_step",
-            "CurPos",
-            "curPos",
-            "abs_step",
-            "AbsStep",
         ):
             if k in value and value[k] is not None:
                 inner = _coerce_focus_value(value[k])
@@ -83,69 +63,28 @@ def _coerce_focus_value(value: Any) -> Optional[int]:
     return None
 
 
-_FOCUS_KEY_RE = re.compile(r"focuser|focus", re.I)
-
-
 def _parse_focus_from_view_dict(view: Any) -> Optional[int]:
     """Pull focuser step from get_view_state-style View dict (or whole payload)."""
     if view is None:
         return None
     if not isinstance(view, dict):
         return _coerce_focus_value(view)
-    inner = (view.get("View") or view.get("view"))
+    inner = view.get("View") or view.get("view")
     if isinstance(inner, dict):
         v = _parse_focus_from_view_dict(inner)
         if v is not None:
             return v
-    focuser = (
-        view.get("Focuser")
-        or view.get("focuser")
-        or view.get("FOCUSER")
-        or {}
-    )
+    focuser = view.get("Focuser") or view.get("focuser") or view.get("FOCUSER") or {}
     if isinstance(focuser, dict):
-        raw = (
-            focuser.get("step")
-            or focuser.get("Step")
-            or focuser.get("position")
-            or focuser.get("pos")
-            or focuser.get("cur_step")
-            or focuser.get("CurStep")
-            or focuser.get("value")
-        )
+        raw = focuser.get("step") or focuser.get("Step") or focuser.get("position")
         v = _coerce_focus_value(raw)
         if v is not None:
             return v
-    for k in (
-        "focuser_step",
-        "focus_pos",
-        "FocuserStep",
-        "focuserStep",
-        "focuser_pos",
-        "FocuserPos",
-        "focus_step",
-        "FocusStep",
-        "step",
-        "Step",
-    ):
+    for k in ("focuser_step", "focus_pos", "FocuserStep", "focuserStep"):
         if k in view:
             v = _coerce_focus_value(view.get(k))
-            if v is not None and _is_plausible_focuser_step(v):
+            if v is not None:
                 return v
-    # Firmware-specific keys (e.g. nested under View with unusual names)
-    for k, v in view.items():
-        if not isinstance(k, str):
-            continue
-        if not _FOCUS_KEY_RE.search(k):
-            continue
-        if isinstance(v, dict):
-            inner = _parse_focus_from_view_dict(v)
-            if inner is not None:
-                return inner
-        else:
-            vv = _coerce_focus_value(v)
-            if vv is not None:
-                return vv
     return None
 
 
@@ -159,9 +98,6 @@ def _parse_focus_from_device_state(payload: Any) -> Optional[int]:
         ("device", "focuser"),
         ("device", "Focuser"),
         ("Device", "Focuser"),
-        ("Scope", "focuser"),
-        ("scope", "focuser"),
-        ("Scope", "Focuser"),
     ):
         d: Any = payload
         ok = True
@@ -176,128 +112,10 @@ def _parse_focus_from_device_state(payload: Any) -> Optional[int]:
                 or d.get("Step")
                 or d.get("position")
                 or d.get("focus_pos")
-                or d.get("ret_step")
-                or d.get("Value")
             )
-            if v is not None and _is_plausible_focuser_step(v):
+            if v is not None:
                 return v
     return None
-
-
-def _deep_find_focuser_step(
-    obj: Any, depth: int = 0, *, under_focuser: bool = False
-) -> Optional[int]:
-    """DFS for focuser step in nested get_view_state / get_device_state payloads."""
-    if obj is None or depth > 20:
-        return None
-    if isinstance(obj, (list, tuple)):
-        for item in obj:
-            found = _deep_find_focuser_step(
-                item, depth + 1, under_focuser=under_focuser
-            )
-            if found is not None:
-                return found
-        return None
-    if not isinstance(obj, dict):
-        return None
-
-    priority_keys = (
-        "focus_pos",
-        "FocusPos",
-        "focuser_step",
-        "FocuserStep",
-        "focuserStep",
-        "cur_step",
-        "CurStep",
-        "focuser_position",
-        "FocuserPosition",
-        "abs_step",
-        "AbsStep",
-        "step",
-        "Step",
-        "Value",
-        "value",
-        "ret_step",
-    )
-    for k in priority_keys:
-        if k in obj:
-            c = _coerce_focus_value(obj[k])
-            if c is not None and _is_plausible_focuser_step(c):
-                return c
-    if under_focuser:
-        for k in ("step", "Step", "position", "Position"):
-            if k in obj:
-                c = _coerce_focus_value(obj[k])
-                if c is not None and _is_plausible_focuser_step(c):
-                    return c
-
-    focuser_child_keys = frozenset({"Focuser", "focuser", "FOCUSER"})
-    for k, v in obj.items():
-        next_under = under_focuser or k in focuser_child_keys
-        found = _deep_find_focuser_step(v, depth + 1, under_focuser=next_under)
-        if found is not None:
-            return found
-    return None
-
-
-def _focus_result_candidates(raw: Any) -> list[Any]:
-    """Yield `raw` plus nested dict/list shells some firmware wraps around the step."""
-    out: list[Any] = []
-    seen_ids: set[int] = set()
-
-    def add(x: Any) -> None:
-        if x is None:
-            return
-        if isinstance(x, (dict, list)):
-            i = id(x)
-            if i in seen_ids:
-                return
-            seen_ids.add(i)
-        out.append(x)
-
-    add(raw)
-    stack: list[Any] = [raw]
-    iterations = 0
-    while stack and iterations < 32:
-        iterations += 1
-        cur = stack.pop()
-        if isinstance(cur, dict):
-            for k in (
-                "result",
-                "data",
-                "Data",
-                "payload",
-                "Payload",
-                "response",
-                "state",
-                "State",
-                "View",
-                "view",
-                "value",
-                "Value",
-                "content",
-            ):
-                if k not in cur:
-                    continue
-                inner = cur[k]
-                add(inner)
-                if isinstance(inner, dict):
-                    stack.append(inner)
-                elif isinstance(inner, list):
-                    for j, item in enumerate(inner):
-                        if j >= 24:
-                            break
-                        add(item)
-                        if isinstance(item, dict):
-                            stack.append(item)
-        elif isinstance(cur, list):
-            for j, item in enumerate(cur):
-                if j >= 24:
-                    break
-                add(item)
-                if isinstance(item, dict):
-                    stack.append(item)
-    return out
 
 
 class SeestarClient:
@@ -351,15 +169,9 @@ class SeestarClient:
         self._recording = False
         self._recording_start_time: Optional[datetime] = None
         self._focus_pos: Optional[int] = None
-        # When hardware never reports absolute step, accumulate ± from move_focuser.
+        # When hardware never returns absolute step, accumulate deltas from move_focuser.
         self._focus_relative_odometer: Optional[int] = None
-        self._focus_warned_unparsable: bool = False
-        # Some firmware never answers get_focuser_position (every variant times out).
-        # Skip that RPC after an all-timeout probe so fallbacks run immediately.
-        self._skip_get_focuser_position_rpc: bool = False
         self._last_focus_poll_mono: float = 0.0
-        self._focus_poll_stop: Optional[threading.Event] = None
-        self._focus_poll_thread: Optional[threading.Thread] = None
         self._viewing_mode: Optional[str] = (
             None  # Track current viewing mode (sun/moon/None)
         )
@@ -396,6 +208,9 @@ class SeestarClient:
         # After one full failed connect() (all TCP retries exhausted), reduce log noise
         # for subsequent attempts (e.g. startup auto-connect loop).
         self._failed_full_connect_cycles: int = 0
+        # Firmware path: focus absolute readback is not available in current setup.
+        # Keep query probes disabled to avoid repeated timeout overhead.
+        self._query_rpc_enabled: bool = False
 
         logger.info(f"Initialized Seestar client for {host}:{port}")
 
@@ -601,31 +416,6 @@ class SeestarClient:
                     f"Seestar event: viewing mode stopped (was {self._viewing_mode})"
                 )
                 self._viewing_mode = None
-        elif name in frozenset(
-            ("FocuserMove", "FocusMove", "focusMove", "FocuserStep", "focus_step")
-        ):
-            # Push events (not AutoFocus* — those names contain "focus" but no step).
-            fp = _deep_find_focuser_step(event)
-            if fp is None:
-                for _k in (
-                    "step",
-                    "Step",
-                    "position",
-                    "focus_pos",
-                    "pos",
-                    "value",
-                    "Value",
-                ):
-                    if _k in event:
-                        c = _coerce_focus_value(event[_k])
-                        if c is not None and _is_plausible_focuser_step(c):
-                            fp = c
-                            break
-            if fp is not None:
-                self._focus_pos = fp
-                self._focus_relative_odometer = None
-                self._focus_warned_unparsable = False
-                logger.debug(f"[Event] {name} → focus_pos={fp}")
         else:
             logger.debug(f"[Event] {name} (no handler) keys={list(event.keys())}")
 
@@ -677,68 +467,10 @@ class SeestarClient:
         self._reconnect_next_try_mono = None
         self._reconnect_gave_up = False
 
-    def _stop_focus_poll_thread(self) -> None:
-        if self._focus_poll_stop is not None:
-            self._focus_poll_stop.set()
-        if self._focus_poll_thread and self._focus_poll_thread.is_alive():
-            self._focus_poll_thread.join(timeout=2.5)
-        self._focus_poll_stop = None
-        self._focus_poll_thread = None
-
-    def _start_focus_poll_thread(self) -> None:
-        """Background focuser read — avoids blocking /telescope/status on JSON-RPC."""
-        if self._focus_poll_thread and self._focus_poll_thread.is_alive():
-            return
-        self._stop_focus_poll_thread()
-        self._focus_poll_stop = threading.Event()
-        self._focus_poll_thread = threading.Thread(
-            target=self._focus_poll_loop, daemon=True, name="seestar-focus-poll"
-        )
-        self._focus_poll_thread.start()
-
-    def _focus_poll_loop(self) -> None:
-        stop = self._focus_poll_stop
-        if stop is None:
-            return
-        logger.debug("[Focus poll] thread started")
-        # Poll immediately so /telescope/status can show focus_pos on the next poll
-        # instead of waiting a full interval (previously the first wait was 5s).
-        while True:
-            if stop.is_set():
-                break
-            if self._connected:
-                try:
-                    self._poll_focus_once_light()
-                except Exception as ex:
-                    logger.debug(f"[Focus poll] {ex}")
-            # Until we have a reading, hit the scope more often (fallback chain is slow).
-            interval = 2.0 if self._focus_pos is None else 5.0
-            if stop.wait(timeout=interval):
-                break
-        logger.debug("[Focus poll] thread exit")
-
-    def _poll_focus_once_light(self) -> None:
-        """Background focuser poll — use full RPC chain (same as manual queries).
-
-        The previous “light” path skipped fallbacks; several firmware builds only
-        expose step via get_device_state / get_setting or alternate param shapes.
-        """
-        if not self._connected:
-            return
-        try:
-            if self._focus_pos is None:
-                self.get_focuser_position(use_fallbacks=True)
-            else:
-                fp = self.get_focuser_position(use_fallbacks=False)
-                if fp is None:
-                    self.get_focuser_position(use_fallbacks=True)
-        except Exception as ex:
-            logger.debug(f"[Focus poll] get_focuser_position: {ex}")
-
     def _note_tcp_drop(self) -> None:
         """Mark disconnected; if heartbeat is active, start a fresh reconnect episode."""
-        self._stop_focus_poll_thread()
         self._connected = False
+        self._focus_relative_odometer = None
         if self._heartbeat_running:
             self._reconnect_gave_up = False
             self._reconnect_failures = 0
@@ -770,7 +502,6 @@ class SeestarClient:
                 self.socket.settimeout(self.timeout)
                 self.socket.connect((self.host, self.port))
                 self._connected = True
-                self._skip_get_focuser_position_rpc = False
                 self._focus_relative_odometer = None
                 logger.info("Reconnected to Seestar")
 
@@ -795,7 +526,6 @@ class SeestarClient:
 
                 self._notify_scope_online()
                 self._reset_reconnect_backoff_on_success()
-                self._start_focus_poll_thread()
                 return True
             except socket.error as e:
                 if self.socket:
@@ -1096,10 +826,21 @@ class SeestarClient:
             import time as _time
 
             _time.sleep(3)
+            if not self._query_rpc_enabled:
+                logger.debug(
+                    "[Init] focus seed skipped (JSON-RPC query probes disabled)"
+                )
+                return
             try:
-                fp = self.get_focuser_position(use_fallbacks=True)
+                fp = self.get_focuser_position()
                 if fp is not None:
                     logger.info(f"[Init] focus_pos seeded: {fp}")
+                    return
+                r = self._send_command("get_view_state", quiet=True, timeout_override=5)
+                fp2 = _parse_focus_from_view_dict((r or {}).get("View") or r)
+                if fp2 is not None:
+                    self._focus_pos = fp2
+                    logger.info(f"[Init] focus_pos from view_state: {self._focus_pos}")
             except Exception as e:
                 logger.debug(f"[Init] focus_pos seed failed (non-fatal): {e}")
 
@@ -1217,10 +958,9 @@ class SeestarClient:
                 )
                 self.socket.connect((self.host, self.port))
                 self._connected = True
+                self._focus_relative_odometer = None
                 self._device_state_consecutive_fails = 0
                 self._failed_full_connect_cycles = 0
-                self._skip_get_focuser_position_rpc = False
-                self._focus_relative_odometer = None
                 logger.info("Connected to Seestar")
 
                 # Start reader thread immediately to drain incoming data
@@ -1243,7 +983,6 @@ class SeestarClient:
                 )
                 self._heartbeat_thread.start()
 
-                self._start_focus_poll_thread()
                 return True
 
             except Exception as e:
@@ -1265,6 +1004,7 @@ class SeestarClient:
                 # socket.error.  Leaked sockets consume one of the Seestar's
                 # 8 connection slots and are never recovered.
                 self._connected = False
+                self._focus_relative_odometer = None
                 if self.socket:
                     try:
                         self.socket.close()
@@ -1444,16 +1184,15 @@ class SeestarClient:
         finally:
             # Socket cleanup runs no matter what — a leaked socket consumes
             # one of the Seestar's 8 connection slots permanently.
-            self._stop_focus_poll_thread()
             self._connected = False
             self._viewing_mode = None
-            self._focus_relative_odometer = None
             if self.socket:
                 try:
                     self.socket.close()
                 except Exception:
                     pass
                 self.socket = None
+            self._focus_relative_odometer = None
 
     def is_connected(self) -> bool:
         """
@@ -1707,19 +1446,10 @@ class SeestarClient:
         return True
 
     def autofocus(self) -> dict:
-        """Trigger autofocus. Note: firmware method is 'start_auto_focuse' (sic).
-
-        On firmware 3.0+ the JSON-RPC channel does not return responses (see
-        docs/SEESTAR_ALPACA_TECHNICAL_REFERENCE.md); waiting would always time out.
-        Fire-and-forget matches the scope behavior for this command class.
-        """
-        self._send_command(
-            "start_auto_focuse",
-            timeout_override=60,
-            expect_response=False,
-        )
-        logger.info("Autofocus command sent (no JSON-RPC ack on fw 3.0+)")
-        return {"sent": True}
+        """Trigger autofocus. Note: firmware method is 'start_auto_focuse' (sic)."""
+        result = self._send_command("start_auto_focuse", expect_response=False)
+        logger.info("Autofocus triggered (fire-and-forget)")
+        return {"sent": True, "provider": "jsonrpc", "confirmed": False}
 
     def get_focuser_position(self, use_fallbacks: bool = True) -> Optional[int]:
         """
@@ -1743,169 +1473,72 @@ class SeestarClient:
         """
         if not self._connected:
             return None
+        if not self._query_rpc_enabled:
+            # Known encrypted/blocked query path on modern firmware.
+            return None
 
         def _store(fp: Optional[int]) -> Optional[int]:
             if fp is not None:
                 self._focus_pos = fp
                 self._focus_relative_odometer = None
-                self._focus_warned_unparsable = False
             return fp
 
-        def _try_parse_focus_blob(blob: Any) -> Optional[int]:
-            fp = _coerce_focus_value(blob)
-            if fp is not None and not isinstance(blob, dict):
-                if not _is_plausible_focuser_step(fp):
-                    fp = None
-            if fp is not None:
-                return fp
-            if isinstance(blob, dict):
-                v = _parse_focus_from_view_dict(blob)
-                if v is not None:
-                    return v
-                v = _parse_focus_from_device_state(blob)
-                if v is not None:
-                    return v
-                return _deep_find_focuser_step(blob)
-            return None
-
-        last_gfp: Any = None
-        # Shorter timeout: when the method is missing, firmware often never replies.
-        _foc_rpc_timeout = 5
-        if not self._skip_get_focuser_position_rpc:
-            # Match seestar_alp: list params append verify; None uses top-level verify;
-            # ``{}`` avoids verify (newer firmware). ``{"verify": true}`` helps older builds.
-            n_timeouts = 0
-            for attempt_params in ([], {}, None, {"verify": True}):
-                try:
-                    r = self._send_command(
-                        "get_focuser_position",
-                        params=attempt_params,
-                        quiet=True,
-                        timeout_override=_foc_rpc_timeout,
-                    )
-                    last_gfp = r
-                    for blob in _focus_result_candidates(r):
-                        fp = _try_parse_focus_blob(blob)
-                        if fp is not None:
-                            return _store(fp)
-                except RuntimeError as e:
-                    if "timed out" in str(e).lower():
-                        n_timeouts += 1
-                    logger.debug(
-                        "get_focuser_position params=%s: %s", attempt_params, e
-                    )
-                except Exception as e:
-                    logger.debug(
-                        "get_focuser_position params=%s: %s", attempt_params, e
-                    )
-            if n_timeouts >= 4:
-                self._skip_get_focuser_position_rpc = True
-                logger.info(
-                    "[Focus] get_focuser_position timed out on all param variants — "
-                    "skipping that RPC until disconnect; using view/device fallbacks only"
+        for attempt_params in ({}, None):
+            try:
+                r = self._send_command(
+                    "get_focuser_position",
+                    params=attempt_params,
+                    quiet=True,
+                    timeout_override=12,
                 )
+                fp = _coerce_focus_value(r) or _parse_focus_from_view_dict(r)
+                if fp is not None:
+                    return _store(fp)
+            except Exception as e:
+                logger.debug("get_focuser_position params=%s: %s", attempt_params, e)
 
         if not use_fallbacks:
             return None
 
-        for vs_params in ([], None):
-            try:
-                r = self._send_command(
-                    "get_view_state",
-                    params=vs_params,
-                    quiet=True,
-                    timeout_override=10,
-                )
-                for blob in _focus_result_candidates(r):
-                    fp = _try_parse_focus_blob(blob)
-                    if fp is not None:
-                        return _store(fp)
-            except Exception as e:
-                logger.debug("get_view_state (focus) params=%s: %s", vs_params, e)
-
-        for ds_params in ([], {}, None):
-            try:
-                r = self._send_command(
-                    "get_device_state",
-                    params=ds_params,
-                    quiet=True,
-                    timeout_override=12,
-                )
-                for blob in _focus_result_candidates(r):
-                    fp = _try_parse_focus_blob(blob)
-                    if fp is not None:
-                        return _store(fp)
-            except Exception as e:
-                logger.debug(
-                    "get_device_state (focus) params=%s: %s", ds_params, e
-                )
-
-        for keys_arg in (
-            {"keys": ["focuser"]},
-            {"keys": ["Focuser"]},
-            {"keys": ["focus"]},
-            {"keys": ["scope"]},
-        ):
-            try:
-                r = self._send_command(
-                    "get_device_state",
-                    params=keys_arg,
-                    quiet=True,
-                    timeout_override=10,
-                )
-                for blob in _focus_result_candidates(r):
-                    fp = _try_parse_focus_blob(blob)
-                    if fp is not None:
-                        return _store(fp)
-            except Exception as e:
-                logger.debug("get_device_state keys=%s: %s", keys_arg, e)
+        try:
+            r = self._send_command("get_view_state", quiet=True, timeout_override=10)
+            fp = _parse_focus_from_view_dict((r or {}).get("View") or r)
+            if fp is not None:
+                return _store(fp)
+        except Exception as e:
+            logger.debug(f"get_view_state (focus): {e}")
 
         try:
             r = self._send_command(
-                "get_setting", params=None, quiet=True, timeout_override=12
+                "get_device_state", params={}, quiet=True, timeout_override=12
             )
-            for blob in _focus_result_candidates(r):
-                fp = _try_parse_focus_blob(blob)
-                if fp is not None:
-                    return _store(fp)
+            fp = _parse_focus_from_device_state(r)
+            if fp is not None:
+                return _store(fp)
         except Exception as e:
-            logger.debug(f"get_setting (focus): {e}")
-
-        if not self._focus_warned_unparsable:
-            self._focus_warned_unparsable = True
-            logger.warning(
-                "[Focus] Could not parse focuser step from scope (tried "
-                "get_focuser_position when not skipped, get_view_state, "
-                "get_device_state, get_setting). Some firmware never answers "
-                "get_focuser_position; run scripts/dump_seestar_focuser.py (default "
-                "skips that RPC). Set LOG_LEVEL=DEBUG for [Wire] / Reader lines."
-            )
-            if last_gfp is not None:
-                hint = f"type={type(last_gfp).__name__}"
-                if isinstance(last_gfp, dict):
-                    hint += f" top_keys={list(last_gfp.keys())[:14]!r}"
-                else:
-                    hint += f" repr={repr(last_gfp)[:160]}"
-                logger.debug("[Focus] Last get_focuser_position payload (unparsed): %s", hint)
+            logger.debug(f"get_device_state (focus): {e}")
 
         return None
 
     def refresh_focus_throttled(self, min_interval_sec: float = 5.0) -> None:
-        """Legacy hook for /telescope/status — focuser is updated by _focus_poll_loop.
-
-        Blocking JSON-RPC here was stalling the status endpoint, starving ALPACA
-        HTTP and delaying the UI \"connected\" state.
-        """
+        """Poll focuser position at most once per min_interval_sec (for /telescope/status)."""
         if not self._connected:
             return
-        if not (self._focus_poll_thread and self._focus_poll_thread.is_alive()):
-            self._start_focus_poll_thread()
+        if not self._query_rpc_enabled:
+            return
+        now = time.monotonic()
+        if (now - self._last_focus_poll_mono) < float(min_interval_sec):
+            return
+        self._last_focus_poll_mono = now
+        self.get_focuser_position(use_fallbacks=False)
 
     def shutdown(self) -> bool:
         """Shutdown the Seestar (parks first, then powers off)."""
         self._send_command("pi_shutdown", expect_response=False)
         logger.info("Shutdown command sent")
         self._connected = False
+        self._focus_pos = None
+        self._focus_relative_odometer = None
         return True
 
     def move_step_focus(self, steps: int) -> dict:
@@ -1914,80 +1547,106 @@ class SeestarClient:
         Seestar firmware expects an absolute step in ``move_focuser`` (see seestar_alp
         ``adjust_focus``). When the current position is unknown we fall back to passing
         ``step`` as before (relative / firmware-dependent).
+
+        Firmware 3.0+ often does not send a JSON-RPC result for ``move_focuser`` even
+        when the move succeeds; waiting would always time out. We send with
+        ``expect_response=False`` and refresh position best-effort, then update the
+        relative odometer if absolute position remains unknown.
         """
-        # With ret_step=True the scope ACKs only after the move finishes; under load
-        # or large |step| this routinely exceeds the default RPC timeout (10–30s).
         try:
             foc_timeout = int(os.getenv("SEESTAR_FOCUS_TIMEOUT", "120"))
         except ValueError:
             foc_timeout = 120
 
         current: Optional[int] = self._focus_pos
-        if current is None and not self._skip_get_focuser_position_rpc:
-            current = self.get_focuser_position(use_fallbacks=True)
+        if current is None and self._query_rpc_enabled:
+            try:
+                current = self.get_focuser_position(use_fallbacks=True)
+            except Exception as e:
+                logger.debug(f"Focus step: pre-move get_focuser_position: {e}")
+                current = None
         if current is not None:
             target = int(current) + int(steps)
             params: Dict[str, Any] = {"step": target, "ret_step": True}
         else:
             logger.warning(
-                "move_focuser: unknown current position — using relative step only"
+                "move_focuser skipped: unknown absolute position; refusing unsafe move"
             )
-            params = {"step": int(steps), "ret_step": True}
+            return {
+                "sent": False,
+                "delta": int(steps),
+                "provider": "jsonrpc",
+                "focus_confirmed": False,
+                "focus_source": "relative",
+                "reason": "unknown_absolute_focus_position",
+                "suggestion": "Focus move blocked for safety: absolute position is unavailable.",
+            }
 
-        # Firmware 3.0+ does not send JSON-RPC responses; waiting would time out
-        # even though the move may succeed (same reference doc as autofocus).
         result = self._send_command(
             "move_focuser",
             params=params,
             timeout_override=max(foc_timeout, 15),
             expect_response=False,
         )
-        logger.info(f"Focus step: delta={steps} target_param={params.get('step')}")
+        logger.info(
+            f"Focus step: delta={steps} target_param={params.get('step')} "
+            f"(sent without waiting for JSON-RPC ack)"
+        )
         fp: Optional[int] = None
         if result is not None:
             fp = _coerce_focus_value(result)
             if fp is None and isinstance(result, dict):
-                fp = _coerce_focus_value(
-                    result.get("focus_pos")
-                    or result.get("ret_step")
-                    or result.get("step")
-                    or result.get("result")
-                )
+                fp = _coerce_focus_value(result.get("focus_pos"))
                 if fp is None:
-                    fp = _deep_find_focuser_step(result)
+                    fp = _coerce_focus_value(result.get("result"))
         if fp is not None:
             self._focus_pos = fp
             self._focus_relative_odometer = None
         else:
-            # Avoid slow fallbacks on every click when queries are dead (fw 3.0+).
-            self.get_focuser_position(use_fallbacks=False)
-
+            try:
+                self.get_focuser_position(use_fallbacks=False)
+            except Exception as e:
+                logger.debug(f"Focus step: post-move position poll skipped: {e}")
         if self._focus_pos is None:
             if self._focus_relative_odometer is None:
                 self._focus_relative_odometer = int(steps)
             else:
                 self._focus_relative_odometer += int(steps)
-        return {"sent": True, "delta": int(steps), "target_param": params.get("step")}
+
+        payload: Dict[str, Any] = {
+            "sent": True,
+            "delta": int(steps),
+            "target_param": params.get("step"),
+            "provider": "jsonrpc",
+            "query_probe_enabled": False,
+        }
+        if self._focus_pos is not None:
+            payload["focus_pos"] = self._focus_pos
+            payload["focus_confirmed"] = True
+            payload["focus_source"] = "absolute"
+        elif self._focus_relative_odometer is not None:
+            payload["focus_pos"] = self._focus_relative_odometer
+            payload["focus_confirmed"] = False
+            payload["focus_source"] = "relative"
+            payload["suggestion"] = (
+                "Absolute focus readback unavailable; relative focus steps only."
+            )
+        else:
+            payload["focus_confirmed"] = False
+            payload["focus_source"] = None
+        return payload
 
     def set_gain(self, gain: int) -> dict:
         """Set camera gain (0–120, default 80)."""
-        self._send_command(
-            "set_control_value",
-            params=["gain", int(gain)],
-            expect_response=False,
-        )
-        logger.info(f"Gain set to {gain} (sent, no JSON-RPC ack on fw 3.0+)")
-        return {"sent": True, "gain": int(gain)}
+        result = self._send_command("set_control_value", params=["gain", int(gain)])
+        logger.info(f"Gain set to {gain}")
+        return result or {}
 
     def set_manual_exp(self, enabled: bool) -> dict:
         """Enable or disable manual exposure mode."""
-        self._send_command(
-            "set_setting",
-            params={"manual_exp": bool(enabled)},
-            expect_response=False,
-        )
-        logger.info(f"Manual exposure {'on' if enabled else 'off'} (sent)")
-        return {"sent": True, "manual_exp": bool(enabled)}
+        result = self._send_command("set_setting", params={"manual_exp": bool(enabled)})
+        logger.info(f"Manual exposure {'on' if enabled else 'off'}")
+        return result or {}
 
     def set_exposure(
         self, stack_ms: Optional[int] = None, preview_ms: Optional[int] = None
@@ -2009,23 +1668,17 @@ class SeestarClient:
             exp["continuous"] = int(preview_ms)
         if not exp:
             return {}
-        self._send_command(
-            "set_setting",
-            params={"exp_ms": exp},
-            expect_response=False,
-        )
-        logger.info(f"Exposure set: {exp} (sent)")
-        return {"sent": True, "exp_ms": exp}
+        result = self._send_command("set_setting", params={"exp_ms": exp})
+        logger.info(f"Exposure set: {exp}")
+        return result or {}
 
     def set_lp_filter(self, enabled: bool) -> dict:
         """Enable or disable the light-pollution filter."""
-        self._send_command(
-            "set_setting",
-            params={"stack_lenhance": bool(enabled)},
-            expect_response=False,
+        result = self._send_command(
+            "set_setting", params={"stack_lenhance": bool(enabled)}
         )
-        logger.info(f"LP filter {'on' if enabled else 'off'} (sent)")
-        return {"sent": True, "stack_lenhance": bool(enabled)}
+        logger.info(f"LP filter {'on' if enabled else 'off'}")
+        return result or {}
 
     def set_dew_heater(self, enabled: bool, power: int = 50) -> dict:
         """
@@ -2038,14 +1691,13 @@ class SeestarClient:
         power : int
             Heater power 0–100 (only used when enabled=True).
         """
-        self._send_command(
+        result = self._send_command(
             "pi_output_set2",
             params={"heater": {"state": bool(enabled), "value": int(power)}},
-            expect_response=False,
         )
         self._heater_on = bool(enabled)
-        logger.info(f"Dew heater {'on' if enabled else 'off'} power={power} (sent)")
-        return {"sent": True, "heater_on": bool(enabled), "power": int(power)}
+        logger.info(f"Dew heater {'on' if enabled else 'off'} power={power}")
+        return result or {}
 
     def _reader_loop(self) -> None:
         """Background thread: continuously read from the scope socket.

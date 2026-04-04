@@ -1,207 +1,105 @@
-# Flymoon Development Guide
+# Flymoon Copilot Instructions (Current)
 
-## Overview
+## What this repository is now
 
-Flymoon tracks aircraft transiting the Sun and Moon using real-time flight data and celestial calculations. It provides a Flask-based web interface with automatic telescope control for capturing transits.
+Flymoon is a Flask app plus headless scripts for predicting, detecting, and recording aircraft transits across the Sun/Moon. It includes:
 
-**Deployment Modes:**
-- **Web Application**: Flask server with interactive map (default, `app.py`)
-- **Headless Scripts**: Background monitoring with push notifications
-  - `transit_capture.py` - Automated telescope control or Telegram notifications
-- **macOS App**: Double-clickable application bundle for `transit_capture.py`
+- Real-time transit prediction (`src/transit.py`)
+- Live CV detection + post-analysis (`src/transit_detector.py`, `src/transit_analyzer.py`)
+- Seestar control via JSON-RPC and ALPACA (`src/seestar_client.py`, `src/alpaca_client.py`, `src/telescope_routes.py`)
+- Solar timelapse support (`src/solar_timelapse.py`)
+- Multi-source flight data (FlightAware + optional OpenSky/ADS-B sources)
 
-## Build & Development Commands
+## Development commands
 
 ```bash
-# Setup (creates venv, installs deps, creates .env from .env.mock)
-make setup
-
-# Install dev dependencies (black, isort, autoflake)
-make dev-install
-
-# Lint (check only)
-make lint
-
-# Auto-format code
-make lint-apply
-
-# Run application
-python app.py  # Access at http://localhost:8000
+make setup          # create .venv, install requirements, create .env from .env.mock
+make dev-install    # install dev tools
+make lint           # black/isort/autoflake checks
+make lint-apply     # auto-format
+python app.py       # run web app on localhost:8000
 ```
 
-**Testing:** No automated test suite exists. Manual testing via web interface.
+Useful scripts:
 
-**Code Quality:**
-- Uses black (line length 88), isort (profile=black), and autoflake
-- Python 3.9+ required
-
-## Architecture
-
-### Core Calculation Flow
-
-1. **Flight Data** (`src/flight_data.py`) - Fetches aircraft from FlightAware AeroAPI within bounding box
-2. **Position Prediction** (`src/position.py`) - Predicts aircraft position up to 15 minutes ahead (constant velocity/heading assumption)
-3. **Celestial Tracking** (`src/astro.py`) - Calculates Sun/Moon altitude/azimuth using Skyfield + JPL ephemeris (de421.bsp)
-4. **Transit Detection** (`src/transit.py`) - Uses numerical optimization to find minimum angular separation between aircraft and target
-5. **Probability Classification** - Simple thresholds assuming 1° target size (0.5° sun/moon + 0.5° margin):
-   - **High** (🟢): alt_diff ≤ 1° AND az_diff ≤ 1° (direct transit very likely)
-   - **Medium** (🟠): alt_diff ≤ 2° AND az_diff ≤ 2° (near miss, worth recording)
-   - **Low** (⚪): alt_diff ≤ 3° AND az_diff ≤ 3° (possible distant transit)
-
-### Key Components
-
-**Flask Routes (`app.py`):**
-- `/` - Main web interface
-- `/flights` - Query flights in bounding box with transit predictions
-- `/flights/<id>/route` - Flight route data (forward path)
-- `/flights/<id>/track` - Historical track data
-- `/telescope/*` - Telescope control endpoints (see `src/telescope_routes.py`)
-- `/gallery` - Transit image gallery
-
-**Telescope Integration (`src/seestar_client.py`):**
-- Direct JSON-RPC 2.0 over TCP (no bridge apps needed)
-- Default port: 4700 (configurable via SEESTAR_PORT)
-- Heartbeat every 3 seconds to prevent timeout
-- TransitRecorder schedules pre/post-buffered video capture (default: 10s before/after)
-
-**Notifications (`src/telegram_notify.py`):**
-- Sends alerts for medium/high probability transits
-- Uses python-telegram-bot library
-
-### Data Flow
-
-```
-FlightAware API → parse_fligh_data() → predict_position() → geographic_to_altaz()
-                                                              ↓
-CelestialObject.update_position() ← Skyfield + de421.bsp ←   ↓
-                                                              ↓
-                                    get_transits() ← minimize angular separation
-                                                              ↓
-                                    PossibilityLevel classification
-                                                              ↓
-                                    Frontend map + Telegram + Telescope
+```bash
+python3 transit_capture.py --latitude LAT --longitude LON --target sun
+python3 src/config_wizard.py --setup
+./build_mac_app.sh
 ```
 
-## Key Conventions
+## Testing reality
 
-### Units & Conversions
+There is an automated Python test suite under `tests/` (pytest-style tests and diagnostics). Do not assume “manual-only testing.”
 
-- **Elevation:** FlightAware returns hundreds of feet → convert to meters (`* 0.3048 * 100`)
-- **Speed:** FlightAware groundspeed in knots → convert to km/h (`* 1.852`)
-- **Angles:** All celestial calculations use degrees
-- **Time:** Uses local timezone via tzlocal, UTC internally for calculations
+Common tests used in this repo include:
 
-### Environment Variables
+- `python3 tests/test_integration.py`
+- `python3 tests/test_classification_logic.py`
+- `python3 tests/test_transit_detection.py`
+- `python3 tests/test_flask_routes.py`
 
-Required in `.env`:
-- `AEROAPI_API_KEY` - FlightAware API key (preferred; legacy aliases `AEROAPI_KEY` and `FLIGHTAWARE_API_KEY` are also supported)
-- Observer position: `OBSERVER_LATITUDE`, `OBSERVER_LONGITUDE`, `OBSERVER_ELEVATION`
-- Bounding box: `LAT_LOWER_LEFT`, `LONG_LOWER_LEFT`, `LAT_UPPER_RIGHT`, `LONG_UPPER_RIGHT`
+## Core behavior to preserve
 
-Optional:
-- Telegram: `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`
-- Telescope: `ENABLE_SEESTAR`, `SEESTAR_HOST`, `SEESTAR_PORT`, `SEESTAR_TIMEOUT`
-- Recording buffers: `SEESTAR_PRE_BUFFER`, `SEESTAR_POST_BUFFER`
-- Headless monitoring: `MONITOR_INTERVAL`
-- Transit detection: `ALT_THRESHOLD`, `AZ_THRESHOLD` (default: 1.0°)
-- Transit detection: `ALT_THRESHOLD` (default: 1.0°), `AZ_THRESHOLD` (default: 1.0°)
+- Prediction horizon: **15 minutes** (`TOP_MINUTE = 15`).
+- Celestial calculations are in **degrees**.
+- FlightAware conversions:
+  - elevation hundreds-of-feet -> meters: `* 0.3048 * 100`
+  - groundspeed knots -> km/h: `* 1.852`
+- `EARTH_TIMESCALE.from_datetime()` inputs must be timezone-aware datetimes.
 
-### Constants (`src/constants.py`)
+### Transit classification (current)
 
-- `ASTRO_EPHEMERIS` - Loaded Skyfield ephemeris (sun, moon, earth)
-- `EARTH_TIMESCALE` - Skyfield timescale for time conversions
-- `INTERVAL_IN_SECS` - Prediction sampling interval
-- `TOP_MINUTE` - Maximum prediction window (15 minutes)
-- `Altitude` - Enum-like classification: LOW (<10,000m), MEDIUM (10k-20k), MEDIUM_HIGH (20k-30k), HIGH (>30k)
-- `PossibilityLevel` - UNLIKELY, LOW, MEDIUM, HIGH
+In `src/transit.py`, `get_possibility_level(sep)` uses angular separation thresholds:
 
-### Logging
+- HIGH: `<= 2.0°`
+- MEDIUM: `<= 4.0°`
+- LOW: `<= 12.0°`
+- UNLIKELY: `> 12.0°`
 
-Uses custom logger (`src/logger_.py`) - imported as `from src import logger`
+Do not revert these to old 1/2/3-degree thresholds.
 
-### Flight Data Structure
+## Key routes and surfaces
 
-Parsed flights (`parse_fligh_data()`) return:
-```python
-{
-    "name": str,           # Flight ident
-    "aircraft_type": str,
-    "fa_flight_id": str,
-    "origin": str,         # City name
-    "destination": str,    # City name or "N/D"
-    "latitude": float,
-    "longitude": float,
-    "direction": float,    # Heading in degrees
-    "speed": float,        # km/h (converted from knots)
-    "elevation": float,    # Meters (for calculations)
-    "elevation_feet": int, # Feet (for display)
-    "elevation_change": str  # "C" (climbing), "D" (descending), "-" (level)
-}
-```
+Main Flask routes in `app.py` include:
 
-### Telescope Control
+- `/`, `/config`, `/flights`, `/flights/<id>/route`, `/flights/<id>/track`
+- `/telescope` (page shell), `/transit-log`
+- `/api/transit-events`, `/api/transit-events/label`
+- `/api/cnn/retrain`, `/api/cnn/retrain/status`
 
-**JSON-RPC Methods:**
-- `start_record_avi` - Start MP4 recording (params: {"raw": false})
-- `stop_record_avi` - Stop recording
-- `scope_get_equ_coord` - Heartbeat check (gets telescope coordinates)
+Telescope API routes are registered from `src/telescope_routes.py` and include:
 
-**Recording Workflow:**
-1. Check if Seestar is in Solar/Lunar mode (not deep sky)
-2. Calculate transit time with buffers
-3. Schedule recording start (default 10s before)
-4. Schedule recording stop (default 10s after)
-5. Actual transit lasts 0.5-2 seconds
+- Connection/discovery: `/telescope/discover`, `/telescope/connect`, `/telescope/status`
+- Motion/control: `/telescope/goto`, `/telescope/nudge`, `/telescope/alpaca/*`
+- Capture/detection: `/telescope/recording/*`, `/telescope/detect/*`
+- Timelapse: `/telescope/timelapse/*`
+- Files/analysis: `/telescope/files/*`, `/telescope/composite`
+- Preview stream: `/telescope/preview/stream.mjpg`
 
-### Transit Detection Thresholds
+## Configuration reality (`.env.mock`)
 
-Simple angular separation thresholds assuming 1° target size (0.5° sun/moon + 0.5° margin for near misses):
-- **HIGH (🟢)**: ≤1° in both altitude and azimuth - Direct transit very likely
-- **MEDIUM (🟠)**: ≤2° in both altitude and azimuth - Near miss, worth recording  
-- **LOW (⚪)**: ≤3° in both altitude and azimuth - Possible distant transit
-- **UNLIKELY**: >3° separation
+Required baseline:
 
-Thresholds are configurable via `.env` variables `ALT_THRESHOLD` and `AZ_THRESHOLD` (default: 1.0°).
+- `AEROAPI_API_KEY`
+- `OBSERVER_LATITUDE`, `OBSERVER_LONGITUDE`, `OBSERVER_ELEVATION`
 
-## Important Notes
+Important optional groups now in active use:
 
-- **No automated tests** - Changes require manual verification via web UI
-- **15-minute prediction window** - Assumes constant aircraft velocity/heading (acceptable for short timeframes)
-- **FlightAware rate limits** - Personal tier: 10 queries/minute
-- **Transit brevity** - Aircraft transits last <2 seconds, automation is critical
-- **Telescope must be pre-pointed** - Seestar should already be tracking Sun/Moon before transit
-- **JPL ephemeris file** - `de421.bsp` must exist in root directory (downloaded on first Skyfield use)
-- **Configuration wizard** - Run `python3 src/config_wizard.py --setup` for interactive config validation
+- Security: `GALLERY_AUTH_TOKEN`
+- Seestar JSON-RPC: `ENABLE_SEESTAR`, `SEESTAR_HOST`, `SEESTAR_PORT`, `SEESTAR_TIMEOUT`
+- Seestar retry: `SEESTAR_RETRY_ATTEMPTS`, `SEESTAR_RETRY_INITIAL_DELAY`
+- Seestar ALPACA: `SEESTAR_ALPACA_PORT`, `SEESTAR_ALPACA_TIMEOUT`
+- RTSP/buffers: `SEESTAR_RTSP_PORT`, `SEESTAR_PRE_BUFFER`, `SEESTAR_POST_BUFFER`
+- Solar timelapse: `SOLAR_TIMELAPSE_*`
+- Flight sources: `OPENSKY_*`, `ADSB_*`, `OPENAIP_API_KEY`
 
-## File Organization
+Bounding-box env vars (`LAT/ LONG _LOWER_LEFT/UPPER_RIGHT`) still exist as fallback, but dynamic transit-corridor logic is now first-class.
 
-```
-/
-├── app.py                 # Flask application entry point
-├── transit_capture.py     # Transit capture with notifications (Telegram/Seestar)
-├── build_mac_app.sh       # macOS .app builder script
-├── Transit Monitor.app    # macOS application bundle (generated)
-├── src/                   # Core modules
-│   ├── astro.py          # Celestial calculations (CelestialObject)
-│   ├── transit.py        # Transit detection & optimization
-│   ├── flight_data.py    # FlightAware API interface
-│   ├── position.py       # Coordinate transforms & prediction
-│   ├── seestar_client.py # Direct telescope control (JSON-RPC)
-│   ├── telescope_routes.py # Flask routes for telescope
-│   ├── telegram_notify.py  # Telegram alerts
-│   ├── config_wizard.py    # Interactive configuration tool
-│   ├── constants.py        # Global constants & enums
-│   └── logger_.py          # Logging setup
-├── static/               # Frontend assets (JS, CSS)
-├── templates/            # Jinja2 HTML templates
-├── data/                 # Flight logs, gallery images
-└── de421.bsp            # JPL planetary ephemeris (generated)
-```
+## Editing guidance
 
-## External Dependencies
-
-- **Skyfield** - High-precision celestial calculations
-- **Flask** - Web framework
-- **FlightAware AeroAPI** - Real-time flight data
-- **python-telegram-bot** - Telegram notifications
-- **Leaflet.js** (frontend) - Interactive map visualization
+- Keep changes small and behavior-safe.
+- Reuse existing helpers and module patterns.
+- Maintain Flask route contracts used by `static/` frontend code.
+- When changing telescope behavior, keep `MockSeestarClient` and real client behavior aligned.
+- Update docs when behavior/config changes.

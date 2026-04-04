@@ -107,13 +107,21 @@ body {
     border-color: #039c9c;
 }
 
-/* Scope button — center bottom of map pane, small gap above map bottom edge */
+/* Scope button anchored to map pane (not viewport) */
 .nav-toggle-btn.nav-toggle-on-map {
     position: absolute;
-    left: 50%;
-    right: auto;
-    transform: translateX(-50%);
     bottom: 2px;
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 1100;
+}
+
+/* MAP button anchored to telescope container (same position as scope button on map) */
+.nav-toggle-btn.nav-toggle-on-telescope {
+    position: absolute;
+    bottom: 2px;
+    left: 50%;
+    transform: translateX(-50%);
     z-index: 1100;
 }
 

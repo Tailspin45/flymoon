@@ -248,3 +248,15 @@ How to run or verify.
 Any follow‑ups or TODOs you recommend.
 
 If you are unsure between multiple reasonable approaches and the choice impacts API usage, UX, or performance, ask one focused question and then proceed with the chosen approach once answered.
+
+
+## 10. Response Style
+Default to short, direct answers.
+
+### User preference: Ultra-compact mode
+
+- Keep normal responses to **1-3 lines** whenever possible.
+- Do **not** include command output unless there is a failure that requires action.
+- Do **not** include code snippets unless explicitly requested.
+- Lead with outcome first; include details only on request.
+

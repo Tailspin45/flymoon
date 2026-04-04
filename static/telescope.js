@@ -86,10 +86,6 @@ let isDetecting = false;
 let detectionPollInterval = null;
 let detectionStats = { fps: 0, detections: 0, elapsed_seconds: 0 };
 let _ctrlState = 'idle';
-/** ALPACA GET slewing — used with ctrl_state for GoTo button Stop vs Execute */
-let _lastAlpacaSlewing = false;
-/** D-pad: active pointer + element (pointer capture) so slew stays on until release */
-let _nudgePointerActive = null;
 
 // Eclipse state
 let eclipseData = null;         // populated from /telescope/status
@@ -167,16 +163,16 @@ window.initTelescope = function() {
         }
     }, 1000);
 
-    // Load auto-capture preference (default ON if never set)
-    const acT = document.getElementById('autoCaptureToggle');
+    // Load auto-capture preference
     const autoCapture = localStorage.getItem('autoCaptureTransits');
-    if (autoCapture === null || autoCapture === '') {
-        if (acT) acT.checked = true;
-        localStorage.setItem('autoCaptureTransits', 'true');
-    } else if (acT) {
-        acT.checked = autoCapture === 'true';
+    if (autoCapture !== null) {
+        const isOn = autoCapture === 'true';
+        document.getElementById('autoCaptureToggle').checked = isOn;
+        const autoCaptureBtn = document.getElementById('autoCaptureBtn');
+        if (autoCaptureBtn) {
+            autoCaptureBtn.classList.toggle('is-active', isOn);
+        }
     }
-    syncAutoCaptureToggleUi();
 
     // Mouse-wheel zoom on preview container
     const previewContainer = document.getElementById('previewContainer');
@@ -354,9 +350,6 @@ async function updateStatus() {
         isConnected = result.connected || false;
         currentViewingMode = result.viewing_mode || null;
         _ctrlState = result.ctrl_state || 'idle';
-        if (result.alpaca && typeof result.alpaca.slewing === 'boolean') {
-            _lastAlpacaSlewing = result.alpaca.slewing;
-        }
         // Sync recording state from server — server is authoritative.
         // Only preserve local state if we're mid-recording AND server agrees it's active.
         const serverRecording = result.recording || false;
@@ -408,28 +401,30 @@ async function updateStatus() {
         const focEl = document.getElementById('focusPos');
         const fplEl = document.getElementById('focusPosLabel');
         if (!isConnected && focEl) {
-            focEl.textContent = '——————';
+            focEl.textContent = '0';
             if (fplEl) fplEl.textContent = 'Relative Focus Steps';
         } else if (focEl) {
             let _fp = result.focus_pos;
             if (typeof _fp === 'bigint') _fp = Number(_fp);
             const n = _fp == null || _fp === '' ? NaN : Number(_fp);
             if (fplEl) {
-                fplEl.textContent =
-                    result.focus_pos_source === 'absolute'
-                        ? 'Focus position'
-                        : 'Relative Focus Steps';
+                if (result.mock_mode) {
+                    fplEl.textContent = 'Simulated focus steps';
+                } else {
+                    fplEl.textContent =
+                        'Relative Focus Steps';
+                }
             }
             if (Number.isFinite(n)) {
                 focEl.textContent = String(Math.round(n));
-                if (result.focus_pos_source === 'relative') {
+                if (!result.mock_mode && result.focus_pos_source === 'relative') {
                     focEl.title =
                         'Δ steps from first focus nudge (hardware did not report absolute position)';
                 } else {
                     focEl.removeAttribute('title');
                 }
             } else {
-                focEl.textContent = '——————';
+                focEl.textContent = '0';
                 focEl.removeAttribute('title');
             }
         }
@@ -454,8 +449,6 @@ async function updateStatus() {
                 timestamp.dataset.lastUpdate = date.getTime();
             }
         }
-
-        updateGotoExecuteButton();
     }
 }
 
@@ -554,7 +547,6 @@ async function switchToMoon() {
         showStatus('Switched to Lunar mode', 'success', 5000);
         currentViewingMode = 'moon';
         updateModeButtons();    // immediately light Lunar keycap
-        _pollTimelapseStatus();
         stopPreview();
         _previewLastError = 0;
         setTimeout(startPreview, 3000);
@@ -575,7 +567,6 @@ async function switchToScenery() {
         showStatus('Scenery mode active — no tracking, manual positioning enabled', 'success', 5000);
         currentViewingMode = 'scenery';
         updateModeButtons();    // immediately light Scene keycap
-        _pollTimelapseStatus();
         stopPreview();
         _previewLastError = 0;
         setTimeout(startPreview, 3000);
@@ -1563,7 +1554,6 @@ async function apiCall(endpoint, method = 'GET', body = null, options = {}) {
 
 function initControlPanel() {
     loadSavedLocations();
-    updateGotoExecuteButton();
 }
 
 // -- Live position readout (scope_get_horiz_coord) --
@@ -1627,77 +1617,11 @@ function gotoModeChanged() {
     document.getElementById('gotoRadecInputs').style.display = isAltaz ? 'none' : '';
 }
 
-function isScopeSlewingForGotoBtn() {
-    if (!isConnected || !_alpacaConnected) return false;
-    return (
-        _ctrlState === 'slewing' ||
-        _ctrlState === 'goto_resuming' ||
-        _lastAlpacaSlewing
-    );
-}
-
-function updateGotoExecuteButton() {
-    const btn = document.getElementById('gotoExecuteBtn');
-    if (!btn) return;
-    const canMotor = isConnected && _alpacaConnected;
-    const busy = isScopeSlewingForGotoBtn();
-    btn.disabled = !isConnected;
-    btn.style.width = '100%';
-    btn.style.letterSpacing = '1px';
-    if (!canMotor) {
-        btn.textContent = 'Execute GoTo';
-        btn.className = 'btn btn-primary btn-compact';
-        return;
-    }
-    if (busy) {
-        btn.textContent = 'Stop slew';
-        btn.className = 'btn btn-danger btn-compact';
-    } else {
-        btn.textContent = 'Execute GoTo';
-        btn.className = 'btn btn-primary btn-compact';
-    }
-}
-
-async function gotoExecuteOrStop() {
-    if (!isConnected) return;
-    if (isScopeSlewingForGotoBtn()) {
-        const r = await apiCall('/telescope/alpaca/abort', 'POST', {});
-        if (r && r.error == null && r.success !== false) {
-            showStatus('Slew stopped', 'warning', 2500);
-            _ctrlState = 'idle';
-            _lastAlpacaSlewing = false;
-            updateGotoExecuteButton();
-            await updateStatus();
-        }
-        return;
-    }
-    await gotoExecute();
-}
-
 // -- GoTo execute --
 
-// -- Manual Slew (Joystick) — ALPACA MoveAxis: one non-zero rate runs until stop (continuous) --
+// -- Manual Slew (Joystick) --
 
-function _releaseNudgePointerCapture() {
-    if (!_nudgePointerActive) return;
-    const { pointerId, el } = _nudgePointerActive;
-    _nudgePointerActive = null;
-    try {
-        if (el && typeof el.releasePointerCapture === 'function') {
-            el.releasePointerCapture(pointerId);
-        }
-    } catch (_) {
-        /* already released */
-    }
-}
-
-/**
- * Pointer handlers for D-pad: capture pointer so leaving the small button does not
- * fire spurious stop (old mouseleave+nudgeStop broke continuous slew).
- */
-function nudgePointerDown(ev, angle) {
-    if (ev.pointerType === 'mouse' && ev.button !== 0) return;
-    ev.preventDefault();
+function nudgeStart(angle) {
     if (!_alpacaConnected) {
         showStatus('Motor control requires ALPACA connection', 'error', 3000);
         return;
@@ -1706,27 +1630,7 @@ function nudgePointerDown(ev, angle) {
         showStatus(`Cannot nudge while ${_ctrlState.replace('_', ' ')}`, 'warning', 3000);
         return;
     }
-    if (_nudgePointerActive) {
-        if (_nudgePointerActive.pointerId === ev.pointerId) return;
-        nudgeStop();
-    }
-    _nudgePointerActive = { pointerId: ev.pointerId, el: ev.currentTarget };
-    try {
-        ev.currentTarget.setPointerCapture(ev.pointerId);
-    } catch (_) {
-        /* ignore */
-    }
-    nudgeStart(angle);
-}
-
-function nudgePointerUp(ev) {
-    if (!_nudgePointerActive || ev.pointerId !== _nudgePointerActive.pointerId) return;
-    _releaseNudgePointerCapture();
-    nudgeStop();
-}
-
-function nudgeStart(angle) {
-    // Preconditions: nudgePointerDown already checked ALPACA + ctrl_state
+    // ALPACA: send once — backend holds the rate until nudge/stop
     // angle: 0=left, 90=down, 180=right, 270=up (legacy convention)
     const fast = document.querySelector('input[name="nudgeSpeed"]:checked')?.value === 'fast';
     const rate = fast ? 3.0 : 1.0;
@@ -1735,13 +1639,10 @@ function nudgeStart(angle) {
     else if (angle === 90)  { axis = 1; dir = -1; } // down = Dec/Alt -
     else if (angle === 180) { axis = 0; dir =  1; } // right = RA/Az +
     else                    { axis = 0; dir = -1; } // left = RA/Az -
-    apiCall('/telescope/nudge', 'POST', { axis, rate: rate * dir }).then(() => {
-        _pollTimelapseStatus();
-    });
+    apiCall('/telescope/nudge', 'POST', { axis, rate: rate * dir });
 }
 
 function nudgeStop() {
-    _releaseNudgePointerCapture();
     apiCall('/telescope/nudge/stop', 'POST', {});
 }
 
@@ -1795,10 +1696,6 @@ async function gotoExecute(overrideAlt, overrideAz) {
             } else {
                 showStatus(msg, 'success', 5000);
             }
-            _ctrlState = 'slewing';
-            _lastAlpacaSlewing = true;
-            updateGotoExecuteButton();
-            _pollTimelapseStatus();
         }
         // Clear user-edited flag so GoTo fields can be updated again
         ['gotoAlt','gotoAz','gotoRa','gotoDec'].forEach(id => {
@@ -1932,7 +1829,7 @@ function _focusPosFromRpcPayload(payload) {
     if (typeof payload === 'number' && Number.isFinite(payload)) return Math.round(payload);
     if (typeof payload === 'string' && /^-?\d+$/.test(payload.trim())) return parseInt(payload.trim(), 10);
     if (typeof payload === 'object') {
-        for (const k of ['focus_pos', 'step', 'FocusPos', 'Step', 'position', 'result']) {
+        for (const k of ['focus_pos', 'target_param', 'step', 'FocusPos', 'Step', 'position', 'result']) {
             const v = payload[k];
             const n = _focusPosFromRpcPayload(v);
             if (n != null) return n;
@@ -2571,31 +2468,12 @@ function dismissTransit(flight) {
     updateTransitList();
 }
 
-function syncAutoCaptureToggleUi() {
-    const cb = document.getElementById('autoCaptureToggle');
-    const btn = document.getElementById('autoCaptureBtn');
-    if (!cb || !btn) return;
-    const on = cb.checked;
-    btn.classList.toggle('is-active', on);
-    // Not live CV detection — that is detectToggleBtn / /telescope/armed banner.
-    btn.textContent = on ? 'AUTO ON' : 'AUTO OFF';
-    btn.setAttribute('aria-pressed', on ? 'true' : 'false');
-}
-
 // One-time UI event listeners — set up once at module load
 (function() {
     const toggle = document.getElementById('autoCaptureToggle');
-    const acBtn = document.getElementById('autoCaptureBtn');
     if (toggle) {
         toggle.addEventListener('change', (e) => {
-            localStorage.setItem('autoCaptureTransits', String(e.target.checked));
-            syncAutoCaptureToggleUi();
-        });
-    }
-    if (toggle && acBtn) {
-        acBtn.addEventListener('click', () => {
-            toggle.checked = !toggle.checked;
-            toggle.dispatchEvent(new Event('change'));
+            localStorage.setItem('autoCaptureTransits', e.target.checked);
         });
     }
     document.addEventListener('keydown', (e) => {
@@ -2634,7 +2512,6 @@ function syncAutoCaptureToggleUi() {
             }
         }
     });
-    syncAutoCaptureToggleUi();
 })();
 
 // ============================================================================
@@ -5415,8 +5292,6 @@ function fireSimTransitDuringEclipse() {
     if (autoCapture && !autoCapture.checked) {
         showStatus('ℹ️ Auto-capture is off — enabling it for this demo', 'info', 3000);
         autoCapture.checked = true;
-        localStorage.setItem('autoCaptureTransits', 'true');
-        syncAutoCaptureToggleUi();
     }
 
     // Inject transit 8s away (handled=false so checkAutoCapture picks it up)
@@ -6273,7 +6148,7 @@ let _detEventsPanel = null;
 
 /**
  * Build the detection-event-history panel inside detectPanel (always visible).
- * Loads /api/transit-events on first create; use _refreshDetectionEventHistory to reload.
+ * Fetches from /api/transit-events on first create; call _refreshDetectionEventHistory to reload.
  */
 async function ensureDetectionEventHistoryPanel() {
     const detectPanel = document.getElementById('detectPanel');
@@ -6315,9 +6190,6 @@ async function ensureDetectionEventHistoryPanel() {
     detectPanel.appendChild(_detEventsPanel);
     await _refreshDetectionEventHistory();
 }
-
-/** Legacy name — panel is always created from initTelescope; no-op if already present. */
-window.toggleDetectionEventHistory = ensureDetectionEventHistoryPanel;
 
 async function _refreshDetectionEventHistory() {
     const wrap = document.getElementById('detEventsTableWrap');
@@ -6495,21 +6367,6 @@ window._labelEventBtn = _labelEventBtn;
 
 let _cnnRetrainPollTimer = null;
 
-/** Absolute API URL (same tab origin, optional Flask SCRIPT_NAME / proxy base). */
-function _flymoonApiUrl(path) {
-    const p = path.startsWith('/') ? path : `/${path}`;
-    const base =
-        typeof window !== 'undefined' && window.FLYMOON_API_ORIGIN
-            ? String(window.FLYMOON_API_ORIGIN).replace(/\/$/, '')
-            : '';
-    if (base) return `${base}${p}`;
-    try {
-        return new URL(p, window.location.href).href;
-    } catch (_) {
-        return p;
-    }
-}
-
 async function _startCnnRetrain(btnEl) {
     if (btnEl && btnEl.disabled) return;
     const statusEl = document.getElementById('detEventsRetrainStatus');
@@ -6521,17 +6378,8 @@ async function _startCnnRetrain(btnEl) {
         statusEl.style.display = 'block';
         statusEl.textContent = 'Starting retrain…';
     }
-    const jsonHeaders = {
-        Accept: 'application/json',
-        'Content-Type': 'application/json',
-    };
     try {
-        const resp = await fetch(_flymoonApiUrl('/api/cnn/retrain'), {
-            method: 'POST',
-            headers: jsonHeaders,
-            body: '{}',
-            cache: 'no-store',
-        });
+        const resp = await fetch('/api/cnn/retrain', { method: 'POST' });
         const data = await resp.json().catch(() => ({}));
         if (!resp.ok) {
             if (statusEl) statusEl.textContent = data.error || resp.statusText || 'Failed to start';
@@ -6544,9 +6392,7 @@ async function _startCnnRetrain(btnEl) {
         if (_cnnRetrainPollTimer) clearInterval(_cnnRetrainPollTimer);
         _cnnRetrainPollTimer = setInterval(async () => {
             try {
-                const st = await fetch(_flymoonApiUrl('/api/cnn/retrain/status'), {
-                    cache: 'no-store',
-                });
+                const st = await fetch('/api/cnn/retrain/status');
                 if (!st.ok) return;
                 const s = await st.json();
                 if (statusEl) {
@@ -6570,12 +6416,8 @@ async function _startCnnRetrain(btnEl) {
         }, 1500);
     } catch (e) {
         console.error('[Retrain]', e);
-        const msg =
-            e instanceof TypeError && /fail|network|load/i.test(String(e.message || ''))
-                ? 'Cannot reach the Flymoon server. Check that it is running, then reload this page using the same host and port as in the address bar (e.g. 127.0.0.1 vs localhost must match how you opened the app).'
-                : String(e);
         if (statusEl) {
-            statusEl.textContent = msg;
+            statusEl.textContent = String(e);
             statusEl.style.color = '#e57373';
         }
         if (btnEl) {
@@ -7531,7 +7373,7 @@ function _updateAlpacaPanel(data) {
 
     if (!data || !data.connected) {
         // Show panel in disconnected/placeholder state — coords reset to dashes
-        ['alpacaRA','alpacaDec','alpacaAlt','alpacaAz','alpacaLST'].forEach(id => {
+        ['alpacaRA','alpacaDec','alpacaAlt','alpacaAz','alpacaLST','alpacaGMT'].forEach(id => {
             const el = document.getElementById(id);
             if (el) el.textContent = '—';
         });
@@ -7549,8 +7391,6 @@ function _updateAlpacaPanel(data) {
             const el = document.getElementById(id);
             if (el) el.className = 'alpaca-state-chip';
         });
-        _lastAlpacaSlewing = false;
-        updateGotoExecuteButton();
         return;
     }
 
@@ -7570,12 +7410,22 @@ function _updateAlpacaPanel(data) {
     if (alt) alt.textContent = fmt(pos.alt, 2);
     if (az) az.textContent = fmt(pos.az, 2);
 
-    // Sidereal time (LST) — comes from state, display as HH:MM
+    // Local time — from system clock
     const lst = document.getElementById('alpacaLST');
-    if (lst && state.sidereal_time != null) {
-        const h = Math.floor(state.sidereal_time);
-        const m = Math.floor((state.sidereal_time - h) * 60);
+    if (lst) {
+        const now = new Date();
+        const h = now.getHours();
+        const m = now.getMinutes();
         lst.textContent = String(h).padStart(2,'0') + ':' + String(m).padStart(2,'0');
+    }
+
+    // GMT/UTC time — use UTC methods to avoid timezone/DST issues
+    const gmt = document.getElementById('alpacaGMT');
+    if (gmt) {
+        const now = new Date();
+        const h = now.getUTCHours();
+        const m = now.getUTCMinutes();
+        gmt.textContent = String(h).padStart(2,'0') + ':' + String(m).padStart(2,'0');
     }
 
     // Also update the GoTo pointing display with ALPACA data
@@ -7594,9 +7444,6 @@ function _updateAlpacaPanel(data) {
     if (chipTrk) chipTrk.className = 'alpaca-state-chip' + (state.tracking ? ' active' : '');
     if (chipSlw) chipSlw.className = 'alpaca-state-chip' + (state.slewing ? ' warn' : '');
     if (chipPrk) chipPrk.className = 'alpaca-state-chip' + (state.parked ? ' active' : '');
-
-    _lastAlpacaSlewing = !!state.slewing;
-    updateGotoExecuteButton();
 
     // Device name
     const nameEl = document.getElementById('alpacaDeviceName');

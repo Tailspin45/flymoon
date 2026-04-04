@@ -340,8 +340,8 @@
                     <h3>Auto-Capture</h3>
                     <div style="display:flex;align-items:center;gap:6px;">
                         <input type="checkbox" id="autoCaptureToggle" checked style="display:none;">
-                        <button type="button" id="autoCaptureBtn" class="btn btn-compact btn-mode btn-toggle is-active"
-                                aria-pressed="true" aria-label="Toggle auto-record transits when aircraft cross the disc">AUTO ON</button>
+                        <button id="autoCaptureBtn" class="btn btn-compact btn-mode btn-toggle is-active"
+                                onclick="var cb=document.getElementById('autoCaptureToggle');cb.checked=!cb.checked;this.classList.toggle('is-active',cb.checked);localStorage.setItem('autoCaptureTransits',cb.checked);cb.dispatchEvent(new Event('change'));">RECORDING</button>
                         <span style="font-size:0.75em;color:#8A9298;font-family:'SF Mono','Menlo','Consolas',monospace;letter-spacing:0.05em;text-transform:uppercase;">Auto-Record Transits</span>
                     </div>
                 </div>
@@ -416,6 +416,10 @@
             <!-- Center: Live Preview -->
             <div class="preview-area">
                 <span class="screw screw-tl"></span><span class="screw screw-tr"></span><span class="screw screw-bl"></span><span class="screw screw-br"></span>
+                
+                <!-- MAP button (overlays at center bottom of preview) -->
+                <button type="button" class="nav-toggle-btn nav-toggle-on-telescope" onclick="showPanel('map')" title="Back to Map (Ctrl/Cmd+M)">MAP</button>
+                
                 <div class="preview-header">
                     <h2><span id="previewTitleIcon">⚫</span> Live Preview</h2>
                     <div class="preview-status" id="previewStatus">
@@ -559,7 +563,7 @@
                     </div>
 
                     <!-- TIMELAPSE cluster -->
-                    <div class="btn-cluster">
+                    <div class="btn-cluster" style="margin-top:8px; padding-top:6px; border-top:1px solid rgba(60,70,78,0.35);">
                         <div class="btn-cluster-label">Timelapse</div>
                         <!-- Button row: Start | Stop | View -->
                         <div class="button-grid-3col" style="margin-bottom:3px;">
@@ -660,10 +664,13 @@
                             </div>
                         </div>
                         <div class="alpaca-coord-row">
-                            <div class="alpaca-coord-cell" style="grid-column: 1 / -1;">
-                                <span class="alpaca-coord-label">LST</span>
+                            <div class="alpaca-coord-cell">
+                                <span class="alpaca-coord-label">LOCAL</span>
                                 <span class="alpaca-coord-value" id="alpacaLST">—</span>
-                                <span class="alpaca-coord-unit">h:m</span>
+                            </div>
+                            <div class="alpaca-coord-cell">
+                                <span class="alpaca-coord-label">GMT</span>
+                                <span class="alpaca-coord-value" id="alpacaGMT">—</span>
                             </div>
                         </div>
                     </div>
@@ -692,18 +699,18 @@
                                     <input type="number" id="gotoAz" class="input-compact" placeholder="Az°" step="0.1" min="0" max="360" style="width:100%;">
                                 </div>
                             </div>
-                            <button type="button" class="btn btn-primary btn-compact" id="gotoExecuteBtn" style="width:100%; letter-spacing:1px;" onclick="gotoExecuteOrStop()">Execute GoTo</button>
+                            <button class="btn btn-primary btn-compact" style="width:100%; letter-spacing:1px;" onclick="gotoExecute()">Execute GoTo</button>
                         </div>
                         <!-- D-pad — right side -->
                         <div class="dpad-grid">
                             <div></div>
-                            <button type="button" class="btn btn-secondary btn-dpad" onpointerdown="nudgePointerDown(event,270)" onpointerup="nudgePointerUp(event)" onpointercancel="nudgePointerUp(event)" title="Hold — continuous slew up">▲</button>
+                            <button class="btn btn-secondary btn-dpad" onmousedown="nudgeStart(270)" onmouseup="nudgeStop()" onmouseleave="nudgeStop()" title="Up">▲</button>
                             <div></div>
-                            <button type="button" class="btn btn-secondary btn-dpad" onpointerdown="nudgePointerDown(event,0)" onpointerup="nudgePointerUp(event)" onpointercancel="nudgePointerUp(event)" title="Hold — continuous slew left">◀</button>
-                            <button type="button" class="btn btn-danger btn-dpad btn-dpad-stop" onclick="nudgeStop()" title="Stop slew">■</button>
-                            <button type="button" class="btn btn-secondary btn-dpad" onpointerdown="nudgePointerDown(event,180)" onpointerup="nudgePointerUp(event)" onpointercancel="nudgePointerUp(event)" title="Hold — continuous slew right">▶</button>
+                            <button class="btn btn-secondary btn-dpad" onmousedown="nudgeStart(0)" onmouseup="nudgeStop()" onmouseleave="nudgeStop()" title="Left">◀</button>
+                            <button class="btn btn-danger btn-dpad btn-dpad-stop" onclick="nudgeStop()" title="Stop">■</button>
+                            <button class="btn btn-secondary btn-dpad" onmousedown="nudgeStart(180)" onmouseup="nudgeStop()" onmouseleave="nudgeStop()" title="Right">▶</button>
                             <div></div>
-                            <button type="button" class="btn btn-secondary btn-dpad" onpointerdown="nudgePointerDown(event,90)" onpointerup="nudgePointerUp(event)" onpointercancel="nudgePointerUp(event)" title="Hold — continuous slew down">▼</button>
+                            <button class="btn btn-secondary btn-dpad" onmousedown="nudgeStart(90)" onmouseup="nudgeStop()" onmouseleave="nudgeStop()" title="Down">▼</button>
                             <div></div>
                         </div>
                     </div>
@@ -730,7 +737,7 @@
                     <h3>Focus &amp; Camera</h3>
                     <!-- FOCUS cluster: step-size toggles + momentary In/Out -->
                     <div class="btn-cluster" style="margin-bottom:4px;">
-                        <div class="btn-cluster-label">Per-click step</div>
+                        <div class="btn-cluster-label">Focus Step</div>
                         <div style="display:flex; align-items:center; justify-content:center; gap:3px;">
                             <button class="btn btn-secondary btn-compact focus-step-btn" onclick="focusStep(-_focusStepSize)" title="Focus In">◀</button>
                             <div class="focus-step-group">
@@ -743,7 +750,7 @@
                     </div>
                     <div class="focus-odometer">
                         <span class="focus-odometer-label" id="focusPosLabel">Relative Focus Steps</span>
-                        <span class="focus-odometer-value" id="focusPos">——————</span>
+                        <span class="focus-odometer-value" id="focusPos">0</span>
                     </div>
                     <!-- Camera controls -->
                     <div style="display:flex; align-items:center; gap:6px; margin-bottom:4px;">
@@ -820,7 +827,6 @@
             <div class="filmstrip-nav">
                 <button class="filmstrip-nav-btn" onclick="filmstripScrollTo('start')" title="Go to newest">|&laquo;</button>
                 <button type="button" class="filmstrip-nav-btn" onpointerdown="filmstripNavDown(-1, event)" onkeydown="filmstripNavKey(event, -1)" title="Scroll left (hold to scan)">&lsaquo;</button>
-                <button class="filmstrip-nav-btn" onclick="showPanel('map')" title="Back to Map (Ctrl/Cmd+M)">MAP</button>
                 <button type="button" class="filmstrip-nav-btn" onpointerdown="filmstripNavDown(1, event)" onkeydown="filmstripNavKey(event, 1)" title="Scroll right (hold to scan)">&rsaquo;</button>
                 <button class="filmstrip-nav-btn" onclick="filmstripScrollTo('end')" title="Go to oldest">&raquo;|</button>
             </div>
@@ -844,7 +850,6 @@
     <script src="{{ url_for('static', filename='leaflet-heat.js') }}"></script>
     <!-- OpenAIP key injected server-side to avoid async timing issues -->
     <script>window.OPENAIP_API_KEY = "{{ openaip_api_key|e }}";</script>
-    <script>window.FLYMOON_API_ORIGIN = {{ app_api_origin | tojson }};</script>
     <script src="{{ url_for('static', filename='telescope.js') }}?v={{ app_version }}" charset="utf-8"></script>
     <script src="{{ url_for('static', filename='map.js') }}?v={{ app_version }}" charset="utf-8"></script>
     <script src="{{ url_for('static', filename='app.js') }}?v={{ app_version }}" charset="utf-8"></script>
