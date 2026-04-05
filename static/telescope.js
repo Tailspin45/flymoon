@@ -3042,6 +3042,8 @@ var _viewerIndex = -1;
 var _viewerFile = null;  // { path, name } of the currently open file
 var _loopSegment = null; // { start, end } for segment looping, or true for full loop
 var _markedFrames = new Set(); // frame indices marked for composite
+var _trimIn = null;  // trim in-point (seconds), set by [ In button
+var _trimOut = null; // trim out-point (seconds), set by Out ] button
 var _videoFps = 30; // detected fps of current video
 var _scrubSlider = null; // reference to the range input
 // Isolation result for det_*.mp4 clips (transit spans / scores from backend)
@@ -3107,7 +3109,6 @@ async function _runIsolateTransit(apiPath, peakHint) {
             const ps = parseFloat(data.peak_time_s);
             const half = 1.5;
             _loopSegment = { start: Math.max(0, ps - half), end: ps + half };
-            _renderTrimRow();
             vid.currentTime = _loopSegment.start;
             vid.play().catch(() => {});
         }
@@ -3202,7 +3203,6 @@ function _jumpToTransitSpan(dir) {
         const mid = (s + e) / 2;
         vid.currentTime = Math.max(0, mid / _videoFps - 0.2);
         _loopSegment = { start: Math.max(0, s / _videoFps - 0.2), end: e / _videoFps + 0.4 };
-        _renderTrimRow();
         vid.play().catch(() => {});
     }
 }
@@ -3253,7 +3253,6 @@ function _loadSidecarSignal(sidecar, videoPath) {
     if (vid && _isolateResult.peak_time_s != null) {
         const ps = _isolateResult.peak_time_s;
         _loopSegment = { start: Math.max(0, ps - 1.0), end: ps + 1.5 };
-        _renderTrimRow();
         vid.currentTime = _loopSegment.start;
         vid.play().catch(() => {});
     }
@@ -3380,6 +3379,9 @@ function _updateSidecarChartCursor() {
 
 function viewFile(path, name, opts) {
     opts = opts || {};
+    // Strip any cache-bust query string for file list lookups; keep it for video src
+    const videoSrc = path;
+    path = path.split('?')[0];
     name = name || path.split('/').pop();
     const files = window.currentFiles || [];
     _viewerIndex = files.findIndex(f => f.path === path);
@@ -3403,6 +3405,10 @@ function viewFile(path, name, opts) {
     _setScanBanner(null); // clear any previous scan result
     _loopSegment = null;
     _markedFrames = new Set();
+    _trimIn = null;
+    _trimOut = null;
+    _lastTrimOrigPath = null;
+    _scrubPlayStop();
     _isolateResult = null;
     _scrubSlider = null;
     // Resolve companion images for this file
@@ -3412,8 +3418,8 @@ function viewFile(path, name, opts) {
     if (isVideo) {
         const loopAttr = opts.loop ? ' loop' : '';
         body.innerHTML =
-            `<div style="display:flex; flex-direction:column; width:100%; max-height:85vh; overflow-y:auto;" id="frameViewerRoot">` +
-              `<video src="${path}" playsinline${loopAttr} muted style="position:absolute;left:-9999px;width:1px;height:1px;" id="hiddenVid"></video>` +
+            `<div style="display:flex; flex-direction:column; width:100%;" id="frameViewerRoot">` +
+              `<video src="${videoSrc}" playsinline${loopAttr} muted style="position:absolute;left:-9999px;width:1px;height:1px;" id="hiddenVid"></video>` +
               `<div style="position:relative; flex-shrink:0;">` +
                 `<div id="fivePanel" style="display:flex; justify-content:center; align-items:center; gap:3px; padding:4px 4px 0; background:#000;">` +
                   `<span style="color:#555; font-size:0.85em;">Loading…</span>` +
@@ -3421,8 +3427,10 @@ function viewFile(path, name, opts) {
                 (companionHtml ? `<div id="companionOverlay" style="position:absolute; top:8px; right:8px; display:flex; flex-direction:column; gap:4px; z-index:10; opacity:0.85;">${companionHtml}</div>` : '') +
               `</div>` +
               `<div id="frameScrubber" style="width:100%; padding:6px 12px; background:#1a1a1a; border-top:1px solid #333; flex-shrink:0;">` +
-                `<div style="display:flex; align-items:center; justify-content:center; gap:8px; margin-bottom:4px;">` +
-                  `<span id="frameCounter" style="color:#0ff; font-family:monospace; font-size:0.85em; min-width:120px;">Frame 0 / 0</span>` +
+                `<div style="display:flex; align-items:center; justify-content:center; gap:6px; margin-bottom:4px; flex-wrap:wrap;">` +
+                  `<button class="btn-viewer" onclick="scrubPlayToggle(-1)" id="scrubPlayRevBtn" title="Play reverse (click again to stop)">◀◀</button>` +
+                  `<span id="frameCounter" style="color:#0ff; font-family:monospace; font-size:0.85em; min-width:120px; text-align:center;">Frame 0 / 0</span>` +
+                  `<button class="btn-viewer" onclick="scrubPlayToggle(1)"  id="scrubPlayFwdBtn" title="Play forward (click again to stop)">▶▶</button>` +
                   `<button id="markFrameBtn" class="btn-viewer" onclick="toggleMarkFrame()" ` +
                     `title="Mark/unmark this frame for composite (M key)" style="font-size:0.85em; padding:2px 8px;">📌 Mark</button>` +
                   `<span id="markedCount" style="color:#fd0; font-family:monospace; font-size:0.8em; min-width:70px;">0 marked</span>` +
@@ -3542,12 +3550,7 @@ function viewFile(path, name, opts) {
     if (trimRow) {
         if (isVideo) {
             trimRow.style.display = 'flex';
-            // Check if a _orig backup already exists (prior trim)
-            const hasBackup = (window.currentFiles || []).some(f2 => {
-                const stem = path.replace(/\.mp4$/i, '');
-                return f2.path === stem + '_orig.mp4';
-            });
-            _renderTrimRow(hasBackup);
+            _renderTrimRow();
         } else {
             trimRow.style.display = 'none';
             trimRow.innerHTML = '';
@@ -3562,11 +3565,14 @@ function closeFileViewer() {
     const body = document.getElementById('fileViewerBody');
     viewer.style.display = 'none';
     body.innerHTML = '';
+    _scrubPlayStop();
     _setScanBanner(null);
     _viewerIndex = -1;
     _viewerFile = null;
     _loopSegment = null;
     _markedFrames = new Set();
+    _trimIn = null;
+    _trimOut = null;
     _scrubSlider = null;
     _frameThumbs = [];
     _currentFrame = 0;
@@ -3602,6 +3608,54 @@ function frameStepStart(dir) {
 
 function frameStepStop() {
     if (_frameStepTimer) { clearTimeout(_frameStepTimer); _frameStepTimer = null; }
+}
+
+// Scrubber playback (frame-by-frame at ~_videoFps using rAF)
+var _scrubPlayRAF = null;
+var _scrubPlayDir = 0;
+var _scrubPlayLastT = null;
+
+function scrubPlayToggle(dir) {
+    if (_scrubPlayDir === dir) {
+        // Already playing this direction — stop
+        _scrubPlayStop();
+        return;
+    }
+    _scrubPlayStop();
+    _scrubPlayDir = dir;
+    _scrubPlayLastT = null;
+    _scrubPlayRAF = requestAnimationFrame(_scrubPlayTick);
+    _scrubPlayUpdateBtns();
+}
+
+function _scrubPlayStop() {
+    if (_scrubPlayRAF) { cancelAnimationFrame(_scrubPlayRAF); _scrubPlayRAF = null; }
+    _scrubPlayDir = 0;
+    _scrubPlayLastT = null;
+    _scrubPlayUpdateBtns();
+}
+
+function _scrubPlayUpdateBtns() {
+    const rev = document.getElementById('scrubPlayRevBtn');
+    const fwd = document.getElementById('scrubPlayFwdBtn');
+    if (rev) rev.style.background = _scrubPlayDir === -1 ? '#0a4' : '';
+    if (fwd) fwd.style.background = _scrubPlayDir ===  1 ? '#0a4' : '';
+}
+
+function _scrubPlayTick(ts) {
+    if (_scrubPlayDir === 0) return;
+    const interval = 1000 / (_videoFps || 30);
+    if (_scrubPlayLastT === null) _scrubPlayLastT = ts;
+    if (ts - _scrubPlayLastT >= interval) {
+        _scrubPlayLastT = ts;
+        const next = _currentFrame + _scrubPlayDir;
+        if (next < 0 || next >= _frameTotalCount) {
+            _scrubPlayStop();
+            return;
+        }
+        _stepFrame(_scrubPlayDir);
+    }
+    _scrubPlayRAF = requestAnimationFrame(_scrubPlayTick);
 }
 
 // ---------------------------------------------------------------------------
@@ -3674,6 +3728,9 @@ function _extractFrameThumbs(mainVid) {
     _thumbExtractorVid = extVid;
 
     extVid.addEventListener('loadeddata', () => {
+        // Guard: if a newer viewFile call replaced the extractor, this one is stale
+        if (extVid !== _thumbExtractorVid) return;
+
         const fps = _videoFps || 30;
         const total = Math.round(extVid.duration * fps);
         _frameTotalCount = total;
@@ -3758,16 +3815,33 @@ function _jumpToFrame(f) {
 }
 
 function toggleMarkFrame() {
-    const frame = _currentFrame;
-    if (_markedFrames.has(frame)) {
-        _markedFrames.delete(frame);
+    const t = _currentFrame / _videoFps;
+
+    if (_trimIn === null) {
+        // No marks yet — set In
+        _trimIn = t;
+    } else if (_trimOut === null) {
+        // In set, Out not yet — set Out (ensure In < Out)
+        if (t <= _trimIn) {
+            _trimIn = t; // replace In if user went backwards
+        } else {
+            _trimOut = t;
+        }
     } else {
-        _markedFrames.add(frame);
+        // Both set — replace whichever is closer
+        if (Math.abs(t - _trimIn) <= Math.abs(t - _trimOut)) {
+            _trimIn = t;
+        } else {
+            _trimOut = t;
+        }
+        // Keep In < Out
+        if (_trimIn > _trimOut) { const tmp = _trimIn; _trimIn = _trimOut; _trimOut = tmp; }
     }
+
     _updateMarkedUI();
-    const vid = document.getElementById('hiddenVid');
     if (vid) _updateScrubPosition(vid);
     _updateFivePanel();
+    _renderTrimRow();
 }
 
 function _updateMarkedUI() {
@@ -3942,49 +4016,25 @@ async function viewerDelete(e) {
 // The original is backed up as _orig.mp4 for single-level undo.
 // ============================================================================
 
-/** Return {start, end} seconds for the current trim region.
- *  Priority: _loopSegment (set by mark-in/out or transit analysis) → 0/duration.
- */
-function _trimGetRegion() {
-    const vid = document.getElementById('hiddenVid');
-    const duration = vid ? vid.duration : null;
-    if (_loopSegment && _loopSegment.start != null && _loopSegment.end != null) {
-        return { start: _loopSegment.start, end: _loopSegment.end };
-    }
-    return { start: 0, end: duration || 0 };
-}
 
-/** Render the trim row buttons into #viewerTrimRow.
- *  hasBackup=true  → post-trim state: show Undo / Save New / Replace Old
- *  hasBackup=false → pre-trim state:  show only Trim
- *  hasBackup=undefined → only refresh the label text (leave buttons alone) */
-function _renderTrimRow(hasBackup) {
+var _lastTrimOrigPath = null; // path of the original file from the last trim
+
+/** Render the trim row into #viewerTrimRow.
+ *  showReplace=true after a trim to offer "Replace Original". */
+function _renderTrimRow(showReplace) {
     const row = document.getElementById('viewerTrimRow');
     if (!row) return;
-    const region = _trimGetRegion();
-    const startStr = region.start.toFixed(2);
-    const endStr = region.end > 0 ? region.end.toFixed(2) : '?';
-    const labelHtml =
-        `<span id="viewerTrimLabel" style="color:#aaa; font-size:0.78em; margin-right:4px;">` +
-            `Trim: ${startStr}s – ${endStr}s` +
-        `</span>`;
-    if (hasBackup === undefined) {
-        const lbl = document.getElementById('viewerTrimLabel');
-        if (lbl) { lbl.textContent = `Trim: ${startStr}s – ${endStr}s`; }
-        return;
-    }
-    if (hasBackup) {
-        row.innerHTML =
-            labelHtml +
-            `<button class="btn-viewer btn-viewer-sun" id="viewerTrimBtn" onclick="viewerTrim()" title="Trim again to new region">✂️ Trim</button>` +
-            `<button class="btn-viewer" onclick="viewerTrimUndo()" title="Discard trimmed version and restore original">↩ Undo</button>` +
-            `<button class="btn-viewer" onclick="viewerTrimSaveNew()" title="Keep trimmed version AND save original as a separate file">💾 Save New</button>` +
-            `<button class="btn-viewer btn-viewer-danger" onclick="viewerTrimReplaceOld()" title="Keep only the trimmed version — delete original backup">🗑 Replace Old</button>`;
-    } else {
-        row.innerHTML =
-            labelHtml +
-            `<button class="btn-viewer btn-viewer-sun" id="viewerTrimBtn" onclick="viewerTrim()" title="Trim video to marked region (original kept as backup)">✂️ Trim</button>`;
-    }
+    const vid = document.getElementById('hiddenVid');
+    const dur = (vid && vid.duration && isFinite(vid.duration)) ? vid.duration.toFixed(2) : '';
+    const durHint = dur ? ` · dur: ${dur}s` : '';
+    const inStr  = _trimIn  !== null ? _trimIn.toFixed(2)  + 's' : '—';
+    const outStr = _trimOut !== null ? _trimOut.toFixed(2) + 's' : '—';
+    row.innerHTML =
+        `<span style="color:#aaa; font-size:0.78em;">✂️ In: <b style="color:#0ff">${inStr}</b> &nbsp;Out: <b style="color:#0ff">${outStr}</b>${durHint}</span>` +
+        `<button class="btn-viewer btn-viewer-sun" onclick="viewerTrim()" title="Save trimmed region as trim_<name>.mp4 (original untouched)">Trim</button>` +
+        (showReplace
+            ? `<button class="btn-viewer btn-viewer-danger" onclick="viewerTrimReplaceOriginal()" title="Delete the original — keep only the trimmed version">Replace Original</button>`
+            : '');
 }
 
 async function viewerTrim() {
@@ -3992,14 +4042,13 @@ async function viewerTrim() {
     const f = (_viewerIndex >= 0 && _viewerIndex < files.length) ? files[_viewerIndex] : _viewerFile;
     if (!f) return;
 
-    const region = _trimGetRegion();
-    if (!region.end || region.end <= region.start) {
-        showStatus('Set in/out marks before trimming', 'warning', 3000);
+    if (_trimIn === null || _trimOut === null) {
+        showStatus('Mark In and Out points first (📌 Mark button)', 'warning', 3000);
         return;
     }
-
-    const dur = (region.end - region.start).toFixed(2);
-    if (!confirm(`Trim to ${region.start.toFixed(2)}s – ${region.end.toFixed(2)}s (${dur}s)?\nOriginal will be kept as _orig backup for undo.`)) return;
+    const start_s = _trimIn;
+    const end_s   = _trimOut;
+    const dur = (end_s - start_s).toFixed(2);
 
     const trimPath = f.path.replace('/static/', '');
     showStatus('Trimming…', 'info', 0);
@@ -4007,108 +4056,45 @@ async function viewerTrim() {
         const resp = await fetch('/telescope/files/trim', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ path: trimPath, start_s: region.start, end_s: region.end }),
+            body: JSON.stringify({ path: trimPath, start_s, end_s }),
         });
         const data = await resp.json();
         if (!resp.ok || !data.success) {
             showStatus(`Trim failed: ${data.error || resp.status}`, 'error', 6000);
             return;
         }
-        showStatus(`Trimmed to ${dur}s`, 'success', 3000);
+        _lastTrimOrigPath = f.path; // remember original for Replace Original
+        showStatus(`Saved ${data.name} (${dur}s)`, 'success', 4000);
         await refreshFiles();
         updateFilesGrid();
-        // Reload the viewer on the same file (now trimmed)
-        const updated = (window.currentFiles || []).find(f2 => f2.path === f.path);
-        if (updated) viewFile(updated.path, updated.name);
-        // Show undo button
+        // Open the trimmed file; show Replace Original button
+        const trimmed = (window.currentFiles || []).find(f2 => f2.name === data.name);
+        if (trimmed) viewFile(trimmed.path, trimmed.name);
         _renderTrimRow(true);
     } catch (err) {
         showStatus(`Trim error: ${err.message}`, 'error', 6000);
     }
 }
 
-async function viewerTrimUndo() {
-    const files = window.currentFiles || [];
-    const f = (_viewerIndex >= 0 && _viewerIndex < files.length) ? files[_viewerIndex] : _viewerFile;
-    if (!f) return;
-    if (!confirm('Restore original (undo trim)?')) return;
-
-    const trimPath = f.path.replace('/static/', '');
-    showStatus('Restoring original…', 'info', 0);
+async function viewerTrimReplaceOriginal() {
+    if (!_lastTrimOrigPath) { showStatus('Original path unknown', 'error', 3000); return; }
+    if (!confirm('Delete the original file? This cannot be undone.')) return;
+    const delPath = _lastTrimOrigPath.replace('/static/', '');
     try {
-        const resp = await fetch('/telescope/files/trim/undo', {
+        const resp = await fetch('/telescope/files/delete', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ path: trimPath }),
+            body: JSON.stringify({ path: delPath }),
         });
         const data = await resp.json();
-        if (!resp.ok || !data.success) {
-            showStatus(`Undo failed: ${data.error || resp.status}`, 'error', 6000);
-            return;
-        }
-        showStatus('Original restored', 'success', 3000);
-        await refreshFiles();
-        updateFilesGrid();
-        const updated = (window.currentFiles || []).find(f2 => f2.path === f.path);
-        if (updated) viewFile(updated.path, updated.name);
-        _renderTrimRow(false);
-    } catch (err) {
-        showStatus(`Undo error: ${err.message}`, 'error', 6000);
-    }
-}
-
-/** Save New — rename the _orig backup to a unique name so both files are kept. */
-async function viewerTrimSaveNew() {
-    const files = window.currentFiles || [];
-    const f = (_viewerIndex >= 0 && _viewerIndex < files.length) ? files[_viewerIndex] : _viewerFile;
-    if (!f) return;
-    const trimPath = f.path.replace('/static/', '');
-    showStatus('Saving original as new file…', 'info', 0);
-    try {
-        const resp = await fetch('/telescope/files/trim/save-new', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ path: trimPath }),
-        });
-        const data = await resp.json();
-        if (!resp.ok || !data.success) {
-            showStatus(`Save failed: ${data.error || resp.status}`, 'error', 6000);
-            return;
-        }
-        showStatus(`Saved original as ${data.saved_name}`, 'success', 4000);
+        if (!resp.ok || !data.success) { showStatus(`Delete failed: ${data.error}`, 'error', 5000); return; }
+        showStatus('Original deleted', 'success', 3000);
+        _lastTrimOrigPath = null;
         await refreshFiles();
         updateFilesGrid();
         _renderTrimRow(false);
     } catch (err) {
-        showStatus(`Save error: ${err.message}`, 'error', 6000);
-    }
-}
-
-/** Replace Old — delete the _orig backup, keeping only the trimmed version. */
-async function viewerTrimReplaceOld() {
-    const files = window.currentFiles || [];
-    const f = (_viewerIndex >= 0 && _viewerIndex < files.length) ? files[_viewerIndex] : _viewerFile;
-    if (!f) return;
-    if (!confirm('Delete the original backup? This cannot be undone.')) return;
-    const trimPath = f.path.replace('/static/', '');
-    showStatus('Deleting original…', 'info', 0);
-    try {
-        const resp = await fetch('/telescope/files/trim/replace-old', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ path: trimPath }),
-        });
-        const data = await resp.json();
-        if (!resp.ok || !data.success) {
-            showStatus(`Delete failed: ${data.error || resp.status}`, 'error', 6000);
-            return;
-        }
-        showStatus('Original deleted — trimmed version kept', 'success', 3000);
-        await refreshFiles();
-        updateFilesGrid();
-        _renderTrimRow(false);
-    } catch (err) {
-        showStatus(`Error: ${err.message}`, 'error', 6000);
+        showStatus(`Error: ${err.message}`, 'error', 5000);
     }
 }
 
@@ -4201,7 +4187,6 @@ async function scanTransit(target) {
             const loopStart = Math.max(0, evt.start_seconds - 0.5);
             const loopEnd = evt.end_seconds + 0.5;
             _loopSegment = { start: loopStart, end: loopEnd };
-            _renderTrimRow();
             playerVideo.currentTime = loopStart;
             playerVideo.play();
         }
