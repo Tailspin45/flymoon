@@ -2842,6 +2842,32 @@ canvas.video-thumb-canvas {
     font-size: 0.82em;
 }
 
+/* Dense variant — used for Focus & Camera panel to keep all controls visible */
+.panel-dense {
+    padding-top: 4px;
+    padding-bottom: 4px;
+}
+.panel-dense h3 {
+    margin-bottom: 3px;
+    padding-bottom: 3px;
+}
+.panel-dense .btn-cluster {
+    padding: 3px;
+    margin-bottom: 2px;
+}
+.panel-dense .btn-cluster-label {
+    margin-bottom: 2px;
+}
+.panel-dense .focus-step-btn,
+.panel-dense .focus-step-group .btn {
+    padding-top: 3px;
+    padding-bottom: 3px;
+}
+.panel-dense .focus-odometer {
+    margin: 2px 0 3px;
+    padding: 2px 8px;
+}
+
 /* ── Aluminum panel: general small-text color overrides ─────────────
    Many elements use inline style="color:#6a7a85" or similar muted-dark
    colors appropriate for a dark background. On the aluminum panel these

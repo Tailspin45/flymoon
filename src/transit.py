@@ -347,6 +347,10 @@ def check_transit(
     response = None
     closest_approach = None  # Track closest approach even if threshold not met
     no_decreasing_count = 0
+    # Current (t=0) position — for edge-square display on the radar
+    _cur_sep: float = float("inf")
+    _cur_signed_alt_diff: float = 0.0
+    _cur_signed_az_diff: float = 0.0
     _pts_per_min = NUM_SECONDS_PER_MIN // INTERVAL_IN_SECS
     _no_decrease_limit = 3 * _pts_per_min  # bail after 3 min of increasing diff
 
@@ -447,6 +451,13 @@ def check_transit(
         # Compute true angular separation (spherical law of cosines)
         sep = angular_separation(t_alt, t_az, future_alt, future_az)
 
+        # Capture current (t=0) position for edge-marker display
+        if idx == 0:
+            _cur_sep = sep
+            _cur_signed_alt_diff = future_alt - t_alt
+            _az_raw = future_az - t_az
+            _cur_signed_az_diff = ((_az_raw + 180) % 360) - 180
+
         # Early exit (T01): use spherical separation as the exit metric when the
         # aircraft is above the horizon, so grazing trajectories are not cut short
         # by the less-accurate diff_combined heuristic.  Fall back to diff_combined
@@ -526,6 +537,10 @@ def check_transit(
         response["is_possible_transit"] = (
             0 if level == PossibilityLevel.UNLIKELY.value else 1
         )
+        # Current (t=0) position for radar edge-square display
+        response["current_angular_separation"] = round(float(_cur_sep), 3)
+        response["current_signed_alt_diff"] = round(float(_cur_signed_alt_diff), 3)
+        response["current_signed_az_diff"] = round(float(_cur_signed_az_diff), 3)
         # C2: angular uncertainty at closest approach (degrees, 1σ)
         if _min_sep_sigma_m is not None:
             try:

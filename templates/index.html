@@ -732,20 +732,20 @@
                 </div>
 
                 <!-- Focus + Camera — merged -->
-                <div class="sidebar-panel">
+                <div class="sidebar-panel panel-dense">
                     <span class="screw screw-tl"></span><span class="screw screw-tr"></span><span class="screw screw-bl"></span><span class="screw screw-br"></span>
                     <h3>Focus &amp; Camera</h3>
                     <!-- FOCUS cluster: step-size toggles + momentary In/Out -->
-                    <div class="btn-cluster" style="margin-bottom:4px;">
+                    <div class="btn-cluster" style="margin-bottom:2px;">
                         <div class="btn-cluster-label">Focus Step</div>
                         <div style="display:flex; align-items:center; justify-content:center; gap:3px;">
-                            <button class="btn btn-secondary btn-compact focus-step-btn" onclick="focusStep(-_focusStepSize)" title="Focus In">◀</button>
+                            <button class="btn btn-secondary btn-compact focus-step-btn" onclick="focusStepIn()" title="Focus In">◀</button>
                             <div class="focus-step-group">
                                 <button class="btn btn-secondary btn-compact focus-step-btn btn-toggle" data-steps="10" onclick="setFocusStepSize(10)">10</button>
                                 <button class="btn btn-secondary btn-compact focus-step-btn btn-toggle" data-steps="50" onclick="setFocusStepSize(50)">50</button>
                                 <button class="btn btn-secondary btn-compact focus-step-btn btn-toggle" data-steps="100" onclick="setFocusStepSize(100)">100</button>
                             </div>
-                            <button class="btn btn-secondary btn-compact focus-step-btn" onclick="focusStep(_focusStepSize)" title="Focus Out">▶</button>
+                            <button class="btn btn-secondary btn-compact focus-step-btn" onclick="focusStepOut()" title="Focus Out">▶</button>
                         </div>
                     </div>
                     <div class="focus-odometer">
@@ -753,29 +753,26 @@
                         <span class="focus-odometer-value" id="focusPos">0</span>
                     </div>
                     <!-- Camera controls -->
-                    <div style="display:flex; align-items:center; gap:6px; margin-bottom:4px;">
+                    <button id="autoExpBtn" class="btn btn-secondary btn-compact btn-toggle" onclick="toggleAutoExp()" style="width:100%; margin-bottom:2px;">Auto Exp</button>
+                    <div style="display:flex; align-items:center; gap:6px; margin-bottom:2px;">
                         <span class="setting-label" style="margin:0; min-width:28px;">Gain</span>
-                        <input type="range" id="gainSlider" min="0" max="120" value="80" class="setting-slider" oninput="document.getElementById('gainVal').textContent=this.value">
+                        <input type="range" id="gainSlider" min="0" max="120" value="80" class="setting-slider" oninput="document.getElementById('gainVal').textContent=this.value" onchange="applyGain()">
                         <span id="gainVal" style="font-size:0.75em; color:#b8e8ff; min-width:20px; font-family:'SF Mono',monospace;">80</span>
                     </div>
-                    <div style="display:flex; align-items:center; gap:8px; margin-bottom:4px; font-size:0.78em; color:#99a0a8;">
+                    <div style="display:flex; align-items:center; gap:8px; margin-bottom:2px; font-size:0.78em; color:#99a0a8;">
                         <label style="display:flex; align-items:center; gap:4px; cursor:pointer;">
-                            <input type="checkbox" id="lpFilterToggle" style="accent-color:#039c9c;"> LP Filter
+                            <input type="checkbox" id="lpFilterToggle" onchange="applyLpFilter()" style="accent-color:#039c9c;"> LP Filter
                         </label>
                         <label style="display:flex; align-items:center; gap:4px; cursor:pointer;">
-                            <input type="checkbox" id="dewHeaterToggle" onchange="toggleDewPower()" style="accent-color:#039c9c;"> Dew Heater
+                            <input type="checkbox" id="dewHeaterToggle" onchange="toggleDewPower(); applyDewHeater()" style="accent-color:#039c9c;"> Dew Heater
                         </label>
                     </div>
-                    <div id="dewPowerRow" style="display:none; margin-bottom:4px;">
+                    <div id="dewPowerRow" style="display:none; margin-bottom:2px;">
                         <div style="display:flex; align-items:center; gap:6px;">
                             <span class="setting-label" style="margin:0; min-width:28px;">Pwr</span>
-                            <input type="range" id="dewPowerSlider" min="0" max="100" value="50" class="setting-slider" oninput="document.getElementById('dewPowerVal').textContent=this.value+'%'">
+                            <input type="range" id="dewPowerSlider" min="0" max="100" value="50" class="setting-slider" oninput="document.getElementById('dewPowerVal').textContent=this.value+'%'" onchange="applyDewHeater()">
                             <span id="dewPowerVal" style="font-size:0.75em; color:#b8e8ff; min-width:26px; font-family:'SF Mono',monospace;">50%</span>
                         </div>
-                    </div>
-                    <div class="button-grid-2x2">
-                        <button class="btn btn-primary btn-compact" onclick="applyCameraSettings()">Apply</button>
-                        <button id="autoExpBtn" class="btn btn-secondary btn-compact btn-toggle" onclick="toggleAutoExp()">Auto Exp</button>
                     </div>
                 </div>
 

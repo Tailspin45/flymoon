@@ -1569,18 +1569,13 @@ class SeestarClient:
             target = int(current) + int(steps)
             params: Dict[str, Any] = {"step": target, "ret_step": True}
         else:
-            logger.warning(
-                "move_focuser skipped: unknown absolute position; refusing unsafe move"
+            # Absolute position unknown — send relative delta directly.
+            # Seestar firmware accepts a bare step delta when no absolute
+            # position has been established yet.
+            logger.info(
+                f"move_focuser: absolute position unknown; sending relative delta={steps}"
             )
-            return {
-                "sent": False,
-                "delta": int(steps),
-                "provider": "jsonrpc",
-                "focus_confirmed": False,
-                "focus_source": "relative",
-                "reason": "unknown_absolute_focus_position",
-                "suggestion": "Focus move blocked for safety: absolute position is unavailable.",
-            }
+            params = {"step": int(steps), "ret_step": True}
 
         result = self._send_command(
             "move_focuser",
@@ -1638,9 +1633,9 @@ class SeestarClient:
 
     def set_gain(self, gain: int) -> dict:
         """Set camera gain (0–120, default 80)."""
-        result = self._send_command("set_control_value", params=["gain", int(gain)])
+        self._send_command("set_control_value", params=["gain", int(gain)], expect_response=False)
         logger.info(f"Gain set to {gain}")
-        return result or {}
+        return {}
 
     def set_manual_exp(self, enabled: bool) -> dict:
         """Enable or disable manual exposure mode."""
@@ -1674,11 +1669,11 @@ class SeestarClient:
 
     def set_lp_filter(self, enabled: bool) -> dict:
         """Enable or disable the light-pollution filter."""
-        result = self._send_command(
-            "set_setting", params={"stack_lenhance": bool(enabled)}
+        self._send_command(
+            "set_setting", params={"stack_lenhance": bool(enabled)}, expect_response=False
         )
         logger.info(f"LP filter {'on' if enabled else 'off'}")
-        return result or {}
+        return {}
 
     def set_dew_heater(self, enabled: bool, power: int = 50) -> dict:
         """
@@ -1691,13 +1686,14 @@ class SeestarClient:
         power : int
             Heater power 0–100 (only used when enabled=True).
         """
-        result = self._send_command(
+        self._send_command(
             "pi_output_set2",
             params={"heater": {"state": bool(enabled), "value": int(power)}},
+            expect_response=False,
         )
         self._heater_on = bool(enabled)
         logger.info(f"Dew heater {'on' if enabled else 'off'} power={power}")
-        return result or {}
+        return {}
 
     def _reader_loop(self) -> None:
         """Background thread: continuously read from the scope socket.

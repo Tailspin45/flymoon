@@ -6,8 +6,8 @@
     "no_transit",
     "transit"
   ],
-  "val_accuracy": 98.91,
-  "best_val_loss": 0.02948,
-  "n_train": 1041,
-  "n_val": 183
+  "val_accuracy": 100.0,
+  "best_val_loss": 0.00029,
+  "n_train": 1199,
+  "n_val": 211
 }

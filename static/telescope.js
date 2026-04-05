@@ -1816,6 +1816,10 @@ async function telescopeShutdown() {
 
 let _focusStepSize = 10;
 
+// Wrappers for inline onclick — let variables are not on window, functions are.
+function focusStepIn()  { focusStep(-_focusStepSize); }
+function focusStepOut() { focusStep(_focusStepSize); }
+
 function setFocusStepSize(size) {
     _focusStepSize = size;
     // Use .is-active (locked-down keycap) instead of inline styles
@@ -1856,15 +1860,20 @@ function toggleDewPower() {
     document.getElementById('dewPowerRow').style.display = on ? '' : 'none';
 }
 
-async function applyCameraSettings() {
-    const body = {
-        gain:       parseInt(document.getElementById('gainSlider').value),
-        lp_filter:  document.getElementById('lpFilterToggle').checked,
-        dew_heater: document.getElementById('dewHeaterToggle').checked,
-        dew_power:  parseInt(document.getElementById('dewPowerSlider').value),
-    };
-    const result = await apiCall('/telescope/settings/camera', 'PATCH', body);
-    if (result && result.success) showStatus('Camera settings applied', 'success', 3000);
+async function applyGain() {
+    const gain = parseInt(document.getElementById('gainSlider').value);
+    await apiCall('/telescope/settings/camera', 'PATCH', { gain });
+}
+
+async function applyLpFilter() {
+    const lp_filter = document.getElementById('lpFilterToggle').checked;
+    await apiCall('/telescope/settings/camera', 'PATCH', { lp_filter });
+}
+
+async function applyDewHeater() {
+    const dew_heater = document.getElementById('dewHeaterToggle').checked;
+    const dew_power  = parseInt(document.getElementById('dewPowerSlider').value);
+    await apiCall('/telescope/settings/camera', 'PATCH', { dew_heater, dew_power });
 }
 
 async function toggleAutoExp() {
@@ -2603,7 +2612,7 @@ function updateFilmstrip(files) {
                 <div class="filmstrip-actions">
                     <button class="btn-icon btn-fav" data-fav-path="${file.path}" onclick="toggleFavorite('${file.path}', event)" title="${getFavorites().has(file.path) ? 'Unfavorite' : 'Favorite'}">${getFavorites().has(file.path) ? '❤️' : '🤍'}</button>
                     <button class="btn-icon" onclick="event.stopPropagation(); downloadFile('${file.path}', '${file.name}')" title="Download" ${isTemp ? 'disabled' : ''}>⬇️</button>
-                    <button class="btn-icon btn-danger" onclick="event.stopPropagation(); deleteFile('${file.path}', '${file.name}', event.metaKey || event.ctrlKey)" title="${getFavorites().has(file.path) ? 'Remove favorite first' : 'Delete (⌘/Ctrl+click to skip confirm)'}" ${isTemp || getFavorites().has(file.path) ? 'disabled' : ''}>🗑️</button>
+                    <button class="btn-icon btn-danger" onclick="event.stopPropagation(); filmstripTrashClick('${file.path}', '${file.name}', event)" title="${getFavorites().has(file.path) ? 'Remove favorite first' : 'Delete selected or this file (⌘/Ctrl+click to skip confirm)'}" ${isTemp || getFavorites().has(file.path) ? 'disabled' : ''}>🗑️</button>
                 </div>
             </div>
         </div>
@@ -2625,7 +2634,7 @@ function _syncFilmstripSelectionUI() {
 
 function filmstripSelectItem(index, path, event) {
     event.stopPropagation();
-    if ((event.ctrlKey || event.metaKey) && event.shiftKey && filmstripSelection.lastClicked !== null) {
+    if (event.shiftKey && filmstripSelection.lastClicked !== null) {
         const lo = Math.min(filmstripSelection.lastClicked, index);
         const hi = Math.max(filmstripSelection.lastClicked, index);
         for (let i = lo; i <= hi; i++) {
@@ -2645,6 +2654,14 @@ function filmstripSelectItem(index, path, event) {
     }
     filmstripSelection.lastClicked = index;
     _syncFilmstripSelectionUI();
+}
+
+function filmstripTrashClick(path, name, event) {
+    if (filmstripSelection.selected.size > 0) {
+        filmstripDeleteSelectedSkipConfirm();
+    } else {
+        deleteFile(path, name, event.metaKey || event.ctrlKey);
+    }
 }
 
 async function filmstripDeleteSelectedSkipConfirm() {

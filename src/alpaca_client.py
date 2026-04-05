@@ -231,10 +231,34 @@ class AlpacaClient:
 
     # ── Connection ─────────────────────────────────────────────────────
 
+    def _persist_host_to_env(self, new_host: str) -> None:
+        """Persist discovered SEESTAR_HOST to .env for future launches."""
+        env_path = os.getenv("FLYMOON_ENV_PATH", ".env")
+        try:
+            with open(env_path, "r", encoding="utf-8") as fh:
+                lines = fh.readlines()
+            updated = False
+            for i, line in enumerate(lines):
+                if line.startswith("SEESTAR_HOST="):
+                    lines[i] = f"SEESTAR_HOST={new_host}\n"
+                    updated = True
+                    break
+            if not updated:
+                if lines and not lines[-1].endswith("\n"):
+                    lines[-1] += "\n"
+                lines.append(f"SEESTAR_HOST={new_host}\n")
+            with open(env_path, "w", encoding="utf-8") as fh:
+                fh.writelines(lines)
+            logger.info(f"ALPACA: persisted SEESTAR_HOST={new_host} to {env_path}")
+        except OSError as e:
+            logger.warning(f"ALPACA: failed to persist SEESTAR_HOST to .env: {e}")
+
     def connect(self) -> bool:
         """Connect to the ALPACA telescope server.
 
-        If host is empty, runs discovery first.
+        If host is empty, runs discovery first.  If the configured host is
+        unreachable (e.g. Seestar rebooted and got a new DHCP address),
+        falls back to UDP discovery automatically.
         Returns True on success.
         """
         self.host = (self.host or "").strip()
@@ -242,14 +266,29 @@ class AlpacaClient:
             ip = self.discover()
             if ip:
                 self.host = ip.strip()
+                self._persist_host_to_env(self.host)
             else:
                 logger.error("ALPACA connect: no host and discovery failed")
                 return False
 
-        # Quick TCP reachability check
+        # Quick TCP reachability check; if stale IP, try discovery
         if not self._tcp_reachable():
-            logger.error(f"ALPACA connect: {self.host}:{self.port} not reachable")
-            return False
+            stale = self.host
+            logger.warning(
+                f"ALPACA connect: {stale}:{self.port} unreachable — trying discovery"
+            )
+            ip = self.discover()
+            if ip and ip.strip() != stale:
+                self.host = ip.strip()
+                logger.info(f"ALPACA discovery: new host {self.host} (was {stale})")
+                self._persist_host_to_env(self.host)
+            elif ip:
+                self.host = ip.strip()
+            if not self._tcp_reachable():
+                logger.error(
+                    f"ALPACA connect: {self.host}:{self.port} not reachable after discovery"
+                )
+                return False
 
         result = self._put("connected", {"Connected": "true"})
         if "error" in result:
