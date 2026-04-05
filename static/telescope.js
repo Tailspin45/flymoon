@@ -3107,6 +3107,7 @@ async function _runIsolateTransit(apiPath, peakHint) {
             const ps = parseFloat(data.peak_time_s);
             const half = 1.5;
             _loopSegment = { start: Math.max(0, ps - half), end: ps + half };
+            _renderTrimRow();
             vid.currentTime = _loopSegment.start;
             vid.play().catch(() => {});
         }
@@ -3201,6 +3202,7 @@ function _jumpToTransitSpan(dir) {
         const mid = (s + e) / 2;
         vid.currentTime = Math.max(0, mid / _videoFps - 0.2);
         _loopSegment = { start: Math.max(0, s / _videoFps - 0.2), end: e / _videoFps + 0.4 };
+        _renderTrimRow();
         vid.play().catch(() => {});
     }
 }
@@ -3251,6 +3253,7 @@ function _loadSidecarSignal(sidecar, videoPath) {
     if (vid && _isolateResult.peak_time_s != null) {
         const ps = _isolateResult.peak_time_s;
         _loopSegment = { start: Math.max(0, ps - 1.0), end: ps + 1.5 };
+        _renderTrimRow();
         vid.currentTime = _loopSegment.start;
         vid.play().catch(() => {});
     }
@@ -3532,6 +3535,23 @@ function viewFile(path, name, opts) {
             `<button class="btn-viewer" onclick="viewerDownload()" title="Download">⬇️ Download</button>` +
             `<button class="btn-viewer btn-viewer-danger" id="viewerDeleteBtn" onclick="viewerDelete(event)" ${delDisabled}>🗑️ Delete</button>` +
             `<button class="btn-viewer" onclick="viewerNav(1)" title="Next" ${hasNext ? '' : 'disabled'}>▶</button>`;
+    }
+
+    // Trim row — only for video files
+    const trimRow = document.getElementById('viewerTrimRow');
+    if (trimRow) {
+        if (isVideo) {
+            trimRow.style.display = 'flex';
+            // Check if a _orig backup already exists (prior trim)
+            const hasBackup = (window.currentFiles || []).some(f2 => {
+                const stem = path.replace(/\.mp4$/i, '');
+                return f2.path === stem + '_orig.mp4';
+            });
+            _renderTrimRow(hasBackup);
+        } else {
+            trimRow.style.display = 'none';
+            trimRow.innerHTML = '';
+        }
     }
 
     viewer.style.display = 'flex';
@@ -3917,6 +3937,182 @@ async function viewerDelete(e) {
 }
 
 // ============================================================================
+// VIDEO TRIM
+// Trim a video to [start_s, end_s] using the server-side ffmpeg -c copy route.
+// The original is backed up as _orig.mp4 for single-level undo.
+// ============================================================================
+
+/** Return {start, end} seconds for the current trim region.
+ *  Priority: _loopSegment (set by mark-in/out or transit analysis) → 0/duration.
+ */
+function _trimGetRegion() {
+    const vid = document.getElementById('hiddenVid');
+    const duration = vid ? vid.duration : null;
+    if (_loopSegment && _loopSegment.start != null && _loopSegment.end != null) {
+        return { start: _loopSegment.start, end: _loopSegment.end };
+    }
+    return { start: 0, end: duration || 0 };
+}
+
+/** Render the trim row buttons into #viewerTrimRow.
+ *  hasBackup=true  → post-trim state: show Undo / Save New / Replace Old
+ *  hasBackup=false → pre-trim state:  show only Trim
+ *  hasBackup=undefined → only refresh the label text (leave buttons alone) */
+function _renderTrimRow(hasBackup) {
+    const row = document.getElementById('viewerTrimRow');
+    if (!row) return;
+    const region = _trimGetRegion();
+    const startStr = region.start.toFixed(2);
+    const endStr = region.end > 0 ? region.end.toFixed(2) : '?';
+    const labelHtml =
+        `<span id="viewerTrimLabel" style="color:#aaa; font-size:0.78em; margin-right:4px;">` +
+            `Trim: ${startStr}s – ${endStr}s` +
+        `</span>`;
+    if (hasBackup === undefined) {
+        const lbl = document.getElementById('viewerTrimLabel');
+        if (lbl) { lbl.textContent = `Trim: ${startStr}s – ${endStr}s`; }
+        return;
+    }
+    if (hasBackup) {
+        row.innerHTML =
+            labelHtml +
+            `<button class="btn-viewer btn-viewer-sun" id="viewerTrimBtn" onclick="viewerTrim()" title="Trim again to new region">✂️ Trim</button>` +
+            `<button class="btn-viewer" onclick="viewerTrimUndo()" title="Discard trimmed version and restore original">↩ Undo</button>` +
+            `<button class="btn-viewer" onclick="viewerTrimSaveNew()" title="Keep trimmed version AND save original as a separate file">💾 Save New</button>` +
+            `<button class="btn-viewer btn-viewer-danger" onclick="viewerTrimReplaceOld()" title="Keep only the trimmed version — delete original backup">🗑 Replace Old</button>`;
+    } else {
+        row.innerHTML =
+            labelHtml +
+            `<button class="btn-viewer btn-viewer-sun" id="viewerTrimBtn" onclick="viewerTrim()" title="Trim video to marked region (original kept as backup)">✂️ Trim</button>`;
+    }
+}
+
+async function viewerTrim() {
+    const files = window.currentFiles || [];
+    const f = (_viewerIndex >= 0 && _viewerIndex < files.length) ? files[_viewerIndex] : _viewerFile;
+    if (!f) return;
+
+    const region = _trimGetRegion();
+    if (!region.end || region.end <= region.start) {
+        showStatus('Set in/out marks before trimming', 'warning', 3000);
+        return;
+    }
+
+    const dur = (region.end - region.start).toFixed(2);
+    if (!confirm(`Trim to ${region.start.toFixed(2)}s – ${region.end.toFixed(2)}s (${dur}s)?\nOriginal will be kept as _orig backup for undo.`)) return;
+
+    const trimPath = f.path.replace('/static/', '');
+    showStatus('Trimming…', 'info', 0);
+    try {
+        const resp = await fetch('/telescope/files/trim', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ path: trimPath, start_s: region.start, end_s: region.end }),
+        });
+        const data = await resp.json();
+        if (!resp.ok || !data.success) {
+            showStatus(`Trim failed: ${data.error || resp.status}`, 'error', 6000);
+            return;
+        }
+        showStatus(`Trimmed to ${dur}s`, 'success', 3000);
+        await refreshFiles();
+        updateFilesGrid();
+        // Reload the viewer on the same file (now trimmed)
+        const updated = (window.currentFiles || []).find(f2 => f2.path === f.path);
+        if (updated) viewFile(updated.path, updated.name);
+        // Show undo button
+        _renderTrimRow(true);
+    } catch (err) {
+        showStatus(`Trim error: ${err.message}`, 'error', 6000);
+    }
+}
+
+async function viewerTrimUndo() {
+    const files = window.currentFiles || [];
+    const f = (_viewerIndex >= 0 && _viewerIndex < files.length) ? files[_viewerIndex] : _viewerFile;
+    if (!f) return;
+    if (!confirm('Restore original (undo trim)?')) return;
+
+    const trimPath = f.path.replace('/static/', '');
+    showStatus('Restoring original…', 'info', 0);
+    try {
+        const resp = await fetch('/telescope/files/trim/undo', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ path: trimPath }),
+        });
+        const data = await resp.json();
+        if (!resp.ok || !data.success) {
+            showStatus(`Undo failed: ${data.error || resp.status}`, 'error', 6000);
+            return;
+        }
+        showStatus('Original restored', 'success', 3000);
+        await refreshFiles();
+        updateFilesGrid();
+        const updated = (window.currentFiles || []).find(f2 => f2.path === f.path);
+        if (updated) viewFile(updated.path, updated.name);
+        _renderTrimRow(false);
+    } catch (err) {
+        showStatus(`Undo error: ${err.message}`, 'error', 6000);
+    }
+}
+
+/** Save New — rename the _orig backup to a unique name so both files are kept. */
+async function viewerTrimSaveNew() {
+    const files = window.currentFiles || [];
+    const f = (_viewerIndex >= 0 && _viewerIndex < files.length) ? files[_viewerIndex] : _viewerFile;
+    if (!f) return;
+    const trimPath = f.path.replace('/static/', '');
+    showStatus('Saving original as new file…', 'info', 0);
+    try {
+        const resp = await fetch('/telescope/files/trim/save-new', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ path: trimPath }),
+        });
+        const data = await resp.json();
+        if (!resp.ok || !data.success) {
+            showStatus(`Save failed: ${data.error || resp.status}`, 'error', 6000);
+            return;
+        }
+        showStatus(`Saved original as ${data.saved_name}`, 'success', 4000);
+        await refreshFiles();
+        updateFilesGrid();
+        _renderTrimRow(false);
+    } catch (err) {
+        showStatus(`Save error: ${err.message}`, 'error', 6000);
+    }
+}
+
+/** Replace Old — delete the _orig backup, keeping only the trimmed version. */
+async function viewerTrimReplaceOld() {
+    const files = window.currentFiles || [];
+    const f = (_viewerIndex >= 0 && _viewerIndex < files.length) ? files[_viewerIndex] : _viewerFile;
+    if (!f) return;
+    if (!confirm('Delete the original backup? This cannot be undone.')) return;
+    const trimPath = f.path.replace('/static/', '');
+    showStatus('Deleting original…', 'info', 0);
+    try {
+        const resp = await fetch('/telescope/files/trim/replace-old', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ path: trimPath }),
+        });
+        const data = await resp.json();
+        if (!resp.ok || !data.success) {
+            showStatus(`Delete failed: ${data.error || resp.status}`, 'error', 6000);
+            return;
+        }
+        showStatus('Original deleted — trimmed version kept', 'success', 3000);
+        await refreshFiles();
+        updateFilesGrid();
+        _renderTrimRow(false);
+    } catch (err) {
+        showStatus(`Error: ${err.message}`, 'error', 6000);
+    }
+}
+
+// ============================================================================
 // TRANSIT FRAME SCANNER
 // Scans a video to find the transit (aircraft crossing sun/moon disk).
 // Compares sampled frames against a reference to detect the brief anomaly,
@@ -4005,6 +4201,7 @@ async function scanTransit(target) {
             const loopStart = Math.max(0, evt.start_seconds - 0.5);
             const loopEnd = evt.end_seconds + 0.5;
             _loopSegment = { start: loopStart, end: loopEnd };
+            _renderTrimRow();
             playerVideo.currentTime = loopStart;
             playerVideo.play();
         }

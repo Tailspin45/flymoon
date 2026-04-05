@@ -2534,6 +2534,245 @@ def upload_telescope_file():
         return handle_error(e)
 
 
+# Video Trim Endpoints
+
+
+def trim_telescope_file():
+    """POST /telescope/files/trim - Trim a video to [start_s, end_s] using ffmpeg -c copy.
+
+    Body: { "path": "captures/...", "start_s": float, "end_s": float }
+    The original is renamed to <stem>_orig.mp4 as an undo backup.
+    Returns: { "success": true, "backup": "...", "url": "/static/..." }
+    """
+    logger.info("[Telescope] POST /telescope/files/trim")
+    try:
+        if not request.is_json:
+            return jsonify({"error": "Request must be JSON"}), 400
+
+        data = request.json
+        file_path = data.get("path")
+        start_s = data.get("start_s")
+        end_s = data.get("end_s")
+
+        if not file_path or start_s is None or end_s is None:
+            return jsonify({"error": "Missing path, start_s, or end_s"}), 400
+        if start_s < 0 or end_s <= start_s:
+            return jsonify({"error": "Invalid start_s / end_s range"}), 400
+
+        full_path = os.path.join("static", file_path)
+        abs_path = os.path.abspath(full_path)
+        captures_abs = os.path.abspath("static/captures")
+        if not abs_path.startswith(captures_abs):
+            return jsonify({"error": "Invalid file path"}), 403
+        if not os.path.exists(abs_path):
+            return jsonify({"error": "File not found"}), 404
+
+        stem, ext = os.path.splitext(abs_path)
+        if ext.lower() != ".mp4":
+            return jsonify({"error": "Only .mp4 files can be trimmed"}), 400
+
+        # Backup original (preserve previous backup if it already exists)
+        backup_path = stem + "_orig.mp4"
+        if not os.path.exists(backup_path):
+            os.rename(abs_path, backup_path)
+        else:
+            # Already backed up from a prior trim — overwrite original with new trim
+            os.replace(abs_path, abs_path + ".tmp_trimming")
+
+        # Run ffmpeg trim (stream copy — no re-encode)
+        tmp_out = abs_path + ".trimtmp.mp4"
+        src = backup_path if os.path.exists(backup_path) else abs_path + ".tmp_trimming"
+        result = subprocess.run(
+            [
+                FFMPEG, "-y",
+                "-ss", str(float(start_s)),
+                "-to", str(float(end_s)),
+                "-i", src,
+                "-c", "copy",
+                tmp_out,
+            ],
+            capture_output=True,
+            timeout=120,
+        )
+        # Clean up any temp file left from overwrite path
+        tmp_prev = abs_path + ".tmp_trimming"
+        if os.path.exists(tmp_prev):
+            os.remove(tmp_prev)
+
+        if result.returncode != 0 or not os.path.exists(tmp_out) or os.path.getsize(tmp_out) == 0:
+            # Restore from backup on failure
+            if os.path.exists(backup_path) and not os.path.exists(abs_path):
+                os.rename(backup_path, abs_path)
+            if os.path.exists(tmp_out):
+                os.remove(tmp_out)
+            stderr = result.stderr.decode(errors="replace")[-500:]
+            logger.error(f"[Telescope] ffmpeg trim failed: {stderr}")
+            return jsonify({"error": f"ffmpeg failed: {stderr}"}), 500
+
+        os.rename(tmp_out, abs_path)
+
+        # Regenerate thumbnail
+        thumb_path = stem + "_thumb.jpg"
+        try:
+            subprocess.run(
+                [FFMPEG, "-y", "-ss", str(float(start_s)), "-i", abs_path,
+                 "-frames:v", "1", "-update", "1", "-q:v", "5", thumb_path],
+                capture_output=True, timeout=15,
+            )
+        except Exception:
+            pass
+
+        rel_path = os.path.relpath(abs_path, "static").replace(os.sep, "/")
+        rel_backup = os.path.relpath(backup_path, "static").replace(os.sep, "/")
+        logger.info(f"[Telescope] Trimmed {file_path} [{start_s}s–{end_s}s], backup at {rel_backup}")
+        return jsonify({"success": True, "url": f"/static/{rel_path}", "backup": rel_backup}), 200
+
+    except Exception as e:
+        logger.error(f"[Telescope] Trim error: {e}", exc_info=True)
+        return handle_error(e)
+
+
+def trim_undo_telescope_file():
+    """POST /telescope/files/trim/undo - Restore a video from its _orig backup.
+
+    Body: { "path": "captures/..." }   (path of the current trimmed file)
+    Returns: { "success": true, "url": "/static/..." }
+    """
+    logger.info("[Telescope] POST /telescope/files/trim/undo")
+    try:
+        if not request.is_json:
+            return jsonify({"error": "Request must be JSON"}), 400
+
+        file_path = request.json.get("path")
+        if not file_path:
+            return jsonify({"error": "Missing path"}), 400
+
+        full_path = os.path.join("static", file_path)
+        abs_path = os.path.abspath(full_path)
+        captures_abs = os.path.abspath("static/captures")
+        if not abs_path.startswith(captures_abs):
+            return jsonify({"error": "Invalid file path"}), 403
+
+        stem, ext = os.path.splitext(abs_path)
+        backup_path = stem + "_orig.mp4"
+        if not os.path.exists(backup_path):
+            return jsonify({"error": "No backup found — cannot undo"}), 404
+
+        # Restore backup
+        if os.path.exists(abs_path):
+            os.remove(abs_path)
+        os.rename(backup_path, abs_path)
+
+        # Regenerate thumbnail from restored file
+        thumb_path = stem + "_thumb.jpg"
+        try:
+            subprocess.run(
+                [FFMPEG, "-y", "-i", abs_path,
+                 "-frames:v", "1", "-update", "1", "-q:v", "5", thumb_path],
+                capture_output=True, timeout=15,
+            )
+        except Exception:
+            pass
+
+        rel_path = os.path.relpath(abs_path, "static").replace(os.sep, "/")
+        logger.info(f"[Telescope] Undo trim: restored {rel_path}")
+        return jsonify({"success": True, "url": f"/static/{rel_path}"}), 200
+
+    except Exception as e:
+        logger.error(f"[Telescope] Trim undo error: {e}", exc_info=True)
+        return handle_error(e)
+
+
+def trim_save_new_telescope_file():
+    """POST /telescope/files/trim/save-new - Rename the _orig backup to a unique name.
+
+    Both the trimmed file and original are kept as separate gallery entries.
+    Body: { "path": "captures/..." }  (path of the trimmed file)
+    Returns: { "success": true, "saved_name": "...", "saved_url": "/static/..." }
+    """
+    logger.info("[Telescope] POST /telescope/files/trim/save-new")
+    try:
+        if not request.is_json:
+            return jsonify({"error": "Request must be JSON"}), 400
+
+        file_path = request.json.get("path")
+        if not file_path:
+            return jsonify({"error": "Missing path"}), 400
+
+        full_path = os.path.join("static", file_path)
+        abs_path = os.path.abspath(full_path)
+        captures_abs = os.path.abspath("static/captures")
+        if not abs_path.startswith(captures_abs):
+            return jsonify({"error": "Invalid file path"}), 403
+
+        stem, ext = os.path.splitext(abs_path)
+        backup_path = stem + "_orig.mp4"
+        if not os.path.exists(backup_path):
+            return jsonify({"error": "No backup found"}), 404
+
+        # Rename backup to a unique timestamped name in the same directory
+        from datetime import datetime as _dt
+        ts = _dt.now().strftime("%Y%m%d_%H%M%S")
+        base_name = os.path.basename(stem)
+        dest_dir = os.path.dirname(abs_path)
+        new_name = f"{base_name}_original_{ts}.mp4"
+        new_path = os.path.join(dest_dir, new_name)
+        counter = 1
+        while os.path.exists(new_path):
+            new_path = os.path.join(dest_dir, f"{base_name}_original_{ts}_{counter}.mp4")
+            counter += 1
+
+        os.rename(backup_path, new_path)
+        rel_new = os.path.relpath(new_path, "static").replace(os.sep, "/")
+        logger.info(f"[Telescope] Trim save-new: original kept as {rel_new}")
+        return jsonify({"success": True, "saved_name": new_name, "saved_url": f"/static/{rel_new}"}), 200
+
+    except Exception as e:
+        logger.error(f"[Telescope] Trim save-new error: {e}", exc_info=True)
+        return handle_error(e)
+
+
+def trim_replace_old_telescope_file():
+    """POST /telescope/files/trim/replace-old - Delete the _orig backup.
+
+    Keeps only the trimmed file; backup is permanently removed.
+    Body: { "path": "captures/..." }  (path of the trimmed file)
+    Returns: { "success": true }
+    """
+    logger.info("[Telescope] POST /telescope/files/trim/replace-old")
+    try:
+        if not request.is_json:
+            return jsonify({"error": "Request must be JSON"}), 400
+
+        file_path = request.json.get("path")
+        if not file_path:
+            return jsonify({"error": "Missing path"}), 400
+
+        full_path = os.path.join("static", file_path)
+        abs_path = os.path.abspath(full_path)
+        captures_abs = os.path.abspath("static/captures")
+        if not abs_path.startswith(captures_abs):
+            return jsonify({"error": "Invalid file path"}), 403
+
+        stem = os.path.splitext(abs_path)[0]
+        backup_path = stem + "_orig.mp4"
+        if not os.path.exists(backup_path):
+            return jsonify({"error": "No backup found"}), 404
+
+        os.remove(backup_path)
+        # Remove backup thumbnail if present
+        backup_thumb = stem + "_orig_thumb.jpg"
+        if os.path.exists(backup_thumb):
+            os.remove(backup_thumb)
+
+        logger.info(f"[Telescope] Trim replace-old: deleted backup {backup_path}")
+        return jsonify({"success": True}), 200
+
+    except Exception as e:
+        logger.error(f"[Telescope] Trim replace-old error: {e}", exc_info=True)
+        return handle_error(e)
+
+
 # Photo Capture Endpoint
 
 
@@ -3391,6 +3630,30 @@ def register_routes(app):
         "/telescope/files/upload",
         "telescope_files_upload",
         upload_telescope_file,
+        methods=["POST"],
+    )
+    app.add_url_rule(
+        "/telescope/files/trim",
+        "telescope_files_trim",
+        trim_telescope_file,
+        methods=["POST"],
+    )
+    app.add_url_rule(
+        "/telescope/files/trim/undo",
+        "telescope_files_trim_undo",
+        trim_undo_telescope_file,
+        methods=["POST"],
+    )
+    app.add_url_rule(
+        "/telescope/files/trim/save-new",
+        "telescope_files_trim_save_new",
+        trim_save_new_telescope_file,
+        methods=["POST"],
+    )
+    app.add_url_rule(
+        "/telescope/files/trim/replace-old",
+        "telescope_files_trim_replace_old",
+        trim_replace_old_telescope_file,
         methods=["POST"],
     )
 

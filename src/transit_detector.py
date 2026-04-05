@@ -1312,19 +1312,22 @@ class TransitDetector:
         if mf_gate or spike_gate:
             self._triggered_buf.clear()
 
-        # Cooldown — log suppressed triggers so missed transits leave forensic evidence
+        # Cooldown — log suppressed triggers once per cooldown period for forensic evidence
         now = time.time()
         if now - self._last_detection_time < DETECTION_COOLDOWN:
-            logger.warning(
-                "[Detector] COOLDOWN suppressed trigger "
-                "(gate=%s score_a=%.4f thresh_a=%.4f score_b=%.4f thresh_b=%.4f "
-                "since_last=%.1fs cooldown=%ds)",
-                "spike" if spike_gate else ("consec" if consec_gate else "mf"),
-                score_a, thresh_a, score_b, thresh_b,
-                now - self._last_detection_time, DETECTION_COOLDOWN,
-            )
+            if not getattr(self, '_cooldown_logged', False):
+                self._cooldown_logged = True
+                logger.warning(
+                    "[Detector] COOLDOWN suppressed trigger "
+                    "(gate=%s score_a=%.4f thresh_a=%.4f score_b=%.4f thresh_b=%.4f "
+                    "since_last=%.1fs cooldown=%ds)",
+                    "spike" if spike_gate else ("consec" if consec_gate else "mf"),
+                    score_a, thresh_a, score_b, thresh_b,
+                    now - self._last_detection_time, DETECTION_COOLDOWN,
+                )
             return
         self._last_detection_time = now
+        self._cooldown_logged = False
 
         _raw_prime = _active_prime["flight_id"] if _active_prime else ""
         predicted_fid = normalize_aircraft_display_id(_raw_prime) or None
