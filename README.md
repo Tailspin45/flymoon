@@ -1,4 +1,4 @@
-# 🌙 Zipcatcher — Aircraft Transit Tracker
+# Zipcatcher — Aircraft Transit Tracker
 
 **Predict, detect, and photograph aircraft crossing the Sun or Moon in real time.**
 
@@ -6,150 +6,201 @@
   <img src="static/images/flymoon-hero.jpg" alt="Zipcatcher — Aircraft Transit Tracker" width="100%">
 </p>
 
+---
+
+## What Zipcatcher Does
+
+Capturing an aircraft silhouette against the solar or lunar disc is a rare and technically demanding shot. The geometry has to be nearly perfect, the timing is measured in fractions of a second, and the telescope has to be pointing at exactly the right place before the aircraft arrives. Zipcatcher automates every part of that problem.
+
+It continuously monitors live flight traffic, projects each aircraft's path against the celestial disc using high-precision ephemeris data, ranks candidates by how close they will come, and — when a high-probability transit is imminent — commands a Seestar S50 telescope to start recording automatically. After the session it analyses the footage and produces an annotated composite image showing the aircraft's full track across the disc.
+
+**Key capabilities:**
+
+- Predicts transits up to **15 minutes ahead** using real-time AeroAPI flight data
+- Displays flight paths, altitudes, and probability on a live **interactive map**
+- Controls a **Seestar S50** via direct TCP — no bridge app required
+- Detects aircraft in the live RTSP stream using a **frame-coherence computer-vision pipeline**
+- Runs a **CNN transit classifier** trained on real detection clips to separate genuine transits from false positives
+- Produces **annotated composite images** from recorded video
+- Sends **Telegram alerts** with flight details and predicted transit time
+- Runs **headlessly overnight** on Mac, Linux, or Windows
 
 ---
 
-## ✨ What Zipcatcher Does
-
-Zipcatcher combines real-time flight data, high-precision celestial mechanics, and telescope automation to give you everything you need to capture an aircraft transiting the Sun or Moon. There's also an eclipse timelapse recorder. Zipcatcher:
-
-- Predicts which flights will pass close to the Sun or Moon up to **15 minutes ahead**
-- Shows flight paths, altitudes, and transit probability on an **interactive map**
-- Controls a **Seestar S50 telescope** to start recording automatically before the transit and stop after
-- Analyses recorded video to produce **annotated composite images** showing the aircraft's path across the disc
-- Sends **Telegram alerts** when a high-probability transit is detected
-- Runs **headlessly overnight** on a Mac, Linux box, or Windows PC
-
-<p align="center">
-  <img src="docs/flymoon-sim.png" alt="Zipcatcher simulation — aircraft path versus Sun disc" width="100%">
-</p>
-
----
-
-## 🚀 Quick Start
+## Quick Start
 
 ### Prerequisites
-- Python 3.9+
+
+- Python 3.9 +
 - FlightAware AeroAPI key ([free personal tier](https://www.flightaware.com/aeroapi/signup/personal))
 
-### Install
+### Install and run
 
-Full setup instructions (Mac, Windows, Linux) → **[SETUP.md](SETUP.md)**
+Full setup instructions → **[SETUP.md](SETUP.md)**
+
+```bash
+make setup                          # create venv, install deps, create .env from .env.mock
+source .venv/bin/activate
+python app.py                       # open http://localhost:8000
+```
+
+For headless operation with telescope control:
+
+```bash
+python3 transit_capture.py --latitude 51.5 --longitude -0.12 --target sun
+```
 
 ---
 
-## 🎯 Transit Detection
+## Transit Detection
 
-### Prediction Algorithm
+### Prediction Pipeline
 
-1. **Flight acquisition** — queries FlightAware AeroAPI for all aircraft within the configured bounding box
-2. **Position projection** — extrapolates each aircraft's position up to 15 minutes ahead using constant velocity and heading
-3. **Celestial tracking** — computes Sun/Moon altitude and azimuth with Skyfield + the JPL DE421 ephemeris, accounting for atmospheric refraction
-4. **Angular separation** — numerical optimisation finds the moment of closest approach between the aircraft path and the celestial disc
-5. **Probability classification** — ranks each candidate by true on-sky angular separation (azimuth differences cosine-weighted by target altitude to correct for geometric compression near the zenith):
+1. **Flight acquisition** — queries FlightAware AeroAPI for all aircraft inside the configured bounding box
+2. **Position projection** — extrapolates constant-velocity/heading tracks up to 15 minutes ahead
+3. **Celestial tracking** — computes Sun and Moon position with Skyfield + JPL DE421 ephemeris, including atmospheric refraction
+4. **Angular separation** — numerical optimisation finds the moment of closest approach on-sky
+5. **Probability classification** — ranks candidates using true angular separation, with azimuth differences cosine-weighted by target altitude to correct for geometric compression near the zenith
 
-| Indicator | Separation | Meaning |
-|-----------|-----------|---------|
+| Level | Separation | Meaning |
+|-------|-----------|---------|
 | 🟢 High | ≤ 2.0° | Direct transit very likely |
 | 🟠 Medium | ≤ 4.0° | Near miss — worth recording |
 | ⚪ Low | ≤ 12.0° | Possible distant transit |
 
-### Real-Time Video Detection
+### Live Video Detection
 
-When the telescope is connected and running, **TransitDetector** monitors the live RTSP stream frame-by-frame, detecting aircraft silhouettes crossing the disc in real time using computer-vision coherence tracking. Detections trigger an immediate recording bookmark and are logged to the gallery.
+When the telescope is connected, **TransitDetector** monitors the live RTSP stream continuously. The detector uses a multi-stage coherence pipeline:
+
+- **Score A** — spike gate: detects a large, sudden per-frame anomaly consistent with a fast-moving silhouette
+- **Score B** — consecutive gate: confirms the anomaly persists across multiple frames in a straight line
+- **Score B (MF)** — matched-filter gate: cross-correlates the signal against a bank of transit templates covering different speeds and sizes
+
+All three gates require `score_a ≥ thresh_a` before they can accumulate, preventing background noise from triggering a false detection. A hard centre-ratio gate suppresses detections where the brightness anomaly is not centred in the disc. After a confirmed detection the detector enforces a 6-second cooldown; suppressed triggers during cooldown are logged once (not once per frame).
 
 ### Post-Capture Analysis
 
-**TransitAnalyzer** processes recorded video after each session to produce:
-- A **composite image** showing every frame where the aircraft was on the disc, blended over a clean reference background
-- A **sidecar legend** annotating the track with frame times, angular velocity, and disc entry/exit positions
+**TransitAnalyzer** processes saved video to produce:
 
-### Detection Tester (Inject / Sweep / Validate)
+- A **composite image** blending every frame where the aircraft was on the disc over a clean reference background
+- A **sidecar JSON** with frame-level signal data (scores, thresholds, triggered frames, peak time) used to annotate the scrubber in the gallery viewer
 
-In the telescope sidebar (under **Live Detection**), the **Detection Tester** card gives quick feedback on missed-vs-detected transits:
+### CNN Transit Classifier
 
-- **Inject** — inserts a synthetic transit and checks whether the analyzer catches it (quick pipeline sanity check)
-- **Sweep** — runs a size × speed matrix and reports how many combinations are detected
-- **Validate** — runs the analyzer over your captured MP4 files and reports events found per file
+A lightweight CNN runs over detection clips to score each event as a genuine transit versus a false positive. Training data is extracted automatically from confirmed captures and stored in `data/training/`. The classifier can be retrained from the telescope panel when new labelled clips are available.
 
-Mode selector:
+### Detection Tester
 
-- **Default** — production-like thresholds (stricter; fewer false positives)
-- **Sensitive** — lower speed/travel gates and static-filter disabled (better at slower birds/balloons, more false positives)
+In the telescope sidebar under **Live Detection**, the Detection Tester card provides rapid pipeline feedback without waiting for a real transit:
 
-How to use the sweep output:
+- **Inject** — inserts a synthetic transit and verifies the pipeline catches it
+- **Sweep** — runs a size × speed matrix and reports which combinations are detected; highlights gaps in coverage
+- **Validate** — runs the analyzer over all saved MP4s and reports events found per file
 
-- If only fast columns (e.g. 200/300 px/s) are green, your setup is tuned for fast transits only
-- If Default misses many cells, switch to **Sensitive** and rerun
-- If Sensitive is still low, run **Validate** on known-transit clips and tune thresholds further
+Two modes:
 
-Recommended sequence:
-
-1. Run **Inject** (Default) to verify the pipeline works
-2. Run **Sweep** (Default), then **Sweep** (Sensitive)
-3. Run **Validate** on known real-transit clips
-4. Keep **Default** for daily use; use **Sensitive** when checking for slow/ambiguous objects
+- **Default** — production thresholds; fewer false positives
+- **Sensitive** — relaxed speed/travel gates, static filter disabled; better for slow or small objects
 
 ---
 
-## 🗺️ Map Interface
+## Map Interface
 
-<p align="center">
-  <img src="docs/flymoon-map.png" alt="Zipcatcher map interface" width="100%">
-</p>
-
-- **Per-quadrant minimum altitude** — set independent minimum angles for North, East, South, and West to mask out trees, rooftops, or other obstructions; only flights near the Sun/Moon when it is above your local horizon count. Click the center to set all quadrants to zero
-- **Altitude bars** — thin horizontal bars on each flight indicator show cruising altitude at a glance
-- **Route & track overlay** — click any indicator to show the planned route ahead and historical track behind
+- **Per-quadrant minimum altitude** — set independent minimum angles for North, East, South, and West to mask out obstructions; flights are only ranked when the target is above your local horizon. Click the centre to reset all quadrants to zero
+- **Altitude bars** — thin bars on each flight indicator show cruising altitude at a glance
+- **Route and track overlay** — click any indicator for planned route ahead and historical track behind
 - **Azimuth arrows** — on-map arrows point toward the Sun and Moon from your observer position
-- **Traffic density heatmap** — toggle 🔥 to reveal accumulated flight corridors built up across polling cycles (persists across sessions in browser storage, capped at 2,000 points)
-- **Adjustable bounding box** — drag the corners to resize the search area
+- **Traffic density heatmap** — toggle 🔥 to reveal accumulated flight corridors built up across polling cycles (persists in browser storage, capped at 2,000 points)
+- **Adjustable bounding box** — drag corners to resize the flight-search area
 
 ---
 
-## 🔭 Telescope Integration
+## Telescope Panel
 
-Zipcatcher connects directly to the Seestar S50 over TCP — no bridge app required.
+Zipcatcher connects directly to the Seestar S50 over TCP on port 4700.
 
-- **Auto-discovery** — scans the local subnet to find the scope's IP automatically
-- **Solar & lunar modes** — switches the scope to the correct imaging mode for the selected target
-- **Automatic recording** — starts video a configurable number of seconds before the predicted transit and stops after (defaults: 10 s pre/post buffer)
-- **Live preview** — MJPEG stream from the scope shown directly in the browser panel
-- **Smart reconnection** — if the scope drops off the network overnight, Zipcatcher waits to reconnect until the selected target is back above the minimum altitude you set in the UI quadrant controls, avoiding noisy reconnect attempts in the middle of the night
-- **Capture gallery** — browsable gallery of all recorded clips and analysed composites
+### Connection
 
-<p align="center">
-  <img src="docs/flymoon-eclipse.png" alt="Zipcatcher eclipse monitoring mode" width="80%">
-</p>
+- **Auto-discovery** — UDP broadcast scan on port 4720 finds the scope's IP automatically
+- **Smart reconnect** — if the scope drops overnight, Zipcatcher waits until the target rises above the configured minimum altitude before attempting to reconnect, avoiding noisy retries in the middle of the night
+
+### Imaging
+
+- **Solar and lunar modes** — switches the scope to the correct imaging mode for the selected target
+- **Scenery mode** — for manual positioning independent of the automated tracking
+- **Automatic recording** — starts video a configurable pre-buffer before the predicted transit and stops after a post-buffer (defaults: 10 s each)
+- **GoTo** — slew to any named location or entered alt/az coordinates
+- **Continuous nudge** — fine-position the scope with hold-to-repeat joystick controls
+- **Autofocus** — trigger a focus run from the panel
+- **Live preview** — MJPEG stream from the scope displayed directly in the browser
+
+### Focus Odometer
+
+A per-session focus-step counter in the sidebar tracks how many focuser steps have been applied since the session started, helping you return to a known focus position after experimenting.
+
+### ALPACA / seestar_alp
+
+If you run a `seestar_alp` sidecar, set `SEESTAR_ALPACA_URL` in `.env` to expose the stable `/v1/seestar/*` ALPACA API. Zipcatcher will prefer ALPACA endpoints when available and fall back to direct RPC otherwise.
 
 ---
 
-## 📱 Notifications
+## Capture Gallery
 
-**Telegram** — instant phone alerts for medium and high probability transits, including predicted transit time, flight details, and angular separation.
+The gallery (📁 **Captured Files** strip at the bottom of the scope panel) shows thumbnails of all recorded clips, detection frames, diff heatmaps, and analysed composites.
+
+### File Viewer
+
+Click any thumbnail to open the file viewer:
+
+- **Five-panel frame display** — shows the current frame flanked by two frames on each side for context
+- **Frame scrubber** — drag to seek; ◀◀ and ▶▶ buttons on either side of the frame counter play the clip in reverse or forward at native FPS; click again to stop
+- **📌 Mark** — first tap sets the In point, second tap sets the Out point; re-tapping replaces whichever endpoint is nearest to the current frame. The trim row above the scrubber shows the current In and Out times live
+- **✂️ Trim** — writes a new `trim_<filename>.mp4` alongside the original (non-destructive; the original is never modified). After trimming a **Replace Original** button appears if you want to discard the source
+- **Transit analysis** — ☀️ Solar Transit / 🌙 Lunar Transit buttons run the post-capture analyzer and overlay signal data on the scrubber bar
+- **Composite** — 🖼 Build Composite assembles marked frames into an annotated stack image
+- **Filmstrip shift-select** — hold Shift to range-select multiple files for batch delete
+
+### Data Sources Activity Panel
+
+A collapsible **Data Sources** panel in the sidebar shows per-source activity odometers (FlightAware, OpenSky, OpenAIP) with the last-updated timestamp and request count for the current session.
 
 ---
 
-## 🤖 Headless / Background Mode
+## Solar Eclipse Timelapse
 
-### `transit_capture.py` — Telescope control or Telegram fallback
+During a solar eclipse, Zipcatcher switches to timelapse mode: it captures frames at a configurable interval throughout the event and assembles them into a timelapse video. Aircraft transits detected during the eclipse are bookmarked as timestamped events within the recording.
+
+Optional stabilisation (`SOLAR_TIMELAPSE_STABILIZE=true`) compensates for atmospheric jitter between frames.
+
+Auto-resume (`SOLAR_TIMELAPSE_AUTO_RESUME=true`) restarts today's timelapse automatically after a reconnect or restart without requiring manual intervention.
+
+---
+
+## Notifications
+
+**Telegram** alerts fire for medium and high-probability transits, including predicted transit time, flight callsign, altitude, aircraft type, and angular separation. Alerts can be muted per-session from the panel without restarting the server.
+
+---
+
+## Headless / Background Mode
+
+### `transit_capture.py`
+
 ```bash
-# Fully automated (Seestar + Telegram)
+# Telescope + Telegram
 python3 transit_capture.py --latitude 51.5 --longitude -0.12 --target sun
 
-# Notifications only
+# Telegram only (no scope)
 python3 transit_capture.py --latitude 51.5 --longitude -0.12 --target sun --manual
 ```
-
-Both scripts run continuously in the background and handle their own scheduling.
 
 ### macOS App Bundle
 
 ```bash
-./build_mac_app.sh        # builds Transit Monitor.app
+./build_mac_app.sh        # builds Zipcatcher.app
 ```
 
-Double-click `Transit Monitor.app`, select your target, and leave it running. Logs go to `/tmp/transit_monitor.log`.
+Double-click `Zipcatcher.app`, choose your target, and leave it running. Logs go to `/tmp/transit_monitor.log`.
 
 ### Windows System Tray
 
@@ -158,36 +209,32 @@ pip install -r requirements-windows.txt
 python windows_monitor.py
 ```
 
-Tray icon colours: **gray** = idle · **green** = monitoring · **orange** = transit detected · **red** = error.
+Tray icon: **gray** = idle · **green** = monitoring · **orange** = transit detected · **red** = error.
 
 ---
 
-## ⚙️ Configuration
+## Configuration
 
-Copy `.env.mock` to `.env` and fill in:
+Copy `.env.mock` to `.env` and fill in the values relevant to your setup. Run `python3 src/config_wizard.py --setup` for interactive validation.
 
 | Variable | Purpose |
 |----------|---------|
-| `AEROAPI_API_KEY` | FlightAware API key (required) |
+| `AEROAPI_API_KEY` | FlightAware AeroAPI key (required) |
 | `OBSERVER_LATITUDE / LONGITUDE / ELEVATION` | Your location |
 | `LAT/LONG_LOWER_LEFT / UPPER_RIGHT` | Flight search bounding box |
 | `TELEGRAM_BOT_TOKEN / CHAT_ID` | Telegram alerts (optional) |
 | `ENABLE_SEESTAR / SEESTAR_HOST` | Telescope control (optional) |
-| `SEESTAR_ALPACA_URL` | Optional `seestar_alp` sidecar endpoint for stable `/v1/seestar/*` API |
+| `SEESTAR_ALPACA_URL` | seestar_alp ALPACA sidecar URL (optional) |
 | `SEESTAR_PRE_BUFFER / POST_BUFFER` | Recording window in seconds (default: 10) |
-| `FLYMOON_BROWSER` | Startup browser preference (`default` or `chrome`) |
-| `FLYMOON_NO_BROWSER` | Disable browser auto-open on startup when set |
-| `SOLAR_TIMELAPSE_AUTO_RESUME` | Auto-resume today's solar timelapse after reconnect/restart (`true`/`false`) |
-| `SOLAR_TIMELAPSE_INTERVAL` | Default seconds between auto-resumed timelapse frames (default: 120) |
-| `SOLAR_TIMELAPSE_STABILIZE` | Stabilize timelapse frames to reduce atmospheric jitter (`true`/`false`) |
-| `SOLAR_TIMELAPSE_STABILIZE_MAX_SHIFT / SOLAR_TIMELAPSE_STABILIZE_SMOOTHING` | Stabilizer clamp (px) and smoothing (0..1) |
-| `MIN_TARGET_ALTITUDE` | Fallback minimum altitude for reconnect logic when the browser hasn't connected yet (default: 10°) |
-
-Run `python3 src/config_wizard.py --setup` for interactive validation of all settings.
+| `SOLAR_TIMELAPSE_AUTO_RESUME` | Auto-resume today's timelapse after reconnect (`true`/`false`) |
+| `SOLAR_TIMELAPSE_INTERVAL` | Seconds between timelapse frames (default: 120) |
+| `SOLAR_TIMELAPSE_STABILIZE` | Stabilize timelapse frames (`true`/`false`) |
+| `MIN_TARGET_ALTITUDE` | Minimum target altitude for reconnect logic (default: 10°) |
+| `GALLERY_AUTH_TOKEN` | Token required for gallery write operations |
 
 ---
 
-## 📖 Documentation
+## Documentation
 
 | File | Contents |
 |------|---------|
@@ -198,21 +245,19 @@ Run `python3 src/config_wizard.py --setup` for interactive validation of all set
 
 ---
 
-## 🔒 Security
+## Security
 
-Zipcatcher binds to `0.0.0.0:8000` by default (LAN-accessible). Gallery write operations require a `GALLERY_AUTH_TOKEN` in `.env`. See [SECURITY.md](SECURITY.md) before exposing the server beyond your local network.
-
----
-
-## 🤝 Contributing
-
-Issues and pull requests welcome — especially transit photographs!
-
-**Share your captures** → [GitHub Discussions / Issue #21](https://github.com/Tailspin45/flymoon/issues/21)
+Zipcatcher binds to `0.0.0.0:8000` by default (LAN-accessible). Gallery write operations require a `GALLERY_AUTH_TOKEN`. See [SECURITY.md](SECURITY.md) before exposing the server beyond your local network.
 
 ---
 
-## 📝 Credits
+## Contributing
+
+Issues and pull requests welcome — especially transit photographs.
+
+---
+
+## Credits
 
 | Component | Project | Licence |
 |-----------|---------|---------|
@@ -230,10 +275,10 @@ See [ATTRIBUTION.md](ATTRIBUTION.md) for full licence texts.
 
 ---
 
-## 📄 Licence
+## Licence
 
 MIT — see [LICENSE](LICENSE)
 
 ---
 
-*Pro tip: open Flightradar24 alongside Zipcatcher for extra situational awareness when a high-probability transit is approaching.*
+*Pro tip: keep Flightradar24 open alongside Zipcatcher for extra situational awareness when a high-probability transit is approaching.*
