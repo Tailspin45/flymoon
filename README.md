@@ -3,7 +3,7 @@
 **Predict, detect, and photograph aircraft crossing the Sun or Moon in real time.**
 
 <p align="center">
-  <img src="static/images/flymoon-hero.jpg" alt="Flymoon — Aircraft Transit Tracker" width="100%">
+  <img src="static/images/flymoon-hero.jpg" alt="Zipcatcher - Transit Tracker" width="100%">
 </p>
 
 
