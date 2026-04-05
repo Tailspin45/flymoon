@@ -35,6 +35,6 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            dist-windows/Flymoon-Windows-EndUser.zip
+            dist-windows/Zipcatcher-Windows-EndUser.zip
             dist-electron/*Setup*.exe
           generate_release_notes: true

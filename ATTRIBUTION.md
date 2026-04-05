@@ -1,6 +1,6 @@
 # Open-Source Attributions
 
-Flymoon incorporates the following open-source libraries and services. Their licenses and acknowledgements are listed below.
+Zipcatcher incorporates the following open-source libraries and services. Their licenses and acknowledgements are listed below.
 
 ---
 

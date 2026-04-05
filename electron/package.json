@@ -12,8 +12,8 @@
   },
   "build": {
     "appId": "com.flymoon.app",
-    "productName": "Flymoon",
-    "copyright": "Copyright © 2025 Flymoon",
+    "productName": "Zipcatcher",
+    "copyright": "Copyright © 2025 Zipcatcher",
     "directories": {
       "buildResources": "assets",
       "output": "../dist-electron"
@@ -60,8 +60,8 @@
         "to": "docs/QUICK_REFERENCE.md"
       },
       {
-        "from": "../docs/Flymoon-article.pdf",
-        "to": "docs/Flymoon-article.pdf"
+        "from": "../docs/Zipcatcher-article.pdf",
+        "to": "docs/Zipcatcher-article.pdf"
       },
       {
         "from": "../docs/transit_capture_position_paper.pdf",
@@ -99,7 +99,7 @@
       "notarize": true
     },
     "dmg": {
-      "title": "Flymoon",
+      "title": "Zipcatcher",
       "background": "assets/dmg-background.png",
       "contents": [
         {
@@ -130,7 +130,7 @@
       "allowToChangeInstallationDirectory": true,
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
-      "shortcutName": "Flymoon",
+      "shortcutName": "Zipcatcher",
       "runAfterFinish": true,
       "installerIcon": "assets/icon.ico",
       "installerHeaderIcon": "assets/icon.ico"

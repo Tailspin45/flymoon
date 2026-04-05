@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Configuration wizard and validator for Flymoon.
+Configuration wizard and validator for Zipcatcher.
 Handles first-run setup and configuration validation.
 """
 import os
@@ -183,9 +183,9 @@ class ConfigWizard:
     def _run_interactive_setup(self):
         """Run interactive setup wizard."""
         print("\n" + "=" * 60)
-        print("  Flymoon Configuration Wizard")
+        print("  Zipcatcher Configuration Wizard")
         print("=" * 60)
-        print("\nThis wizard will help you configure Flymoon step by step.")
+        print("\nThis wizard will help you configure Zipcatcher step by step.")
         print("You can press Ctrl+C at any time to cancel.\n")
 
         try:
@@ -203,7 +203,7 @@ class ConfigWizard:
         print("  Configuration Complete!")
         print("=" * 60)
         print(f"\nSettings saved to: {self.config_file}")
-        print("\nTo start Flymoon:")
+        print("\nTo start Zipcatcher:")
         print("  python3 app.py")
         print("\nThen open: http://localhost:8000")
         print("")
@@ -454,7 +454,7 @@ class ConfigWizard:
         print("\n" + "-" * 40)
         print("STEP 5: Telegram Notifications (optional)")
         print("-" * 40)
-        print("\nTelegram lets Flymoon alert your phone when a transit is imminent.")
+        print("\nTelegram lets Zipcatcher alert your phone when a transit is imminent.")
         print(
             "This is especially useful for the headless monitor (transit_capture.py)."
         )
@@ -498,7 +498,7 @@ class ConfigWizard:
         print("\n" + "-" * 40)
         print("STEP 6: Seestar Telescope (optional)")
         print("-" * 40)
-        print("\nIf you have a Seestar S50 on your local network, Flymoon can")
+        print("\nIf you have a Seestar S50 on your local network, Zipcatcher can")
         print("automatically start recording the moment a transit is detected.")
 
         current_enabled = os.getenv("ENABLE_SEESTAR", "false").lower() == "true"
@@ -563,7 +563,7 @@ def main():
     """CLI entry point for config wizard."""
     import argparse
 
-    parser = argparse.ArgumentParser(description="Flymoon Configuration Wizard")
+    parser = argparse.ArgumentParser(description="Zipcatcher Configuration Wizard")
     parser.add_argument(
         "--validate",
         action="store_true",

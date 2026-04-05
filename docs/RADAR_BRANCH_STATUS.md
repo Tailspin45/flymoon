@@ -1,4 +1,4 @@
-# Flymoon — `radar` branch status
+# Zipcatcher — `radar` branch status
 *Last updated: 2026-03-27 (by Claude Sonnet 4.6)*
 
 ---

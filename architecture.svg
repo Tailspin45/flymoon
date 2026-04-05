@@ -3,7 +3,7 @@
   <rect width="1400" height="1020" fill="#0d1117"/>
 
   <!-- Title -->
-  <text x="700" y="36" text-anchor="middle" font-size="22" font-weight="bold" fill="#58a6ff">Flymoon Architecture</text>
+  <text x="700" y="36" text-anchor="middle" font-size="22" font-weight="bold" fill="#58a6ff">Zipcatcher Architecture</text>
 
   <!-- ═══════════════════════════════════════════════════════ -->
   <!-- ROW 1: External Sources -->

@@ -1,5 +1,5 @@
 """
-Eclipse detection for Flymoon.
+Eclipse detection for Zipcatcher.
 
 Detects solar and lunar eclipses within a configurable lookahead window
 (default 48 hours) for a given observer location.

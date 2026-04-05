@@ -1,6 +1,6 @@
-# Flymoon Setup Guide
+# Zipcatcher Setup Guide
 
-Complete setup instructions for Flymoon's automated aircraft transit monitoring system with Telegram notifications and telescope integration.
+Complete setup instructions for Zipcatcher's automated aircraft transit monitoring system with Telegram notifications and telescope integration.
 
 ## Table of Contents
 
@@ -17,7 +17,7 @@ Complete setup instructions for Flymoon's automated aircraft transit monitoring 
 
 ## Quick Start
 
-Flymoon predicts when aircraft will transit the Sun or Moon from your location and can:
+Zipcatcher predicts when aircraft will transit the Sun or Moon from your location and can:
 - Send real-time notifications via Telegram
 - Automatically trigger video recording on a Seestar telescope
 
@@ -29,7 +29,7 @@ This guide will help you set up both features.
 
 ### Required
 - Python 3.9 or higher
-- Flymoon installed with dependencies
+- Zipcatcher installed with dependencies
 - Internet connection for FlightAware API access
 
 ### Optional (for Telegram notifications)
@@ -91,7 +91,7 @@ Automate video recording on your Seestar telescope for predicted aircraft transi
 
 ### Overview
 
-Flymoon communicates directly with your Seestar telescope using its native JSON-RPC protocol over TCP. No external bridge apps or complex dependencies needed.
+Zipcatcher communicates directly with your Seestar telescope using its native JSON-RPC protocol over TCP. No external bridge apps or complex dependencies needed.
 
 **Key Benefits:**
 - Direct communication with Seestar (no middleman)
@@ -101,7 +101,7 @@ Flymoon communicates directly with your Seestar telescope using its native JSON-
 - No licensing concerns
 
 **How It Works:**
-1. Flymoon predicts when aircraft will transit the Sun or Moon
+1. Zipcatcher predicts when aircraft will transit the Sun or Moon
 2. Calculates optimal recording timing with configurable buffers
 3. Schedules recording to start before the transit (default: 10 seconds early)
 4. Triggers Seestar via JSON-RPC command
@@ -114,7 +114,7 @@ Since aircraft transits last only 0.5-2 seconds, automated triggering is essenti
 - Seestar telescope (S50 or S30 Pro)
 - Firmware with JSON-RPC support
 - Seestar connected to WiFi network
-- Computer running Flymoon on the same network
+- Computer running Zipcatcher on the same network
 
 ### Step 1: Get Your Seestar IP Address
 
@@ -147,17 +147,17 @@ Add Seestar settings to your `.env` file (see [Configuration](#configuration) se
 
 ### Step 4: Put Seestar in Solar/Lunar Mode
 
-Before running Flymoon with telescope integration:
+Before running Zipcatcher with telescope integration:
 
 1. Point your Seestar at the Sun or Moon
 2. Use the Seestar app to enter Solar or Lunar viewing mode
-3. Leave the telescope in this mode while Flymoon is monitoring
+3. Leave the telescope in this mode while Zipcatcher is monitoring
 
 ---
 
 ## Configuration
 
-All configuration is done through the `.env` file in your Flymoon directory.
+All configuration is done through the `.env` file in your Zipcatcher directory.
 
 ### Create Configuration File
 
@@ -219,7 +219,7 @@ Replace `192.168.1.100` with your actual Seestar IP address.
 
 ### OpenAIP Aviation Overlay (Optional)
 
-OpenAIP overlays airspace boundaries, VOR stations, and airports on the Flymoon map. Getting the key is slightly non-obvious — follow these exact steps:
+OpenAIP overlays airspace boundaries, VOR stations, and airports on the Zipcatcher map. Getting the key is slightly non-obvious — follow these exact steps:
 
 1. Go to **[https://www.openaip.net](https://www.openaip.net)** and create a free account
 2. Confirm your email and log in
@@ -294,7 +294,7 @@ package-win-enduser-zip.bat
 This generates:
 
 ```text
-dist-windows\Flymoon-Windows-EndUser.zip
+dist-windows\Zipcatcher-Windows-EndUser.zip
 ```
 
 ### Building Windows installer from macOS (no .bat needed)
@@ -304,7 +304,7 @@ If you are on macOS/Linux, use GitHub Actions:
 1. Push your branch to GitHub
 2. Open **Actions** tab
 3. Run workflow: **Build Windows End-User ZIP**
-4. Download artifact: `Flymoon-Windows-EndUser`
+4. Download artifact: `Zipcatcher-Windows-EndUser`
 
 ---
 
@@ -468,7 +468,7 @@ Symptoms: Connection drops after 30-60 seconds
 Solutions:
 1. Check network stability
 2. Ensure Seestar isn't going to sleep or standby mode
-3. Keep the Seestar app closed while running Flymoon
+3. Keep the Seestar app closed while running Zipcatcher
 4. Monitor Seestar's status lights for connectivity issues
 
 **Recording Not Working**
@@ -503,7 +503,7 @@ Possible causes:
 - Check that all required dependencies are installed
 - Verify Python version is 3.9 or higher
 - Review error messages carefully
-- Check file permissions on the Flymoon directory
+- Check file permissions on the Zipcatcher directory
 
 **Too much console output/logging?**
 - The application runs with minimal logging by default (WARNING level)
@@ -535,7 +535,7 @@ Aircraft transits are extremely brief (0.5-2 seconds). The buffer configuration 
 
 ### Protocol Details
 
-Flymoon uses a JSON-RPC 2.0–style protocol over TCP sockets to communicate with Seestar. **Important:** Seestar requests do *not* include a `"jsonrpc"` field — only responses do.
+Zipcatcher uses a JSON-RPC 2.0–style protocol over TCP sockets to communicate with Seestar. **Important:** Seestar requests do *not* include a `"jsonrpc"` field — only responses do.
 
 **Request format:**
 ```json
@@ -594,5 +594,5 @@ Happy transit hunting!
 ---
 
 **Last Updated**: 2026-03-09
-**Project**: Flymoon
+**Project**: Zipcatcher
 **Documentation**: See project README for more details

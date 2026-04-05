@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Flight Data Acquisition: Cost–Benefit Analysis for Amateur Transit Observers — Flymoon</title>
+<title>Flight Data Acquisition: Cost–Benefit Analysis for Amateur Transit Observers — Zipcatcher</title>
 <style>
   :root {
     --bg:       #0d0d1a;
@@ -351,13 +351,13 @@
   <span class="tsb-saved" id="tsbSaved">✓ Saved</span>
 </div>
 
-<a class="back-link" href="/">← Back to Flymoon</a>
+<a class="back-link" href="/">← Back to Zipcatcher</a>
 
 <div class="paper-header">
   <div class="paper-title">Flight Data Acquisition for Amateur Solar and Lunar Transit Photography:<br>A Cost–Benefit Analysis of Available Data Sources</div>
   <div class="paper-subtitle">Operational Economics of Real-Time Aircraft Tracking Under Budget Constraints</div>
   <div class="paper-meta">
-    <span class="badge">Flymoon v1.0</span>
+    <span class="badge">Zipcatcher v1.0</span>
     <span class="badge">FlightAware AeroAPI Personal Tier</span>
     <span class="badge">OpenSky Network</span>
     <span class="badge">ADS-B / RTL-SDR</span>
@@ -380,7 +380,7 @@
 
 <p>FlightAware charges per <em>result set</em>, where one result set contains up to 15 flight records. The current Personal tier rate is <strong>$0.02 per result set</strong>, with a monthly credit of <strong>$5.00</strong> — sufficient for exactly <strong>250 result sets</strong> before additional charges apply.</p>
 
-<p>Flymoon's bounding-box search uses the <code>/flights/search</code> endpoint with <code>max_pages=1</code>, returning a single result set per call regardless of how many aircraft are present (up to 15). Therefore:</p>
+<p>Zipcatcher's bounding-box search uses the <code>/flights/search</code> endpoint with <code>max_pages=1</code>, returning a single result set per call regardless of how many aircraft are present (up to 15). Therefore:</p>
 
 <div class="callout callout-info">
   <strong>Cost formula:</strong> Each bounding-box API call = 1 result set = <strong>$0.02</strong>.<br>
@@ -614,13 +614,13 @@
 
 <h2>8. Conclusion</h2>
 
-<p>The FlightAware AeroAPI Personal tier's result-set pricing model is poorly matched to the high-frequency polling requirements of automated transit detection. Running Flymoon 24/7 at a 10-minute interval costs approximately $86/month — 17 times the included $5 credit. Even the most aggressive cost reduction measures available within the FA-only model (60-minute intervals, active-hours masking) leave observers with either unacceptable positional staleness or marginal budget compliance.</p>
+<p>The FlightAware AeroAPI Personal tier's result-set pricing model is poorly matched to the high-frequency polling requirements of automated transit detection. Running Zipcatcher 24/7 at a 10-minute interval costs approximately $86/month — 17 times the included $5 credit. Even the most aggressive cost reduction measures available within the FA-only model (60-minute intervals, active-hours masking) leave observers with either unacceptable positional staleness or marginal budget compliance.</p>
 
 <p>The hybrid strategy — using the free OpenSky Network API for continuous position data and reserving FlightAware calls for confirmed HIGH-probability transit events — typically generates fewer than 250 FA calls per month, keeping costs within the included $5/month Personal tier credit and making Hybrid <strong>effectively free</strong>. Full flight metadata is preserved for the alerts that matter most. The selective FA enrichment cache ensures that each unique aircraft is queried at most once per flight, regardless of how many transit alerts it generates.</p>
 
 <p>For observers willing to invest in hardware, a local ADS-B receiver eliminates all ongoing position data costs entirely, provides sub-second update latency, and functions without internet connectivity — representing the optimal long-term solution for dedicated transit photographers.</p>
 
-<p>Regardless of data source, every refresh contributes aircraft positions to Flymoon's traffic density heatmap — a browser-local layer that accumulates over time to reveal the flight corridors crossing your observing site. Higher-frequency data sources (ADS-B, OpenSky) naturally produce denser, more accurate corridor maps.</p>
+<p>Regardless of data source, every refresh contributes aircraft positions to Zipcatcher's traffic density heatmap — a browser-local layer that accumulates over time to reveal the flight corridors crossing your observing site. Higher-frequency data sources (ADS-B, OpenSky) naturally produce denser, more accurate corridor maps.</p>
 
 <!-- ── Interactive Selector ── -->
 <h2>9. Select Your Data Source Mode</h2>
@@ -702,7 +702,7 @@
 })();
 </script>
 
-<a class="back-link" href="/" style="display:inline-block; margin:24px 0;">← Back to Flymoon</a>
+<a class="back-link" href="/" style="display:inline-block; margin:24px 0;">← Back to Zipcatcher</a>
 
 <div style="font-size:0.72em; color:var(--muted); border-top:1px solid var(--border); margin-top:24px; padding-top:12px; line-height:1.8;">
   <strong style="color:#aaa;">Attributions</strong><br>

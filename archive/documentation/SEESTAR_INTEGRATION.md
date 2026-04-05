@@ -4,7 +4,7 @@ Automated telescope control for aircraft transit capture using direct TCP/JSON-R
 
 ## Overview
 
-This feature enables Flymoon to automatically trigger video recording on a Seestar telescope when high-probability aircraft transits are predicted. By communicating directly with the Seestar via its native JSON-RPC protocol, the system eliminates external dependencies and provides a lightweight integration.
+This feature enables Zipcatcher to automatically trigger video recording on a Seestar telescope when high-probability aircraft transits are predicted. By communicating directly with the Seestar via its native JSON-RPC protocol, the system eliminates external dependencies and provides a lightweight integration.
 
 **Key Benefits:**
 - ✅ **No external dependencies** - Talks directly to Seestar
@@ -17,7 +17,7 @@ This feature enables Flymoon to automatically trigger video recording on a Seest
 
 ```
 ┌─────────────┐      ┌──────────────┐      ┌──────────┐
-│  Flymoon    │─────▶│ TCP Socket   │─────▶│ Seestar  │
+│  Zipcatcher    │─────▶│ TCP Socket   │─────▶│ Seestar  │
 │  (Transit   │ JSON │  (Port 4700) │ JSON │ Telescope│
 │  Predictor) │ RPC  │              │ RPC  │          │
 └─────────────┘      └──────────────┘      └──────────┘
@@ -41,13 +41,13 @@ Since aircraft transits last only 0.5-2 seconds, automated triggering is essenti
 
 ### Software
 - **Python 3.9+**
-- **Flymoon** with dependencies installed
+- **Zipcatcher** with dependencies installed
 - **Network access** to Seestar's IP address
 
 ### Network Setup
 1. Connect Seestar to your WiFi network
 2. Note the Seestar's IP address (check your router or Seestar app)
-3. Ensure computer running Flymoon can reach Seestar IP
+3. Ensure computer running Zipcatcher can reach Seestar IP
 4. Test connectivity: `ping <seestar-ip>`
 
 ## Configuration
@@ -530,11 +530,11 @@ python3 examples/seestar_transit_trigger.py \
 
 ## License
 
-Same as Flymoon project.
+Same as Zipcatcher project.
 
 ---
 
 **Status**: Framework complete, video commands need hardware testing
 **Last Updated**: 2026-02-02
-**Maintainer**: Flymoon project
+**Maintainer**: Zipcatcher project
 **Contact**: Via GitHub issues

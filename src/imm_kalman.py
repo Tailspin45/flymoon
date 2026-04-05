@@ -8,7 +8,7 @@ Maintains two sub-models:
 The IMM blends both models with probability weights μ = [μ_cv, μ_ca].
 During straight cruise, μ_cv → 1. When the aircraft manoeuvres, μ_ca rises
 automatically, producing a better position forecast and a wider uncertainty
-cone — exactly what Flymoon needs to avoid both false-positive and
+cone — exactly what Zipcatcher needs to avoid both false-positive and
 missed-transit alerts.
 
 Per-aircraft filter state is cached by ICAO24 for up to FILTER_TTL_S seconds

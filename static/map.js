@@ -1,5 +1,5 @@
 /**
- * Flymoon Map Visualization
+ * Zipcatcher Map Visualization
  *
  * Interactive Leaflet map displaying:
  * - Observer location and bounding box for flight searches
@@ -8,7 +8,7 @@
  * - Flight routes and historical tracks
  * - Altitude overlay with clickable indicators
  *
- * @author Flymoon Team
+ * @author Zipcatcher Team
  * @version 1.0
  */
 

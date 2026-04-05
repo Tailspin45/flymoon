@@ -1,4 +1,4 @@
-# Flymoon — Quick Start
+# Zipcatcher — Quick Start
 
 ## The Easy Way: Docker
 
@@ -6,7 +6,7 @@
 
 Go to **[docker.com/get-started](https://www.docker.com/get-started/)**, click the "Download Docker Desktop" button, and install it  for your system (Mac, Windows, and Linux).
 
-### Step 2 — Download Flymoon
+### Step 2 — Download Zipcatcher
 
 Windows: “Press the Windows key, type cmd, then press Enter.”
 
@@ -35,7 +35,7 @@ This walks you through everything interactively:
 - Optional: Telegram notifications
 - Optional: Seestar telescope
 
-### Step 4 — Start Flymoon
+### Step 4 — Start Zipcatcher
 
 docker compose up -d
 
@@ -52,11 +52,11 @@ To see logs: `docker compose logs -f`
 2. **Pick a target** — Sun or Moon
 3. **Set minimum altitudes** — use the N / E / S / W quadrant inputs to mask out directions blocked by trees or buildings
 3a. Click "Min Angle" in quadrant to reset to zero in each quadrant
-5. **Enable auto-refresh** — set a check interval so Flymoon monitors continuously
+5. **Enable auto-refresh** — set a check interval so Zipcatcher monitors continuously
 
 ---
 
-## Keeping Flymoon Updated (frequent bug fixes and updates)
+## Keeping Zipcatcher Updated (frequent bug fixes and updates)
 
 git pull
 docker compose build
@@ -83,7 +83,7 @@ Add to `.env` with text editor:
 ENABLE_SEESTAR=true
 SEESTAR_HOST=192.168.x.x   # leave blank to auto-discover on your LAN
 
-Flymoon will start recording automatically before each predicted transit and stop after. If the scope disconnects overnight it waits until the target is back above your minimum altitude before reconnecting.
+Zipcatcher will start recording automatically before each predicted transit and stop after. If the scope disconnects overnight it waits until the target is back above your minimum altitude before reconnecting.
 
 ---
 

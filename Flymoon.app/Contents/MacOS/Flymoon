@@ -1,12 +1,12 @@
 #!/bin/bash
-# Flymoon macOS launcher
+# Zipcatcher macOS launcher
 # Finds the flymoon-server binary next to this .app, starts it, opens browser.
 
 DIR="$(cd "$(dirname "$0")/../../.." && pwd)"
 BINARY="$DIR/flymoon-server"
 
 if [ ! -f "$BINARY" ]; then
-    osascript -e 'display alert "Flymoon" message "Cannot find flymoon-server next to Flymoon.app.\n\nMake sure Flymoon.app and flymoon-server are in the same folder." as critical'
+    osascript -e 'display alert "Zipcatcher" message "Cannot find flymoon-server next to Zipcatcher.app.\n\nMake sure Zipcatcher.app and flymoon-server are in the same folder." as critical'
     exit 1
 fi
 

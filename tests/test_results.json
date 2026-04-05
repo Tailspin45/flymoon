@@ -1,0 +1,354 @@
+[
+  {
+    "test_name": "BOUNDARY_HIGH_1.9",
+    "description": "1.9\u00b0 lateral miss \u2192 HIGH",
+    "passed": true,
+    "errors": [],
+    "ground_truth": {
+      "angular_separation": 1.91,
+      "alt_diff": 0.034,
+      "az_diff": 2.492,
+      "aircraft_alt": 39.97,
+      "aircraft_az": 177.51
+    },
+    "algorithm": {
+      "angular_separation": 1.91,
+      "alt_diff": 0.034,
+      "az_diff": 2.492,
+      "classification": 3
+    },
+    "expected": {
+      "classification": 3
+    }
+  },
+  {
+    "test_name": "BOUNDARY_MED_2.1",
+    "description": "2.1\u00b0 lateral miss \u2192 MEDIUM",
+    "passed": true,
+    "errors": [],
+    "ground_truth": {
+      "angular_separation": 2.111,
+      "alt_diff": 0.04,
+      "az_diff": 2.755,
+      "aircraft_alt": 39.96,
+      "aircraft_az": 177.25
+    },
+    "algorithm": {
+      "angular_separation": 2.111,
+      "alt_diff": 0.04,
+      "az_diff": 2.755,
+      "classification": 2
+    },
+    "expected": {
+      "classification": 2
+    }
+  },
+  {
+    "test_name": "BOUNDARY_MED_3.9",
+    "description": "3.9\u00b0 lateral miss \u2192 MEDIUM",
+    "passed": true,
+    "errors": [],
+    "ground_truth": {
+      "angular_separation": 3.924,
+      "alt_diff": 0.12,
+      "az_diff": 5.117,
+      "aircraft_alt": 39.88,
+      "aircraft_az": 174.88
+    },
+    "algorithm": {
+      "angular_separation": 3.916,
+      "alt_diff": 0.61,
+      "az_diff": 5.028,
+      "classification": 2
+    },
+    "expected": {
+      "classification": 2
+    }
+  },
+  {
+    "test_name": "BOUNDARY_LOW_4.1",
+    "description": "4.1\u00b0 lateral miss \u2192 LOW",
+    "passed": true,
+    "errors": [],
+    "ground_truth": {
+      "angular_separation": 4.126,
+      "alt_diff": 0.132,
+      "az_diff": 5.379,
+      "aircraft_alt": 39.87,
+      "aircraft_az": 174.62
+    },
+    "algorithm": {
+      "angular_separation": 4.114,
+      "alt_diff": 0.621,
+      "az_diff": 5.286,
+      "classification": 1
+    },
+    "expected": {
+      "classification": 1
+    }
+  },
+  {
+    "test_name": "BOUNDARY_LOW_11.0",
+    "description": "11.0\u00b0 lateral miss \u2192 LOW",
+    "passed": true,
+    "errors": [],
+    "ground_truth": {
+      "angular_separation": 11.162,
+      "alt_diff": 0.911,
+      "az_diff": 14.443,
+      "aircraft_alt": 39.09,
+      "aircraft_az": 165.56
+    },
+    "algorithm": {
+      "angular_separation": 10.879,
+      "alt_diff": 3.134,
+      "az_diff": 13.316,
+      "classification": 1
+    },
+    "expected": {
+      "classification": 1
+    }
+  },
+  {
+    "test_name": "BOUNDARY_UNLIKELY_13.0",
+    "description": "13.0\u00b0 lateral miss \u2192 UNLIKELY",
+    "passed": true,
+    "errors": [],
+    "ground_truth": {
+      "angular_separation": 13.243,
+      "alt_diff": 1.275,
+      "az_diff": 17.075,
+      "aircraft_alt": 38.73,
+      "aircraft_az": 162.92
+    },
+    "algorithm": {
+      "angular_separation": 12.777,
+      "alt_diff": 4.646,
+      "az_diff": 15.066,
+      "classification": 0
+    },
+    "expected": {
+      "classification": 0
+    }
+  },
+  {
+    "test_name": "DIRECT_TRANSIT_0.0",
+    "description": "Perfect alignment \u2014 aircraft exactly on transit point",
+    "passed": true,
+    "errors": [],
+    "ground_truth": {
+      "angular_separation": 0.007,
+      "alt_diff": 0.007,
+      "az_diff": 0.0,
+      "aircraft_alt": 39.99,
+      "aircraft_az": 180.0
+    },
+    "algorithm": {
+      "angular_separation": 0.007,
+      "alt_diff": 0.007,
+      "az_diff": 0.0,
+      "classification": 3
+    },
+    "expected": {
+      "classification": 3
+    }
+  },
+  {
+    "test_name": "APPROACH_NORTH_1.5",
+    "description": "1.5\u00b0 miss, NORTH heading (0\u00b0)",
+    "passed": true,
+    "errors": [],
+    "ground_truth": {
+      "angular_separation": 1.508,
+      "alt_diff": 0.024,
+      "az_diff": 1.968,
+      "aircraft_alt": 39.98,
+      "aircraft_az": 178.03
+    },
+    "algorithm": {
+      "angular_separation": 1.508,
+      "alt_diff": 0.024,
+      "az_diff": 1.968,
+      "classification": 3
+    },
+    "expected": {
+      "classification": 3
+    }
+  },
+  {
+    "test_name": "APPROACH_EAST_1.5",
+    "description": "1.5\u00b0 miss, EAST heading (90\u00b0)",
+    "passed": true,
+    "errors": [],
+    "ground_truth": {
+      "angular_separation": 1.508,
+      "alt_diff": 0.024,
+      "az_diff": 1.968,
+      "aircraft_alt": 39.98,
+      "aircraft_az": 178.03
+    },
+    "algorithm": {
+      "angular_separation": 1.508,
+      "alt_diff": 0.024,
+      "az_diff": 1.968,
+      "classification": 3
+    },
+    "expected": {
+      "classification": 3
+    }
+  },
+  {
+    "test_name": "APPROACH_NE_1.5",
+    "description": "1.5\u00b0 miss, NE heading (45\u00b0)",
+    "passed": true,
+    "errors": [],
+    "ground_truth": {
+      "angular_separation": 1.508,
+      "alt_diff": 0.024,
+      "az_diff": 1.968,
+      "aircraft_alt": 39.98,
+      "aircraft_az": 178.03
+    },
+    "algorithm": {
+      "angular_separation": 1.508,
+      "alt_diff": 0.024,
+      "az_diff": 1.968,
+      "classification": 3
+    },
+    "expected": {
+      "classification": 3
+    }
+  },
+  {
+    "test_name": "APPROACH_SOUTH_1.5",
+    "description": "1.5\u00b0 miss, SOUTH heading (180\u00b0)",
+    "passed": true,
+    "errors": [],
+    "ground_truth": {
+      "angular_separation": 1.508,
+      "alt_diff": 0.024,
+      "az_diff": 1.968,
+      "aircraft_alt": 39.98,
+      "aircraft_az": 178.03
+    },
+    "algorithm": {
+      "angular_separation": 1.508,
+      "alt_diff": 0.024,
+      "az_diff": 1.968,
+      "classification": 3
+    },
+    "expected": {
+      "classification": 3
+    }
+  },
+  {
+    "test_name": "ALTITUDE_LOW_1.5",
+    "description": "1.5\u00b0 miss at 10000 ft",
+    "passed": true,
+    "errors": [],
+    "ground_truth": {
+      "angular_separation": 1.506,
+      "alt_diff": 0.034,
+      "az_diff": 1.966,
+      "aircraft_alt": 40.03,
+      "aircraft_az": 178.03
+    },
+    "algorithm": {
+      "angular_separation": 1.506,
+      "alt_diff": 0.034,
+      "az_diff": 1.966,
+      "classification": 3
+    },
+    "expected": {
+      "classification": 3
+    }
+  },
+  {
+    "test_name": "ALTITUDE_MED_1.5",
+    "description": "1.5\u00b0 miss at 25000 ft",
+    "passed": true,
+    "errors": [],
+    "ground_truth": {
+      "angular_separation": 1.507,
+      "alt_diff": 0.001,
+      "az_diff": 1.967,
+      "aircraft_alt": 40.0,
+      "aircraft_az": 178.03
+    },
+    "algorithm": {
+      "angular_separation": 1.507,
+      "alt_diff": 0.001,
+      "az_diff": 1.967,
+      "classification": 3
+    },
+    "expected": {
+      "classification": 3
+    }
+  },
+  {
+    "test_name": "ALTITUDE_HIGH_1.5",
+    "description": "1.5\u00b0 miss at 45000 ft",
+    "passed": true,
+    "errors": [],
+    "ground_truth": {
+      "angular_separation": 1.509,
+      "alt_diff": 0.047,
+      "az_diff": 1.968,
+      "aircraft_alt": 39.95,
+      "aircraft_az": 178.03
+    },
+    "algorithm": {
+      "angular_separation": 1.509,
+      "alt_diff": 0.047,
+      "az_diff": 1.968,
+      "classification": 3
+    },
+    "expected": {
+      "classification": 3
+    }
+  },
+  {
+    "test_name": "EDGE_FAST_AIRCRAFT",
+    "description": "Fast aircraft (600 kts = 1111 km/h) \u2014 speed must not affect classification",
+    "passed": true,
+    "errors": [],
+    "ground_truth": {
+      "angular_separation": 1.005,
+      "alt_diff": 0.014,
+      "az_diff": 1.312,
+      "aircraft_alt": 39.99,
+      "aircraft_az": 178.69
+    },
+    "algorithm": {
+      "angular_separation": 1.005,
+      "alt_diff": 0.014,
+      "az_diff": 1.312,
+      "classification": 3
+    },
+    "expected": {
+      "classification": 3
+    }
+  },
+  {
+    "test_name": "EDGE_SLOW_AIRCRAFT",
+    "description": "Slow aircraft (100 kts = 185 km/h) \u2014 speed must not affect classification",
+    "passed": true,
+    "errors": [],
+    "ground_truth": {
+      "angular_separation": 1.005,
+      "alt_diff": 0.014,
+      "az_diff": 1.312,
+      "aircraft_alt": 39.99,
+      "aircraft_az": 178.69
+    },
+    "algorithm": {
+      "angular_separation": 1.005,
+      "alt_diff": 0.014,
+      "az_diff": 1.312,
+      "classification": 3
+    },
+    "expected": {
+      "classification": 3
+    }
+  }
+]

@@ -158,7 +158,7 @@ class WindowsTransitMonitor:
     def _create_menu(self):
         """Create the right-click menu."""
         return pystray.Menu(
-            pystray.MenuItem("Flymoon Transit Monitor", None, enabled=False),
+            pystray.MenuItem("Zipcatcher Transit Monitor", None, enabled=False),
             pystray.Menu.SEPARATOR,
             pystray.MenuItem(
                 lambda item: f"Target: {self.target.upper()}", None, enabled=False
@@ -368,7 +368,7 @@ class WindowsTransitMonitor:
         self.icon = pystray.Icon(
             "flymoon",
             self._create_icon_image(),
-            "Flymoon Transit Monitor",
+            "Zipcatcher Transit Monitor",
             self._create_menu(),
         )
 

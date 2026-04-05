@@ -1,6 +1,6 @@
 @echo off
 REM Package a naive-user Windows ZIP from existing installer artifacts.
-REM Output: dist-windows\Flymoon-Windows-EndUser.zip
+REM Output: dist-windows\Zipcatcher-Windows-EndUser.zip
 REM Prerequisite: run build-win-oneclick.bat (or build-win.bat) first.
 
 setlocal enabledelayedexpansion
@@ -9,8 +9,8 @@ set ROOT=%CD%
 
 set DIST_ELECTRON=%ROOT%\dist-electron
 set DIST_WINDOWS=%ROOT%\dist-windows
-set STAGE=%DIST_WINDOWS%\Flymoon-Windows-EndUser
-set ZIP=%DIST_WINDOWS%\Flymoon-Windows-EndUser.zip
+set STAGE=%DIST_WINDOWS%\Zipcatcher-Windows-EndUser
+set ZIP=%DIST_WINDOWS%\Zipcatcher-Windows-EndUser.zip
 
 if not exist "%DIST_ELECTRON%" (
     echo ERROR: %DIST_ELECTRON% does not exist.
@@ -39,7 +39,7 @@ if exist "%STAGE%" rmdir /s /q "%STAGE%"
 mkdir "%STAGE%"
 
 copy /Y "%INSTALLER%" "%STAGE%\" >nul
-copy /Y "%ROOT%\START-HERE-Install-Flymoon.bat" "%STAGE%\" >nul
+copy /Y "%ROOT%\START-HERE-Install-Zipcatcher.bat" "%STAGE%\" >nul
 copy /Y "%ROOT%\README-WINDOWS.txt" "%STAGE%\" >nul
 
 if exist "%ZIP%" del /q "%ZIP%"

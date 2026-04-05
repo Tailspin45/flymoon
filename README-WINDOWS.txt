@@ -1,4 +1,4 @@
-Flymoon for Windows - Quick Start
+Zipcatcher for Windows - Quick Start
 =================================
 
 No extra software required - everything is included.
@@ -7,21 +7,21 @@ No extra software required - everything is included.
 1) INSTALL FLYMOON
 ------------------
 Double-click:
-  START-HERE-Install-Flymoon.bat
+  START-HERE-Install-Zipcatcher.bat
 
-This launches the Flymoon Setup wizard.
+This launches the Zipcatcher Setup wizard.
 Follow the prompts (click Next, then Install, then Finish).
-Flymoon will start automatically when installation is complete.
+Zipcatcher will start automatically when installation is complete.
 
 
-2) Running Flymoon again
+2) Running Zipcatcher again
 ------------------------
-Use the Flymoon shortcut on your Desktop or in the Start Menu.
+Use the Zipcatcher shortcut on your Desktop or in the Start Menu.
 
 
 3) First-time configuration
 ---------------------------
-On first launch Flymoon will ask for your API key and location.
+On first launch Zipcatcher will ask for your API key and location.
 Follow the on-screen setup wizard.
 
 
@@ -29,4 +29,4 @@ Troubleshooting
 ---------------
 - If Windows SmartScreen appears, click "More info" -> "Run anyway".
 - If a firewall prompt appears, allow private network access.
-- If Flymoon does not start after install, use the Desktop shortcut.
+- If Zipcatcher does not start after install, use the Desktop shortcut.

@@ -1,8 +1,8 @@
-# Flymoon Diagnostic & Repair Plan
+# Zipcatcher Diagnostic & Repair Plan
 
 ## System Overview
 
-Flymoon predicts and captures aircraft transits across the Sun and Moon. It combines:
+Zipcatcher predicts and captures aircraft transits across the Sun and Moon. It combines:
 
 - **Prediction**: OpenSky ADS-B data + Skyfield ephemeris → angular separation → transit probability.
 - **Detection**: Dual-signal CV algorithm on live RTSP stream (160×90 @ 15 fps) with adaptive thresholds.

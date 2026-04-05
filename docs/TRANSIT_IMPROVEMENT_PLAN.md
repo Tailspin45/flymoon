@@ -1,4 +1,4 @@
-# Flymoon Transit System: Gap Analysis and Improvement Plan
+# Zipcatcher Transit System: Gap Analysis and Improvement Plan
 ## A Research-Grounded Evaluation for Future Development
 
 **Date:** March 2026  
@@ -59,9 +59,9 @@ The prediction and detection pipelines are **almost entirely independent**. The 
 
 **Reference:** R. Graas, J. Sun, J.M. Hoekstra, *"Quantifying Accuracy and Uncertainty in Data-Driven Flight Trajectory Predictions with Gaussian Process Regression,"* 11th SESAR Innovation Days, 2021. (TU Delft Research Portal)
 
-A two-stage GPR approach combines historical flight-type data with the observed trajectory of the specific flight. Applied to arrivals at Amsterdam Schiphol, the model produces full **predictive distributions** (not just point estimates), allowing uncertainty to shrink as the aircraft approaches. Flight-plan and meteorological information further reduce prediction error. Critically, this approach is evaluated on ADS-B data from OpenSky — the same source Flymoon uses — making it directly applicable.
+A two-stage GPR approach combines historical flight-type data with the observed trajectory of the specific flight. Applied to arrivals at Amsterdam Schiphol, the model produces full **predictive distributions** (not just point estimates), allowing uncertainty to shrink as the aircraft approaches. Flight-plan and meteorological information further reduce prediction error. Critically, this approach is evaluated on ADS-B data from OpenSky — the same source Zipcatcher uses — making it directly applicable.
 
-**Relevance to Flymoon:** Replacing the constant-velocity model with a trained GPR (or lighter-weight Kalman variant) would yield: (a) angular uncertainty bounds alongside the separation estimate; (b) better accuracy for non-cruising aircraft; (c) the ability to discount alerts with high uncertainty.
+**Relevance to Zipcatcher:** Replacing the constant-velocity model with a trained GPR (or lighter-weight Kalman variant) would yield: (a) angular uncertainty bounds alongside the separation estimate; (b) better accuracy for non-cruising aircraft; (c) the ability to discount alerts with high uncertainty.
 
 ---
 
@@ -71,7 +71,7 @@ A two-stage GPR approach combines historical flight-type data with the observed 
 
 An Interacting Multiple Model Kalman Filter (IMM-KF) augmented with a recurrent neural network that adaptively estimates the process and observation noise matrices from the ADS-B data stream. Compared to a conventional IMM-KF, the RNN-enhanced version achieved a **28.56% reduction in total RMSE** on maneuvering targets. The IMM framework maintains probability-weighted combinations of a constant-velocity (CV) and constant-acceleration (CA) motion model, seamlessly handling the switch between straight cruise and turns.
 
-**Relevance to Flymoon:** The IMM approach is the practical engineering alternative to full GPR. It handles the exact failure mode in Limitation 1 (constant-velocity assumption breaking during turns or climb/descent) with moderate implementation effort. The ADS-B-specific noise adaptation addresses Limitation 2 (OpenSky data latency and quality variance).
+**Relevance to Zipcatcher:** The IMM approach is the practical engineering alternative to full GPR. It handles the exact failure mode in Limitation 1 (constant-velocity assumption breaking during turns or climb/descent) with moderate implementation effort. The ADS-B-specific noise adaptation addresses Limitation 2 (OpenSky data latency and quality variance).
 
 ---
 
@@ -81,7 +81,7 @@ An Interacting Multiple Model Kalman Filter (IMM-KF) augmented with a recurrent 
 
 Extends the standard IMM to an Unscented Kalman Filter (UKF) for nonlinear dynamics, with transition probabilities between motion modes adapted via a distance function. Demonstrates robust tracking during sensor outages (analogous to OpenSky going into 429 backoff) and improved accuracy during combined maneuver + sensor-gap scenarios.
 
-**Relevance to Flymoon:** The sensor-outage robustness is directly applicable to the 300-second OpenSky backoff period, during which Flymoon currently has no position updates for any aircraft. An IMM-UKF could continue propagating plausible trajectory envelopes through the outage.
+**Relevance to Zipcatcher:** The sensor-outage robustness is directly applicable to the 300-second OpenSky backoff period, during which Zipcatcher currently has no position updates for any aircraft. An IMM-UKF could continue propagating plausible trajectory envelopes through the outage.
 
 ---
 
@@ -91,7 +91,7 @@ Extends the standard IMM to an Unscented Kalman Filter (UKF) for nonlinear dynam
 
 Discrete Wavelet Transform (DWT) preprocessing using symlet-5 wavelets followed by LightGBM classification achieved **81% accuracy** in distinguishing true transits from false positives (binary systems, pulsating stars), outperforming non-wavelet pipelines by 5–6 percentage points. The DWT separates the slowly-varying background (analogous to atmospheric shimmer on the solar disc) from the impulsive transit signature.
 
-**Relevance to Flymoon:** The rolling EMA reference (Signal B) is a crude first-order high-pass filter. A wavelet decomposition of the per-frame disc-averaged intensity time series would cleanly separate: (a) DC component (solar limb darkening); (b) low-frequency component (atmospheric seeing, clouds, granulation evolution); (c) high-frequency impulse (aircraft crossing at ~15–30 frames/transit). This would improve the signal-to-noise ratio of Signal B significantly, especially for slow-moving or partial disc crossings.
+**Relevance to Zipcatcher:** The rolling EMA reference (Signal B) is a crude first-order high-pass filter. A wavelet decomposition of the per-frame disc-averaged intensity time series would cleanly separate: (a) DC component (solar limb darkening); (b) low-frequency component (atmospheric seeing, clouds, granulation evolution); (c) high-frequency impulse (aircraft crossing at ~15–30 frames/transit). This would improve the signal-to-noise ratio of Signal B significantly, especially for slow-moving or partial disc crossings.
 
 ---
 
@@ -101,7 +101,7 @@ Discrete Wavelet Transform (DWT) preprocessing using symlet-5 wavelets followed 
 
 The Transit Comb Filter (TCF), combined with ARIMA-based detrending of the residual time series, significantly outperforms traditional BLS when **autocorrelated noise** is present. BLS assumes white noise; BLS degrades when the noise has a power spectrum that correlates across adjacent samples — exactly the condition imposed by atmospheric turbulence and granulation jitter on a solar image sequence.
 
-**Relevance to Flymoon:** While BLS is designed for periodic transit surveys, the core insight — that matched-filter approaches tuned to the known transit shape outperform simple threshold detectors in correlated noise — applies directly to Flymoon's Signal A/B detection. A matched filter or template correlator shaped to the expected aircraft silhouette duration (0.3–1.5 s) would improve sensitivity for partial or slow crossings.
+**Relevance to Zipcatcher:** While BLS is designed for periodic transit surveys, the core insight — that matched-filter approaches tuned to the known transit shape outperform simple threshold detectors in correlated noise — applies directly to Zipcatcher's Signal A/B detection. A matched filter or template correlator shaped to the expected aircraft silhouette duration (0.3–1.5 s) would improve sensitivity for partial or slow crossings.
 
 ---
 
@@ -111,7 +111,7 @@ The Transit Comb Filter (TCF), combined with ARIMA-based detrending of the resid
 
 GPFC achieved **97% training accuracy** and detection rates superior to BLS at three orders of magnitude faster runtime on GPU. The CNN operates on phase-folded images of the light curve, classifying transit vs. non-transit with high recall on synthetic + real data.
 
-**Relevance to Flymoon:** The architecture is not directly portable (it requires a periodic signal), but the core approach — a small CNN trained on known transit morphologies — is applicable to Flymoon's post-event classifier. A CNN trained on confirmed transit frame-sequences vs. false-positive frame-sequences (clouds, sunspot edge artefacts, cosmic rays) could replace the current hard-threshold consecutive-frame gate with a learned decision boundary, substantially reducing false positives without sacrificing recall.
+**Relevance to Zipcatcher:** The architecture is not directly portable (it requires a periodic signal), but the core approach — a small CNN trained on known transit morphologies — is applicable to Zipcatcher's post-event classifier. A CNN trained on confirmed transit frame-sequences vs. false-positive frame-sequences (clouds, sunspot edge artefacts, cosmic rays) could replace the current hard-threshold consecutive-frame gate with a learned decision boundary, substantially reducing false positives without sacrificing recall.
 
 ---
 
@@ -121,13 +121,13 @@ GPFC achieved **97% training accuracy** and detection rates superior to BLS at t
 
 KBMOD's "shift-and-stack" method detects moving objects by evaluating candidate linear trajectories across a sequence of difference images. A CNN stamp filter rejects artefacts that survive the linear-motion hypothesis but are not true moving objects. In practice this step removed ~70% of false positives while retaining >98% of true detections.
 
-**Relevance to Flymoon:** TransitAnalyzer already performs a similar shift-and-stack via blob tracking + coherence filtering. Adding a lightweight CNN stamp classifier (trained on positive examples from confirmed transits and negatives from false detections) would strengthen the offline post-capture confirmation step and could be applied to the live stream as a second-stage gate.
+**Relevance to Zipcatcher:** TransitAnalyzer already performs a similar shift-and-stack via blob tracking + coherence filtering. Adding a lightweight CNN stamp classifier (trained on positive examples from confirmed transits and negatives from false detections) would strengthen the offline post-capture confirmation step and could be applied to the live stream as a second-stage gate.
 
 ---
 
 ### Additional Observational Context
 
-**Transit Chaser** (transitchaser.com) is the closest publicly known competitor to Flymoon's predictive function. It uses **four simultaneous flight data sources** (ADSB-One, OpenSky, ADS-B Exchange, RadarBox) with search radii from 10–60 km and prediction windows from 30 s to 3 minutes. This multi-source approach directly addresses Flymoon's single-source dependency on OpenSky and the data latency problem.
+**Transit Chaser** (transitchaser.com) is the closest publicly known competitor to Zipcatcher's predictive function. It uses **four simultaneous flight data sources** (ADSB-One, OpenSky, ADS-B Exchange, RadarBox) with search radii from 10–60 km and prediction windows from 30 s to 3 minutes. This multi-source approach directly addresses Zipcatcher's single-source dependency on OpenSky and the data latency problem.
 
 ---
 
@@ -182,7 +182,7 @@ Replace `predict_position()` with a two-model Interacting Multiple Model Kalman 
 - **Measurement update:** Each new OpenSky state vector is a noisy measurement; the filter smooths and extrapolates.  
 - **Output:** Point estimate + 1σ covariance propagated forward → angular uncertainty ellipse → `possibility_level_lower` and `possibility_level_upper` bounds.  
 
-The IMM mode-blending handles the cruising→turning transition that is Flymoon's Limitation 1. Literature evidence [L2] shows 28.56% RMSE reduction vs constant-velocity over ADS-B data. Implementation is self-contained in `src/position.py`; the API to `check_transit()` can remain unchanged.
+The IMM mode-blending handles the cruising→turning transition that is Zipcatcher's Limitation 1. Literature evidence [L2] shows 28.56% RMSE reduction vs constant-velocity over ADS-B data. Implementation is self-contained in `src/position.py`; the API to `check_transit()` can remain unchanged.
 
 **Effort:** Medium (2–3 days). Requires `filterpy` or a thin custom Kalman implementation. No external API changes.
 
@@ -444,7 +444,7 @@ Items are ordered by the product of *impact* (how many transits are saved/verifi
 
 ## 7. Sense Check
 
-Each proposed change is tested here against three criteria: (a) it addresses a concrete identified gap; (b) it is supported by cited evidence or first-principles reasoning; (c) it is feasible within Flymoon's project constraints (Python, OpenCV, Skyfield, Flask, no dedicated GPU required except optionally for Phase E).
+Each proposed change is tested here against three criteria: (a) it addresses a concrete identified gap; (b) it is supported by cited evidence or first-principles reasoning; (c) it is feasible within Zipcatcher's project constraints (Python, OpenCV, Skyfield, Flask, no dedicated GPU required except optionally for Phase E).
 
 | Item | Gap(s) Addressed | Evidence Basis | Feasibility | Risk |
 |------|-----------------|---------------|-------------|------|

@@ -2,7 +2,7 @@
 <html>
 <head>
 <meta charset="utf-8">
-<title>Flymoon Setup</title>
+<title>Zipcatcher Setup</title>
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0; }
   body {
@@ -218,7 +218,7 @@
 <body>
 
 <div class="wizard-header">
-  <h1>🔭 Flymoon Setup</h1>
+  <h1>🔭 Zipcatcher Setup</h1>
   <div class="subtitle">Configure your installation — takes about 2 minutes</div>
   <div class="steps">
     <div class="step-dot active" id="dot-0"></div>
@@ -236,8 +236,8 @@
   <div class="step-panel active" id="step-0">
     <div class="welcome-hero">
       <div class="logo">🌙☀️✈️</div>
-      <h2>Welcome to Flymoon</h2>
-      <p>Flymoon detects aircraft transiting the Sun and Moon in real time, and can automatically trigger your Seestar telescope to capture the event.</p>
+      <h2>Welcome to Zipcatcher</h2>
+      <p>Zipcatcher detects aircraft transiting the Sun and Moon in real time, and can automatically trigger your Seestar telescope to capture the event.</p>
       <ul class="feature-list">
         <li>Live flight tracking via FlightAware AeroAPI</li>
         <li>Celestial position calculations (no internet needed for sky math)</li>
@@ -254,7 +254,7 @@
   <!-- Step 1: FlightAware API Key -->
   <div class="step-panel" id="step-1">
     <h2>✈️ FlightAware API Key</h2>
-    <p class="step-desc">Flymoon uses FlightAware AeroAPI to fetch real-time aircraft positions near you. A free Personal tier account includes 10 requests/minute — enough for continuous monitoring.</p>
+    <p class="step-desc">Zipcatcher uses FlightAware AeroAPI to fetch real-time aircraft positions near you. A free Personal tier account includes 10 requests/minute — enough for continuous monitoring.</p>
     <div class="info-box">
       1. Sign up at <a onclick="open_('https://www.flightaware.com/aeroapi/portal/')">flightaware.com/aeroapi/portal</a><br>
       2. Create a new API key under the "Personal" plan<br>
@@ -270,7 +270,7 @@
   <!-- Step 2: Observer Location -->
   <div class="step-panel" id="step-2">
     <h2>📍 Your Location</h2>
-    <p class="step-desc">Flymoon calculates the Sun and Moon's position relative to where you are. Your location stays on this device and is never shared.</p>
+    <p class="step-desc">Zipcatcher calculates the Sun and Moon's position relative to where you are. Your location stays on this device and is never shared.</p>
     <button class="detect-btn" id="detectBtn" onclick="detectLocation()">
       <span id="detectIcon">📡</span> Auto-detect my location
     </button>
@@ -297,7 +297,7 @@
   <!-- Step 3: Bounding Box -->
   <div class="step-panel" id="step-3">
     <h2>🗺️ Search Area</h2>
-    <p class="step-desc">Flymoon searches for aircraft within a rectangular area around your location. A ±2° box (~220 km) works well for most observers.</p>
+    <p class="step-desc">Zipcatcher searches for aircraft within a rectangular area around your location. A ±2° box (~220 km) works well for most observers.</p>
     <button class="detect-btn" id="autoBoxBtn" onclick="autoBox()">
       ⚡ Auto-compute from my location (±2°)
     </button>
@@ -346,7 +346,7 @@
   <!-- Step 5: Seestar (optional) -->
   <div class="step-panel" id="step-5">
     <h2>🔭 Seestar Telescope <span class="optional-badge">optional</span></h2>
-    <p class="step-desc">If you have a Seestar S50 on your local network, Flymoon can automatically start recording when a transit is imminent.</p>
+    <p class="step-desc">If you have a Seestar S50 on your local network, Zipcatcher can automatically start recording when a transit is imminent.</p>
     <div class="toggle-row">
       <input type="checkbox" id="seestar_enabled" onchange="toggleSeestar()">
       <label for="seestar_enabled">Enable Seestar integration</label>
@@ -376,7 +376,7 @@
   <div class="step-panel" id="step-launch" style="display:none">
     <div class="launch-screen">
       <div class="launch-emoji">🚀</div>
-      <h2>Starting Flymoon</h2>
+      <h2>Starting Zipcatcher</h2>
       <div class="spinner"></div>
       <p id="launchStatusText">Saving configuration…</p>
       <div class="launch-progress-track">
@@ -389,7 +389,7 @@
   <!-- Step 6 (implicit via review in footer): Review — shown as a summary overlay -->
   <div class="step-panel" id="step-review" style="display:none">
     <h2>✅ Review &amp; Finish</h2>
-    <p class="step-desc">Double-check your settings then click <strong>Launch Flymoon</strong>.</p>
+    <p class="step-desc">Double-check your settings then click <strong>Launch Zipcatcher</strong>.</p>
     <table class="review-table" id="reviewTable"></table>
     <div class="info-box" style="margin-top:14px">
       You can change any setting later from <strong>File → Preferences</strong>.
@@ -428,7 +428,7 @@ function showStep(idx) {
     document.getElementById('btnBack').style.display = idx > 0 ? '' : 'none';
     const isLast = idx === STEPS.length - 1;
     const btnNext = document.getElementById('btnNext');
-    btnNext.textContent = isLast ? '🚀 Launch Flymoon' : 'Next →';
+    btnNext.textContent = isLast ? '🚀 Launch Zipcatcher' : 'Next →';
     btnNext.className   = 'btn ' + (isLast ? 'btn-success' : 'btn-primary');
     document.getElementById('stepCounter').textContent = `Step ${Math.min(idx+1, 6)} of 6`;
     if (isLast) buildReview();

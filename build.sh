@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# Build script for Flymoon desktop app (macOS / Linux)
-# Produces: dist-electron/Flymoon-{version}.dmg  (macOS)
-#           dist-electron/Flymoon-{version}.AppImage (Linux)
+# Build script for Zipcatcher desktop app (macOS / Linux)
+# Produces: dist-electron/Zipcatcher-{version}.dmg  (macOS)
+#           dist-electron/Zipcatcher-{version}.AppImage (Linux)
 #
 # Prerequisites:
 #   macOS:  brew install python3 node imagemagick inkscape
@@ -21,7 +21,7 @@ for arg in "$@"; do
 done
 
 echo "═══════════════════════════════════════════"
-echo "  Flymoon build"
+echo "  Zipcatcher build"
 echo "═══════════════════════════════════════════"
 
 # ── 1. Python environment ──────────────────────────────────────────────────

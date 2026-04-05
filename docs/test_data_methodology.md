@@ -1,8 +1,8 @@
-# Synthetic Test Data Generation for Flymoon Transit Detection
+# Synthetic Test Data Generation for Zipcatcher Transit Detection
 
 ## Abstract
 
-Validating an aircraft transit detection pipeline against live data is impractical: transits are rare, the target's sky position changes continuously, and API dependencies make repeatable unit testing impossible. This note describes the synthetic test data strategy used by Flymoon — how geometrically correct flight positions are constructed from first principles for any sky configuration, how the data is formatted to match the live API pipeline, and what pitfalls were discovered and corrected during development.
+Validating an aircraft transit detection pipeline against live data is impractical: transits are rare, the target's sky position changes continuously, and API dependencies make repeatable unit testing impossible. This note describes the synthetic test data strategy used by Zipcatcher — how geometrically correct flight positions are constructed from first principles for any sky configuration, how the data is formatted to match the live API pipeline, and what pitfalls were discovered and corrected during development.
 
 ---
 

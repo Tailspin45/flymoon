@@ -1,9 +1,9 @@
 {
-  "name": "Flymoon Transit Tracker",
+  "name": "Zipcatcher Transit Tracker",
   "description": "Full project access for web app and background processes",
   "workingDirectories": [
     "/Users/Tom/flymoon",
-    "/Users/Tom/flymoon/dist/Flymoon-Web",
+    "/Users/Tom/flymoon/dist/Zipcatcher-Web",
     "/Users/Tom/flymoon/src",
     "/Users/Tom/flymoon/static",
     "/Users/Tom/flymoon/templates",

@@ -1,6 +1,6 @@
 @echo off
-REM Build script for Flymoon desktop app (Windows)
-REM Produces: dist-electron\Flymoon-Setup-{version}.exe
+REM Build script for Zipcatcher desktop app (Windows)
+REM Produces: dist-electron\Zipcatcher-Setup-{version}.exe
 REM
 REM Prerequisites:
 REM   - Python 3.9+  https://python.org/downloads/
@@ -13,7 +13,7 @@ cd /d "%~dp0"
 set ROOT=%CD%
 
 echo ===============================================
-echo   Flymoon build (Windows)
+echo   Zipcatcher build (Windows)
 echo ===============================================
 
 REM ── 1. Python venv ──────────────────────────────────────────────────────

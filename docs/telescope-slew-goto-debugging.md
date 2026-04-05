@@ -92,7 +92,7 @@ Move the scope via nudge, then immediately call `scope_get_equ_coord`. If the RA
 Check if the Seestar firmware supports this command (seestar_alp reference code doesn't use it, but it may exist in newer firmware). If it works, it returns direct alt/az without the broken RA/Dec conversion chain and can replace `scope_get_equ_coord` in `get_telemetry`.
 
 ### 4. Parse position from unsolicited Event messages
-The firmware broadcasts Event messages continuously. Some events likely carry actual mount position (e.g. `MotionInfo`, `ScopeGoto`, or similar). Currently Flymoon discards all Events except viewing-mode and recording changes. Capturing a position event in `_handle_event` and caching it would give reliable real-time position for the `manual_goto` servo loop.
+The firmware broadcasts Event messages continuously. Some events likely carry actual mount position (e.g. `MotionInfo`, `ScopeGoto`, or similar). Currently Zipcatcher discards all Events except viewing-mode and recording changes. Capturing a position event in `_handle_event` and caching it would give reliable real-time position for the `manual_goto` servo loop.
 
 ### 5. Fallback: use balance sensor + compass as position proxy
 `tilt_angle` (from `balance_sensor`) tracks arm elevation angle; `compass_direction` (from `compass_sensor`) tracks azimuth. They're imprecise but physically updated as the scope moves. Could serve as a rough position source for `manual_goto` when RA/Dec telemetry is stale.

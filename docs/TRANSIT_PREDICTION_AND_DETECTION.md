@@ -1,4 +1,4 @@
-# Flymoon: Transit Prediction and Detection
+# Zipcatcher: Transit Prediction and Detection
 ## Technical Reference for Future Development
 
 **Date:** March 2026  
@@ -32,7 +32,7 @@
 
 ## 1. Overview and Architecture
 
-Flymoon tracks commercial aircraft transiting the solar or lunar disc. A transit is an event in which an aircraft passes across the face of the Sun or Moon as seen by an observer on the ground — an event that lasts typically 0.5–2 seconds.
+Zipcatcher tracks commercial aircraft transiting the solar or lunar disc. A transit is an event in which an aircraft passes across the face of the Sun or Moon as seen by an observer on the ground — an event that lasts typically 0.5–2 seconds.
 
 The system has two independent pipelines that run simultaneously:
 

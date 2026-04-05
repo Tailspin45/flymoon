@@ -9,7 +9,7 @@ Mock mode allows you to test the telescope control interface without actual Sees
 ### Temporary (Current Session)
 
 ```bash
-cd dist/Flymoon-Web
+cd dist/Zipcatcher-Web
 MOCK_TELESCOPE=true python app.py
 ```
 
@@ -22,7 +22,7 @@ MOCK_TELESCOPE=true
 
 Then start the app normally:
 ```bash
-cd dist/Flymoon-Web
+cd dist/Zipcatcher-Web
 python app.py
 ```
 
@@ -30,7 +30,7 @@ python app.py
 
 ### Remove from environment:
 ```bash
-cd dist/Flymoon-Web
+cd dist/Zipcatcher-Web
 python app.py
 ```
 

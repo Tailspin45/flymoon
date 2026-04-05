@@ -119,7 +119,7 @@ class AlpacaClient:
         try:
             req = urllib.request.Request(
                 url,
-                headers={"User-Agent": "Flymoon/1.0 (ASCOM Alpaca client)"},
+                headers={"User-Agent": "Zipcatcher/1.0 (ASCOM Alpaca client)"},
             )
             with urllib.request.urlopen(
                 req,
@@ -162,7 +162,7 @@ class AlpacaClient:
         url = f"{self._base_url}/{endpoint}"
         req = urllib.request.Request(url, data=body, method="PUT")
         req.add_header("Content-Type", "application/x-www-form-urlencoded")
-        req.add_header("User-Agent", "Flymoon/1.0 (ASCOM Alpaca client)")
+        req.add_header("User-Agent", "Zipcatcher/1.0 (ASCOM Alpaca client)")
         logfn = logger.debug if quiet else logger.warning
         try:
             with urllib.request.urlopen(
@@ -191,7 +191,7 @@ class AlpacaClient:
         try:
             req = urllib.request.Request(
                 url,
-                headers={"User-Agent": "Flymoon/1.0 (ASCOM Alpaca client)"},
+                headers={"User-Agent": "Zipcatcher/1.0 (ASCOM Alpaca client)"},
             )
             with urllib.request.urlopen(req, timeout=self.timeout) as resp:
                 return json.loads(resp.read().decode("utf-8-sig"))

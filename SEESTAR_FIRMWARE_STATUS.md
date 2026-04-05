@@ -7,7 +7,7 @@ _Last updated: 2026-03-25_
 ## Background
 
 The Seestar S50 firmware was updated (believed to be firmware >2300, possibly >2582)
-and several behaviours changed that broke Flymoon's telescope control.
+and several behaviours changed that broke Zipcatcher's telescope control.
 
 ---
 
@@ -43,8 +43,8 @@ and several behaviours changed that broke Flymoon's telescope control.
 ### Best hypothesis for why movement fails
 
 The Seestar iPhone app, if open in background, holds the **master client** role.
-The scope sends `{"Event": "Client", "is_master": false}` to Flymoon's connection.
-Without a reader thread, Flymoon never sees this event, never retries claiming master,
+The scope sends `{"Event": "Client", "is_master": false}` to Zipcatcher's connection.
+Without a reader thread, Zipcatcher never sees this event, never retries claiming master,
 and all motor commands are silently dropped by the firmware.
 
 ---
@@ -89,7 +89,7 @@ and all motor commands are silently dropped by the firmware.
 - `_send_init_sequence()` — added:
   - UDP `scan_iscope` to scope IP:4720 before TCP connect
   - `set_setting {"master_cli": True}` to claim master
-  - `set_setting {"cli_name": "Flymoon/hostname"}` to identify client
+  - `set_setting {"cli_name": "Zipcatcher/hostname"}` to identify client
 - `_reader_loop()` — new background thread that drains the socket continuously,
   handles all push events, and logs `Client` master status
 - `_reader_thread` started in `_do_connect()`, stopped in `disconnect()`
@@ -110,7 +110,7 @@ and all motor commands are silently dropped by the firmware.
 
 ## Next Steps / Hypotheses to Test
 
-1. **Force-quit the Seestar iPhone app** completely before starting Flymoon.
+1. **Force-quit the Seestar iPhone app** completely before starting Zipcatcher.
    If the terminal shows `[Reader] We are master client` after connect, and nudge
    then works, the iPhone app was stealing master control.
 
@@ -120,7 +120,7 @@ and all motor commands are silently dropped by the firmware.
 
 3. **Verify `iscope_start_view mode=sun` actually causes movement** vs the scope
    booting into sun mode on its own. Switch the scope to scenery mode from the
-   iPhone app, then disconnect the iPhone app, then reconnect Flymoon — if the scope
+   iPhone app, then disconnect the iPhone app, then reconnect Zipcatcher — if the scope
    switches back to sun mode, our command works.
 
 4. **Consider `verify` injection** for list-param commands (ALP always appends

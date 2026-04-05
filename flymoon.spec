@@ -1,5 +1,5 @@
 # -*- mode: python ; coding: utf-8 -*-
-# PyInstaller spec for Flymoon Flask backend
+# PyInstaller spec for Zipcatcher Flask backend
 # Output: flymoon-server (or flymoon-server.exe on Windows)
 
 import sys, os

@@ -1,5 +1,5 @@
 @echo off
-REM One-click Windows build + installer launcher for Flymoon
+REM One-click Windows build + installer launcher for Zipcatcher
 REM Usage: double-click this file from the repository root on Windows.
 
 setlocal enabledelayedexpansion
@@ -7,7 +7,7 @@ cd /d "%~dp0"
 set ROOT=%CD%
 
 echo ===============================================
-echo   Flymoon one-click Windows installer build
+echo   Zipcatcher one-click Windows installer build
 echo ===============================================
 
 REM Ensure .env exists

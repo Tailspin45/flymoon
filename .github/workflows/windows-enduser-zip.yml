@@ -12,7 +12,7 @@ on:
       - "electron/**"
       - "flymoon.spec"
       - "requirements.txt"
-      - "START-HERE-Install-Flymoon.bat"
+      - "START-HERE-Install-Zipcatcher.bat"
       - "README-WINDOWS.txt"
       - "build-win.bat"
       - "build-win-oneclick.bat"
@@ -49,14 +49,14 @@ jobs:
       - name: Upload end-user ZIP artifact
         uses: actions/upload-artifact@v4
         with:
-          name: Flymoon-Windows-EndUser
-          path: dist-windows/Flymoon-Windows-EndUser.zip
+          name: Zipcatcher-Windows-EndUser
+          path: dist-windows/Zipcatcher-Windows-EndUser.zip
           if-no-files-found: error
 
       - name: Upload setup exe artifact
         uses: actions/upload-artifact@v4
         with:
-          name: Flymoon-Windows-SetupExe
+          name: Zipcatcher-Windows-SetupExe
           path: dist-electron/*Setup*.exe
           if-no-files-found: error
 

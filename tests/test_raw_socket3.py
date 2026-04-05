@@ -114,7 +114,7 @@ send(
 )
 send(sock, "pi_is_verified", msg_id=3)
 send(sock, "set_setting", {"master_cli": True}, 4)
-send(sock, "set_setting", {"cli_name": "Flymoon/test"}, 5)
+send(sock, "set_setting", {"cli_name": "Zipcatcher/test"}, 5)
 
 # 4. Wait for events to start
 print("\n[4] Waiting for scope to start sending events...")

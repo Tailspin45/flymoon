@@ -807,14 +807,14 @@ class SeestarClient:
 
         # 5. Identify this client
         try:
-            cli_name = _socket.gethostname() or "Flymoon"
+            cli_name = _socket.gethostname() or "Zipcatcher"
             self._send_command(
                 "set_setting",
-                params={"cli_name": f"Flymoon/{cli_name}"},
+                params={"cli_name": f"Zipcatcher/{cli_name}"},
                 expect_response=False,
                 quiet=True,
             )
-            logger.info(f"[Init] cli_name set to Flymoon/{cli_name}")
+            logger.info(f"[Init] cli_name set to Zipcatcher/{cli_name}")
         except Exception as e:
             logger.debug(f"[Init] cli_name failed (non-fatal): {e}")
 
@@ -1832,7 +1832,7 @@ class SeestarClient:
         This works in Solar, Lunar, and Scenery viewing modes.
 
         Workflow:
-        1. Ensure telescope is in Solar, Lunar, or Scenery mode (via Seestar app or Flymoon)
+        1. Ensure telescope is in Solar, Lunar, or Scenery mode (via Seestar app or Zipcatcher)
         2. Call this method to capture a single photo
         3. Use get_albums() to retrieve the saved image
         4. Download via HTTP: http://<host>/<path>/<filename>

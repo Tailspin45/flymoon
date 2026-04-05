@@ -1,0 +1,11 @@
+Ever watched the Sun or Moon through a telescope and wondered if a plane has ever crossed it while you were looking? It happens — and it can be over in the blink of an eye.
+
+I built a system called Zipcatcher that watches live telescope video of the Sun and Moon and automatically hits record the moment an aircraft or balloon crosses the disk.
+
+Here's the surprising physics: a small plane in a landing pattern at 1,500 feet is so close that it zips across the disk in a fraction of a second — even at 80 knots. A large commercial jet at 35,000 feet is twenty times farther away, so despite travelling at 500 knots it takes 2–3 seconds to cross. Distance beats speed every time.
+
+The tricky part: clouds, atmospheric shimmer at the solar edge, and solar surface detail are constantly trying to fool it. Zipcatcher uses two independent motion signals, wavelet filtering to strip out slow drifts, and three separate trigger methods to make sure it never misses a real transit — even one that's over in just a few frames of video.
+
+Latest test: 6 known transit videos, 6 detected. Zero misses.
+
+#Astrophotography #SolarImaging #Transit #Zipcatcher #DIYAstronomy

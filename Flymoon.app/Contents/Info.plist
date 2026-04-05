@@ -3,9 +3,9 @@
 <plist version="1.0">
 <dict>
     <key>CFBundleName</key>
-    <string>Flymoon</string>
+    <string>Zipcatcher</string>
     <key>CFBundleDisplayName</key>
-    <string>Flymoon</string>
+    <string>Zipcatcher</string>
     <key>CFBundleIdentifier</key>
     <string>com.flymoon.app</string>
     <key>CFBundleVersion</key>
@@ -13,9 +13,9 @@
     <key>CFBundleShortVersionString</key>
     <string>1.0.0</string>
     <key>CFBundleExecutable</key>
-    <string>Flymoon</string>
+    <string>Zipcatcher</string>
     <key>CFBundleIconFile</key>
-    <string>Flymoon</string>
+    <string>Zipcatcher</string>
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>CFBundleSignature</key>

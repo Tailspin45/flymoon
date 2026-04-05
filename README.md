@@ -1,17 +1,17 @@
-# 🌙 Flymoon — Aircraft Transit Tracker
+# 🌙 Zipcatcher — Aircraft Transit Tracker
 
 **Predict, detect, and photograph aircraft crossing the Sun or Moon in real time.**
 
 <p align="center">
-  <img src="static/images/flymoon-hero.jpg" alt="Zipcatcher - Transit Tracker" width="100%">
+  <img src="static/images/flymoon-hero.jpg" alt="Zipcatcher — Aircraft Transit Tracker" width="100%">
 </p>
 
 
 ---
 
-## ✨ What Flymoon Does
+## ✨ What Zipcatcher Does
 
-Flymoon combines real-time flight data, high-precision celestial mechanics, and telescope automation to give you everything you need to capture an aircraft transiting the Sun or Moon. There's also an eclipse timelapse recorder. Flymoon:
+Zipcatcher combines real-time flight data, high-precision celestial mechanics, and telescope automation to give you everything you need to capture an aircraft transiting the Sun or Moon. There's also an eclipse timelapse recorder. Zipcatcher:
 
 - Predicts which flights will pass close to the Sun or Moon up to **15 minutes ahead**
 - Shows flight paths, altitudes, and transit probability on an **interactive map**
@@ -21,7 +21,7 @@ Flymoon combines real-time flight data, high-precision celestial mechanics, and 
 - Runs **headlessly overnight** on a Mac, Linux box, or Windows PC
 
 <p align="center">
-  <img src="docs/flymoon-sim.png" alt="Flymoon simulation — aircraft path versus Sun disc" width="100%">
+  <img src="docs/flymoon-sim.png" alt="Zipcatcher simulation — aircraft path versus Sun disc" width="100%">
 </p>
 
 ---
@@ -95,7 +95,7 @@ Recommended sequence:
 ## 🗺️ Map Interface
 
 <p align="center">
-  <img src="docs/flymoon-map.png" alt="Flymoon map interface" width="100%">
+  <img src="docs/flymoon-map.png" alt="Zipcatcher map interface" width="100%">
 </p>
 
 - **Per-quadrant minimum altitude** — set independent minimum angles for North, East, South, and West to mask out trees, rooftops, or other obstructions; only flights near the Sun/Moon when it is above your local horizon count. Click the center to set all quadrants to zero
@@ -109,17 +109,17 @@ Recommended sequence:
 
 ## 🔭 Telescope Integration
 
-Flymoon connects directly to the Seestar S50 over TCP — no bridge app required.
+Zipcatcher connects directly to the Seestar S50 over TCP — no bridge app required.
 
 - **Auto-discovery** — scans the local subnet to find the scope's IP automatically
 - **Solar & lunar modes** — switches the scope to the correct imaging mode for the selected target
 - **Automatic recording** — starts video a configurable number of seconds before the predicted transit and stops after (defaults: 10 s pre/post buffer)
 - **Live preview** — MJPEG stream from the scope shown directly in the browser panel
-- **Smart reconnection** — if the scope drops off the network overnight, Flymoon waits to reconnect until the selected target is back above the minimum altitude you set in the UI quadrant controls, avoiding noisy reconnect attempts in the middle of the night
+- **Smart reconnection** — if the scope drops off the network overnight, Zipcatcher waits to reconnect until the selected target is back above the minimum altitude you set in the UI quadrant controls, avoiding noisy reconnect attempts in the middle of the night
 - **Capture gallery** — browsable gallery of all recorded clips and analysed composites
 
 <p align="center">
-  <img src="docs/flymoon-eclipse.png" alt="Flymoon eclipse monitoring mode" width="80%">
+  <img src="docs/flymoon-eclipse.png" alt="Zipcatcher eclipse monitoring mode" width="80%">
 </p>
 
 ---
@@ -200,7 +200,7 @@ Run `python3 src/config_wizard.py --setup` for interactive validation of all set
 
 ## 🔒 Security
 
-Flymoon binds to `0.0.0.0:8000` by default (LAN-accessible). Gallery write operations require a `GALLERY_AUTH_TOKEN` in `.env`. See [SECURITY.md](SECURITY.md) before exposing the server beyond your local network.
+Zipcatcher binds to `0.0.0.0:8000` by default (LAN-accessible). Gallery write operations require a `GALLERY_AUTH_TOKEN` in `.env`. See [SECURITY.md](SECURITY.md) before exposing the server beyond your local network.
 
 ---
 
@@ -236,4 +236,4 @@ MIT — see [LICENSE](LICENSE)
 
 ---
 
-*Pro tip: open Flightradar24 alongside Flymoon for extra situational awareness when a high-probability transit is approaching.*
+*Pro tip: open Flightradar24 alongside Zipcatcher for extra situational awareness when a high-probability transit is approaching.*

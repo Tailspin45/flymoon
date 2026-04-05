@@ -229,13 +229,13 @@ async function startFlask(cfg) {
     const spawnErrorPromise = new Promise((_, reject) => {
         proc.once('error', (err) => {
             const context = IS_PACKAGED ? `Bundled server path: ${cmd}` : `Command: ${cmd}`;
-            reject(new Error(`Failed to start Flymoon server (${err.message}). ${context}`));
+            reject(new Error(`Failed to start Zipcatcher server (${err.message}). ${context}`));
         });
     });
 
     const earlyExitPromise = new Promise((_, reject) => {
         proc.once('exit', (code) => {
-            reject(new Error(`Flymoon server exited before becoming ready (exit code ${code}).`));
+            reject(new Error(`Zipcatcher server exited before becoming ready (exit code ${code}).`));
         });
     });
 
@@ -261,7 +261,7 @@ function createMainWindow() {
         y:         pos.y,
         minWidth:  900,
         minHeight: 600,
-        title: 'Flymoon',
+        title: 'Zipcatcher',
         webPreferences: {
             preload: path.join(__dirname, 'preload.js'),
             contextIsolation: true,
@@ -323,7 +323,7 @@ function createWizardWindow() {
         width:  720,
         height: 680,
         resizable: false,
-        title: 'Flymoon Setup',
+        title: 'Zipcatcher Setup',
         webPreferences: {
             preload: path.join(__dirname, 'preload.js'),
             contextIsolation: true,
@@ -360,7 +360,7 @@ function buildMenu() {
                 { label: 'Setup Guide',      click: () => shell.openPath(path.join(docsDir, 'SETUP.md')) },
                 { label: 'Telescope Guide',  click: () => shell.openPath(path.join(docsDir, 'TELESCOPE_GUIDE.md')) },
                 { type: 'separator' },
-                { label: 'Flymoon Article (PDF)',       click: () => shell.openPath(path.join(docsDir, 'Flymoon-article.pdf')) },
+                { label: 'Zipcatcher Article (PDF)',       click: () => shell.openPath(path.join(docsDir, 'Zipcatcher-article.pdf')) },
                 { label: 'Transit Position Paper (PDF)',click: () => shell.openPath(path.join(docsDir, 'transit_capture_position_paper.pdf')) },
                 { type: 'separator' },
                 { label: 'Get FlightAware API Key', click: () => shell.openExternal('https://www.flightaware.com/aeroapi/portal/') },
@@ -407,7 +407,7 @@ ipcMain.handle('wizard-complete', async (_e, cfg) => {
                 wizardWindow.close();
                 wizardWindow = null;
             }
-            dialog.showErrorBox('Startup Error', `Failed to start Flymoon server:\n\n${err.message}`);
+            dialog.showErrorBox('Startup Error', `Failed to start Zipcatcher server:\n\n${err.message}`);
         }
     } else {
         if (wizardWindow && !wizardWindow.isDestroyed()) {
@@ -456,7 +456,7 @@ app.whenReady().then(async () => {
         createWizardWindow();
     } else {
         try {
-            setSplashProgress('Starting Flymoon server…', 20);
+            setSplashProgress('Starting Zipcatcher server…', 20);
             await startFlask(cfg);
             setSplashProgress('Connecting to flight data…', 65);
             await new Promise(r => setTimeout(r, 300));
@@ -465,7 +465,7 @@ app.whenReady().then(async () => {
             createMainWindow();
         } catch (err) {
             if (splashWindow && !splashWindow.isDestroyed()) splashWindow.close();
-            dialog.showErrorBox('Startup Error', `Failed to start Flymoon server:\n\n${err.message}`);
+            dialog.showErrorBox('Startup Error', `Failed to start Zipcatcher server:\n\n${err.message}`);
             app.quit();
         }
     }

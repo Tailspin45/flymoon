@@ -310,7 +310,7 @@ fetch('/config')
         appConfig = config;
         console.log('Loaded config:', appConfig);
         if (config.codeRevision) {
-            console.log('Flymoon codeRevision:', config.codeRevision, '(should match git after pull + restart)');
+            console.log('Zipcatcher codeRevision:', config.codeRevision, '(should match git after pull + restart)');
         }
 
         // Seed localStorage from server config when position is missing
@@ -1773,7 +1773,7 @@ const HELP_CONTENT = {
     },
     'heatmap': {
         title: '🔥 Traffic Density Heatmap',
-        body: `<p>An overlay that reveals which areas within your search bounding box see the most aircraft traffic, built up from every auto-refresh since you first enabled Flymoon.</p>
+        body: `<p>An overlay that reveals which areas within your search bounding box see the most aircraft traffic, built up from every auto-refresh since you first enabled Zipcatcher.</p>
 <p><strong>Colour scale:</strong> blue (sparse) → lime → orange → <strong>red</strong> (dense corridors).</p>
 <p>The heatmap accumulates silently in the background — every refresh adds the current aircraft positions to a dataset saved in browser storage (capped at 2,000 points, oldest discarded first).</p>
 <p>After a few hours you will see the main flight corridors. Corridors passing close to the Sun/Moon azimuth line are your best targets to watch.</p>
@@ -1918,7 +1918,7 @@ function _bothOffReminderTick() {
         const moonAbove = coords.moon && coords.moon.altitude >= minAlt;
         if ((sunAbove || moonAbove) && alertsEnabled) {
             const targets = [sunAbove ? 'Sun' : null, moonAbove ? 'Moon' : null].filter(Boolean).join(' and ');
-            console.warn(`[Flymoon] Both targets disabled but ${targets} is in range!`);
+            console.warn(`[Zipcatcher] Both targets disabled but ${targets} is in range!`);
             if (typeof showNotification === 'function') {
                 showNotification(`Both targets off — ${targets} is in range`, 'warning');
             }

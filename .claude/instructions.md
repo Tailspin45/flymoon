@@ -1,4 +1,4 @@
-# Flymoon Project Instructions
+# Zipcatcher Project Instructions
 
 ## Project Structure
 

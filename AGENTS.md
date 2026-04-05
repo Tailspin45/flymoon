@@ -50,9 +50,9 @@ Optimize both prompt and output length:
    - Default to concise answers that a human can read quickly.
    - Only provide extended explanations when explicitly requested (e.g., “explain in detail”).
 
-## 4. Project Context (Flymoon)
+## 4. Project Context (Zipcatcher)
 
-Flymoon tracks aircraft transiting the Sun and Moon using real‑time flight data, celestial calculations, and a computer‑vision transit detection pipeline. It is a Flask‑based web app with automatic Seestar S50 telescope control for capturing transits.
+Zipcatcher tracks aircraft transiting the Sun and Moon using real‑time flight data, celestial calculations, and a computer‑vision transit detection pipeline. It is a Flask‑based web app with automatic Seestar S50 telescope control for capturing transits.
 
 Deployment modes:
 
@@ -123,7 +123,7 @@ src/logger_.py – Logger setup.
 
 Flask routes live in app.py and src/telescope_routes.py, templates in templates/, and frontend JS/CSS in static/.
 
-Always modify active code in /Users/Tom/flymoon/ and never touch legacy files under /Users/Tom/flymoon/archive/development/dist/Flymoon-Web/.
+Always modify active code in /Users/Tom/flymoon/ and never touch legacy files under /Users/Tom/flymoon/archive/development/dist/Zipcatcher-Web/.
 
 7. Important Domain Rules
 Units and conversions (critical for correctness):

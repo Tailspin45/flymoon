@@ -1,8 +1,8 @@
-# Flymoon Security Guide
+# Zipcatcher Security Guide
 
 ## Overview
 
-Flymoon is designed to run on a local network for personal use. This document outlines security considerations and best practices.
+Zipcatcher is designed to run on a local network for personal use. This document outlines security considerations and best practices.
 
 ## Network Security
 
@@ -14,7 +14,7 @@ Flymoon is designed to run on a local network for personal use. This document ou
 ### Recommendations
 
 #### 1. LAN-Only Deployment (Recommended)
-- Keep Flymoon on your local network only
+- Keep Zipcatcher on your local network only
 - **DO NOT** expose to the internet without proper security measures
 - Use a firewall to block external access to port 8000
 
@@ -90,7 +90,7 @@ GALLERY_AUTH_TOKEN=
 - Seestar telescope accessed via local network JSON-RPC
 - No authentication built into Seestar protocol
 - **Risk**: Anyone on LAN can control telescope if endpoints are accessible
-- **Mitigation**: Keep Flymoon on trusted network only
+- **Mitigation**: Keep Zipcatcher on trusted network only
 
 ### Rate Limiting
 - No rate limiting implemented
@@ -121,7 +121,7 @@ If you discover a security vulnerability:
 
 ## Security Checklist
 
-Before running Flymoon:
+Before running Zipcatcher:
 - [ ] `.env` file has strong `GALLERY_AUTH_TOKEN` or left empty for read-only
 - [ ] Application not exposed to internet
 - [ ] Firewall blocks external access to port 8000
@@ -161,4 +161,4 @@ Stay informed about security updates:
 
 ---
 
-**Remember**: Flymoon is designed for personal/small group use on trusted networks, not as a public web service. Additional security hardening required for internet-facing deployments.
+**Remember**: Zipcatcher is designed for personal/small group use on trusted networks, not as a public web service. Additional security hardening required for internet-facing deployments.

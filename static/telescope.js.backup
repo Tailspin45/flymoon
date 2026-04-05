@@ -136,7 +136,7 @@ async function showSetupInstructions() {
         const targetEmoji = target.target === 'sun' ? '☀️' : '🌙';
         const targetName = target.target === 'sun' ? 'Sun' : 'Moon';
 
-        const message = `${targetEmoji} Please set up your Seestar to track the ${targetName}.\n\nFlymoon will automatically start/stop recording during transit events.`;
+        const message = `${targetEmoji} Please set up your Seestar to track the ${targetName}.\n\nZipcatcher will automatically start/stop recording during transit events.`;
 
         alert(message);
     } catch (error) {

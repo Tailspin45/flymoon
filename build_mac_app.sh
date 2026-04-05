@@ -48,7 +48,7 @@ on run
 
         -- ── Welcome ───────────────────────────────────────────────────────────
         try
-            display dialog "🌙 Welcome to Flymoon!" & return & return & "Let's get you set up in 5 easy steps so you can start detecting aircraft transiting the Sun and Moon." & return & return & "You'll need:" & return & "  ✈️  A free FlightAware API key" & return & "  📍 Your location (latitude & longitude)" & return & "  📲 Telegram (optional, for notifications)" & return & "  🔭 Seestar telescope (optional)" & return & return & "Ready? Let's go!" buttons {"Cancel", "Let's Go! →"} default button "Let's Go! →"
+            display dialog "🌙 Welcome to Zipcatcher!" & return & return & "Let's get you set up in 5 easy steps so you can start detecting aircraft transiting the Sun and Moon." & return & return & "You'll need:" & return & "  ✈️  A free FlightAware API key" & return & "  📍 Your location (latitude & longitude)" & return & "  📲 Telegram (optional, for notifications)" & return & "  🔭 Seestar telescope (optional)" & return & return & "Ready? Let's go!" buttons {"Cancel", "Let's Go! →"} default button "Let's Go! →"
         on error number -128
             cancelSetup()
             return
@@ -62,7 +62,7 @@ on run
         set apiKey to ""
         repeat
             try
-                set d to display dialog "✈️  Step 1 of 5 — FlightAware API Key" & return & return & "Flymoon fetches live flight data from FlightAware AeroAPI. A free personal-tier key gives you 10 queries/minute — more than enough." & return & return & "Get a free key at:" & return & "https://www.flightaware.com/aeroapi/portal/" & return & return & "Paste your API key below:" buttons {"Cancel", "Open Website", "Next →"} default button "Next →" default answer ""
+                set d to display dialog "✈️  Step 1 of 5 — FlightAware API Key" & return & return & "Zipcatcher fetches live flight data from FlightAware AeroAPI. A free personal-tier key gives you 10 queries/minute — more than enough." & return & return & "Get a free key at:" & return & "https://www.flightaware.com/aeroapi/portal/" & return & return & "Paste your API key below:" buttons {"Cancel", "Open Website", "Next →"} default button "Next →" default answer ""
             on error number -128
                 cancelSetup()
                 return
@@ -143,7 +143,7 @@ on run
 
         -- ── Step 3/5 — Bounding box ───────────────────────────────────────────
         try
-            set d to display dialog "🗺️  Step 3 of 5 — Search Area (Bounding Box)" & return & return & "Flymoon only fetches flights inside a rectangular area around you. A bigger box means more flights to check but more API calls." & return & return & "Recommended: auto-compute ±2° around your location (≈ 220 km radius). Covers most aircraft visible from your position." & return & return & "Or enter the four corner coordinates manually." buttons {"Cancel", "Enter Manually", "Auto ±2° (Recommended)"} default button "Auto ±2° (Recommended)"
+            set d to display dialog "🗺️  Step 3 of 5 — Search Area (Bounding Box)" & return & return & "Zipcatcher only fetches flights inside a rectangular area around you. A bigger box means more flights to check but more API calls." & return & return & "Recommended: auto-compute ±2° around your location (≈ 220 km radius). Covers most aircraft visible from your position." & return & return & "Or enter the four corner coordinates manually." buttons {"Cancel", "Enter Manually", "Auto ±2° (Recommended)"} default button "Auto ±2° (Recommended)"
         on error number -128
             cancelSetup()
             return
@@ -219,7 +219,7 @@ on run
         set telegramChatId to ""
 
         try
-            set d to display dialog "📲 Step 4 of 5 — Telegram Notifications" & return & return & "Flymoon can send you real-time alerts on your phone when a high-probability transit is detected. Notifications are sent via a free Telegram bot you create yourself (takes about 2 minutes)." & return & return & "You can skip this now and add it later by editing .env." buttons {"Cancel", "Skip for Now", "Set Up Telegram"} default button "Set Up Telegram"
+            set d to display dialog "📲 Step 4 of 5 — Telegram Notifications" & return & return & "Zipcatcher can send you real-time alerts on your phone when a high-probability transit is detected. Notifications are sent via a free Telegram bot you create yourself (takes about 2 minutes)." & return & return & "You can skip this now and add it later by editing .env." buttons {"Cancel", "Skip for Now", "Set Up Telegram"} default button "Set Up Telegram"
         on error number -128
             cancelSetup()
             return
@@ -281,7 +281,7 @@ on run
         set seestarPort to "4700"
 
         try
-            set d to display dialog "🔭 Step 5 of 5 — Seestar S50 Telescope" & return & return & "Flymoon can automatically trigger your Seestar S50 to start recording video just before an aircraft transits the Sun or Moon, and stop after." & return & return & "Requirements:" & return & "  • Seestar on the same Wi-Fi network as this Mac" & return & "  • Already tracking the Sun or Moon before the transit" & return & return & "Skip this if you don't have a Seestar." buttons {"Cancel", "Skip", "Enable Seestar"} default button "Skip"
+            set d to display dialog "🔭 Step 5 of 5 — Seestar S50 Telescope" & return & return & "Zipcatcher can automatically trigger your Seestar S50 to start recording video just before an aircraft transits the Sun or Moon, and stop after." & return & return & "Requirements:" & return & "  • Seestar on the same Wi-Fi network as this Mac" & return & "  • Already tracking the Sun or Moon before the transit" & return & return & "Skip this if you don't have a Seestar." buttons {"Cancel", "Skip", "Enable Seestar"} default button "Skip"
         on error number -128
             cancelSetup()
             return
@@ -376,7 +376,7 @@ on run
 
     -- ── Target selection ──────────────────────────────────────────────────────
     try
-        set d to display dialog "🌟 Select Transit Target" & return & return & "Which celestial body should Flymoon watch for aircraft transits?" buttons {"Cancel", "🌙 Moon", "☀️ Sun"} default button "☀️ Sun"
+        set d to display dialog "🌟 Select Transit Target" & return & return & "Which celestial body should Zipcatcher watch for aircraft transits?" buttons {"Cancel", "🌙 Moon", "☀️ Sun"} default button "☀️ Sun"
     on error number -128
         cancelSetup()
         return
@@ -399,7 +399,7 @@ on run
 
     -- ── Launch confirmation ───────────────────────────────────────────────────
     try
-        display dialog "🚀 Ready to start monitoring!" & return & return & "Target:    " & targetName & return & "Location:  " & confirmedLat & ", " & confirmedLon & return & "Elevation: " & confirmedElev & "m" & return & return & "Flymoon will run in the background and alert you to any transits. Logs are written to /tmp/transit_monitor.log." buttons {"Cancel", "Start Monitoring 🚀"} default button "Start Monitoring 🚀"
+        display dialog "🚀 Ready to start monitoring!" & return & return & "Target:    " & targetName & return & "Location:  " & confirmedLat & ", " & confirmedLon & return & "Elevation: " & confirmedElev & "m" & return & return & "Zipcatcher will run in the background and alert you to any transits. Logs are written to /tmp/transit_monitor.log." buttons {"Cancel", "Start Monitoring 🚀"} default button "Start Monitoring 🚀"
     on error number -128
         cancelSetup()
         return

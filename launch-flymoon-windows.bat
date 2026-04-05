@@ -1,5 +1,5 @@
 @echo off
-REM Local launcher for Flymoon on Windows (from source checkout).
+REM Local launcher for Zipcatcher on Windows (from source checkout).
 REM Starts app.py and opens the UI in your configured/default browser.
 
 setlocal enabledelayedexpansion
@@ -22,7 +22,7 @@ echo Installing/updating Python dependencies...
 pip install -q --upgrade pip
 pip install -q -r requirements.txt
 
-echo Starting Flymoon...
+echo Starting Zipcatcher...
 python app.py
 
 endlocal

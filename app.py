@@ -1,5 +1,5 @@
 """
-Flymoon - Aircraft Transit Tracker
+Zipcatcher - Aircraft Transit Tracker
 ===================================
 
 Main Flask application for tracking aircraft transiting celestial objects (Sun/Moon).
@@ -24,7 +24,7 @@ Environment Variables (see SETUP.md):
 - TELEGRAM_CHAT_ID - Telegram chat ID (optional)
 - SEESTAR_IP - Telescope IP address (optional)
 
-@author Flymoon Team
+@author Zipcatcher Team
 @version 1.0
 """
 
@@ -1343,7 +1343,7 @@ transit_monitor.start()
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Flymoon Transit Monitor")
+    parser = argparse.ArgumentParser(description="Zipcatcher Transit Monitor")
     parser.add_argument(
         "--test", action="store_true", help="Use test data (deprecated, use --demo)"
     )

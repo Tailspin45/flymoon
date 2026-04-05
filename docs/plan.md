@@ -1,8 +1,8 @@
-# Flymoon Master Phased Plan (Diagnostics-First, No Production Code)
+# Zipcatcher Master Phased Plan (Diagnostics-First, No Production Code)
 
 ## 1) System overview and primary problem domains
 
-Flymoon combines:
+Zipcatcher combines:
 - Python backend for flight ingestion, celestial prediction, transit scoring, telescope control, and CV detection.
 - JavaScript frontend for map/radar/scope UI and operator workflows.
 - Seestar-like control paths (legacy + Alpaca-related additions) and RTSP live video.
@@ -83,7 +83,7 @@ Guiding rule for all phases: **evidence before edits** and **no production code 
 
 #### Fresh-chat bootstrap package
 - Paste:
-  - “Executing Phase 0 of Flymoon master plan”
+  - “Executing Phase 0 of Zipcatcher master plan”
   - short status of hardware availability
 - Attach:
   - key logs, screenshots/video clips, config excerpt (non-secret), error traces.
@@ -685,7 +685,7 @@ Phase completion dependency rules:
 - Phase 5 only executes approved designs from Phases 1–4.
 
 Fresh-chat kickoff template (copy/paste):
-- `Executing Phase <N> of Flymoon master plan`
+- `Executing Phase <N> of Zipcatcher master plan`
 - `Hardware: <available/unavailable>, RTSP source: <details>`
 - `Inputs attached: <artifact list>`
 - `Goal for this phase: <objective from plan>`
@@ -770,4 +770,4 @@ Phase 0 is complete only when:
 
 ### 9.5 Next-chat kickoff text (copy/paste)
 
-`Executing Phase 0 of Flymoon master plan. Hardware/feed available. Attached: current logs, screenshots, and redacted config excerpt. Goal: complete inventory + evidence harness only. Constraint: no production code changes until checkpoint approval.`
+`Executing Phase 0 of Zipcatcher master plan. Hardware/feed available. Attached: current logs, screenshots, and redacted config excerpt. Goal: complete inventory + evidence harness only. Constraint: no production code changes until checkpoint approval.`

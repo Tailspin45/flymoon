@@ -1,8 +1,8 @@
-# Flymoon Copilot Instructions (Current)
+# Zipcatcher Copilot Instructions (Current)
 
 ## What this repository is now
 
-Flymoon is a Flask app plus headless scripts for predicting, detecting, and recording aircraft transits across the Sun/Moon. It includes:
+Zipcatcher is a Flask app plus headless scripts for predicting, detecting, and recording aircraft transits across the Sun/Moon. It includes:
 
 - Real-time transit prediction (`src/transit.py`)
 - Live CV detection + post-analysis (`src/transit_detector.py`, `src/transit_analyzer.py`)
