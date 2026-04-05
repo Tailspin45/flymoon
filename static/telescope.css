@@ -2842,6 +2842,72 @@ canvas.video-thumb-canvas {
     font-size: 0.82em;
 }
 
+/* ── Data Sources activity panel ─────────────────────────────────────────── */
+.api-source-lights {
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+}
+
+.api-light-row {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    padding: 1px 0;
+}
+
+.api-led-count {
+    margin-left: auto;
+    font-size: 0.60em;
+    font-family: 'SF Mono', 'Menlo', 'Consolas', monospace;
+    color: #5a7080;
+    min-width: 22px;
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+}
+
+.api-led {
+    display: inline-block;
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: #2a2e34;
+    border: 1px solid #3a3e44;
+    box-shadow: none;
+    flex-shrink: 0;
+    transition: background 0.15s, box-shadow 0.15s;
+}
+
+/* Blink animation triggered once on each fresh hit.
+   Uses filter:brightness (GPU composited) instead of box-shadow to avoid paint. */
+@keyframes led-blink {
+    0%   { filter: brightness(4); }
+    100% { filter: brightness(1); }
+}
+
+.api-led.blink {
+    animation: led-blink 2.5s ease-out forwards;
+}
+
+.api-led-label {
+    font-size: 0.60em;
+    color: #8a9ba8;
+    font-family: 'SF Mono', 'Menlo', 'Consolas', monospace;
+    letter-spacing: 0.3px;
+    text-transform: uppercase;
+}
+
+/* Paused state — master off */
+#dataSourcesPanel.paused .api-led {
+    background: #2a2e34;
+    border-color: #3a3e44;
+    box-shadow: none;
+}
+
+#dataSourcesPanel.paused .api-led-label {
+    opacity: 0.4;
+}
+
 /* Dense variant — used for Focus & Camera panel to keep all controls visible */
 .panel-dense {
     padding-top: 4px;

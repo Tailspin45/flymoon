@@ -104,7 +104,7 @@ from src.flight_data import (
 from src.position import compute_track_velocity, get_my_pos
 from src.seestar_client import TransitRecorder
 from src.telegram_notify import send_telegram_notification
-from src.transit import get_transits
+from src.transit import get_transits, get_fa_last_call, get_fa_call_count
 
 # Module-level cache: {fa_flight_id: (speed_kmh, heading_deg)}
 # Populated when a user loads a flight's track; consumed by soft-refresh recalculation.
@@ -650,6 +650,14 @@ def get_all_flights():
         # Exclude flights where the celestial target is below the user's obstruction threshold
         visible_flights = [f for f in all_flights if not f.get("target_below_min_alt")]
 
+        # Collect per-source activity for the Data Sources panel
+        from src.flight_sources import get_source_activity
+        _src_activity = get_source_activity()
+        _fa_ts = get_fa_last_call()
+        _fa_ct = get_fa_call_count()
+        if _fa_ts or _fa_ct:
+            _src_activity["flightaware"] = {"ts": _fa_ts, "count": _fa_ct}
+
         # Combine results
         data = {
             "flights": sort_results(visible_flights),
@@ -661,6 +669,7 @@ def get_all_flights():
             "weather": None,  # Weather functionality not implemented yet
             "boundingBox": _bbox_for_client,
             "generated_at_ms": int(time.time() * 1000),
+            "sources_used": _src_activity,
         }
 
         end_time = time.time()

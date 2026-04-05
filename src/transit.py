@@ -35,6 +35,36 @@ from src.flight_data import (
     parse_fligh_data,
 )
 
+# ── FA call timestamp and count (for the Data Sources activity panel) ────────
+import json as _json_fa, os as _os_fa
+
+_FA_COUNTS_PATH = _os_fa.path.join(_os_fa.path.dirname(__file__), "..", "data", "fa_counts.json")
+
+def _load_fa_counts():
+    try:
+        with open(_FA_COUNTS_PATH) as f:
+            d = _json_fa.load(f)
+        return float(d.get("ts", 0)), int(d.get("count", 0))
+    except Exception:
+        return 0.0, 0
+
+def _save_fa_counts():
+    try:
+        with open(_FA_COUNTS_PATH, "w") as f:
+            _json_fa.dump({"ts": _fa_last_call, "count": _fa_call_count}, f)
+    except Exception:
+        pass
+
+_fa_last_call, _fa_call_count = _load_fa_counts()
+
+
+def get_fa_last_call() -> float:
+    return _fa_last_call
+
+def get_fa_call_count() -> int:
+    return _fa_call_count
+
+
 # ── FA enrichment cache ──────────────────────────────────────────────────────
 # Per-callsign metadata cache (aircraft type, airline, origin, destination).
 # Only populated for HIGH-probability transits — avoids per-refresh FA charges.
@@ -106,6 +136,10 @@ def _enrich_from_fa(callsign: str, api_key: str) -> dict:
 
     url = f"https://aeroapi.flightaware.com/aeroapi/flights/{callsign}"
     headers = {"Accept": "application/json; charset=UTF-8", "x-apikey": api_key}
+    global _fa_last_call, _fa_call_count
+    _fa_last_call = _time.time()
+    _fa_call_count += 1
+    _save_fa_counts()
     try:
         resp = requests.get(url, headers=headers, timeout=10)
         if resp.status_code == 200:
@@ -739,6 +773,9 @@ def get_transits(
                     f"Using cached FA data ({cache.get_stats()['hit_rate_percent']}% hit rate)"
                 )
             else:
+                _fa_last_call = _time.time()
+                _fa_call_count += 1
+                _save_fa_counts()
                 raw_flight_data = get_flight_data(bbox, API_URL, API_KEY)
                 cache.set(
                     bbox.lat_lower_left,

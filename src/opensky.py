@@ -165,6 +165,8 @@ def fetch_opensky_positions(
         "extended": 1,  # includes category (index 17) in state vectors
     }
 
+    from src.flight_sources import _record_http_call
+    _record_http_call("opensky")
     try:
         resp = requests.get(
             url,

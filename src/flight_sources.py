@@ -62,6 +62,7 @@ _adsb_fi_backoff_until: float = 0.0
 _adsbx_backoff_until: float = 0.0
 _local_backoff_until: float = 0.0
 BACKOFF_SECONDS: int = 60
+ADSB_FI_BACKOFF_SECONDS: int = 300  # adsb.fi rate limits are longer — back off 5 min
 
 # Short-lived cache for fetch_multi_source_positions — avoids a double fetch
 # when the /flights endpoint calls get_transits() for both sun and moon within
@@ -69,6 +70,62 @@ BACKOFF_SECONDS: int = 60
 _multi_source_cache: Dict[tuple, dict] = {}
 _multi_source_cache_ts: Dict[tuple, float] = {}
 MULTI_SOURCE_CACHE_TTL: int = 20  # seconds
+
+# Per-source call timestamps and counts — updated each time a source is queried.
+# Persisted to disk so counts survive server restarts.
+import json as _json
+
+_COUNTS_PATH = os.path.join(os.path.dirname(__file__), "..", "data", "source_counts.json")
+
+def _load_counts() -> tuple:
+    try:
+        with open(_COUNTS_PATH) as f:
+            d = _json.load(f)
+        return d.get("ts", {}), d.get("counts", {})
+    except Exception:
+        return {}, {}
+
+def _save_counts() -> None:
+    try:
+        with open(_COUNTS_PATH, "w") as f:
+            _json.dump({"ts": _last_source_calls, "counts": _source_call_counts}, f)
+    except Exception:
+        pass
+
+_last_source_calls: Dict[str, float]
+_source_call_counts: Dict[str, int]
+_last_source_calls, _source_call_counts = _load_counts()
+
+# Tracks which sources have already been counted in the current Flask request
+# cycle, so sun+moon double-fetches don't double the odometer.
+_counted_this_cycle: set = set()
+_cycle_wall_ts: float = 0.0
+_CYCLE_DEDUP_WINDOW: float = 5.0  # seconds
+
+
+def _mark_cycle_start() -> None:
+    """Call once per logical refresh cycle to reset the per-cycle dedup set."""
+    global _counted_this_cycle, _cycle_wall_ts
+    now = time.time()
+    if now - _cycle_wall_ts > _CYCLE_DEDUP_WINDOW:
+        _counted_this_cycle = set()
+        _cycle_wall_ts = now
+
+
+def _record_http_call(name: str) -> None:
+    """Increment the odometer for a source only when a real HTTP request fires."""
+    if name not in _counted_this_cycle:
+        _source_call_counts[name] = _source_call_counts.get(name, 0) + 1
+        _counted_this_cycle.add(name)
+        _save_counts()
+
+
+def get_source_activity() -> Dict[str, dict]:
+    """Return {source: {ts, count}} for all sources that have been queried."""
+    return {
+        k: {"ts": _last_source_calls.get(k, 0), "count": _source_call_counts.get(k, 0)}
+        for k in set(list(_last_source_calls) + list(_source_call_counts))
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -234,6 +291,7 @@ def _fetch_adsb_one(
     raw = None
     for verify_ssl in (True, False):  # retry without SSL verify on TLS decode errors
         try:
+            _record_http_call("adsb_one")
             resp = requests.get(url, timeout=REQUEST_TIMEOUT, verify=verify_ssl)
             if resp.status_code == 429:
                 _adsb_one_backoff_until = time.time() + BACKOFF_SECONDS
@@ -295,6 +353,7 @@ def _fetch_adsb_lol(
     radius_nm = min(dist_km * 0.539957 * 1.1, ADSB_LOL_MAX_RADIUS_NM)
 
     url = f"{ADSB_LOL_BASE}/v2/point/{clat:.4f}/{clon:.4f}/{radius_nm:.0f}"
+    _record_http_call("adsb_lol")
     try:
         resp = requests.get(url, timeout=REQUEST_TIMEOUT)
         if resp.status_code == 429:
@@ -350,11 +409,12 @@ def _fetch_adsb_fi(
     dist_nm = min(dist_km * 0.539957 * 1.1, ADSB_FI_MAX_RADIUS_NM)
 
     url = f"{ADSB_FI_BASE}/v3/lat/{clat:.4f}/lon/{clon:.4f}/dist/{dist_nm:.0f}"
+    _record_http_call("adsb_fi")
     try:
         resp = requests.get(url, timeout=REQUEST_TIMEOUT)
         if resp.status_code == 429:
-            _adsb_fi_backoff_until = time.time() + BACKOFF_SECONDS
-            logger.warning(f"[adsb.fi] Rate limited (429) — backoff {BACKOFF_SECONDS}s")
+            _adsb_fi_backoff_until = time.time() + ADSB_FI_BACKOFF_SECONDS
+            logger.warning(f"[adsb.fi] Rate limited (429) — backoff {ADSB_FI_BACKOFF_SECONDS}s")
             return {}
         resp.raise_for_status()
         raw = resp.json()
@@ -404,6 +464,7 @@ def _fetch_adsbexchange(
 
     url = f"{ADSBX_BASE}/lat/{clat:.4f}/lon/{clon:.4f}/dist/{dist_nm:.0f}/"
     headers = {"api-auth": api_key}
+    _record_http_call("adsbx")
     try:
         resp = requests.get(url, headers=headers, timeout=REQUEST_TIMEOUT)
         if resp.status_code == 429:
@@ -460,6 +521,7 @@ def _fetch_adsb_local(
     if now < _local_backoff_until:
         return {}
 
+    _record_http_call("local")
     try:
         resp = requests.get(url, timeout=3)
         resp.raise_for_status()
@@ -511,6 +573,9 @@ def fetch_multi_source_positions(
     Returns a dict of {callsign: position_dict} in the same format as
     ``src.opensky.fetch_opensky_positions()``.
     """
+    # Mark the start of a new logical refresh cycle for odometer dedup.
+    _mark_cycle_start()
+
     # When /flights calls get_transits() for both sun and moon in the same
     # request cycle they use the same bbox; serve the second call from cache.
     cache_key = (round(lat_ll, 4), round(lon_ll, 4), round(lat_ur, 4), round(lon_ur, 4))
@@ -557,6 +622,8 @@ def fetch_multi_source_positions(
                 batch = {}
 
             source_counts[name] = len(batch)
+            if batch:
+                _last_source_calls[name] = time.time()
             for callsign, pos in batch.items():
                 norm = normalize_aircraft_display_id(callsign)
                 if not norm:

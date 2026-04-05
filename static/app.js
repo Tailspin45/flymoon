@@ -2135,6 +2135,7 @@ function fetchFlights() {
         _radarUpdateBase(data.flights || []);
         try { sessionStorage.setItem('lastFlightData', JSON.stringify(data)); } catch(e) {}
         updateLastUpdateDisplay();
+        if (data.sources_used) updateApiSourceLights(data.sources_used);
 
         if(data.flights.length == 0) {
             alertNoResults.innerHTML = "No flights!"
@@ -3052,6 +3053,68 @@ function startTelescopeStatusPolling() {
     _telescopeStatusInterval = setInterval(updateTelescopeStatus, 2000);
 }
 startTelescopeStatusPolling();
+
+// ── Data Sources activity lights ─────────────────────────────────────────────
+// sources_used: { source_name: { ts: float, count: int }, ... }
+// Each response: blink the light if ts advanced since last render, then go dark.
+// Odometer shows server-side call count.
+
+var _apiPaused = false;
+var _lastSourceTs = null; // null = first render this page load
+
+function updateApiSourceLights(sourcesUsed) {
+    const panel = document.getElementById('dataSourcesPanel');
+    if (!panel || panel.classList.contains('paused')) return;
+
+    // On first render after a page load, seed previous timestamps to 0 so any
+    // persisted ts from the server triggers a blink immediately.
+    const firstRender = (_lastSourceTs === null);
+    if (firstRender) _lastSourceTs = {};
+
+    document.querySelectorAll('#apiSourceLights .api-light-row').forEach(row => {
+        const key = row.dataset.source;
+        const led = row.querySelector('.api-led');
+        const cnt = row.querySelector('.api-led-count');
+        if (!led) return;
+
+        const info  = sourcesUsed[key] || {};
+        const ts    = info.ts    || 0;
+        const count = info.count || 0;
+
+        if (cnt) cnt.textContent = count;
+
+        const prev = _lastSourceTs[key] || 0;
+        if (ts && ts > prev) {
+            led.classList.remove('blink');
+            void led.offsetWidth;
+            led.classList.add('blink');
+            setTimeout(() => led.classList.remove('blink'), 2600);
+        }
+        _lastSourceTs[key] = ts;
+    });
+}
+
+function toggleApiPause() {
+    _apiPaused = !_apiPaused;
+    const btn = document.getElementById('apiPauseBtn');
+    const panel = document.getElementById('dataSourcesPanel');
+
+    if (_apiPaused) {
+        clearInterval(autoGoInterval);
+        autoGoInterval = null;
+        if (panel) panel.classList.add('paused');
+        if (btn) btn.textContent = 'Resume (lights only)';
+        if (btn) btn.classList.add('btn-warning');
+        if (btn) btn.classList.remove('btn-secondary');
+    } else {
+        autoGoInterval = setInterval(goFetch, currentCheckInterval * 1000);
+        if (panel) panel.classList.remove('paused');
+        if (btn) btn.textContent = 'Pause All (lights only)';
+        if (btn) btn.classList.remove('btn-warning');
+        if (btn) btn.classList.add('btn-secondary');
+        goFetch(); // immediate fetch on resume
+    }
+}
 
 // bfcache support: pause all intervals on pagehide so there are no in-flight
 // requests blocking restoration. Restart on pageshow if restored from cache.

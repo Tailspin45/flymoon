@@ -346,19 +346,11 @@
                     </div>
                 </div>
 
-                <!-- Transit Notifications -->
-                <div class="sidebar-panel" id="transitPanel">
-                    <span class="screw screw-tl"></span><span class="screw screw-tr"></span><span class="screw screw-bl"></span><span class="screw screw-br"></span>
-                    <!-- Eclipse watch/warning/active card — shown when eclipse is imminent/active -->
-                    <div id="eclipseCard" style="display:none"></div>
-                    <h3>Upcoming Transits <span class="panel-subtitle">(Prediction)</span></h3>
-                    <!-- Map-derived flight predictions (from injectMapTransits) -->
-                    <div id="upcomingTransitsList" style="color:#C0C4CA;margin-bottom:4px;min-height:0;"></div>
-                    <!-- Live telescope transit tracking -->
-                    <div id="transitList" class="transit-list">
-                        <p class="empty-state">No transits detected</p>
-                    </div>
-                </div>
+                <!-- Eclipse card — hidden by default, shown by JS when eclipse imminent/active -->
+                <div id="eclipseCard" style="display:none"></div>
+                <!-- Hidden sinks for JS that writes to these without crashing -->
+                <div id="upcomingTransitsList" style="display:none"></div>
+                <div id="transitList" style="display:none"></div>
 
                 <!-- Real-time Transit Detection -->
                 <div class="sidebar-panel" id="detectPanel">
@@ -592,9 +584,48 @@
                     </div>
                 </div>
 
-                <!-- Spacer panel — fills remaining column height -->
-                <div class="sidebar-panel sidebar-panel-spacer" style="flex:1;">
+                <!-- Data Sources activity panel -->
+                <div class="sidebar-panel panel-dense" id="dataSourcesPanel" style="flex:1;">
                     <span class="screw screw-tl"></span><span class="screw screw-tr"></span><span class="screw screw-bl"></span><span class="screw screw-br"></span>
+                    <h3>Data Sources</h3>
+                    <div id="apiSourceLights" class="api-source-lights">
+                        <div class="api-light-row" data-source="opensky">
+                            <span class="api-led"></span>
+                            <span class="api-led-label">OpenSky</span>
+                            <span class="api-led-count">0</span>
+                        </div>
+                        <div class="api-light-row" data-source="adsb_one">
+                            <span class="api-led"></span>
+                            <span class="api-led-label">ADSB-One</span>
+                            <span class="api-led-count">0</span>
+                        </div>
+                        <div class="api-light-row" data-source="adsb_lol">
+                            <span class="api-led"></span>
+                            <span class="api-led-label">adsb.lol</span>
+                            <span class="api-led-count">0</span>
+                        </div>
+                        <div class="api-light-row" data-source="adsb_fi">
+                            <span class="api-led"></span>
+                            <span class="api-led-label">adsb.fi</span>
+                            <span class="api-led-count">0</span>
+                        </div>
+                        <div class="api-light-row" data-source="adsbx">
+                            <span class="api-led"></span>
+                            <span class="api-led-label">ADSBx</span>
+                            <span class="api-led-count">0</span>
+                        </div>
+                        <div class="api-light-row" data-source="local">
+                            <span class="api-led"></span>
+                            <span class="api-led-label">Local</span>
+                            <span class="api-led-count">0</span>
+                        </div>
+                        <div class="api-light-row" data-source="flightaware">
+                            <span class="api-led"></span>
+                            <span class="api-led-label">FlightAware</span>
+                            <span class="api-led-count">0</span>
+                        </div>
+                    </div>
+                    <button id="apiPauseBtn" class="btn btn-secondary btn-compact" onclick="toggleApiPause()" style="width:100%; margin-top:2px;">Pause All (lights only)</button>
                 </div>
 
             </div>
@@ -753,12 +784,6 @@
                         <span class="focus-odometer-value" id="focusPos">0</span>
                     </div>
                     <!-- Camera controls -->
-                    <button id="autoExpBtn" class="btn btn-secondary btn-compact btn-toggle" onclick="toggleAutoExp()" style="width:100%; margin-bottom:2px;">Auto Exp</button>
-                    <div style="display:flex; align-items:center; gap:6px; margin-bottom:2px;">
-                        <span class="setting-label" style="margin:0; min-width:28px;">Gain</span>
-                        <input type="range" id="gainSlider" min="0" max="120" value="80" class="setting-slider" oninput="document.getElementById('gainVal').textContent=this.value" onchange="applyGain()">
-                        <span id="gainVal" style="font-size:0.75em; color:#b8e8ff; min-width:20px; font-family:'SF Mono',monospace;">80</span>
-                    </div>
                     <div style="display:flex; align-items:center; gap:8px; margin-bottom:2px; font-size:0.78em; color:#99a0a8;">
                         <label style="display:flex; align-items:center; gap:4px; cursor:pointer;">
                             <input type="checkbox" id="lpFilterToggle" onchange="applyLpFilter()" style="accent-color:#039c9c;"> LP Filter

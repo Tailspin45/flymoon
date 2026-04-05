@@ -276,16 +276,8 @@ Tests or at least a quick manual check path.
 A short explanation of what you changed and how to verify it.
 
 ## 10. Response Style
-Default to short, direct answers.
+Default to short, direct answers. Minimize token use in every response.
 
-Show enough code to be unambiguous, but avoid flooding the user with large files.
+**NEVER show code in responses** — not snippets, not diffs, not single lines. Describe changes in plain language (file name + what changed). If the user wants to see code they will read the file.
 
-When you finish a meaningful chunk of work, briefly summarize:
-
-What changed.
-
-How to run or verify.
-
-Any follow‑ups or TODOs you recommend.
-
-If you are unsure between multiple reasonable approaches and the choice impacts API usage, UX, or performance, ask one focused question and then proceed with the chosen approach once answered.
+When you finish a chunk of work, briefly summarize what changed (file names only) and how to verify. No code, no extended explanations unless explicitly requested.
