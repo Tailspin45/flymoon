@@ -65,11 +65,11 @@ python3 transit_capture.py --latitude 51.5 --longitude -0.12 --target sun
 
 ---
 
-## Transit Detection
+## Transit Capture
 
 ### Prediction Pipeline
 
-1. **Flight acquisition** — queries FlightAware AeroAPI for all aircraft inside the configured bounding box
+1. **Flight acquisition** — queries APIs for all aircraft inside the configured bounding box
 2. **Position projection** — extrapolates constant-velocity/heading tracks up to 15 minutes ahead
 3. **Celestial tracking** — computes Sun and Moon position with Skyfield + JPL DE421 ephemeris, including atmospheric refraction
 4. **Angular separation** — numerical optimisation finds the moment of closest approach on-sky
@@ -135,13 +135,13 @@ Zipcatcher connects directly to the Seestar S50 over TCP on port 4700.
 ### Connection
 
 - **Auto-discovery** — UDP broadcast scan on port 4720 finds the scope's IP automatically
-- **Smart reconnect** — if the scope drops overnight, Zipcatcher waits until the target rises above the configured minimum altitude before attempting to reconnect, avoiding noisy retries in the middle of the night
+- **Smart reconnect** — if the scope connection drops overnight, Zipcatcher waits until the target rises above the configured minimum altitude before attempting to reconnect, avoiding noisy retries in the middle of the night
 
 ### Imaging
 
 - **Solar and lunar modes** — switches the scope to the correct imaging mode for the selected target
 - **Scenery mode** — for manual positioning independent of the automated tracking
-- **Automatic recording** — starts video a configurable pre-buffer before the predicted transit and stops after a post-buffer (defaults: 10 s each)
+- **Automatic recording** — starts a configurable video pre-buffer before the predicted transit and stops after a post-buffer (defaults: 10 s each)
 - **GoTo** — slew to any named location or entered alt/az coordinates
 - **Continuous nudge** — fine-position the scope with hold-to-repeat joystick controls
 - **Autofocus** — trigger a focus run from the panel
@@ -149,7 +149,7 @@ Zipcatcher connects directly to the Seestar S50 over TCP on port 4700.
 
 ### Focus Odometer
 
-A per-session focus-step counter in the sidebar tracks how many focuser steps have been applied since the session started, helping you return to a known focus position after experimenting.
+A per-session focus-step counter in the sidebar tracks how many focuser steps have been applied since the session started, helping you return to a known focus position after experimenting. ZWO has encrypted the position readout.
 
 ### ALPACA / seestar_alp
 
@@ -183,7 +183,7 @@ A collapsible **Data Sources** panel in the sidebar shows per-source activity od
 
 During a solar eclipse, Zipcatcher switches to timelapse mode: it captures frames at a configurable interval throughout the event and assembles them into a timelapse video. Aircraft transits detected during the eclipse are bookmarked as timestamped events within the recording.
 
-Optional stabilisation (`SOLAR_TIMELAPSE_STABILIZE=true`) compensates for atmospheric jitter between frames.
+Stabilisation (`SOLAR_TIMELAPSE_STABILIZE=true`) compensates for atmospheric jitter between frames.
 
 Auto-resume (`SOLAR_TIMELAPSE_AUTO_RESUME=true`) restarts today's timelapse automatically after a reconnect or restart without requiring manual intervention.
 
@@ -232,7 +232,7 @@ Copy `.env.mock` to `.env` and fill in the values relevant to your setup. Run `p
 
 | Variable | Purpose |
 |----------|---------|
-| `AEROAPI_API_KEY` | FlightAware AeroAPI key (required) |
+| `AEROAPI_API_KEY` | FlightAware AeroAPI key (required if used) |
 | `OBSERVER_LATITUDE / LONGITUDE / ELEVATION` | Your location |
 | `LAT/LONG_LOWER_LEFT / UPPER_RIGHT` | Flight search bounding box |
 | `TELEGRAM_BOT_TOKEN / CHAT_ID` | Telegram alerts (optional) |
@@ -274,6 +274,7 @@ Issues and pull requests welcome — especially transit photographs.
 
 | Component | Project | Licence |
 |-----------|---------|---------|
+| Original idea and foundation code: [David Bettancort Montebello](https://github.com/dbetm/flymoon) | Public Domain
 | Interactive map | [Leaflet 1.9.4](https://leafletjs.com) © Vladimir Agafonkin | BSD 2-Clause |
 | Bounding-box drawing | [Leaflet.Editable](https://github.com/Leaflet/Leaflet.editable) © Yoann Aubineau | MIT |
 | Traffic heatmap | [Leaflet.heat](https://github.com/Leaflet/Leaflet.heat) © Vladimir Agafonkin | MIT |
