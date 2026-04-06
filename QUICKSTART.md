@@ -1,71 +1,54 @@
 # Zipcatcher — Quick Start
 
-## The Easy Way: Docker
+## Option A: Docker (easiest)
 
 ### Step 1 — Install Docker Desktop
 
-Go to **[docker.com/get-started](https://www.docker.com/get-started/)**, click the "Download Docker Desktop" button, and install it  for your system (Mac, Windows, and Linux).
+Download and install **[Docker Desktop](https://www.docker.com/get-started/)** for your platform (Mac, Windows, Linux).
 
 ### Step 2 — Download Zipcatcher
 
-Windows: “Press the Windows key, type cmd, then press Enter.”
+Open a terminal:
 
-Linux: “Press Ctrl+Alt+T.”
+- **Mac** — Command + Space, type `Terminal`, press Return
+- **Windows** — Windows key, type `cmd`, press Enter
+- **Linux** — Ctrl + Alt + T
 
-If that doesn’t work on Linux: “Open the apps menu, search for Terminal, and open it.”
+```bash
+git clone https://github.com/Tailspin45/Zipcatcher.git
+cd Zipcatcher
+```
 
-Mac / Apple: “Press Command + Space, type Terminal, then press Return.”
-
-## Then copy/paste the following
-
-git clone https://github.com/Tailspin45/flymoon.git
-cd flymoon
-
-No git? [Download the zip](https://github.com/Tailspin45/flymoon/archive/refs/heads/main.zip) and unzip it instead.
+No git? [Download the ZIP](https://github.com/Tailspin45/Zipcatcher/archive/refs/heads/main.zip) and unzip it instead.
 
 ### Step 3 — Run the setup wizard
 
+```bash
 docker compose run --rm flymoon python3 src/config_wizard.py --setup
+```
 
-
-This walks you through everything interactively:
-- Your location (lat / lon / elevation)
-- Your FlightAware API key — the wizard opens the signup page for you
-- ([free personal tier](https://www.flightaware.com/aeroapi/signup/personal))
+The wizard walks you through:
+- Your location (latitude / longitude / elevation)
+- Optional: FlightAware API key — adds airline and route metadata ([free personal tier](https://www.flightaware.com/aeroapi/signup/personal))
 - Optional: Telegram notifications
 - Optional: Seestar telescope
 
+**Note:** Zipcatcher works with zero API keys out of the box, pulling flight positions from OpenSky, ADSB-One, adsb.lol, and adsb.fi — all free with no signup.
+
 ### Step 4 — Start Zipcatcher
 
+```bash
 docker compose up -d
+```
 
-Open **[http://localhost:8000](http://localhost:8000)** in your browser. That's it.
+Open **[http://localhost:8000](http://localhost:8000)** in your browser.
 
-To stop it: `docker compose down`  
-To see logs: `docker compose logs -f`
-
----
-
-## First Use
-
-1. **Draw your bounding box** — drag the corners of the search rectangle to cover the patch of sky you want to see
-2. **Pick a target** — Sun or Moon
-3. **Set minimum altitudes** — use the N / E / S / W quadrant inputs to mask out directions blocked by trees or buildings
-3a. Click "Min Angle" in quadrant to reset to zero in each quadrant
-5. **Enable auto-refresh** — set a check interval so Zipcatcher monitors continuously
+To stop: `docker compose down`  
+To view logs: `docker compose logs -f`
 
 ---
 
-## Keeping Zipcatcher Updated (frequent bug fixes and updates)
-
-git pull
-docker compose build
-docker compose up -d
-
-
----
-
-## Without Docker (Mac / Linux)
+## Option B: Without Docker (Mac / Linux)
 
 ```bash
 make setup
@@ -74,26 +57,50 @@ python3 src/config_wizard.py --setup
 python app.py
 ```
 
----
-
-## Telescope (Seestar S50)
-
-Add to `.env` with text editor:
-
-ENABLE_SEESTAR=true
-SEESTAR_HOST=192.168.x.x   # leave blank to auto-discover on your LAN
-
-Zipcatcher will start recording automatically before each predicted transit and stop after. If the scope disconnects overnight it waits until the target is back above your minimum altitude before reconnecting.
+Open **[http://localhost:8000](http://localhost:8000)**.
 
 ---
 
-## Notifications
+## First Use
+
+1. **Draw your bounding box** — drag the corners of the search rectangle to cover the area of sky you want to monitor
+2. **Pick a target** — Sun or Moon
+3. **Set minimum altitudes** — use the N / E / S / W quadrant inputs to mask out directions blocked by trees or buildings (click the centre button to reset all to zero)
+4. **Enable auto-refresh** — set a polling interval so Zipcatcher monitors continuously
+
+---
+
+## Keeping Zipcatcher Updated
+
+```bash
+git pull
+docker compose build
+docker compose up -d
+```
+
+---
+
+## Telescope (Seestar S50) — optional
 
 Add to `.env`:
 
+```bash
+ENABLE_SEESTAR=true
+SEESTAR_HOST=192.168.x.x   # leave blank to auto-discover on your LAN
+```
+
+Zipcatcher will slew to the target and start recording automatically before each predicted transit. If the scope disconnects overnight it waits until the target rises above your configured minimum altitude before reconnecting.
+
+---
+
+## Notifications — optional
+
+Add to `.env`:
+
+```bash
 TELEGRAM_BOT_TOKEN=your_token
 TELEGRAM_CHAT_ID=your_chat_id
-
+```
 
 See **[SETUP.md](SETUP.md)** for how to create the Telegram bot.
 
@@ -104,9 +111,9 @@ See **[SETUP.md](SETUP.md)** for how to create the Telegram bot.
 | Symptom | Fix |
 |---------|-----|
 | Page won't load | Make sure Docker Desktop is running; check `docker compose logs` |
-| No flights shown | Check `AEROAPI_API_KEY` in `.env` and ensure the bounding box covers your sky |
+| No flights shown | Verify bounding box covers your sky; no API key is needed for basic operation |
 | Sun/Moon not appearing | Target may be below your minimum altitude — lower the quadrant inputs |
-| Telescope not found | Set `SEESTAR_HOST=` blank to enable auto-discovery |
+| Telescope not found | Leave `SEESTAR_HOST=` blank to enable UDP auto-discovery |
 | Need to re-run setup | `docker compose run --rm flymoon python3 src/config_wizard.py --setup` |
 
 Full documentation → **[SETUP.md](SETUP.md)**

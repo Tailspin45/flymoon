@@ -285,6 +285,8 @@ For local source-based launching (without creating an installer), use:
 launch-flymoon-windows.bat
 ```
 
+(This file is named `launch-flymoon-windows.bat` in the repository — it launches Zipcatcher correctly despite the legacy name.)
+
 To create a naive-user delivery ZIP (installer + quick-start text only):
 
 ```bat
@@ -365,11 +367,11 @@ python3 transit_capture.py \
   --latitude 34.111369 \
   --longitude -118.310169 \
   --target moon \
-  --interval 60
+  --interval 5
 ```
 
 This will:
-- Monitor for aircraft transits every 60 seconds
+- Monitor for aircraft transits every 5 minutes (`--interval` is in **minutes**)
 - Send Telegram notifications for high-probability transits
 - Automatically trigger telescope recording
 - Display status updates in the console
@@ -385,8 +387,10 @@ python3 transit_capture.py \
   --latitude 34.111369 \
   --longitude -118.310169 \
   --target sun \
-  --interval 30
+  --interval 15
 ```
+
+(`--interval` is in **minutes** — this polls every 15 minutes)
 
 ### Monitor Moon Transits with Telescope
 
@@ -395,7 +399,7 @@ python3 transit_capture.py \
   --latitude 34.111369 \
   --longitude -118.310169 \
   --target moon \
-  --interval 60
+  --interval 15
 ```
 
 ### Adjust Recording Buffers
@@ -453,12 +457,11 @@ Solutions:
 1. Verify Seestar is powered on
 2. Check WiFi connection (Seestar and computer on same network)
 3. Confirm IP address is correct: `ping 192.168.1.100`
-4. Try different ports in `.env`:
+4. Confirm the TCP control port — almost always 4700:
    ```bash
-   SEESTAR_PORT=4700  # Try this first
-   SEESTAR_PORT=4720  # Or this
-   SEESTAR_PORT=8080  # Or this
+   SEESTAR_PORT=4700
    ```
+   Note: port 4720 is used internally for UDP auto-discovery broadcasts only, not for TCP control.
 5. Check firewall settings on your computer
 
 **Heartbeat Failures**
@@ -593,6 +596,6 @@ Happy transit hunting!
 
 ---
 
-**Last Updated**: 2026-03-09
+**Last Updated**: 2026-04-06
 **Project**: Zipcatcher
 **Documentation**: See project README for more details
