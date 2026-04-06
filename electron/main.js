@@ -356,7 +356,6 @@ function buildMenu() {
             label: 'Help',
             submenu: [
                 { label: 'Quick Start',      click: () => shell.openPath(path.join(docsDir, 'QUICKSTART.md')) },
-                { label: 'Quick Reference',  click: () => shell.openPath(path.join(docsDir, 'QUICK_REFERENCE.md')) },
                 { label: 'Setup Guide',      click: () => shell.openPath(path.join(docsDir, 'SETUP.md')) },
                 { label: 'Telescope Guide',  click: () => shell.openPath(path.join(docsDir, 'TELESCOPE_GUIDE.md')) },
                 { type: 'separator' },
