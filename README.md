@@ -12,15 +12,15 @@
 
 Capturing an aircraft silhouette against the solar or lunar disc is a rare and technically demanding shot. The geometry has to be nearly perfect, the timing is measured in fractions of a second, and the telescope has to be pointing at exactly the right place before the aircraft arrives. Zipcatcher automates every part of that problem.
 
-It continuously monitors live flight traffic, projects each aircraft's path against the celestial disc using high-precision ephemeris data, ranks candidates by how close they will come, and — when a high-probability transit is imminent — commands a Seestar S50 telescope to start recording automatically. After the session it analyses the footage and produces an annotated composite image showing the aircraft's full track across the disc.
+It continuously monitors live flight traffic, projects each aircraft's path against the planetary disc using high-precision ephemeris data, ranks candidates by how close they will come, and — when a high-probability transit is imminent — commands a Seestar S50 telescope to start recording automatically. After the session it analyses the footage and produces an annotated composite image showing the aircraft's full track across the disc.
 
 **Key capabilities:**
 
-- Predicts transits up to **15 minutes ahead** using real-time AeroAPI flight data
+- Predicts transits up to **15 minutes ahead** using real-time flight data from six concurrent sources
 - Displays flight paths, altitudes, and probability on a live **interactive map**
 - Controls a **Seestar S50** via direct TCP — no bridge app required
 - Detects aircraft in the live RTSP stream using a **frame-coherence computer-vision pipeline**
-- Runs a **CNN transit classifier** trained on real detection clips to separate genuine transits from false positives
+- Runs a **Convolutional Neural Network (CNN) transit classifier** trained on real detection clips to separate genuine transits from false positives
 - Produces **annotated composite images** from recorded video
 - Sends **Telegram alerts** with flight details and predicted transit time
 - Runs **headlessly overnight** on Mac, Linux, or Windows
@@ -32,7 +32,20 @@ It continuously monitors live flight traffic, projects each aircraft's path agai
 ### Prerequisites
 
 - Python 3.9 +
-- FlightAware AeroAPI key ([free personal tier](https://www.flightaware.com/aeroapi/signup/personal))
+
+**Flight data sources** — Zipcatcher queries up to six sources concurrently and merges the results. Most work with no account or API key:
+
+| Source | Key required? | Notes |
+|--------|--------------|-------|
+| [OpenSky Network](https://opensky-network.org) | No | Free, community ADS-B network |
+| [ADSB-One](https://api.adsb.one) | No | Free, no authentication |
+| [adsb.lol](https://api.adsb.lol) | No | Free, no authentication |
+| [adsb.fi](https://opendata.adsb.fi) | No | Free open-data API |
+| [FlightAware AeroAPI](https://www.flightaware.com/aeroapi/signup/personal) | Yes — free personal tier | Adds airline/route metadata |
+| [ADS-B Exchange](https://www.adsbexchange.com/data/) | Yes — `ADSBX_API_KEY` in `.env` | Optional; skip if you don't have one |
+| Local receiver (dump1090 / tar1090) | No | Point `ADSB_LOCAL_URL` at your own RTL-SDR receiver — optional |
+
+You can run Zipcatcher with zero API keys and still get solid coverage from the four free sources. Adding a FlightAware key enriches results with callsign, route, and aircraft-type data.
 
 ### Install and run
 
