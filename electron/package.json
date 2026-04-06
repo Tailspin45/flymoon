@@ -11,7 +11,7 @@
     "build:all": "electron-builder -mwl"
   },
   "build": {
-    "appId": "com.flymoon.app",
+    "appId": "com.zipcatcher.app",
     "productName": "Zipcatcher",
     "copyright": "Copyright © 2025 Zipcatcher",
     "directories": {
@@ -54,10 +54,6 @@
       {
         "from": "../QUICKSTART.md",
         "to": "docs/QUICKSTART.md"
-      },
-      {
-        "from": "../QUICK_REFERENCE.md",
-        "to": "docs/QUICK_REFERENCE.md"
       },
       {
         "from": "../docs/Zipcatcher-article.pdf",

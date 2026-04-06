@@ -209,11 +209,15 @@ python3 transit_capture.py --latitude 51.5 --longitude -0.12 --target sun --manu
 
 ### macOS App Bundle
 
+Build the signed DMG installer from the `electron/` directory:
+
 ```bash
-./build_mac_app.sh        # builds Zipcatcher.app
+cd electron
+npm install
+npx electron-builder --mac
 ```
 
-Double-click `Zipcatcher.app`, choose your target, and leave it running. Logs go to `/tmp/transit_monitor.log`.
+The output DMG is written to `dist-electron/`. Open it and drag Zipcatcher to Applications.
 
 ### Windows System Tray
 
