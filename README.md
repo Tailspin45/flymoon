@@ -209,15 +209,13 @@ python3 transit_capture.py --latitude 51.5 --longitude -0.12 --target sun --manu
 
 ### macOS App Bundle
 
-Build the signed DMG installer from the `electron/` directory:
+Build the signed DMG installer from the repo root — the build script handles everything:
 
 ```bash
-cd electron
-npm install
-npx electron-builder --mac
+cd electron && npx electron-builder --mac
 ```
 
-The output DMG is written to `dist-electron/`. Open it and drag Zipcatcher to Applications.
+The output DMG is written to `../dist-electron/`. Open it and drag Zipcatcher to Applications.
 
 ### Windows System Tray
 
