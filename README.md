@@ -122,7 +122,7 @@ Two modes:
 ## Map Interface
 
 <p align="center">
-  <img src="static/images/Screenshot 2026-04-06 at 11.59.35 AM.png" alt="Zipcatcher map interface" width="100%">
+  <img src="~/static/images/Screenshot 2026-04-06 at 11.59.35 AM.png" alt="Zipcatcher map interface" width="100%">
 </p>
 
 - **Per-quadrant minimum altitude** — set independent minimum angles for North, East, South, and West to mask out obstructions; flights are only ranked when the target is above your local horizon. Click the centre to reset all quadrants to zero
@@ -137,7 +137,7 @@ Two modes:
 ## Telescope Panel
 
 <p align="center">
-  <img src="static/images/Screenshot 2026-04-06 at 11.55.42 AM.png" alt="Zipcatcher Seestar telescope control panel" width="100%">
+  <img src="~/static/images/Screenshot 2026-04-06 at 11.55.42 AM.png" alt="Zipcatcher Seestar telescope control panel" width="100%">
 </p>
 
 Zipcatcher connects directly to the Seestar S50 over TCP on port 4700.
