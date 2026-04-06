@@ -69,6 +69,7 @@ python3 transit_capture.py --latitude 51.5 --longitude -0.12 --target sun
 
 ### Prediction Pipeline
 
+
 1. **Flight acquisition** — queries APIs for all aircraft inside the configured bounding box
 2. **Position projection** — extrapolates constant-velocity/heading tracks up to 15 minutes ahead
 3. **Celestial tracking** — computes Sun and Moon position with Skyfield + JPL DE421 ephemeris, including atmospheric refraction
@@ -82,6 +83,7 @@ python3 transit_capture.py --latitude 51.5 --longitude -0.12 --target sun
 | ⚪ Low | ≤ 12.0° | Possible distant transit |
 
 ### Live Video Detection
+
 
 When the telescope is connected, **TransitDetector** monitors the live RTSP stream continuously. The detector uses a multi-stage coherence pipeline:
 
@@ -119,6 +121,10 @@ Two modes:
 
 ## Map Interface
 
+<p align="center">
+  <img src="static/images/Screenshot 2026-04-06 at 11.59.35 AM.png" alt="Zipcatcher map interface" width="100%">
+</p>
+
 - **Per-quadrant minimum altitude** — set independent minimum angles for North, East, South, and West to mask out obstructions; flights are only ranked when the target is above your local horizon. Click the centre to reset all quadrants to zero
 - **Altitude bars** — thin bars on each flight indicator show cruising altitude at a glance
 - **Route and track overlay** — click any indicator for planned route ahead and historical track behind
@@ -129,6 +135,10 @@ Two modes:
 ---
 
 ## Telescope Panel
+
+<p align="center">
+  <img src="static/images/Screenshot 2026-04-06 at 11.55.42 AM.png" alt="Zipcatcher Seestar telescope control panel" width="100%">
+</p>
 
 Zipcatcher connects directly to the Seestar S50 over TCP on port 4700.
 
