@@ -217,6 +217,11 @@ A collapsible **Data Sources** panel in the sidebar shows per-source activity od
 
 During a solar eclipse, Zipcatcher switches to timelapse mode: it captures frames at a configurable interval throughout the event and assembles them into a timelapse video. Aircraft transits detected during the eclipse are bookmarked as timestamped events within the recording.
 
+<p align="center">
+<img width="1922" height="961" alt="Screenshot 2026-04-07 at 8 28 53 AM" src="https://github.com/user-attachments/assets/c35a82dc-d8c7-4076-b0d5-d72679d09275" />
+
+</p>
+
 Stabilisation (`SOLAR_TIMELAPSE_STABILIZE=true`) compensates for atmospheric jitter between frames.
 
 Auto-resume (`SOLAR_TIMELAPSE_AUTO_RESUME=true`) restarts today's timelapse automatically after a reconnect or restart without requiring manual intervention.
