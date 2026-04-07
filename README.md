@@ -183,18 +183,20 @@ The gallery (📁 **Captured Files** strip at the bottom of the scope panel) sho
 
 ### File Viewer
 
-<p align="center"
-<img width="1197" height="873" alt="Screenshot 2026-04-07 at 8 08 53 AM" src="https://github.com/user-attachments/assets/7b109e5a-7c83-42e8-9f6d-ed71c83d1e3f" />
-</p>
-
-Click any thumbnail to open the file viewer:
+ Click any thumbnail to open the file viewer:
 
 <p align="center">
-<img width="1827" height="387" alt="Screenshot 2026-04-07 at 8 13 09 AM" src="https://github.com/user-attachments/assets/6ff49ae5-e56d-49d8-bd40-884f4a087418" />
+  <img width="1197" height="873" alt="Screenshot 2026-04-07 at 8 08 53 AM" src="https://github.com/user-attachments/assets/e54943d2-cd93-4637-9200-e71e4b95a36d" />
+
 </p>
 
 - **Five-panel frame display** — shows the current frame flanked by two frames on each side for context
 - **Frame scrubber** — drag to seek; ◀◀ and ▶▶ buttons on either side of the frame counter play the clip in reverse or forward at native FPS; click again to stop
+  
+<p align="center">
+  <img width="1827" height="387" alt="Screenshot 2026-04-07 at 8 13 09 AM" src="https://github.com/user-attachments/assets/efdd0277-0501-48a9-927d-9a8c14c52dd6" />
+</p>
+
 - **📌 Mark** — first tap sets the In point, second tap sets the Out point; re-tapping replaces whichever endpoint is nearest to the current frame. The trim row above the scrubber shows the current In and Out times live
 - **✂️ Trim** — writes a new `trim_<filename>.mp4` alongside the original (non-destructive; the original is never modified). After trimming a **Replace Original** button appears if you want to discard the source
 - **Transit analysis** — ☀️ Solar Transit / 🌙 Lunar Transit buttons run the post-capture analyzer and overlay signal data on the scrubber bar
