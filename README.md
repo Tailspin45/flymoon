@@ -18,7 +18,7 @@ It continuously monitors live flight traffic, projects each aircraft's path agai
 
 - Predicts transits up to **15 minutes ahead** using real-time flight data from six concurrent sources
 - Displays flight paths, altitudes, and probability on a live **interactive map**
-- Controls a **Seestar S50** via direct TCP — no bridge app required
+- Controls a **Seestar** via direct TCP — no bridge app required
 - Detects aircraft in the live RTSP stream using a **frame-coherence computer-vision pipeline**
 - Runs a **Convolutional Neural Network (CNN) transit classifier** trained on real detection clips to separate genuine transits from false positives
 - Produces **annotated composite images** from recorded video
