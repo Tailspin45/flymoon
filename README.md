@@ -178,6 +178,10 @@ The gallery (📁 **Captured Files** strip at the bottom of the scope panel) sho
 
 ### File Viewer
 
+<p align="center"
+<img width="1197" height="873" alt="Screenshot 2026-04-07 at 8 08 53 AM" src="https://github.com/user-attachments/assets/7b109e5a-7c83-42e8-9f6d-ed71c83d1e3f" />
+</p>
+
 Click any thumbnail to open the file viewer:
 
 - **Five-panel frame display** — shows the current frame flanked by two frames on each side for context
