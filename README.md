@@ -12,7 +12,7 @@
 
 Capturing an aircraft silhouette against the solar or lunar disc is a rare and technically demanding shot. The geometry has to be nearly perfect, the timing is measured in fractions of a second, and the Seestar has to be tracking the Sun or Moon before the aircraft arrives. Zipcatcher automates every part of that problem.
 
-It continuously monitors live flight traffic, projects each aircraft's path against the solar or lunar disc using high-precision ephemeris data, ranks candidates by how close they will come, and — when a high-probability transit is imminent — commands a Seestar S50 telescope to start recording automatically. After the session it analyses the footage and produces an annotated composite image showing the aircraft's full track across the disc.
+It continuously monitors live flight traffic, projects each aircraft's path against the solar or lunar disc using high-precision ephemeris data, ranks candidates by how close they will come, and — when a high-probability transit is imminent — commands a Seestar telescope to start recording automatically. After the session it analyses the footage and produces an annotated composite image showing the aircraft's full track across the disc.
 
 **Key capabilities:**
 
@@ -145,7 +145,7 @@ Two modes:
   <img width="1916" height="1047" alt="Screenshot 2026-04-06 at 11 55 42 AM" src="https://github.com/user-attachments/assets/df7e751e-72f0-49a5-b65b-c392bfd820ef" />
 </p>
 
-Zipcatcher connects directly to the Seestar S50 over TCP on port 4700.
+Zipcatcher connects directly to the Seestar over TCP on port 4700.
 
 ### Connection
 
