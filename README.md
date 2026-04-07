@@ -207,6 +207,10 @@ The gallery (📁 **Captured Files** strip at the bottom of the scope panel) sho
 
 A collapsible **Data Sources** panel in the sidebar shows per-source activity odometers (FlightAware, OpenSky, OpenAIP) with the last-updated timestamp and request count for the current session.
 
+<p align="center">
+  <img width="386" height="141" alt="Screenshot 2026-04-07 at 8 26 02 AM" src="https://github.com/user-attachments/assets/26bd6099-8fc0-4754-bab2-ba34f2cf229b" />
+</p>
+
 ---
 
 ## Solar Eclipse Timelapse
