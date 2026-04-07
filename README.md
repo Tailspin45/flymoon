@@ -171,7 +171,8 @@ A per-session focus-step counter in the sidebar tracks how many focuser steps ha
 If you run a `seestar_alp` sidecar, set `SEESTAR_ALPACA_URL` in `.env` to expose the stable `/v1/seestar/*` ALPACA API. Zipcatcher will prefer ALPACA endpoints when available and fall back to direct RPC otherwise.
 
 <p align="center">
-  <img width="382" height="709" alt="Screenshot 2026-04-07 at 8 15 43 AM" src="https://github.com/user-attachments/assets/64f0d96d-4ec5-44dc-b8e9-e70caf73f66b" />
+<img width="391" height="673" alt="Alpaca panel" src="https://github.com/user-attachments/assets/02823808-ac62-4c69-9d1a-58679770f4bb" />
+
 </p>
 
 ---
