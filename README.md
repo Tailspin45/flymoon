@@ -88,6 +88,9 @@ python3 transit_capture.py --latitude 51.5 --longitude -0.12 --target sun
 
 ### Live Video Detection
 
+<p align="center">
+<img width="369" height="753" alt="Screenshot 2026-04-07 at 8 05 40 AM" src="https://github.com/user-attachments/assets/adc376d0-8a51-4e52-94f4-85bcbf06b8b4" />
+</p>
 
 When the telescope is connected, **TransitDetector** monitors the live RTSP stream continuously. The detector uses a multi-stage coherence pipeline:
 
