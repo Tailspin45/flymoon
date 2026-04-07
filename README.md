@@ -170,6 +170,10 @@ A per-session focus-step counter in the sidebar tracks how many focuser steps ha
 
 If you run a `seestar_alp` sidecar, set `SEESTAR_ALPACA_URL` in `.env` to expose the stable `/v1/seestar/*` ALPACA API. Zipcatcher will prefer ALPACA endpoints when available and fall back to direct RPC otherwise.
 
+<p align="center">
+  <img width="382" height="709" alt="Screenshot 2026-04-07 at 8 15 43 AM" src="https://github.com/user-attachments/assets/64f0d96d-4ec5-44dc-b8e9-e70caf73f66b" />
+</p>
+
 ---
 
 ## Capture Gallery
@@ -183,6 +187,10 @@ The gallery (📁 **Captured Files** strip at the bottom of the scope panel) sho
 </p>
 
 Click any thumbnail to open the file viewer:
+
+<p align="center">
+<img width="1827" height="387" alt="Screenshot 2026-04-07 at 8 13 09 AM" src="https://github.com/user-attachments/assets/6ff49ae5-e56d-49d8-bd40-884f4a087418" />
+</p>
 
 - **Five-panel frame display** — shows the current frame flanked by two frames on each side for context
 - **Frame scrubber** — drag to seek; ◀◀ and ▶▶ buttons on either side of the frame counter play the clip in reverse or forward at native FPS; click again to stop
