@@ -67,6 +67,10 @@ python3 transit_capture.py --latitude 51.5 --longitude -0.12 --target sun
 
 ## Transit Capture
 
+<p align="center">
+  <img width="1890" height="1048" alt="Screenshot 2026-04-06 at 11 59 35 AM" src="https://github.com/user-attachments/assets/23a9245b-4b15-4505-a19e-1d3ad287d5b3" />
+</p>
+
 ### Prediction Pipeline
 
 
@@ -121,9 +125,7 @@ Two modes:
 
 ## Map Interface
 
-<p align="center">
-  <img src="~/static/images/Screenshot 2026-04-06 at 11.59.35 AM.png" alt="Zipcatcher map interface" width="100%">
-</p>
+
 
 - **Per-quadrant minimum altitude** — set independent minimum angles for North, East, South, and West to mask out obstructions; flights are only ranked when the target is above your local horizon. Click the centre to reset all quadrants to zero
 - **Altitude bars** — thin bars on each flight indicator show cruising altitude at a glance
@@ -137,7 +139,7 @@ Two modes:
 ## Telescope Panel
 
 <p align="center">
-  <img src="~/static/images/Screenshot 2026-04-06 at 11.55.42 AM.png" alt="Zipcatcher Seestar telescope control panel" width="100%">
+  <img width="1916" height="1047" alt="Screenshot 2026-04-06 at 11 55 42 AM" src="https://github.com/user-attachments/assets/df7e751e-72f0-49a5-b65b-c392bfd820ef" />
 </p>
 
 Zipcatcher connects directly to the Seestar S50 over TCP on port 4700.
