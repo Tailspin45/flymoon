@@ -3120,6 +3120,7 @@ async function _runIsolateTransit(apiPath, peakHint) {
 /**
  * Draw red transit-span tick marks on markedFrameBar.
  * Yellow ticks (user-marked frames) are preserved alongside.
+ * Also draws cyan In/Out trim markers.
  */
 function _drawTransitSpans() {
     const bar = document.getElementById('markedFrameBar');
@@ -3134,6 +3135,36 @@ function _drawTransitSpans() {
         tick.title = `Marked frame ${f}`;
         tick.onclick = () => { const v = document.querySelector('#fileViewerBody video'); if (v) { v.pause(); v.currentTime = f / _videoFps; } };
         bar.appendChild(tick);
+    }
+    // Trim In/Out markers (cyan)
+    if (_trimIn !== null) {
+        const inFrame = Math.round(_trimIn * _videoFps);
+        const pct = (inFrame / Math.max(1, total - 1)) * 100;
+        const inMark = document.createElement('div');
+        inMark.style.cssText = `position:absolute; left:${pct}%; top:0; width:3px; height:100%; background:#0ff; border-radius:1px; cursor:pointer; z-index:10;`;
+        inMark.title = `Trim In: ${_trimIn.toFixed(2)}s (frame ${inFrame})`;
+        inMark.onclick = () => { const v = document.querySelector('#fileViewerBody video'); if (v) { v.pause(); v.currentTime = _trimIn; } };
+        bar.appendChild(inMark);
+    }
+    if (_trimOut !== null) {
+        const outFrame = Math.round(_trimOut * _videoFps);
+        const pct = (outFrame / Math.max(1, total - 1)) * 100;
+        const outMark = document.createElement('div');
+        outMark.style.cssText = `position:absolute; left:${pct}%; top:0; width:3px; height:100%; background:#0ff; border-radius:1px; cursor:pointer; z-index:10;`;
+        outMark.title = `Trim Out: ${_trimOut.toFixed(2)}s (frame ${outFrame})`;
+        outMark.onclick = () => { const v = document.querySelector('#fileViewerBody video'); if (v) { v.pause(); v.currentTime = _trimOut; } };
+        bar.appendChild(outMark);
+    }
+    // Optional: draw a highlighted region between In/Out
+    if (_trimIn !== null && _trimOut !== null) {
+        const inFrame = Math.round(_trimIn * _videoFps);
+        const outFrame = Math.round(_trimOut * _videoFps);
+        const pctL = (inFrame / Math.max(1, total - 1)) * 100;
+        const pctW = Math.max(0.5, ((outFrame - inFrame) / Math.max(1, total - 1)) * 100);
+        const region = document.createElement('div');
+        region.style.cssText = `position:absolute; left:${pctL}%; top:0; width:${pctW}%; height:100%; background:rgba(0,255,255,0.15); pointer-events:none;`;
+        region.title = 'Trim region';
+        bar.appendChild(region);
     }
     // Red transit spans
     if (!_isolateResult || !_isolateResult.spans) return;
@@ -3432,8 +3463,7 @@ function viewFile(path, name, opts) {
                   `<span id="frameCounter" style="color:#0ff; font-family:monospace; font-size:0.85em; min-width:120px; text-align:center;">Frame 0 / 0</span>` +
                   `<button class="btn-viewer" onclick="scrubPlayToggle(1)"  id="scrubPlayFwdBtn" title="Play forward (click again to stop)">▶▶</button>` +
                   `<button id="markFrameBtn" class="btn-viewer" onclick="toggleMarkFrame()" ` +
-                    `title="Mark/unmark this frame for composite (M key)" style="font-size:0.85em; padding:2px 8px;">📌 Mark</button>` +
-                  `<span id="markedCount" style="color:#fd0; font-family:monospace; font-size:0.8em; min-width:70px;">0 marked</span>` +
+                    `title="Mark In/Out points for trimming (M key)" style="font-size:0.85em; padding:2px 8px;">📌 Mark</button>` +
                 `</div>` +
                 `<input type="range" id="frameScrubSlider" min="0" max="100" value="0" step="1" ` +
                   `style="width:100%; height:20px; accent-color:#0ff; cursor:pointer;" title="Drag to scrub frames">` +
@@ -3442,7 +3472,7 @@ function viewFile(path, name, opts) {
                     `←/→ step · Shift ±10 · Space play/pause · M mark` +
                   `</div>` +
                 `</div>` +
-                `<div id="markedFrameBar" style="position:relative; width:100%; height:8px; background:#222; margin-top:4px; border-radius:4px; overflow:hidden;" title="Yellow = marked frames · Red = transit spans · Green = peak frame"></div>` +
+                `<div id="markedFrameBar" style="position:relative; width:100%; height:8px; background:#222; margin-top:4px; border-radius:4px; overflow:hidden;" title="Cyan = trim In/Out · Red = transit spans · Green = peak frame"></div>` +
               `</div>` +
               `<div id="buildCompositeRow" style="display:none; padding:4px 8px; background:#1a1a1a; border-top:1px solid #222; text-align:center; flex-shrink:0;">` +
                 `<button class="btn-viewer" id="buildCompositeBtn" onclick="buildCompositeFromMarked()">🖼 Build Composite (<span id="compositeCountBtn">0</span>)</button>` +
@@ -3815,6 +3845,7 @@ function _jumpToFrame(f) {
 }
 
 function toggleMarkFrame() {
+    const vid = document.getElementById('hiddenVid');
     const t = _currentFrame / _videoFps;
 
     if (_trimIn === null) {
@@ -4027,10 +4058,11 @@ function _renderTrimRow(showReplace) {
     const vid = document.getElementById('hiddenVid');
     const dur = (vid && vid.duration && isFinite(vid.duration)) ? vid.duration.toFixed(2) : '';
     const durHint = dur ? ` · dur: ${dur}s` : '';
-    const inStr  = _trimIn  !== null ? _trimIn.toFixed(2)  + 's' : '—';
-    const outStr = _trimOut !== null ? _trimOut.toFixed(2) + 's' : '—';
+    const inStr  = _trimIn  !== null ? 'f' + Math.round(_trimIn * _videoFps) : '—';
+    const outStr = _trimOut !== null ? 'f' + Math.round(_trimOut * _videoFps) : '—';
+    const selDur = (_trimIn !== null && _trimOut !== null) ? (_trimOut - _trimIn).toFixed(2) + 's' : '—';
     row.innerHTML =
-        `<span style="color:#aaa; font-size:0.78em;">✂️ In: <b style="color:#0ff">${inStr}</b> &nbsp;Out: <b style="color:#0ff">${outStr}</b>${durHint}</span>` +
+        `<span style="color:#aaa; font-size:0.78em;">✂️ In: <b style="color:#0ff">${inStr}</b> &nbsp;Out: <b style="color:#0ff">${outStr}</b> &nbsp;Sel: <b style="color:#0ff">${selDur}</b>${durHint}</span>` +
         `<button class="btn-viewer btn-viewer-sun" onclick="viewerTrim()" title="Save trimmed region as trim_<name>.mp4 (original untouched)">Trim</button>` +
         (showReplace
             ? `<button class="btn-viewer btn-viewer-danger" onclick="viewerTrimReplaceOriginal()" title="Delete the original — keep only the trimmed version">Replace Original</button>`
