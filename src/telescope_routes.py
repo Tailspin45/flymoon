@@ -3817,7 +3817,43 @@ def _auto_connect_background():
                     interval = 120.0
                 tl.resume_today(host=client.host, interval=interval)
 
+        # Watchdog: restart the detector if it dies while the scope is still connected.
+        _start_detector_watchdog(client)
+
     t = threading.Thread(target=_worker, name="seestar-auto-connect", daemon=True)
+    t.start()
+
+
+def _start_detector_watchdog(client) -> None:
+    """Launch a daemon thread that restarts the transit detector if it stops
+    unexpectedly (e.g. RTSP stream drop) while the scope is still connected."""
+
+    import time as _time
+
+    _WATCHDOG_INTERVAL = 30  # seconds between checks
+
+    def _watchdog():
+        while True:
+            _time.sleep(_WATCHDOG_INTERVAL)
+            try:
+                if not client.is_connected():
+                    # Scope disconnected — stop watching; auto-connect will handle it.
+                    logger.debug("[Watchdog] Scope disconnected, watchdog exiting.")
+                    return
+
+                from src.transit_detector import get_detector
+
+                det = get_detector()
+                if det is not None and not det.is_running:
+                    logger.info(
+                        "[Watchdog] Detector stopped unexpectedly — auto-restarting."
+                    )
+                    mode = getattr(client, "_viewing_mode", None) or "sun"
+                    _maybe_auto_start_detector(mode)
+            except Exception as exc:
+                logger.debug(f"[Watchdog] check error: {exc}")
+
+    t = threading.Thread(target=_watchdog, name="detector-watchdog", daemon=True)
     t.start()
 
 

@@ -1,5 +1,11 @@
 /* Telescope Control Page Styles - Lightroom Layout */
 
+/* Kill body padding when the scope page is visible so 100vw/100vh don't overflow. */
+body:has(#telescopeView:not([style*="display:none"]):not([style*="display: none"])) {
+    padding: 0;
+    overflow: hidden;
+}
+
 /* Scope page: full viewport width + column flex so filmstrip is a sibling of .telescope-container. */
 #telescopeView {
     box-sizing: border-box;
@@ -20,6 +26,17 @@
 #telescopeView > #mismatchBanner,
 #telescopeView > .header-row {
     flex-shrink: 0;
+}
+
+/* Compact header on the scope page so the filmstrip fits in the viewport. */
+#telescopeView > .header-row {
+    min-height: 0;
+    padding-top: 4px;
+    padding-bottom: 4px;
+    margin-bottom: 0;
+}
+#telescopeView > .header-row .logo {
+    height: 24px;
 }
 
 #telescopeView > .telescope-container {
@@ -1120,7 +1137,7 @@
     background: #111114;
     border-top: 1px solid #1e1e24;
     height: auto;
-    min-height: 140px;
+    min-height: 120px;
     flex-shrink: 0;
     display: flex;
     flex-direction: column;
@@ -1217,6 +1234,12 @@
 .btn-icon:disabled {
     opacity: 0.4;
     cursor: not-allowed;
+}
+
+.gallery-mode-btn.active {
+    background: #0ff;
+    color: #000;
+    border-color: #0ff;
 }
 
 .filmstrip-list {

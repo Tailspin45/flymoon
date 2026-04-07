@@ -854,6 +854,11 @@
                 <button class="filmstrip-nav-btn" onclick="filmstripScrollTo('end')" title="Go to oldest">&raquo;|</button>
             </div>
             <div class="filmstrip-controls">
+                <span id="galleryModeToggle" style="display:inline-flex;gap:3px;align-items:center;margin-right:4px;">
+                    <button class="btn-icon gallery-mode-btn active" data-mode="video"   onclick="setGalleryMode('video')"   title="Show video thumbnails">🎬</button>
+                    <button class="btn-icon gallery-mode-btn"        data-mode="diff"    onclick="setGalleryMode('diff')"    title="Show diff heatmaps">🌡️</button>
+                    <button class="btn-icon gallery-mode-btn"        data-mode="trigger" onclick="setGalleryMode('trigger')" title="Show trigger frames">🎯</button>
+                </span>
                 <button id="refreshFilesBtn" class="btn-icon" onclick="refreshFiles()" disabled title="Refresh">🔄</button>
                 <button id="expandFilesBtn" class="btn-icon" onclick="toggleFilesModal()" disabled title="Show all files">⛶</button>
             </div>

@@ -1800,6 +1800,8 @@ class TransitDetector:
                     "23",
                     "-pix_fmt",
                     "yuv420p",
+                    "-video_track_timescale",
+                    "30000",
                     "-movflags",
                     "+faststart",
                     filepath,

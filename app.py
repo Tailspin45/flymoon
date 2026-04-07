@@ -1462,6 +1462,10 @@ if __name__ == "__main__":
 
     from werkzeug.serving import BaseWSGIServer, WSGIRequestHandler
 
+    class HTTP11RequestHandler(WSGIRequestHandler):
+        """Force HTTP/1.1 so browsers can seek video via byte-range requests."""
+        protocol_version = "HTTP/1.1"
+
     class ReusableWSGIServer(BaseWSGIServer):
         """Threaded WSGI server with SO_REUSEADDR/SO_REUSEPORT set before bind."""
 
@@ -1493,7 +1497,7 @@ if __name__ == "__main__":
             finally:
                 self.shutdown_request(request)
 
-    server = ReusableWSGIServer("0.0.0.0", port, app, handler=WSGIRequestHandler)
+    server = ReusableWSGIServer("0.0.0.0", port, app, handler=HTTP11RequestHandler)
 
     # Ctrl-C / SIGTERM: stop the WSGI server gracefully.
     #

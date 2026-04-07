@@ -74,6 +74,7 @@ let simulationVideo = null;
 let disconnectedPollCount = 0; // consecutive disconnected polls before stopping preview
 let simulationFiles = []; // Track temporary simulation files
 let filmstripFiles = []; // current files rendered in the horizontal filmstrip
+let _galleryMode = 'video'; // 'video' | 'diff' | 'trigger'
 let _lastDiscoveredSeestarIp = null; // last discovered scope IP
 
 const filmstripSelection = {
@@ -2560,6 +2561,14 @@ function toggleFilesModal() {
     }
 }
 
+function setGalleryMode(mode) {
+    _galleryMode = mode;
+    document.querySelectorAll('.gallery-mode-btn').forEach(b => {
+        b.classList.toggle('active', b.dataset.mode === mode);
+    });
+    updateFilmstrip(filmstripFiles);
+}
+
 function updateFilmstrip(files) {
     const filmstrip = document.getElementById('filmstripList');
     if (!filmstrip) return;
@@ -2594,8 +2603,12 @@ function updateFilmstrip(files) {
         const displayName = file.timelapse_frame_count
             ? `${file.name} · ${file.timelapse_frame_count} frames`
             : file.name;
-        const thumbnail = file.thumbnail
-            ? `<img src="${file.thumbnail}" alt="${file.name}" title="${imgTitle}" class="filmstrip-thumbnail">`
+        const isDetClipThumb = /\/det_[^/]+\.mp4$/i.test(file.path);
+        let thumbSrc = file.thumbnail;
+        if (isDetClipThumb && _galleryMode === 'diff'    && file.diff_heatmap)   thumbSrc = file.diff_heatmap;
+        if (isDetClipThumb && _galleryMode === 'trigger' && file.trigger_frame)  thumbSrc = file.trigger_frame;
+        const thumbnail = thumbSrc
+            ? `<img src="${thumbSrc}" alt="${file.name}" title="${imgTitle}" class="filmstrip-thumbnail">`
             : isVideo
                 ? `<canvas class="filmstrip-thumbnail video-thumb-canvas" data-video-src="${file.path}"></canvas>`
                 : `<img src="${file.path}" alt="${file.name}" title="${imgTitle}" class="filmstrip-thumbnail">`;
@@ -2603,11 +2616,22 @@ function updateFilmstrip(files) {
             ? '<span style="position:absolute; top:1px; right:1px; font-size:0.9em; filter:drop-shadow(0 0 2px #000);" title="Has heatmap">🔥</span>'
             : '';
         
+        const isDetClip = /\/det_[^/]+\.mp4$/i.test(file.path);
+        const labelBtns = isDetClip
+            ? `<div class="filmstrip-label-btns" data-det-name="${file.name}" style="display:flex;gap:2px;justify-content:center;padding:2px 0;">` +
+              ['tp','fp','fn'].map(lbl =>
+                `<button class="filmstrip-label-btn" data-lbl="${lbl}" data-det-name="${file.name}"` +
+                ` onclick="event.stopPropagation();_filmstripLabel('${file.name}',this)"` +
+                ` title="${lbl.toUpperCase()}" style="background:#333;border:1px solid #555;color:#fff;padding:1px 5px;border-radius:3px;cursor:pointer;font-size:0.72em;">${lbl==='tp'?'✅TP':lbl==='fp'?'❌FP':'⚠️FN'}</button>`
+              ).join('') + `</div>`
+            : '';
+
         return `
         <div class="${itemClass}" data-file-path="${file.path}" data-file-idx="${index}" onclick="filmstripSelectItem(${index}, '${file.path}', event)" style="position:relative;">
             ${badge}${detBadge2}
             <div class="filmstrip-name" title="${displayName}">${displayName}</div>
             ${thumbnail}
+            ${labelBtns}
             <div class="filmstrip-info">
                 <div class="filmstrip-actions">
                     <button class="btn-icon btn-fav" data-fav-path="${file.path}" onclick="toggleFavorite('${file.path}', event)" title="${getFavorites().has(file.path) ? 'Unfavorite' : 'Favorite'}">${getFavorites().has(file.path) ? '❤️' : '🤍'}</button>
@@ -2621,6 +2645,83 @@ function updateFilmstrip(files) {
 
     // Generate thumbnails from video first frame for any canvas placeholders
     filmstrip.querySelectorAll('canvas.video-thumb-canvas').forEach(generateVideoThumbnail);
+
+    // Paint existing labels onto det_* items (one fetch, async)
+    _paintFilmstripLabels(filmstrip);
+}
+
+const _LC_FILMSTRIP = { tp: '#4caf50', fp: '#f44336', fn: '#ff9800' };
+
+/** Fetch transit-events labels once and color the filmstrip buttons. */
+async function _paintFilmstripLabels(filmstrip) {
+    try {
+        const resp = await fetch('/api/transit-events');
+        if (!resp.ok) return;
+        const evts = await resp.json();
+        // Build a map: filename-stem (YYYYMMDD_HHMMSS) → label
+        const stemToLabel = {};
+        for (const ev of evts) {
+            if (!ev.timestamp || !ev.label) continue;
+            const d = new Date(ev.timestamp);
+            if (isNaN(d)) continue;
+            const p = n => String(n).padStart(2,'0');
+            const stem = `${d.getFullYear()}${p(d.getMonth()+1)}${p(d.getDate())}_${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}`;
+            stemToLabel[stem] = ev.label;
+        }
+        filmstrip.querySelectorAll('.filmstrip-label-btns').forEach(row => {
+            const name = row.dataset.detName || '';
+            const sm = name.match(/det_(\d{8}_\d{6})/i);
+            if (!sm) return;
+            const lbl = stemToLabel[sm[1]];
+            if (!lbl) return;
+            row.querySelectorAll('button[data-lbl]').forEach(b => {
+                const bl = b.getAttribute('data-lbl');
+                b.style.background  = bl === lbl ? _LC_FILMSTRIP[bl] : '#333';
+                b.style.borderColor = bl === lbl ? _LC_FILMSTRIP[bl] : '#555';
+            });
+        });
+    } catch (_) {}
+}
+
+/** Handle a filmstrip label button click. */
+async function _filmstripLabel(filename, btnEl) {
+    const lbl = btnEl.getAttribute('data-lbl');
+    // Parse timestamp from filename
+    const m = filename.match(/det_(\d{4})(\d{2})(\d{2})_(\d{2})(\d{2})(\d{2})/i);
+    if (!m) return;
+    const fileDate = new Date(+m[1], +m[2]-1, +m[3], +m[4], +m[5], +m[6]);
+
+    // Find matching event timestamp (within 2 s)
+    let eventTs = null;
+    try {
+        const resp = await fetch('/api/transit-events');
+        if (resp.ok) {
+            const evts = await resp.json();
+            for (const ev of evts) {
+                if (!ev.timestamp) continue;
+                if (Math.abs(new Date(ev.timestamp) - fileDate) <= 2000) { eventTs = ev.timestamp; break; }
+            }
+        }
+    } catch (_) {}
+    if (!eventTs) return;
+
+    try {
+        const resp = await fetch('/api/transit-events/label', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ timestamp: eventTs, label: lbl }),
+        });
+        if (!resp.ok) throw new Error(await resp.text());
+        // Color buttons in this filmstrip item
+        const row = btnEl.closest('.filmstrip-label-btns');
+        if (row) {
+            row.querySelectorAll('button[data-lbl]').forEach(b => {
+                const bl = b.getAttribute('data-lbl');
+                b.style.background  = bl === lbl ? _LC_FILMSTRIP[bl] : '#333';
+                b.style.borderColor = bl === lbl ? _LC_FILMSTRIP[bl] : '#555';
+            });
+        }
+    } catch (e) { console.error('[FilmstripLabel]', e); }
 }
 
 function _syncFilmstripSelectionUI() {
@@ -3525,7 +3626,7 @@ function viewFile(path, name, opts) {
             });
         };
         vid.addEventListener('loadedmetadata', () => { _initFrameScrubber(vid); updateAfterSeek(); _maybeAutoIsolate(); });
-        vid.addEventListener('loadeddata', () => { _initFrameScrubber(vid); updateAfterSeek(); });
+        vid.addEventListener('loadeddata', () => { updateAfterSeek(); });
         if (vid.readyState >= 1) { _initFrameScrubber(vid); updateAfterSeek(); }
         _extractFrameThumbs(vid);
     } else {
@@ -3565,14 +3666,25 @@ function viewFile(path, name, opts) {
         const isFav = getFavorites().has(path);
         const favBtn = `<button class="btn-viewer" id="viewerFavBtn" data-fav-path="${path}" onclick="toggleFavorite('${path}', event)" title="Favorite">${isFav ? '❤️' : '🤍'}</button>`;
         const delDisabled = isFav ? 'disabled title="Remove favorite first"' : 'title="Delete (⌘/Ctrl+click to skip confirm)"';
+        // TP/FP/FN label buttons for det_* clips
+        let labelBtnsHtml = '';
+        if (_isDetFile) {
+            labelBtnsHtml = `<span id="viewerLabelBtns" style="display:inline-flex;gap:3px;align-items:center;"></span>`;
+        }
+
         actionsEl.innerHTML =
             `<button class="btn-viewer" onclick="viewerNav(-1)" title="Previous" ${hasPrev ? '' : 'disabled'}>◀</button>` +
             scanBtn +
             replayBtn +
             favBtn +
+            labelBtnsHtml +
             `<button class="btn-viewer" onclick="viewerDownload()" title="Download">⬇️ Download</button>` +
             `<button class="btn-viewer btn-viewer-danger" id="viewerDeleteBtn" onclick="viewerDelete(event)" ${delDisabled}>🗑️ Delete</button>` +
             `<button class="btn-viewer" onclick="viewerNav(1)" title="Next" ${hasNext ? '' : 'disabled'}>▶</button>`;
+
+        if (_isDetFile) {
+            _initViewerLabelBtns(name, path);
+        }
     }
 
     // Trim row — only for video files
@@ -3616,6 +3728,93 @@ function closeFileViewer() {
         if (filesModal) filesModal.style.display = 'flex';
         viewer._filesModalWasOpen = false;
     }
+}
+
+/** Resolve the transit_events CSV timestamp for a det_* filename, then
+ *  render TP/FP/FN buttons into #viewerLabelBtns. */
+async function _initViewerLabelBtns(filename, path) {
+    const wrap = document.getElementById('viewerLabelBtns');
+    if (!wrap) return;
+
+    // Parse det_YYYYMMDD_HHMMSS[_*].mp4 → Date
+    const m = filename.match(/det_(\d{4})(\d{2})(\d{2})_(\d{2})(\d{2})(\d{2})/i);
+    if (!m) return;
+    const fileDate = new Date(
+        parseInt(m[1]), parseInt(m[2])-1, parseInt(m[3]),
+        parseInt(m[4]), parseInt(m[5]), parseInt(m[6])
+    );
+
+    // Find matching event timestamp from cached events (within 2 s)
+    let eventTs = null;
+    const cached = (_detEventsSelection && _detEventsSelection.allEvents) || [];
+    for (const ev of cached) {
+        if (!ev.timestamp) continue;
+        const diff = Math.abs(new Date(ev.timestamp) - fileDate);
+        if (diff <= 2000) { eventTs = ev.timestamp; break; }
+    }
+
+    // If not in cache, fetch fresh from API
+    if (!eventTs) {
+        try {
+            const resp = await fetch('/api/transit-events');
+            if (resp.ok) {
+                const evts = await resp.json();
+                for (const ev of evts) {
+                    if (!ev.timestamp) continue;
+                    const diff = Math.abs(new Date(ev.timestamp) - fileDate);
+                    if (diff <= 2000) { eventTs = ev.timestamp; break; }
+                }
+            }
+        } catch (_) {}
+    }
+
+    if (!eventTs) return;  // no matching event — no buttons
+
+    const _LC = { tp: '#4caf50', fp: '#f44336', fn: '#ff9800' };
+    const _LI = { tp: '✅TP', fp: '❌FP', fn: '⚠️FN' };
+    const _LT = { tp: 'True positive', fp: 'False positive', fn: 'False negative' };
+
+    ['tp','fp','fn'].forEach(lbl => {
+        const b = document.createElement('button');
+        b.className = 'btn-viewer';
+        b.id = `viewerLabel_${lbl}`;
+        b.textContent = _LI[lbl];
+        b.title = `${_LT[lbl]} — label this clip`;
+        b.style.cssText = `background:#333;border:1px solid #555;color:#fff;padding:2px 7px;border-radius:3px;cursor:pointer;font-size:0.85em;`;
+        b.onclick = async () => {
+            try {
+                const resp = await fetch('/api/transit-events/label', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ timestamp: eventTs, label: lbl }),
+                });
+                if (!resp.ok) throw new Error(await resp.text());
+                // Highlight active button
+                wrap.querySelectorAll('button').forEach(btn => {
+                    const bl = btn.id.replace('viewerLabel_','');
+                    btn.style.background   = bl === lbl ? _LC[bl] : '#333';
+                    btn.style.borderColor  = bl === lbl ? _LC[bl] : '#555';
+                });
+            } catch (e) { console.error('[ViewerLabel]', e); }
+        };
+        wrap.appendChild(b);
+    });
+
+    // Pre-fill current label if already set
+    try {
+        const resp = await fetch('/api/transit-events');
+        if (resp.ok) {
+            const evts = await resp.json();
+            const ev = evts.find(e => e.timestamp === eventTs);
+            if (ev && ev.label) {
+                const activeBtn = document.getElementById(`viewerLabel_${ev.label}`);
+                if (activeBtn) {
+                    activeBtn.style.background  = _LC[ev.label];
+                    activeBtn.style.borderColor = _LC[ev.label];
+                }
+            }
+        }
+    } catch (_) {}
 }
 
 var _frameStepTimer = null;
@@ -6376,6 +6575,11 @@ async function runHarnessValidate() {
 // ============================================================================
 
 let _detEventsPanel = null;
+let _detEventsSelection = {
+    selected: new Set(),  // Set of event timestamps
+    lastClickedIndex: null,  // for shift-range selection
+    allEvents: [],  // cache of current event list
+};
 
 /**
  * Build the detection-event-history panel inside detectPanel (always visible).
@@ -6393,17 +6597,77 @@ async function ensureDetectionEventHistoryPanel() {
 
     const header = document.createElement('div');
     header.className = 'det-events-header';
+    header.style.cssText = 'display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;';
+    
+    const titleWrap = document.createElement('div');
+    titleWrap.style.cssText = 'display:flex;align-items:center;gap:8px;';
+    
     const title = document.createElement('span');
     title.className = 'det-events-title';
     title.textContent = 'Detection Event History (last 7 days)';
+    
+    const selCount = document.createElement('span');
+    selCount.id = 'detEventsSelCount';
+    selCount.style.cssText = 'color:#90caf9;font-size:0.8em;font-weight:normal;';
+    selCount.textContent = '';
+    
+    titleWrap.appendChild(title);
+    titleWrap.appendChild(selCount);
+    
+    const btnWrap = document.createElement('div');
+    btnWrap.style.cssText = 'display:flex;gap:6px;align-items:center;';
+    
+    const clearSelBtn = document.createElement('button');
+    clearSelBtn.type = 'button';
+    clearSelBtn.id = 'detEventsClearSel';
+    clearSelBtn.className = 'btn btn-secondary btn-compact';
+    clearSelBtn.textContent = 'Clear Selection';
+    clearSelBtn.title = 'Clear selected events (Esc key)';
+    clearSelBtn.style.display = 'none';
+    clearSelBtn.onclick = () => {
+        _detEventsSelection.selected.clear();
+        _detEventsSelection.lastClickedIndex = null;
+        _updateEventSelectionUI();
+    };
+
+    // Bulk-label buttons — visible only when rows are selected
+    const _BULK_LABEL_COLORS = { tp: '#4caf50', fp: '#f44336', fn: '#ff9800' };
+    const _BULK_LABEL_ICONS  = { tp: '✅TP', fp: '❌FP', fn: '⚠️FN' };
+    const bulkLabelWrap = document.createElement('span');
+    bulkLabelWrap.id = 'detEventsBulkLabel';
+    bulkLabelWrap.style.cssText = 'display:none;gap:4px;align-items:center;';
+    ['tp','fp','fn'].forEach(lbl => {
+        const b = document.createElement('button');
+        b.type = 'button';
+        b.className = 'btn btn-compact';
+        b.textContent = _BULK_LABEL_ICONS[lbl];
+        b.title = `Label all selected as ${lbl.toUpperCase()}`;
+        b.style.cssText = `background:${_BULK_LABEL_COLORS[lbl]};border:1px solid ${_BULK_LABEL_COLORS[lbl]};color:#fff;padding:1px 7px;border-radius:3px;cursor:pointer;font-size:0.82em;`;
+        b.onclick = () => {
+            // Synthesize a fake btnEl pointing at the first selected row's button,
+            // but _labelEventBtn reads from _detEventsSelection so any ts works.
+            const firstTs = Array.from(_detEventsSelection.selected)[0] || '';
+            const fakeBtn = document.createElement('button');
+            fakeBtn.setAttribute('data-ts', firstTs);
+            fakeBtn.setAttribute('data-lbl', lbl);
+            _labelEventBtn(fakeBtn);
+        };
+        bulkLabelWrap.appendChild(b);
+    });
+
     const retrainBtn = document.createElement('button');
     retrainBtn.type = 'button';
     retrainBtn.className = 'btn btn-secondary btn-compact det-events-retrain-btn';
     retrainBtn.textContent = 'Retrain';
     retrainBtn.title = 'Promote TP/FP-labeled clips from unlabeled, then retrain CNN and reload model (runs in background; may take several minutes)';
     retrainBtn.onclick = () => _startCnnRetrain(retrainBtn);
-    header.appendChild(title);
-    header.appendChild(retrainBtn);
+
+    btnWrap.appendChild(clearSelBtn);
+    btnWrap.appendChild(bulkLabelWrap);
+    btnWrap.appendChild(retrainBtn);
+    
+    header.appendChild(titleWrap);
+    header.appendChild(btnWrap);
     _detEventsPanel.appendChild(header);
 
     const retrainStatus = document.createElement('div');
@@ -6419,6 +6683,16 @@ async function ensureDetectionEventHistoryPanel() {
     _detEventsPanel.appendChild(tableWrap);
 
     detectPanel.appendChild(_detEventsPanel);
+    
+    // Keyboard shortcut: Escape to clear selection
+    document.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape' && _detEventsSelection.selected.size > 0) {
+            _detEventsSelection.selected.clear();
+            _detEventsSelection.lastClickedIndex = null;
+            _updateEventSelectionUI();
+        }
+    });
+    
     await _refreshDetectionEventHistory();
 }
 
@@ -6548,12 +6822,62 @@ async function _refreshDetectionEventHistory() {
         hrow.appendChild(th);
     });
 
+    // Suppress browser text-selection on shift/ctrl clicks across the whole table
+    tbl.addEventListener('mousedown', (e) => {
+        if (e.shiftKey || e.ctrlKey || e.metaKey) e.preventDefault();
+    });
+
     const tbody = tbl.createTBody();
-    events.slice(0, 100).forEach(ev => {
+    _detEventsSelection.allEvents = events.slice(0, 100);  // cache for shift-range logic
+    events.slice(0, 100).forEach((ev, idx) => {
         const tr = tbody.insertRow();
-        tr.style.cssText = 'border-bottom:1px solid #1e1e3a;';
-        tr.onmouseenter = () => tr.style.background = '#1e1e3a';
-        tr.onmouseleave = () => tr.style.background = '';
+        const ts = ev.timestamp || '';
+        tr.setAttribute('data-ts', ts);
+        tr.setAttribute('data-idx', idx);
+        tr.style.cssText = 'border-bottom:1px solid #1e1e3a;cursor:pointer;user-select:none;';
+
+        // Selection state
+        const isSelected = _detEventsSelection.selected.has(ts);
+        if (isSelected) {
+            tr.style.background = '#2a3a5a';
+        }
+
+        tr.onmouseenter = () => { if (!_detEventsSelection.selected.has(ts)) tr.style.background = '#1e1e3a'; };
+        tr.onmouseleave = () => { if (!_detEventsSelection.selected.has(ts)) tr.style.background = ''; };
+
+        // Multi-select click handler
+        tr.onclick = (e) => {
+            // Don't interfere with label button clicks
+            if (e.target.tagName === 'BUTTON') return;
+
+            const timestamp = tr.getAttribute('data-ts');
+            const rowIdx = parseInt(tr.getAttribute('data-idx'), 10);
+
+            if (e.shiftKey && _detEventsSelection.lastClickedIndex !== null) {
+                const start = Math.min(_detEventsSelection.lastClickedIndex, rowIdx);
+                const end = Math.max(_detEventsSelection.lastClickedIndex, rowIdx);
+                for (let i = start; i <= end; i++) {
+                    const evt = _detEventsSelection.allEvents[i];
+                    if (evt && evt.timestamp) _detEventsSelection.selected.add(evt.timestamp);
+                }
+                _detEventsSelection.lastClickedIndex = rowIdx;
+                _updateEventSelectionUI();
+            } else if (e.ctrlKey || e.metaKey) {
+                if (_detEventsSelection.selected.has(timestamp)) {
+                    _detEventsSelection.selected.delete(timestamp);
+                } else {
+                    _detEventsSelection.selected.add(timestamp);
+                }
+                _detEventsSelection.lastClickedIndex = rowIdx;
+                _updateEventSelectionUI();
+            } else {
+                _detEventsSelection.selected.clear();
+                _detEventsSelection.selected.add(timestamp);
+                _detEventsSelection.lastClickedIndex = rowIdx;
+                _updateEventSelectionUI();
+            }
+        };
+        
         cols.forEach(c => {
             const td = tr.insertCell();
             const nowrap = c.key === 'timestamp' ? '' : 'white-space:nowrap;';
@@ -6566,31 +6890,86 @@ async function _refreshDetectionEventHistory() {
     wrap.appendChild(tbl);
 }
 
-/** T23 — Send a TP/FP/FN label for a detection event to the backend. */
+/** T23 — Send a TP/FP/FN label for a detection event to the backend.
+ *  If rows are selected, applies the label to all selected rows;
+ *  otherwise labels only the clicked row. */
 async function _labelEventBtn(btnEl) {
-    const timestamp = btnEl.getAttribute('data-ts');
+    const clickedTs = btnEl.getAttribute('data-ts');
     const label = btnEl.getAttribute('data-lbl');
-    if (!timestamp || !label) return;
-    try {
-        const resp = await fetch('/api/transit-events/label', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ timestamp, label }),
-        });
-        if (!resp.ok) throw new Error(await resp.text());
+    if (!clickedTs || !label) return;
 
-        const _LABEL_COLORS_JS = { tp: '#4caf50', fp: '#f44336', fn: '#ff9800' };
-        const row = btnEl.closest('tr');
-        if (row) {
-            row.querySelectorAll('button[data-lbl]').forEach(b => {
-                const lbl = b.getAttribute('data-lbl');
-                const active = lbl === label;
-                b.style.background = active ? (_LABEL_COLORS_JS[lbl] || '#555') : '#333';
-                b.style.borderColor = active ? (_LABEL_COLORS_JS[lbl] || '#666') : '#444';
+    const _LABEL_COLORS_JS = { tp: '#4caf50', fp: '#f44336', fn: '#ff9800' };
+
+    // Determine which timestamps to label
+    const sel = _detEventsSelection.selected;
+    const targets = sel.size > 0
+        ? Array.from(sel)
+        : [clickedTs];
+
+    // Send requests sequentially to avoid hammering the server
+    for (const ts of targets) {
+        try {
+            const resp = await fetch('/api/transit-events/label', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ timestamp: ts, label }),
             });
+            if (!resp.ok) { console.error('[Label]', ts, await resp.text()); continue; }
+
+            // Update button styles for this row
+            const wrap = document.getElementById('detEventsTableWrap');
+            if (wrap) {
+                const row = wrap.querySelector(`tr[data-ts="${CSS.escape(ts)}"]`);
+                if (row) {
+                    row.querySelectorAll('button[data-lbl]').forEach(b => {
+                        const lbl = b.getAttribute('data-lbl');
+                        const active = lbl === label;
+                        b.style.background  = active ? (_LABEL_COLORS_JS[lbl] || '#555') : '#333';
+                        b.style.borderColor = active ? (_LABEL_COLORS_JS[lbl] || '#666') : '#444';
+                    });
+                }
+            }
+        } catch (e) {
+            console.error('[Label]', ts, e);
         }
-    } catch (e) {
-        console.error('[Label]', e);
+    }
+}
+
+/** Update visual selection state for all event rows. */
+function _updateEventSelectionUI() {
+    const wrap = document.getElementById('detEventsTableWrap');
+    if (!wrap) return;
+    const tbody = wrap.querySelector('tbody');
+    if (!tbody) return;
+    
+    tbody.querySelectorAll('tr').forEach(tr => {
+        const ts = tr.getAttribute('data-ts');
+        const isSelected = _detEventsSelection.selected.has(ts);
+        if (isSelected) {
+            tr.style.background = '#2a3a5a';
+        } else {
+            tr.style.background = '';
+        }
+    });
+    
+    // Update count display
+    const count = _detEventsSelection.selected.size;
+    const countEl = document.getElementById('detEventsSelCount');
+    if (countEl) {
+        if (count > 0) {
+            countEl.textContent = `(${count} selected)`;
+        } else {
+            countEl.textContent = '';
+        }
+    }
+    
+    // Show/hide clear button and bulk-label buttons
+    const clearBtn = document.getElementById('detEventsClearSel');
+    if (clearBtn) clearBtn.style.display = count > 0 ? '' : 'none';
+
+    const bulkWrap = document.getElementById('detEventsBulkLabel');
+    if (bulkWrap) {
+        bulkWrap.style.display = count > 0 ? 'inline-flex' : 'none';
     }
 }
 
