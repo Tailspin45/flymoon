@@ -1,6 +1,6 @@
 # Zipcatcher — Seestar Aircraft Transit Tracker
 
-**Predict, detect, and photograph aircraft crossing the Sun or Moon in real time.**
+**Predict, detect, and photograph aircraft zipping crossing the Sun or Moon in real time.**
 
 <p align="center">
   <img src="static/images/flymoon-hero.jpg" alt="Zipcatcher — Aircraft Transit Tracker" width="100%">
