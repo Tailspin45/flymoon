@@ -164,7 +164,7 @@ Zipcatcher connects directly to the Seestar over TCP on port 4700.
 
 ### Focus Odometer
 
-A per-session focus-step counter in the sidebar tracks how many focuser steps have been applied since the session started, helping you return to a known focus position after experimenting. ZWO has encrypted the position readout.
+A per-session focus-step counter in the sidebar tracks how many focuser steps have been applied since the session started, helping you return to a known focus position after experimenting. ZWO has encrypted the position readout so this is the best we can do.
 
 ### ALPACA / seestar_alp
 
