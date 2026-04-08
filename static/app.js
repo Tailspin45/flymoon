@@ -375,10 +375,10 @@ const DATA_SOURCES = {
     },
     'opensky-only': {
         icon: '🌐',
-        label: 'Multi-Source (no FA)',
+        label: 'No FlightAware',
         cost: 'Free',
         color: '#10b981',
-        note: 'OpenSky + ADSB-One + adsb.lol + adsb.fi opendata + ADS-B Exchange (if key set) in parallel. No FlightAware enrichment. Zero cost.',
+        note: 'OpenSky + ADSB-One + adsb.lol + adsb.fi + ADS-B Exchange (if key set) in parallel. No FlightAware enrichment. Zero cost.',
     },
     'hybrid': {
         icon: '⚡',
@@ -3071,6 +3071,11 @@ function updateApiSourceLights(sourcesUsed) {
     const firstRender = (_lastSourceTs === null);
     if (firstRender) _lastSourceTs = {};
 
+    // Sources that are optional/disabled-by-default don't count toward "all dead"
+    const optionalSources = new Set(['adsbx', 'local', 'flightaware']);
+    let anyActive = false;
+    let allRequiredDead = true;
+
     document.querySelectorAll('#apiSourceLights .api-light-row').forEach(row => {
         const key = row.dataset.source;
         const led = row.querySelector('.api-led');
@@ -3080,18 +3085,52 @@ function updateApiSourceLights(sourcesUsed) {
         const info  = sourcesUsed[key] || {};
         const ts    = info.ts    || 0;
         const count = info.count || 0;
+        const inBackoff = !!info.in_backoff;
 
         if (cnt) cnt.textContent = count;
 
-        const prev = _lastSourceTs[key] || 0;
-        if (ts && ts > prev) {
+        // Red LED if the source is in backoff (timing out or rate-limited)
+        if (inBackoff) {
+            led.classList.add('error');
             led.classList.remove('blink');
-            void led.offsetWidth;
-            led.classList.add('blink');
-            setTimeout(() => led.classList.remove('blink'), 2600);
+        } else {
+            led.classList.remove('error');
+            const prev = _lastSourceTs[key] || 0;
+            if (ts && ts > prev) {
+                led.classList.remove('blink');
+                void led.offsetWidth;
+                led.classList.add('blink');
+                setTimeout(() => led.classList.remove('blink'), 2600);
+            }
         }
         _lastSourceTs[key] = ts;
+
+        if (!optionalSources.has(key)) {
+            if (!inBackoff && ts > 0) anyActive = true;
+            if (!inBackoff) allRequiredDead = false;
+        }
     });
+
+    // Show toast when every required ADS-B source is in backoff simultaneously
+    const allDead = allRequiredDead && !anyActive;
+    _showSourceDeadToast(allDead);
+}
+
+var _sourceDeadToastVisible = false;
+function _showSourceDeadToast(dead) {
+    if (dead === _sourceDeadToastVisible) return;
+    _sourceDeadToastVisible = dead;
+    let toast = document.getElementById('source-toast');
+    if (dead) {
+        if (!toast) {
+            toast = document.createElement('div');
+            toast.id = 'source-toast';
+            toast.textContent = '⚠ All ADS-B sources unavailable — flight data may be stale';
+            document.body.appendChild(toast);
+        }
+    } else {
+        if (toast) toast.remove();
+    }
 }
 
 function toggleApiPause() {

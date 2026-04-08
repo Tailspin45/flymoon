@@ -813,6 +813,12 @@
                         <span id="gridSelCount" class="grid-sel-count"></span>
                         <button class="btn-icon" onclick="gridSelectAll()" title="Select all">☑️</button>
                         <button class="btn-icon" onclick="gridSelectNone()" title="Clear selection">✖️</button>
+                        <span class="grid-lbl-sep"></span>
+                        <button class="strip-lbl-btn" data-lbl="tp" onclick="gridLabelSelected('tp')" title="Label selected as True Positive">✅ TP</button>
+                        <button class="strip-lbl-btn" data-lbl="fp" onclick="gridLabelSelected('fp')" title="Label selected as False Positive">❌ FP</button>
+                        <button class="strip-lbl-btn" data-lbl="fn" onclick="gridLabelSelected('fn')" title="Label selected as False Negative">⚠️ FN</button>
+                        <button class="strip-lbl-btn strip-lbl-clear" onclick="gridLabelSelected('')"  title="Clear label">✕</button>
+                        <span class="grid-lbl-sep"></span>
                         <button class="btn-icon" onclick="gridDownloadSelected()" title="Download selected">⬇️</button>
                         <button class="btn-icon btn-danger" onclick="gridDeleteSelected(event)" title="Delete selected (⌘/Ctrl+click to skip confirm)">🗑️</button>
                     </div>
@@ -858,6 +864,12 @@
                     <button class="btn-icon gallery-mode-btn active" data-mode="video"   onclick="setGalleryMode('video')"   title="Show video thumbnails">🎬</button>
                     <button class="btn-icon gallery-mode-btn"        data-mode="diff"    onclick="setGalleryMode('diff')"    title="Show diff heatmaps">🌡️</button>
                     <button class="btn-icon gallery-mode-btn"        data-mode="trigger" onclick="setGalleryMode('trigger')" title="Show trigger frames">🎯</button>
+                </span>
+                <span id="filmstripLabelToolbar" style="display:none;gap:3px;align-items:center;margin-right:6px;">
+                    <button class="strip-lbl-btn" data-lbl="tp" onclick="filmstripLabelSelected('tp')" title="Label selected as True Positive">✅ TP</button>
+                    <button class="strip-lbl-btn" data-lbl="fp" onclick="filmstripLabelSelected('fp')" title="Label selected as False Positive">❌ FP</button>
+                    <button class="strip-lbl-btn" data-lbl="fn" onclick="filmstripLabelSelected('fn')" title="Label selected as False Negative">⚠️ FN</button>
+                    <button class="strip-lbl-btn strip-lbl-clear" onclick="filmstripLabelSelected('')"  title="Clear label">✕</button>
                 </span>
                 <button id="refreshFilesBtn" class="btn-icon" onclick="refreshFiles()" disabled title="Refresh">🔄</button>
                 <button id="expandFilesBtn" class="btn-icon" onclick="toggleFilesModal()" disabled title="Show all files">⛶</button>

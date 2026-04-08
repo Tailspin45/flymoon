@@ -2617,13 +2617,9 @@ function updateFilmstrip(files) {
             : '';
         
         const isDetClip = /\/det_[^/]+\.mp4$/i.test(file.path);
-        const labelBtns = isDetClip
-            ? `<div class="filmstrip-label-btns" data-det-name="${file.name}" style="display:flex;gap:2px;justify-content:center;padding:2px 0;">` +
-              ['tp','fp','fn'].map(lbl =>
-                `<button class="filmstrip-label-btn" data-lbl="${lbl}" data-det-name="${file.name}"` +
-                ` onclick="event.stopPropagation();_filmstripLabel('${file.name}',this)"` +
-                ` title="${lbl.toUpperCase()}" style="background:#333;border:1px solid #555;color:#fff;padding:1px 5px;border-radius:3px;cursor:pointer;font-size:0.72em;">${lbl==='tp'?'✅TP':lbl==='fp'?'❌FP':'⚠️FN'}</button>`
-              ).join('') + `</div>`
+        // Label badge — shows current TP/FP/FN state; no per-frame buttons
+        const labelBadge = isDetClip
+            ? `<span class="filmstrip-lbl-badge" data-det-name="${file.name}"></span>`
             : '';
 
         return `
@@ -2631,7 +2627,7 @@ function updateFilmstrip(files) {
             ${badge}${detBadge2}
             <div class="filmstrip-name" title="${displayName}">${displayName}</div>
             ${thumbnail}
-            ${labelBtns}
+            ${labelBadge}
             <div class="filmstrip-info">
                 <div class="filmstrip-actions">
                     <button class="btn-icon btn-fav" data-fav-path="${file.path}" onclick="toggleFavorite('${file.path}', event)" title="${getFavorites().has(file.path) ? 'Unfavorite' : 'Favorite'}">${getFavorites().has(file.path) ? '❤️' : '🤍'}</button>
@@ -2650,78 +2646,164 @@ function updateFilmstrip(files) {
     _paintFilmstripLabels(filmstrip);
 }
 
-const _LC_FILMSTRIP = { tp: '#4caf50', fp: '#f44336', fn: '#ff9800' };
+const _LC = { tp: '#4caf50', fp: '#f44336', fn: '#ff9800' };
+const _LC_TEXT = { tp: '✅ TP', fp: '❌ FP', fn: '⚠️ FN' };
 
-/** Fetch transit-events labels once and color the filmstrip buttons. */
+// Cached: stem → {label, timestamp}  — refreshed on each paint pass
+let _stemLabelCache = {};
+
+/** Build stem→{label,timestamp} map from transit-events list. */
+function _buildStemMap(evts) {
+    const map = {};
+    for (const ev of evts) {
+        if (!ev.timestamp) continue;
+        const d = new Date(ev.timestamp);
+        if (isNaN(d)) continue;
+        const p = n => String(n).padStart(2,'0');
+        const stem = `${d.getFullYear()}${p(d.getMonth()+1)}${p(d.getDate())}_${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}`;
+        map[stem] = { label: ev.label || '', timestamp: ev.timestamp };
+    }
+    return map;
+}
+
+/** Paint label badges on filmstrip items from a stem→{label} map. */
+function _applyBadges(root, stemMap) {
+    root.querySelectorAll('.filmstrip-lbl-badge[data-det-name]').forEach(badge => {
+        const name = badge.dataset.detName || '';
+        const sm = name.match(/det_(\d{8}_\d{6})/i);
+        if (!sm) return;
+        const info = stemMap[sm[1]];
+        const lbl = info && info.label;
+        if (lbl && _LC[lbl]) {
+            badge.textContent = _LC_TEXT[lbl];
+            badge.style.background = _LC[lbl];
+            badge.style.display = 'inline-block';
+        } else {
+            badge.textContent = '';
+            badge.style.display = 'none';
+        }
+    });
+}
+
+/** Paint label badges on grid items from a stem→{label} map. */
+function _applyGridBadges(root, stemMap) {
+    root.querySelectorAll('.file-lbl-badge[data-det-name]').forEach(badge => {
+        const name = badge.dataset.detName || '';
+        const sm = name.match(/det_(\d{8}_\d{6})/i);
+        if (!sm) return;
+        const info = stemMap[sm[1]];
+        const lbl = info && info.label;
+        if (lbl && _LC[lbl]) {
+            badge.textContent = _LC_TEXT[lbl];
+            badge.style.background = _LC[lbl];
+            badge.style.display = 'inline-block';
+        } else {
+            badge.textContent = '';
+            badge.style.display = 'none';
+        }
+    });
+}
+
+/** Fetch transit-events once, cache stem map, paint filmstrip + grid badges. */
 async function _paintFilmstripLabels(filmstrip) {
     try {
         const resp = await fetch('/api/transit-events');
         if (!resp.ok) return;
         const evts = await resp.json();
-        // Build a map: filename-stem (YYYYMMDD_HHMMSS) → label
-        const stemToLabel = {};
-        for (const ev of evts) {
-            if (!ev.timestamp || !ev.label) continue;
-            const d = new Date(ev.timestamp);
-            if (isNaN(d)) continue;
-            const p = n => String(n).padStart(2,'0');
-            const stem = `${d.getFullYear()}${p(d.getMonth()+1)}${p(d.getDate())}_${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}`;
-            stemToLabel[stem] = ev.label;
-        }
-        filmstrip.querySelectorAll('.filmstrip-label-btns').forEach(row => {
-            const name = row.dataset.detName || '';
-            const sm = name.match(/det_(\d{8}_\d{6})/i);
-            if (!sm) return;
-            const lbl = stemToLabel[sm[1]];
-            if (!lbl) return;
-            row.querySelectorAll('button[data-lbl]').forEach(b => {
-                const bl = b.getAttribute('data-lbl');
-                b.style.background  = bl === lbl ? _LC_FILMSTRIP[bl] : '#333';
-                b.style.borderColor = bl === lbl ? _LC_FILMSTRIP[bl] : '#555';
-            });
-        });
+        _stemLabelCache = _buildStemMap(evts);
+        _applyBadges(filmstrip || document, _stemLabelCache);
+        const grid = document.getElementById('filesGrid');
+        if (grid) _applyGridBadges(grid, _stemLabelCache);
     } catch (_) {}
 }
 
-/** Handle a filmstrip label button click. */
-async function _filmstripLabel(filename, btnEl) {
-    const lbl = btnEl.getAttribute('data-lbl');
-    // Parse timestamp from filename
+/** Resolve filename stem → event timestamp using the cache (or fetch if cold). */
+async function _resolveEventTs(filename) {
     const m = filename.match(/det_(\d{4})(\d{2})(\d{2})_(\d{2})(\d{2})(\d{2})/i);
-    if (!m) return;
-    const fileDate = new Date(+m[1], +m[2]-1, +m[3], +m[4], +m[5], +m[6]);
+    if (!m) return null;
+    const stem = `${m[1]}${m[2]}${m[3]}_${m[4]}${m[5]}${m[6]}`;
 
-    // Find matching event timestamp (within 2 s)
-    let eventTs = null;
+    // Use cache if available
+    if (_stemLabelCache[stem]) return _stemLabelCache[stem].timestamp;
+
+    // Cold fetch
     try {
         const resp = await fetch('/api/transit-events');
-        if (resp.ok) {
-            const evts = await resp.json();
-            for (const ev of evts) {
-                if (!ev.timestamp) continue;
-                if (Math.abs(new Date(ev.timestamp) - fileDate) <= 2000) { eventTs = ev.timestamp; break; }
-            }
-        }
-    } catch (_) {}
-    if (!eventTs) return;
+        if (!resp.ok) return null;
+        const evts = await resp.json();
+        _stemLabelCache = _buildStemMap(evts);
+        return _stemLabelCache[stem]?.timestamp || null;
+    } catch (_) { return null; }
+}
 
-    try {
-        const resp = await fetch('/api/transit-events/label', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ timestamp: eventTs, label: lbl }),
-        });
-        if (!resp.ok) throw new Error(await resp.text());
-        // Color buttons in this filmstrip item
-        const row = btnEl.closest('.filmstrip-label-btns');
-        if (row) {
-            row.querySelectorAll('button[data-lbl]').forEach(b => {
-                const bl = b.getAttribute('data-lbl');
-                b.style.background  = bl === lbl ? _LC_FILMSTRIP[bl] : '#333';
-                b.style.borderColor = bl === lbl ? _LC_FILMSTRIP[bl] : '#555';
-            });
+/** Post a label for one event timestamp. Returns true on success. */
+async function _postLabel(timestamp, label) {
+    const resp = await fetch('/api/transit-events/label', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ timestamp, label: label || 'tn' }),
+    });
+    if (!resp.ok) throw new Error(await resp.text());
+    // Keep cache consistent
+    for (const stem of Object.keys(_stemLabelCache)) {
+        if (_stemLabelCache[stem].timestamp === timestamp) {
+            _stemLabelCache[stem].label = label;
         }
-    } catch (e) { console.error('[FilmstripLabel]', e); }
+    }
+    return true;
+}
+
+/** Label all selected det_* filmstrip frames with the given label ('tp','fp','fn', or '' to clear). */
+async function filmstripLabelSelected(label) {
+    const detFiles = filmstripFiles.filter(f =>
+        filmstripSelection.selected.has(f.path) && /\/det_[^/]+\.mp4$/i.test(f.path)
+    );
+    if (detFiles.length === 0) { showStatus('No detection clips selected', 'warning', 2000); return; }
+
+    let ok = 0;
+    for (const f of detFiles) {
+        const ts = await _resolveEventTs(f.name);
+        if (!ts) continue;
+        try { await _postLabel(ts, label); ok++; } catch (e) { console.error('[Label]', f.name, e); }
+    }
+
+    // Repaint badges
+    const filmstrip = document.getElementById('filmstripList');
+    if (filmstrip) _applyBadges(filmstrip, _stemLabelCache);
+    const grid = document.getElementById('filesGrid');
+    if (grid) _applyGridBadges(grid, _stemLabelCache);
+
+    // Sync Detection Event History
+    if (typeof _refreshDetectionEventHistory === 'function') _refreshDetectionEventHistory();
+
+    if (ok > 0) showStatus(`Labeled ${ok} clip${ok > 1 ? 's' : ''} as ${label || 'cleared'}`, 'success', 2000);
+}
+
+/** Label all selected det_* grid files with the given label. */
+async function gridLabelSelected(label) {
+    const files = window.currentFiles || [];
+    const detFiles = files.filter(f =>
+        gridSelection.selected.has(f.path) && /\/det_[^/]+\.mp4$/i.test(f.path)
+    );
+    if (detFiles.length === 0) { showStatus('No detection clips selected', 'warning', 2000); return; }
+
+    let ok = 0;
+    for (const f of detFiles) {
+        const ts = await _resolveEventTs(f.name);
+        if (!ts) continue;
+        try { await _postLabel(ts, label); ok++; } catch (e) { console.error('[Label]', f.name, e); }
+    }
+
+    // Repaint badges
+    const filmstrip = document.getElementById('filmstripList');
+    if (filmstrip) _applyBadges(filmstrip, _stemLabelCache);
+    const grid = document.getElementById('filesGrid');
+    if (grid) _applyGridBadges(grid, _stemLabelCache);
+
+    // Sync Detection Event History
+    if (typeof _refreshDetectionEventHistory === 'function') _refreshDetectionEventHistory();
+
+    if (ok > 0) showStatus(`Labeled ${ok} clip${ok > 1 ? 's' : ''} as ${label || 'cleared'}`, 'success', 2000);
 }
 
 function _syncFilmstripSelectionUI() {
@@ -2731,6 +2813,27 @@ function _syncFilmstripSelectionUI() {
         const path = el.dataset.filePath;
         el.classList.toggle('selected', filmstripSelection.selected.has(path));
     });
+
+    // Show label toolbar only when at least one det_*.mp4 is selected
+    const toolbar = document.getElementById('filmstripLabelToolbar');
+    if (toolbar) {
+        const anyDet = [...filmstripSelection.selected].some(p => /\/det_[^/]+\.mp4$/i.test(p));
+        toolbar.style.display = anyDet ? 'inline-flex' : 'none';
+
+        // Highlight the button matching a shared label across all selected det clips
+        const selectedStems = filmstripFiles
+            .filter(f => filmstripSelection.selected.has(f.path) && /\/det_[^/]+\.mp4$/i.test(f.path))
+            .map(f => { const sm = f.name.match(/det_(\d{8}_\d{6})/i); return sm && sm[1]; })
+            .filter(Boolean);
+        const labels = selectedStems.map(s => (_stemLabelCache[s] && _stemLabelCache[s].label) || '');
+        const sharedLabel = labels.length > 0 && labels.every(l => l === labels[0]) ? labels[0] : '';
+        toolbar.querySelectorAll('.strip-lbl-btn[data-lbl]').forEach(b => {
+            const lbl = b.getAttribute('data-lbl');
+            const active = sharedLabel && lbl === sharedLabel;
+            b.style.background  = active ? (_LC[lbl] || '#555') : '#2a2a3a';
+            b.style.borderColor = active ? (_LC[lbl] || '#666') : '#444';
+        });
+    }
 }
 
 function filmstripSelectItem(index, path, event) {
@@ -3073,10 +3176,14 @@ function updateFilesGrid() {
         const detBadge = file.diff_heatmap
             ? `<span style="position:absolute; top:2px; right:2px; font-size:1.1em; filter:drop-shadow(0 0 2px #000);" title="Detection has heatmap &amp; trigger frame">🔥</span>`
             : '';
+        const isDetClipGrid = /\/det_[^/]+\.mp4$/i.test(file.path);
+        const gridLabelBadge = isDetClipGrid
+            ? `<span class="file-lbl-badge" data-det-name="${file.name}" style="display:none;"></span>`
+            : '';
         return `
         <div class="file-item${sel}" data-file-path="${file.path}" data-file-idx="${idx}"
              onclick="gridSelectItem(${idx}, '${file.path}', event)" style="position:relative;">
-            ${detBadge}
+            ${detBadge}${gridLabelBadge}
             <div class="file-info">
                 <span class="file-name" title="${displayName}">${displayName}</span>
                 <div class="file-actions">
@@ -3093,6 +3200,12 @@ function updateFilesGrid() {
     grid.querySelectorAll('canvas.video-thumb-canvas').forEach(generateVideoThumbnail);
     _initGridLasso();
     _syncGridSelectionUI();
+    // Paint labels — use cache if warm, else fetch
+    if (Object.keys(_stemLabelCache).length > 0) {
+        _applyGridBadges(grid, _stemLabelCache);
+    } else {
+        _paintFilmstripLabels(null); // fetches and paints both filmstrip + grid
+    }
 }
 
 // Generate a thumbnail from a video's first frame onto a <canvas>
@@ -6789,7 +6902,7 @@ async function _refreshDetectionEventHistory() {
                 const col = active ? _LABEL_COLORS[lbl] : '#333';
                 const bord = active ? _LABEL_COLORS[lbl] : '#444';
                 const tip = _escAttr(_LABEL_TITLES[lbl] || '');
-                return `<button type="button" data-ts="${tsA}" data-lbl="${lbl}" onclick="_labelEventBtn(this)"
+                return `<button type="button" data-ts="${tsA}" data-lbl="${lbl}" onclick="if(!event.shiftKey&&!event.ctrlKey&&!event.metaKey){event.stopPropagation();_labelEventBtn(this);}"
                     title="${tip}"
                     style="background:${col};border:1px solid ${bord};color:#fff;
                     padding:1px 5px;border-radius:3px;cursor:pointer;font-size:0.78em;
@@ -6845,11 +6958,8 @@ async function _refreshDetectionEventHistory() {
         tr.onmouseenter = () => { if (!_detEventsSelection.selected.has(ts)) tr.style.background = '#1e1e3a'; };
         tr.onmouseleave = () => { if (!_detEventsSelection.selected.has(ts)) tr.style.background = ''; };
 
-        // Multi-select click handler
+        // Multi-select click handler (buttons always stopPropagation so they never reach here)
         tr.onclick = (e) => {
-            // Don't interfere with label button clicks
-            if (e.target.tagName === 'BUTTON') return;
-
             const timestamp = tr.getAttribute('data-ts');
             const rowIdx = parseInt(tr.getAttribute('data-idx'), 10);
 
@@ -6900,39 +7010,62 @@ async function _labelEventBtn(btnEl) {
 
     const _LABEL_COLORS_JS = { tp: '#4caf50', fp: '#f44336', fn: '#ff9800' };
 
+    // Toggle off if clicking the already-active label
+    const wrap = document.getElementById('detEventsTableWrap');
+    const clickedRow = wrap && wrap.querySelector(`tr[data-ts="${CSS.escape(clickedTs)}"]`);
+    const currentlyActive = clickedRow && clickedRow.querySelector(`button[data-lbl="${label}"]`)
+        ?.style.background !== '#333';
+    const effectiveLabel = currentlyActive ? '' : label;
+
+    // Set lastClickedIndex so shift-click works after a button click
+    if (clickedRow) {
+        const idx = parseInt(clickedRow.getAttribute('data-idx'), 10);
+        if (!isNaN(idx)) _detEventsSelection.lastClickedIndex = idx;
+    }
+
     // Determine which timestamps to label
     const sel = _detEventsSelection.selected;
-    const targets = sel.size > 0
-        ? Array.from(sel)
-        : [clickedTs];
+    const targets = sel.size > 0 ? Array.from(sel) : [clickedTs];
 
-    // Send requests sequentially to avoid hammering the server
+    // Send requests sequentially
     for (const ts of targets) {
         try {
             const resp = await fetch('/api/transit-events/label', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ timestamp: ts, label }),
+                body: JSON.stringify({ timestamp: ts, label: effectiveLabel || 'tn' }),
             });
             if (!resp.ok) { console.error('[Label]', ts, await resp.text()); continue; }
 
             // Update button styles for this row
-            const wrap = document.getElementById('detEventsTableWrap');
             if (wrap) {
                 const row = wrap.querySelector(`tr[data-ts="${CSS.escape(ts)}"]`);
                 if (row) {
                     row.querySelectorAll('button[data-lbl]').forEach(b => {
                         const lbl = b.getAttribute('data-lbl');
-                        const active = lbl === label;
+                        const active = !effectiveLabel ? false : lbl === effectiveLabel;
                         b.style.background  = active ? (_LABEL_COLORS_JS[lbl] || '#555') : '#333';
                         b.style.borderColor = active ? (_LABEL_COLORS_JS[lbl] || '#666') : '#444';
                     });
                 }
             }
-        } catch (e) {
-            console.error('[Label]', ts, e);
+        } catch (err) {
+            console.error('[Label]', ts, err);
         }
     }
+
+    // Keep stem cache consistent and repaint filmstrip + grid badges
+    for (const ts of targets) {
+        for (const stem of Object.keys(_stemLabelCache)) {
+            if (_stemLabelCache[stem].timestamp === ts) {
+                _stemLabelCache[stem].label = effectiveLabel;
+            }
+        }
+    }
+    const filmstrip = document.getElementById('filmstripList');
+    if (filmstrip) _applyBadges(filmstrip, _stemLabelCache);
+    const grid = document.getElementById('filesGrid');
+    if (grid) _applyGridBadges(grid, _stemLabelCache);
 }
 
 /** Update visual selection state for all event rows. */

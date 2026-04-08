@@ -55,14 +55,66 @@ ADSB_FI_MAX_RADIUS_NM = 250
 ADSBX_BASE = "https://adsbexchange.com/api/aircraft"
 ADSBX_MAX_RADIUS_NM = 100
 
-# Backoff state (per-source)
-_adsb_one_backoff_until: float = 0.0
-_adsb_lol_backoff_until: float = 0.0
-_adsb_fi_backoff_until: float = 0.0
-_adsbx_backoff_until: float = 0.0
-_local_backoff_until: float = 0.0
+# ---------------------------------------------------------------------------
+# Per-source backoff state
+# ---------------------------------------------------------------------------
+
+class _SourceBackoff:
+    """Tracks rate-limit and timeout backoff for a single ADS-B source.
+
+    Timeout backoff is exponential: 60s → 120s → 240s → … → 3600s cap.
+    Rate-limit backoff uses a fixed override duration passed to on_rate_limit().
+    Successful fetches reset the timeout streak so a source that recovers
+    returns to normal retry frequency.
+    """
+
+    BASE: int = 60
+    MAX: int = 3600  # 1 hour
+
+    def __init__(self, name: str) -> None:
+        self.name = name
+        self._until: float = 0.0
+        self._streak: int = 0
+
+    def in_backoff(self) -> bool:
+        remaining = self._until - time.time()
+        if remaining > 0:
+            logger.debug(f"[{self.name}] In backoff ({int(remaining)}s remaining)")
+            return True
+        return False
+
+    def on_timeout(self) -> None:
+        self._streak += 1
+        backoff = min(self.BASE * (2 ** (self._streak - 1)), self.MAX)
+        self._until = time.time() + backoff
+        logger.warning(f"[{self.name}] Timeout #{self._streak} — backoff {backoff}s")
+
+    def on_rate_limit(self, duration: int) -> None:
+        # Rate limit resets the streak so the first timeout after recovery is short
+        self._streak = 0
+        self._until = time.time() + duration
+        logger.warning(f"[{self.name}] Rate limited (429) — backoff {duration}s")
+
+    def on_success(self) -> None:
+        if self._streak:
+            logger.info(f"[{self.name}] Recovered after {self._streak} timeout(s)")
+        self._streak = 0
+        self._until = 0.0
+
+    def status(self) -> dict:
+        remaining = max(0.0, self._until - time.time())
+        return {"in_backoff": remaining > 0, "backoff_remaining": int(remaining), "streak": self._streak}
+
+
+_bo_adsb_one = _SourceBackoff("ADSB-One")
+_bo_adsb_lol = _SourceBackoff("adsb.lol")
+_bo_adsb_fi  = _SourceBackoff("adsb.fi")
+_bo_adsbx    = _SourceBackoff("ADSBX")
+_bo_local    = _SourceBackoff("ADS-B Local")
+
+# Keep these for any external code that may reference them (read-only)
 BACKOFF_SECONDS: int = 60
-ADSB_FI_BACKOFF_SECONDS: int = 300  # adsb.fi rate limits are longer — back off 5 min
+ADSB_FI_BACKOFF_SECONDS: int = 300
 
 # Short-lived cache for fetch_multi_source_positions — avoids a double fetch
 # when the /flights endpoint calls get_transits() for both sun and moon within
@@ -125,6 +177,17 @@ def get_source_activity() -> Dict[str, dict]:
     return {
         k: {"ts": _last_source_calls.get(k, 0), "count": _source_call_counts.get(k, 0)}
         for k in set(list(_last_source_calls) + list(_source_call_counts))
+    }
+
+
+def get_source_backoff_status() -> Dict[str, dict]:
+    """Return {source: {in_backoff, backoff_remaining, streak}} for ADS-B sources."""
+    return {
+        "adsb_one": _bo_adsb_one.status(),
+        "adsb_lol": _bo_adsb_lol.status(),
+        "adsb_fi":  _bo_adsb_fi.status(),
+        "adsbx":    _bo_adsbx.status(),
+        "local":    _bo_local.status(),
     }
 
 
@@ -272,16 +335,9 @@ def _fetch_adsb_one(
     lat_ll: float, lon_ll: float, lat_ur: float, lon_ur: float
 ) -> Dict[str, dict]:
     """Fetch positions from ADSB-One (api.adsb.one). Free, no authentication."""
-    global _adsb_one_backoff_until
-
     if os.getenv("ADSB_ONE_ENABLED", "true").lower() not in ("true", "1", "yes"):
         return {}
-
-    now = time.time()
-    if now < _adsb_one_backoff_until:
-        logger.debug(
-            f"[ADSB-One] In backoff ({int(_adsb_one_backoff_until - now)}s remaining)"
-        )
+    if _bo_adsb_one.in_backoff():
         return {}
 
     clat, clon, dist_km = _bbox_to_center_radius(lat_ll, lon_ll, lat_ur, lon_ur)
@@ -292,25 +348,20 @@ def _fetch_adsb_one(
     for verify_ssl in (True, False):  # retry without SSL verify on TLS decode errors
         try:
             _record_http_call("adsb_one")
-            resp = requests.get(url, timeout=REQUEST_TIMEOUT, verify=verify_ssl)
+            resp = requests.get(url, timeout=(3, REQUEST_TIMEOUT), verify=verify_ssl)
             if resp.status_code == 429:
-                _adsb_one_backoff_until = time.time() + BACKOFF_SECONDS
-                logger.warning(
-                    f"[ADSB-One] Rate limited (429) — backoff {BACKOFF_SECONDS}s"
-                )
+                _bo_adsb_one.on_rate_limit(BACKOFF_SECONDS)
                 return {}
             resp.raise_for_status()
             raw = resp.json()
             break
         except requests.exceptions.SSLError as exc:
             if not verify_ssl:
-                logger.warning(
-                    f"[ADSB-One] SSL error even without verify — skipping: {exc}"
-                )
+                logger.warning(f"[ADSB-One] SSL error even without verify — skipping: {exc}")
                 return {}
             logger.debug("[ADSB-One] SSL error — retrying without verify")
-        except requests.exceptions.Timeout:
-            logger.warning("[ADSB-One] Request timed out")
+        except (requests.exceptions.Timeout, requests.exceptions.ConnectionError):
+            _bo_adsb_one.on_timeout()
             return {}
         except Exception as exc:
             logger.warning(f"[ADSB-One] Request failed: {exc}")
@@ -329,6 +380,7 @@ def _fetch_adsb_one(
         callsign = parsed["_callsign"]
         result[callsign] = parsed
 
+    _bo_adsb_one.on_success()
     logger.info(f"[ADSB-One] {len(result)} aircraft (radius={radius_nm:.0f} nm)")
     return result
 
@@ -337,16 +389,9 @@ def _fetch_adsb_lol(
     lat_ll: float, lon_ll: float, lat_ur: float, lon_ur: float
 ) -> Dict[str, dict]:
     """Fetch positions from api.adsb.lol (readsb v2 /point — same shape as ADSB-One)."""
-    global _adsb_lol_backoff_until
-
     if os.getenv("ADSB_LOL_ENABLED", "true").lower() not in ("true", "1", "yes"):
         return {}
-
-    now = time.time()
-    if now < _adsb_lol_backoff_until:
-        logger.debug(
-            f"[adsb.lol] In backoff ({int(_adsb_lol_backoff_until - now)}s remaining)"
-        )
+    if _bo_adsb_lol.in_backoff():
         return {}
 
     clat, clon, dist_km = _bbox_to_center_radius(lat_ll, lon_ll, lat_ur, lon_ur)
@@ -355,17 +400,14 @@ def _fetch_adsb_lol(
     url = f"{ADSB_LOL_BASE}/v2/point/{clat:.4f}/{clon:.4f}/{radius_nm:.0f}"
     _record_http_call("adsb_lol")
     try:
-        resp = requests.get(url, timeout=REQUEST_TIMEOUT)
+        resp = requests.get(url, timeout=(3, REQUEST_TIMEOUT))
         if resp.status_code == 429:
-            _adsb_lol_backoff_until = time.time() + BACKOFF_SECONDS
-            logger.warning(
-                f"[adsb.lol] Rate limited (429) — backoff {BACKOFF_SECONDS}s"
-            )
+            _bo_adsb_lol.on_rate_limit(BACKOFF_SECONDS)
             return {}
         resp.raise_for_status()
         raw = resp.json()
-    except requests.exceptions.Timeout:
-        logger.warning("[adsb.lol] Request timed out")
+    except (requests.exceptions.Timeout, requests.exceptions.ConnectionError):
+        _bo_adsb_lol.on_timeout()
         return {}
     except Exception as exc:
         logger.warning(f"[adsb.lol] Request failed: {exc}")
@@ -382,6 +424,7 @@ def _fetch_adsb_lol(
         callsign = parsed["_callsign"]
         result[callsign] = parsed
 
+    _bo_adsb_lol.on_success()
     logger.info(f"[adsb.lol] {len(result)} aircraft (radius={radius_nm:.0f} nm)")
     return result
 
@@ -393,16 +436,9 @@ def _fetch_adsb_fi(
 
     See https://opendata.adsb.fi/api/ — v3/lat/lon/dist with dist in NM.
     """
-    global _adsb_fi_backoff_until
-
     if os.getenv("ADSB_FI_ENABLED", "true").lower() not in ("true", "1", "yes"):
         return {}
-
-    now = time.time()
-    if now < _adsb_fi_backoff_until:
-        logger.debug(
-            f"[adsb.fi] In backoff ({int(_adsb_fi_backoff_until - now)}s remaining)"
-        )
+    if _bo_adsb_fi.in_backoff():
         return {}
 
     clat, clon, dist_km = _bbox_to_center_radius(lat_ll, lon_ll, lat_ur, lon_ur)
@@ -411,15 +447,14 @@ def _fetch_adsb_fi(
     url = f"{ADSB_FI_BASE}/v3/lat/{clat:.4f}/lon/{clon:.4f}/dist/{dist_nm:.0f}"
     _record_http_call("adsb_fi")
     try:
-        resp = requests.get(url, timeout=REQUEST_TIMEOUT)
+        resp = requests.get(url, timeout=(3, REQUEST_TIMEOUT))
         if resp.status_code == 429:
-            _adsb_fi_backoff_until = time.time() + ADSB_FI_BACKOFF_SECONDS
-            logger.warning(f"[adsb.fi] Rate limited (429) — backoff {ADSB_FI_BACKOFF_SECONDS}s")
+            _bo_adsb_fi.on_rate_limit(ADSB_FI_BACKOFF_SECONDS)
             return {}
         resp.raise_for_status()
         raw = resp.json()
-    except requests.exceptions.Timeout:
-        logger.warning("[adsb.fi] Request timed out")
+    except (requests.exceptions.Timeout, requests.exceptions.ConnectionError):
+        _bo_adsb_fi.on_timeout()
         return {}
     except Exception as exc:
         logger.warning(f"[adsb.fi] Request failed: {exc}")
@@ -436,6 +471,7 @@ def _fetch_adsb_fi(
         callsign = parsed["_callsign"]
         result[callsign] = parsed
 
+    _bo_adsb_fi.on_success()
     logger.info(f"[adsb.fi] {len(result)} aircraft (radius={dist_nm:.0f} nm)")
     return result
 
@@ -444,19 +480,12 @@ def _fetch_adsbexchange(
     lat_ll: float, lon_ll: float, lat_ur: float, lon_ur: float
 ) -> Dict[str, dict]:
     """Fetch positions from ADS-B Exchange. Requires ADSBX_API_KEY env var."""
-    global _adsbx_backoff_until
-
     api_key = os.getenv("ADSBX_API_KEY", "").strip()
     if not api_key:
         return {}
     if os.getenv("ADSBX_ENABLED", "true").lower() not in ("true", "1", "yes"):
         return {}
-
-    now = time.time()
-    if now < _adsbx_backoff_until:
-        logger.debug(
-            f"[ADSBX] In backoff ({int(_adsbx_backoff_until - now)}s remaining)"
-        )
+    if _bo_adsbx.in_backoff():
         return {}
 
     clat, clon, dist_km = _bbox_to_center_radius(lat_ll, lon_ll, lat_ur, lon_ur)
@@ -466,18 +495,17 @@ def _fetch_adsbexchange(
     headers = {"api-auth": api_key}
     _record_http_call("adsbx")
     try:
-        resp = requests.get(url, headers=headers, timeout=REQUEST_TIMEOUT)
+        resp = requests.get(url, headers=headers, timeout=(3, REQUEST_TIMEOUT))
         if resp.status_code == 429:
-            _adsbx_backoff_until = time.time() + BACKOFF_SECONDS
-            logger.warning(f"[ADSBX] Rate limited (429) — backoff {BACKOFF_SECONDS}s")
+            _bo_adsbx.on_rate_limit(BACKOFF_SECONDS)
             return {}
         if resp.status_code == 403:
             logger.warning("[ADSBX] Authentication failed (403) — check ADSBX_API_KEY")
             return {}
         resp.raise_for_status()
         raw = resp.json()
-    except requests.exceptions.Timeout:
-        logger.warning("[ADSBX] Request timed out")
+    except (requests.exceptions.Timeout, requests.exceptions.ConnectionError):
+        _bo_adsbx.on_timeout()
         return {}
     except Exception as exc:
         logger.warning(f"[ADSBX] Request failed: {exc}")
@@ -494,6 +522,7 @@ def _fetch_adsbexchange(
         callsign = parsed["_callsign"]
         result[callsign] = parsed
 
+    _bo_adsbx.on_success()
     logger.info(f"[ADSBX] {len(result)} aircraft (radius={dist_nm:.0f} nm)")
     return result
 
@@ -509,16 +538,12 @@ def _fetch_adsb_local(
     Configure with:
         ADSB_LOCAL_URL=http://192.168.x.y/data/aircraft.json
     """
-    global _local_backoff_until
-
     url = os.getenv("ADSB_LOCAL_URL", "").strip()
     if not url:
         return {}
     if os.getenv("ADSB_LOCAL_ENABLED", "true").lower() not in ("true", "1", "yes"):
         return {}
-
-    now = time.time()
-    if now < _local_backoff_until:
+    if _bo_local.in_backoff():
         return {}
 
     _record_http_call("local")
@@ -527,10 +552,8 @@ def _fetch_adsb_local(
         resp.raise_for_status()
         raw = resp.json()
     except Exception as exc:
-        _local_backoff_until = time.time() + BACKOFF_SECONDS
-        logger.warning(
-            f"[ADS-B Local] Request failed: {exc} — backoff {BACKOFF_SECONDS}s"
-        )
+        _bo_local.on_timeout()
+        logger.warning(f"[ADS-B Local] Request failed: {exc}")
         return {}
 
     # dump1090 / tar1090 / readsb: {"aircraft": [...]} or {"ac": [...]}
@@ -550,6 +573,7 @@ def _fetch_adsb_local(
         callsign = parsed["_callsign"]
         result[callsign] = parsed
 
+    _bo_local.on_success()
     logger.info(f"[ADS-B Local] {len(result)} aircraft in bbox from {url}")
     return result
 

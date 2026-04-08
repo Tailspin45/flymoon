@@ -345,7 +345,7 @@
 <div class="top-selector-bar" id="topSelectorBar">
   <span class="tsb-label">Data source:</span>
   <button class="tsb-btn" data-tsb="fa-only"      onclick="selectMode('fa-only')">☁️ FlightAware Only</button>
-  <button class="tsb-btn" data-tsb="opensky-only" onclick="selectMode('opensky-only')">🌐 OpenSky Only</button>
+  <button class="tsb-btn" data-tsb="opensky-only" onclick="selectMode('opensky-only')">🌐 No FlightAware</button>
   <button class="tsb-btn" data-tsb="hybrid"       onclick="selectMode('hybrid')">⚡ Hybrid</button>
   <button class="tsb-btn" data-tsb="adsb-local"   onclick="selectMode('adsb-local')">📡 ADS-B Receiver</button>
   <span class="tsb-saved" id="tsbSaved">✓ Saved</span>
@@ -636,9 +636,9 @@
       <div class="sel-desc">Full metadata on every refresh. Expensive at frequent intervals. Recommended only for occasional use or professional budgets.</div>
     </div>
     <div class="selector-option" data-mode="opensky-only" onclick="selectMode('opensky-only')">
-      <div class="sel-name" style="color:var(--os)">🌐 OpenSky Only</div>
+      <div class="sel-name" style="color:var(--os)">🌐 No FlightAware</div>
       <div class="sel-cost" style="color:var(--green)">Free</div>
-      <div class="sel-desc">Positions every 60s. No aircraft type or airline data. Callsign usually available. Zero cost. Good for casual monitoring.</div>
+      <div class="sel-desc">OpenSky + ADSB-One + adsb.lol + adsb.fi + ADS-B Exchange in parallel. No FlightAware enrichment. Zero cost.</div>
     </div>
     <div class="selector-option" data-mode="hybrid" onclick="selectMode('hybrid')">
       <div class="sel-name" style="color:var(--hybrid)">⚡ Hybrid (Recommended)</div>
@@ -662,7 +662,7 @@
 (function() {
     const MODES = {
         'fa-only':      { label: 'FlightAware Only',       cost: '$14–$87/month',    color: '#3b82f6' },
-        'opensky-only': { label: 'OpenSky Only',            cost: 'Free',             color: '#10b981' },
+        'opensky-only': { label: 'No FlightAware',           cost: 'Free',             color: '#10b981' },
         'hybrid':       { label: 'Hybrid (OpenSky + FA)',   cost: 'Free (within $5 credit)',  color: '#a78bfa' },
         'adsb-local':   { label: 'ADS-B Receiver + FA',    cost: '~$0/month',         color: '#06b6d4' },
     };

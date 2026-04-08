@@ -256,6 +256,12 @@ def fetch_opensky_positions(
     return result
 
 
+def get_backoff_status() -> dict:
+    """Return backoff state for the OpenSky source."""
+    remaining = max(0.0, _backoff_until - time.time())
+    return {"in_backoff": remaining > 0, "backoff_remaining": int(remaining), "streak": 0}
+
+
 def get_latest_snapshot() -> Dict[str, dict]:
     """Return the most recently fetched aircraft positions from any cached bbox.
 

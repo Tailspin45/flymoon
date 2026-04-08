@@ -153,7 +153,7 @@ def target_above_min_altitude(
         now = EARTH_TIMESCALE.from_datetime(datetime.now(tz=timezone.utc))
         body = ASTRO_EPHEMERIS[target]
         # Correct Skyfield API: earth + observer position, then observe
-        observer = EARTH + observer_loc
+        observer = ASTRO_EPHEMERIS["earth"] + observer_loc
         alt, _, _ = observer.at(now).observe(body).apparent().altaz()
         return alt.degrees >= min_altitude
     except Exception as exc:

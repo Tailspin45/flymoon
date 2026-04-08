@@ -1317,7 +1317,7 @@ class TransitDetector:
         if now - self._last_detection_time < DETECTION_COOLDOWN:
             if not getattr(self, '_cooldown_logged', False):
                 self._cooldown_logged = True
-                logger.warning(
+                logger.debug(
                     "[Detector] COOLDOWN suppressed trigger "
                     "(gate=%s score_a=%.4f thresh_a=%.4f score_b=%.4f thresh_b=%.4f "
                     "since_last=%.1fs cooldown=%ds)",

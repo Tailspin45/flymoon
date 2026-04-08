@@ -651,12 +651,18 @@ def get_all_flights():
         visible_flights = [f for f in all_flights if not f.get("target_below_min_alt")]
 
         # Collect per-source activity for the Data Sources panel
-        from src.flight_sources import get_source_activity
+        from src.flight_sources import get_source_activity, get_source_backoff_status
+        from src.opensky import get_backoff_status as get_opensky_backoff_status
         _src_activity = get_source_activity()
         _fa_ts = get_fa_last_call()
         _fa_ct = get_fa_call_count()
         if _fa_ts or _fa_ct:
             _src_activity["flightaware"] = {"ts": _fa_ts, "count": _fa_ct}
+        # Merge backoff state into each source entry so the frontend can show red LEDs
+        _backoff = get_source_backoff_status()
+        _backoff["opensky"] = get_opensky_backoff_status()
+        for src, bk in _backoff.items():
+            _src_activity.setdefault(src, {"ts": 0, "count": 0}).update(bk)
 
         # Combine results
         data = {
@@ -1125,8 +1131,8 @@ def api_label_transit_event():
     label = body.get("label", "").strip().lower()
     notes = body.get("notes", "").strip()
 
-    if not ts or label not in ("tp", "fp", "fn", "tn"):
-        return jsonify({"error": "timestamp and label (tp/fp/fn/tn) required"}), 400
+    if not ts or label not in ("tp", "fp", "fn", "tn", ""):
+        return jsonify({"error": "timestamp and label (tp/fp/fn/tn or empty to clear) required"}), 400
 
     labels_path = "data/transit_labels.csv"
     os.makedirs("data", exist_ok=True)

@@ -816,10 +816,10 @@ def get_transits(
             data_source = "hybrid"  # fall through to multi-source block below
 
         if not test_mode and data_source in ("hybrid", "opensky-only"):
-            # ── Multi-source mode (default) ───────────────────────────────
-            # Queries OpenSky + ADSB-One + ADS-B Exchange (if key set) +
-            # local receiver (if URL set) in parallel and merges results.
-            # FA is only called post-capture for metadata enrichment.
+            # ── Multi-source mode ─────────────────────────────────────────────
+            # "hybrid" = all ADS-B sources + FA enrichment on high-prob transits
+            # "opensky-only" = all ADS-B sources, no FA (renamed "No FlightAware"
+            #                  in the UI — the internal key is kept for compat)
             from src.flight_sources import fetch_multi_source_positions
 
             try:
