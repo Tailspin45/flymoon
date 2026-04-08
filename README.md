@@ -80,11 +80,17 @@ python3 transit_capture.py --latitude 51.5 --longitude -0.12 --target sun
 4. **Angular separation** — numerical optimisation finds the moment of closest approach on-sky
 5. **Probability classification** — ranks candidates using true angular separation, with azimuth differences cosine-weighted by target altitude to correct for geometric compression near the zenith
 
+Transit candidates are graded by the predicted minimum center-to-center angular separation (d) between the aircraft and the Sun. The model uses the Sun’s angular radius (R \approx 0.266^\circ) and the detector’s disk-margin exclusion fraction (m), where (m=0.25) excludes the outer 25% of the solar radius. Thresholds are computed as (X=(1-m)R), (Y=R), and (Z=(2-m)R). A candidate is classified as high-likelihood if (d ≤ X), medium-likelihood if (X < d ≤ Y), and low-likelihood if (Y < d ≤ Z).
+
+This grading system is operational rather than statistical. It reflects the detector’s preference for events that cross the trusted inner disk, distinguishes those from limb-region overlaps, and retains a broader outer band for larger nearby aircraft that may still produce a detectable transit. Broader monitoring thresholds may still be used to avoid missing candidates, but the grading bands provide a tighter, more meaningful basis for prioritization, logging, and review.
+
+
+
 | Level | Separation | Meaning |
 |-------|-----------|---------|
-| 🟢 High | ≤ 2.0° | Direct transit very likely |
-| 🟠 Medium | ≤ 4.0° | Near miss — worth recording |
-| ⚪ Low | ≤ 12.0° | Possible distant transit |
+| 🟢 High | ≤ 0.20° | Direct transit very likely |
+| 🟠 Medium | ≤ 0.27° | Near miss — worth recording |
+| ⚪ Low | ≤ 0.4° | Possible distant transit |
 
 ### Live Video Detection
 
@@ -99,11 +105,6 @@ When the telescope is connected, **TransitDetector** monitors the live RTSP stre
 - **Score B (MF)** — matched-filter gate: cross-correlates the signal against a bank of transit templates covering different speeds and sizes
 
 All three gates require `score_a ≥ thresh_a` before they can accumulate, preventing background noise from triggering a false detection. A hard centre-ratio gate suppresses detections where the brightness anomaly is not centred in the disc. After a confirmed detection the detector enforces a 6-second cooldown; suppressed triggers during cooldown are logged once (not once per frame).
-
-Transit candidates are graded by the predicted minimum center-to-center angular separation (d) between the aircraft and the Sun. The model uses the Sun’s angular radius (R \approx 0.266^\circ) and the detector’s disk-margin exclusion fraction (m), where (m=0.25) excludes the outer 25% of the solar radius. Thresholds are computed as (X=(1-m)R), (Y=R), and (Z=(2-m)R). A candidate is classified as high-likelihood if (d ≤ X), medium-likelihood if (X < d ≤ Y), and low-likelihood if (Y < d ≤ Z).
-
-This grading system is operational rather than statistical. It reflects the detector’s preference for events that cross the trusted inner disk, distinguishes those from limb-region overlaps, and retains a broader outer band for larger nearby aircraft that may still produce a detectable transit. Broader monitoring thresholds may still be used to avoid missing candidates, but the grading bands provide a tighter, more meaningful basis for prioritization, logging, and review.
-
 
 ### Post-Capture Analysis
 
