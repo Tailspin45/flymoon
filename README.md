@@ -100,6 +100,11 @@ When the telescope is connected, **TransitDetector** monitors the live RTSP stre
 
 All three gates require `score_a ≥ thresh_a` before they can accumulate, preventing background noise from triggering a false detection. A hard centre-ratio gate suppresses detections where the brightness anomaly is not centred in the disc. After a confirmed detection the detector enforces a 6-second cooldown; suppressed triggers during cooldown are logged once (not once per frame).
 
+Transit candidates are graded by the predicted minimum center-to-center angular separation (d) between the aircraft and the Sun. The model uses the Sun’s angular radius (R \approx 0.266^\circ) and the detector’s disk-margin exclusion fraction (m), where (m=0.25) excludes the outer 25% of the solar radius. Thresholds are computed as (X=(1-m)R), (Y=R), and (Z=(2-m)R). A candidate is classified as high-likelihood if (d ≤ X), medium-likelihood if (X < d ≤ Y), and low-likelihood if (Y < d ≤ Z).
+
+This grading system is operational rather than statistical. It reflects the detector’s preference for events that cross the trusted inner disk, distinguishes those from limb-region overlaps, and retains a broader outer band for larger nearby aircraft that may still produce a detectable transit. Broader monitoring thresholds may still be used to avoid missing candidates, but the grading bands provide a tighter, more meaningful basis for prioritization, logging, and review.
+
+
 ### Post-Capture Analysis
 
 **TransitAnalyzer** processes saved video to produce:
