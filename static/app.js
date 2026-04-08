@@ -627,8 +627,8 @@ function renderRichFlightRow(item, bodyTable) {
     if (item.alt_diff != null && item.az_diff != null) {
         const ad = item.alt_diff.toFixed(1), azd = item.az_diff.toFixed(1);
         const sep = item.angular_separation;
-        // Color by angular separation: HIGH ≤2°, MEDIUM ≤4°
-        const c = (sep != null && sep <= 2.0) ? '#4caf50' : (sep != null && sep <= 4.0) ? '#ff9800' : '#888';
+        // Color by angular separation: HIGH ≤0.20°, MEDIUM ≤0.27°
+        const c = (sep != null && sep <= 0.20) ? '#4caf50' : (sep != null && sep <= 0.27) ? '#ff9800' : '#888';
         const sigma = item.sep_1sigma;
         const sigmaStr = (sigma != null && sigma > 0)
             ? ` <span style="color:#9e9e9e;font-size:0.82em" title="IMM 1σ position uncertainty">±${sigma.toFixed(2)}°</span>`
@@ -1783,9 +1783,9 @@ const HELP_CONTENT = {
         title: 'Transit Probability Levels',
         body: `<p>Each aircraft is assigned a probability level from <strong>combined angular separation</strong> (on-sky degrees between aircraft and Sun/Moon at closest approach):</p>
 <table style="width:100%;border-collapse:collapse;margin:10px 0;">
-<tr style="border-bottom:1px solid #444"><td style="padding:5px 8px">🟢 <strong>High</strong></td><td style="padding:5px 8px">≤2° — very likely near or on disk. <em>Prioritise recording.</em></td></tr>
-<tr style="border-bottom:1px solid #444"><td style="padding:5px 8px">🟠 <strong>Medium</strong></td><td style="padding:5px 8px">≤4° — close pass; may graze the limb or suit a wide field.</td></tr>
-<tr style="border-bottom:1px solid #444"><td style="padding:5px 8px">⚪ <strong>Low</strong></td><td style="padding:5px 8px">≤12° — distant geometry; useful for monitoring, unlikely silhouette.</td></tr>
+<tr style="border-bottom:1px solid #444"><td style="padding:5px 8px">🟢 <strong>High</strong></td><td style="padding:5px 8px">≤0.20° — very likely near or on disk. <em>Prioritise recording.</em></td></tr>
+<tr style="border-bottom:1px solid #444"><td style="padding:5px 8px">🟠 <strong>Medium</strong></td><td style="padding:5px 8px">≤0.27° — close pass; may graze the limb or suit a wide field.</td></tr>
+<tr style="border-bottom:1px solid #444"><td style="padding:5px 8px">⚪ <strong>Low</strong></td><td style="padding:5px 8px">≤0.40° — distant geometry; useful for monitoring, unlikely silhouette.</td></tr>
 <tr><td style="padding:5px 8px">— <strong>Unlikely</strong></td><td style="padding:5px 8px">&gt;12° — shown but not treated as a transit candidate.</td></tr>
 </table>
 <p>The Sun and Moon each subtend about <strong>0.5°</strong> of arc. An aircraft crossing within that cone produces a true silhouette transit lasting 0.5–2 seconds.</p>
@@ -1799,7 +1799,7 @@ const HELP_CONTENT = {
 <tr><td style="padding:4px 8px;color:#7eb8f7;white-space:nowrap"><strong>target / @CPA°</strong></td><td style="padding:4px 8px">☀️/🌙 target plus target altitude at closest approach time (CPA), so values can differ by aircraft.</td></tr>
 <tr><td style="padding:4px 8px;color:#7eb8f7;white-space:nowrap"><strong>aircraft</strong></td><td style="padding:4px 8px">Callsign and ICAO type code (e.g. B738 = Boeing 737-800). Click to flash on map and show route.</td></tr>
 <tr><td style="padding:4px 8px;color:#7eb8f7;white-space:nowrap"><strong>alt / v/s</strong></td><td style="padding:4px 8px">Altitude (FL350 above 18,000ft, otherwise feet). Vertical speed: ▲ climbing (green), ▼ descending (red), ▶ level (grey). V/S in ft/min from ADS-B vertical rate; ▲/▼ only from FlightAware elevation_change flag.</td></tr>
-<tr><td style="padding:4px 8px;color:#7eb8f7;white-space:nowrap"><strong>sky Δ</strong></td><td style="padding:4px 8px">Angular separation at closest approach: ↕ altitude diff, ↔ azimuth diff. Colours follow level: green ≤2° HIGH, orange ≤4° MEDIUM, gold ≤12° LOW.</td></tr>
+<tr><td style="padding:4px 8px;color:#7eb8f7;white-space:nowrap"><strong>sky Δ</strong></td><td style="padding:4px 8px">Angular separation at closest approach: ↕ altitude diff, ↔ azimuth diff. Colours follow level: green ≤0.20° HIGH, orange ≤0.27° MEDIUM, gold ≤0.40° LOW.</td></tr>
 <tr><td style="padding:4px 8px;color:#7eb8f7;white-space:nowrap"><strong>track</strong></td><td style="padding:4px 8px">Compass direction (NNW etc.), true heading in degrees, and ground speed in knots.</td></tr>
 <tr><td style="padding:4px 8px;color:#7eb8f7;white-space:nowrap"><strong>src / age</strong></td><td style="padding:4px 8px">Position source badge (ADS-B / MLAT / FLARM / OS / FA) and data age in seconds. Age colour: green ≤5s, yellow ≤30s, orange ≤60s, red >60s.</td></tr>
 </table>
@@ -1816,7 +1816,7 @@ const HELP_CONTENT = {
 <tr><td style="padding:4px 8px;color:#7eb8f7;white-space:nowrap"><strong>plane angle</strong></td><td style="padding:4px 8px">Predicted altitude angle of the aircraft at closest approach to the target</td></tr>
 <tr><td style="padding:4px 8px;color:#7eb8f7;white-space:nowrap"><strong>target az</strong></td><td style="padding:4px 8px">Current azimuth of the Sun/Moon — degrees clockwise from true North</td></tr>
 <tr><td style="padding:4px 8px;color:#7eb8f7;white-space:nowrap"><strong>plane az</strong></td><td style="padding:4px 8px">Predicted azimuth of the aircraft at closest approach</td></tr>
-<tr><td style="padding:4px 8px;color:#7eb8f7;white-space:nowrap"><strong>△angle</strong></td><td style="padding:4px 8px">Altitude difference at closest approach (one component of separation). Row highlight uses combined separation: 🟢 HIGH ≤2°, 🟠 MEDIUM ≤4°, ⚪ LOW ≤12°.</td></tr>
+<tr><td style="padding:4px 8px;color:#7eb8f7;white-space:nowrap"><strong>△angle</strong></td><td style="padding:4px 8px">Altitude difference at closest approach (one component of separation). Row highlight uses combined separation: 🟢 HIGH ≤0.20°, 🟠 MEDIUM ≤0.27°, ⚪ LOW ≤0.40°.</td></tr>
 <tr><td style="padding:4px 8px;color:#7eb8f7;white-space:nowrap"><strong>△az</strong></td><td style="padding:4px 8px">Azimuth difference at closest approach. Smaller = better.</td></tr>
 <tr><td style="padding:4px 8px;color:#7eb8f7;white-space:nowrap"><strong>elev</strong></td><td style="padding:4px 8px">Flight level in hundreds of feet (350 = FL350 = 35,000 ft)</td></tr>
 <tr><td style="padding:4px 8px;color:#7eb8f7;white-space:nowrap"><strong>GPS alt (ft)</strong></td><td style="padding:4px 8px">GPS altitude in feet above sea level from ADS-B transponder</td></tr>
@@ -2060,7 +2060,7 @@ function fetchFlights() {
     const minAltQ = getQuadrantMinAltitudes();
     // Use wide outer-search thresholds so all classifiable transits are returned.
     // Wide prefilter (5°) so server returns candidates; classification bands are
-    // HIGH ≤2°, MEDIUM ≤4°, LOW ≤12° (see get_possibility_level in src/transit.py).
+    // HIGH ≤0.20°, MEDIUM ≤0.27°, LOW ≤0.40° (see get_possibility_level in src/transit.py).
     const altThreshold = 5.0;
     const azThreshold = 5.0;
     
