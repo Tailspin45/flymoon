@@ -8137,6 +8137,22 @@ function _updateAlpacaPanel(data) {
 
     panel.style.display = '';
 
+    const _setAlpacaEndpoint = (payload) => {
+        const endpoint = document.getElementById('alpacaEndpoint');
+        if (!endpoint) return;
+        const hostRaw =
+            (payload && payload.host !== undefined ? payload.host : null) ??
+            (_lastConnectedStatus && _lastConnectedStatus.host);
+        const host = typeof hostRaw === 'string' ? hostRaw.trim() : '';
+        const n = payload && payload.port !== undefined && payload.port !== null
+            ? Number(payload.port)
+            : NaN;
+        const port = Number.isFinite(n) ? Math.round(n) : null;
+        if (host && port != null) endpoint.textContent = `${host}:${port}`;
+        else if (host) endpoint.textContent = host;
+        else endpoint.textContent = '—';
+    };
+
     if (!data || !data.connected) {
         // Show panel in disconnected/placeholder state — coords reset to dashes
         ['alpacaRA','alpacaDec','alpacaAlt','alpacaAz','alpacaLST','alpacaGMT','alpacaFocusPos','alpacaCameraGain'].forEach(id => {
@@ -8149,6 +8165,7 @@ function _updateAlpacaPanel(data) {
         if (label) label.textContent = 'DISC';
         const dot = document.getElementById('alpacaStatusDot');
         if (dot) dot.style.background = '#555';
+        _setAlpacaEndpoint(data);
         const name = document.getElementById('alpacaDeviceName');
         if (name) name.textContent = '';
         const drvr = document.getElementById('alpacaDriverInfo');
@@ -8176,6 +8193,8 @@ function _updateAlpacaPanel(data) {
         const n = _toNum(v);
         return n == null ? '—' : n.toFixed(d);
     };
+
+    _setAlpacaEndpoint(data);
 
     // Coordinate values
     const ra = document.getElementById('alpacaRA');

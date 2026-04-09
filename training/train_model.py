@@ -51,7 +51,7 @@ def build_model():
         import torch.nn as nn
     except ImportError:
         print(
-            "PyTorch is required for training. Install with: pip install torch",
+            "PyTorch is required for training. Install with: pip install -r requirements.txt",
             file=sys.stderr,
         )
         sys.exit(1)
@@ -179,7 +179,19 @@ def train(
         import torch.nn as nn
         import torch.optim as optim
     except ImportError:
-        print("PyTorch is required for training.", file=sys.stderr)
+        print(
+            "PyTorch is required for training. Install with: pip install -r requirements.txt",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    try:
+        import onnx  # noqa: F401
+    except ImportError:
+        print(
+            "ONNX export dependency is missing. Install with: pip install -r requirements.txt",
+            file=sys.stderr,
+        )
         sys.exit(1)
 
     # MPS (Apple GPU) does not implement Conv3d — first forward throws at model(x).

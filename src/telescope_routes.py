@@ -93,10 +93,62 @@ def _agent_debug_log(
         pass
 
 
-def _probe_rtsp_stream(host: str, timeout_seconds: int = 5) -> bool:
-    """Return True when an RTSP frame can be read from the scope quickly."""
-    rtsp_port = int(os.getenv("SEESTAR_RTSP_PORT", "4554"))
-    rtsp_url = f"rtsp://{host}:{rtsp_port}/stream"
+def _rtsp_port_probe_order(primary: int) -> list[int]:
+    """Ordered RTSP ports for Seestar probing (prefer documented 4554)."""
+    primary = int(primary)
+    ordered = [4554, 8554]
+    if primary not in (4554, 8554, 554):
+        ordered.insert(1, primary)
+    elif primary == 554:
+        logger.warning("[RTSP] Ignoring SEESTAR_RTSP_PORT=554; using Seestar ports 4554/8554")
+    seen: set[int] = set()
+    out: list[int] = []
+    for p in ordered:
+        if p not in seen:
+            seen.add(p)
+            out.append(p)
+    return out
+
+
+def _rtsp_path_candidates() -> list[str]:
+    """Ordered RTSP path candidates (default /stream)."""
+    raw = os.getenv("SEESTAR_RTSP_PATH", "")
+    raw = str(raw).split("#", 1)[0].strip().strip('"').strip("'")
+    if not raw:
+        base = "/stream"
+    else:
+        base = raw if raw.startswith("/") else f"/{raw}"
+    if base in ("/str", "/stre", "/st", "/s"):
+        logger.warning(
+            "[RTSP] SEESTAR_RTSP_PATH looks truncated (%r); using /stream",
+            os.getenv("SEESTAR_RTSP_PATH"),
+        )
+        base = "/stream"
+
+    out = [base] if base == "/stream" else [base, "/stream"]
+    if os.getenv("SEESTAR_RTSP_TRY_ROOT", "").strip().lower() in (
+        "1",
+        "true",
+        "yes",
+        "on",
+    ):
+        out.append("/")
+    # Preserve order while removing duplicates
+    return list(dict.fromkeys(out))
+
+
+def _rtsp_candidate_urls(host: str) -> list[str]:
+    """All RTSP URL candidates in probe order (port × path)."""
+    primary = int(os.getenv("SEESTAR_RTSP_PORT", "4554"))
+    urls: list[str] = []
+    for port in _rtsp_port_probe_order(primary):
+        for path in _rtsp_path_candidates():
+            urls.append(f"rtsp://{host}:{port}{path}")
+    return list(dict.fromkeys(urls))
+
+
+def _probe_rtsp_url(rtsp_url: str, timeout_seconds: int = 5) -> bool:
+    """Return True when one frame can be read quickly from the given RTSP URL."""
     cmd = [
         FFMPEG,
         "-rtsp_transport",
@@ -121,13 +173,22 @@ def _probe_rtsp_stream(host: str, timeout_seconds: int = 5) -> bool:
         return False
 
 
-def _ensure_rtsp_ready(client) -> bool:
-    """Check whether the scope is streaming RTSP — never change scope mode here."""
-    ok = _probe_rtsp_stream(client.host)
-    if not ok:
-        mode = getattr(client, "_viewing_mode", None)
-        logger.warning(f"[RTSP] Probe failed (mode={mode})")
-    return ok
+def _resolve_rtsp_stream_url(host: str, timeout_seconds: int = 6) -> Optional[str]:
+    """Return first working RTSP URL from candidate list, else None."""
+    for url in _rtsp_candidate_urls(host):
+        if _probe_rtsp_url(url, timeout_seconds=timeout_seconds):
+            return url
+    return None
+
+
+def _ensure_rtsp_ready(client, *, timeout_seconds: int = 4) -> Optional[str]:
+    """Return a working RTSP URL from probe candidates, else None."""
+    rtsp_url = _resolve_rtsp_stream_url(client.host, timeout_seconds=timeout_seconds)
+    if rtsp_url:
+        return rtsp_url
+    mode = getattr(client, "_viewing_mode", None)
+    logger.warning(f"[RTSP] Probe failed (mode={mode})")
+    return None
 
 
 # Mock Telescope Client for Testing
@@ -1675,7 +1736,8 @@ def start_recording():
         if not client or not client.is_connected():
             return jsonify({"error": "Not connected to telescope"}), 400
 
-        if not _ensure_rtsp_ready(client):
+        rtsp_url = _ensure_rtsp_ready(client)
+        if not rtsp_url:
             return (
                 jsonify(
                     {
@@ -1698,10 +1760,6 @@ def start_recording():
         if request.is_json:
             duration = int(request.json.get("duration", 30))
             interval = float(request.json.get("interval", 0))
-
-        # Get RTSP stream URL
-        rtsp_port = int(os.getenv("SEESTAR_RTSP_PORT", "4554"))
-        rtsp_url = f"rtsp://{client.host}:{rtsp_port}/stream"
 
         # Generate filename with timestamp
         from datetime import datetime
@@ -2734,7 +2792,8 @@ def capture_photo():
         if not client or not client.is_connected():
             return jsonify({"error": "Not connected to telescope"}), 400
 
-        if not _ensure_rtsp_ready(client):
+        rtsp_url = _ensure_rtsp_ready(client)
+        if not rtsp_url:
             return (
                 jsonify(
                     {
@@ -2743,10 +2802,6 @@ def capture_photo():
                 ),
                 503,
             )
-
-        # Get RTSP stream URL
-        rtsp_port = int(os.getenv("SEESTAR_RTSP_PORT", "4554"))
-        rtsp_url = f"rtsp://{client.host}:{rtsp_port}/stream"
 
         # Generate filename with timestamp
         from datetime import datetime
@@ -3055,9 +3110,14 @@ def telescope_preview_stream():
         if not client or not client.is_connected():
             return jsonify({"error": "Not connected to telescope"}), 400
 
-        # Get RTSP stream URL
-        rtsp_port = int(os.getenv("SEESTAR_RTSP_PORT", "4554"))
-        rtsp_url = f"rtsp://{client.host}:{rtsp_port}/stream"
+        rtsp_url = _ensure_rtsp_ready(client, timeout_seconds=2)
+        if not rtsp_url:
+            candidates = _rtsp_candidate_urls(client.host)
+            rtsp_url = candidates[0] if candidates else f"rtsp://{client.host}:4554/stream"
+            logger.warning(
+                "[RTSP] Preview probe failed; trying direct stream URL anyway: %s",
+                rtsp_url,
+            )
 
         logger.info(f"[Telescope] Transcoding RTSP stream: {rtsp_url}")
 
@@ -3311,9 +3371,24 @@ def alpaca_telemetry():
     device info, and capabilities.  Useful for a live scope status panel.
     """
     alpaca = get_alpaca_client()
-    if not alpaca or not alpaca.is_connected():
+    if not alpaca:
         return jsonify({"error": "ALPACA not connected", "connected": False}), 200
-    return jsonify(alpaca.get_telemetry()), 200
+    if not alpaca.is_connected():
+        return (
+            jsonify(
+                {
+                    "error": "ALPACA not connected",
+                    "connected": False,
+                    "host": getattr(alpaca, "host", None),
+                    "port": getattr(alpaca, "port", None),
+                }
+            ),
+            200,
+        )
+    telemetry = alpaca.get_telemetry()
+    telemetry["host"] = getattr(alpaca, "host", None)
+    telemetry["port"] = getattr(alpaca, "port", None)
+    return jsonify(telemetry), 200
 
 
 def alpaca_tracking():
@@ -3990,8 +4065,12 @@ def _maybe_auto_start_detector(target: str = "sun") -> None:
             return
 
         host = client.host
-        rtsp_port = int(os.getenv("SEESTAR_RTSP_PORT", "4554"))
-        rtsp_url = f"rtsp://{host}:{rtsp_port}/stream"
+        rtsp_url = _ensure_rtsp_ready(client)
+        if not rtsp_url:
+            logger.warning(
+                "[Telescope] Auto-detect: RTSP unavailable, detector auto-start skipped"
+            )
+            return
 
         logger.info(
             f"[Telescope] Auto-detect: starting detector for {target} target "
@@ -4026,8 +4105,20 @@ def start_detection():
         if not host:
             return jsonify({"error": "No telescope host configured"}), 400
 
-        rtsp_port = int(os.getenv("SEESTAR_RTSP_PORT", "4554"))
-        rtsp_url = f"rtsp://{host}:{rtsp_port}/stream"
+        rtsp_url = (
+            _ensure_rtsp_ready(client)
+            if client and client.is_connected()
+            else _resolve_rtsp_stream_url(host, timeout_seconds=4)
+        )
+        if not rtsp_url:
+            return (
+                jsonify(
+                    {
+                        "error": "RTSP stream is not ready. Set scope to Sun/Moon view and try again."
+                    }
+                ),
+                503,
+            )
 
         # Optional params
         record = True

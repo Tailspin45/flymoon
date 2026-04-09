@@ -2621,7 +2621,7 @@ canvas.video-thumb-canvas {
 .alpaca-header {
     display: flex;
     align-items: center;
-    justify-content: space-between;
+    gap: 8px;
     margin-bottom: 8px;
 }
 
@@ -2640,7 +2640,22 @@ canvas.video-thumb-canvas {
     display: none;
 }
 
+.alpaca-endpoint {
+    flex: 1;
+    min-width: 0;
+    text-align: center;
+    font-size: 0.6em;
+    font-weight: 600;
+    letter-spacing: 1px;
+    color: #8aafb3;
+    font-family: "SF Mono", "Menlo", "Consolas", monospace;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
 .alpaca-status-badge {
+    flex: 0 0 auto;
     display: flex;
     align-items: center;
     gap: 5px;
@@ -3081,4 +3096,3 @@ canvas.video-thumb-canvas {
     font-size: 0.8em;
     color: #8a9ba8;
 }
-

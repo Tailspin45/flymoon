@@ -117,6 +117,8 @@ All three gates require `score_a ≥ thresh_a` before they can accumulate, preve
 
 A lightweight CNN runs over detection clips to score each event as a genuine transit versus a false positive. Training data is extracted automatically from confirmed captures and stored in `data/training/`. The classifier can be retrained from the telescope panel when new labelled clips are available.
 
+CNN retraining requires `torch` and `onnx`; these are now included in `requirements.txt` and installed by `make setup`.
+
 ### Detection Tester
 
 In the telescope sidebar under **Live Detection**, the Detection Tester card provides rapid pipeline feedback without waiting for a real transit:

@@ -4,6 +4,8 @@ numpy>=1.24.0
 opencv-python-headless>=4.8.0
 PyWavelets>=1.4.0
 onnxruntime>=1.17.0
+onnx>=1.16.0
+torch>=2.2.0
 python-telegram-bot==21.0
 python-dotenv==1.0.1
 requests==2.32.5

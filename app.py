@@ -1186,6 +1186,17 @@ _cnn_retrain_state: dict = {
 _cnn_retrain_lock = threading.Lock()
 
 
+def _missing_cnn_training_dependencies() -> list[str]:
+    """Return missing optional modules required by training.train_model."""
+    missing: list[str] = []
+    for mod in ("torch", "onnx"):
+        try:
+            __import__(mod)
+        except Exception:
+            missing.append(mod)
+    return missing
+
+
 @app.route("/api/cnn/retrain/status")
 def api_cnn_retrain_status():
     """Poll background CNN retrain job."""
@@ -1207,6 +1218,21 @@ def api_cnn_retrain_status():
 def api_cnn_retrain():
     """Promote labeled unlabeled clips, run training.train_model, reload ONNX."""
     global _cnn_retrain_state
+    missing = _missing_cnn_training_dependencies()
+    if missing:
+        mods = ", ".join(missing)
+        return (
+            jsonify(
+                {
+                    "error": (
+                        f"Missing CNN training dependencies: {mods}. "
+                        "Install with: pip install -r requirements.txt"
+                    )
+                }
+            ),
+            503,
+        )
+
     with _cnn_retrain_lock:
         if _cnn_retrain_state["running"]:
             return jsonify({"error": "Retrain already in progress"}), 409

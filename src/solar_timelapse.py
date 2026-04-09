@@ -41,11 +41,17 @@ SPOT_COLOR = (140, 140, 140)
 def seestar_rtsp_port_probe_order(primary: int) -> list:
     """Ordered TCP ports for Seestar S50 RTSP.
 
-    ZWO documents **4554**. ``SEESTAR_RTSP_PORT`` is often wrongly set to **554** (classic
-    RTSP); we always try **4554 before** the env port so timelapse/probe still work.
+    ZWO documents **4554**. We always try **4554 before** the env port so
+    timelapse/probe still work if ``SEESTAR_RTSP_PORT`` is misconfigured.
     """
     primary = int(primary)
-    ordered = (4554, primary, 8554, 554)
+    ordered = [4554, 8554]
+    if primary not in (4554, 8554, 554):
+        ordered.insert(1, primary)
+    elif primary == 554:
+        logger.warning(
+            "[Timelapse] Ignoring SEESTAR_RTSP_PORT=554; using Seestar ports 4554/8554"
+        )
     seen = set()
     out = []
     for p in ordered:
@@ -746,7 +752,7 @@ class SolarTimelapse:
         filepath = os.path.join(self._frames_dir, filename)
 
         tries = _rtsp_grab_urls(self._host, self._rtsp_port)
-        # Log probe order (not sorted) — sorted([554,4554,8554]) wrongly implied .env used 554.
+        # Log probe order (not sorted) so fallback order remains explicit.
         probe_ports = seestar_rtsp_port_probe_order(self._rtsp_port)
         env_port = os.getenv("SEESTAR_RTSP_PORT", "4554")
 
