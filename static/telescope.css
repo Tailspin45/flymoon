@@ -2106,7 +2106,6 @@ canvas.video-thumb-canvas {
 #detectPanel > #detectStats,
 #detectPanel > #tuningBody,
 #detectPanel > .harness-card,
-#detectPanel > .detect-event-log,
 #detectPanel > button {
     margin-left: 8px;
     margin-right: 8px;
@@ -2150,17 +2149,6 @@ canvas.video-thumb-canvas {
 }
 .harness-mode-label { color: #2A2E34; font-size: 0.74em; }
 .harness-note       { color: #3A4048; font-size: 0.85em; }
-
-/* Live detection rows; collapsed when no rows (:empty) */
-.detect-event-log {
-    max-height: 120px;
-    overflow-y: auto;
-    font-size: 0.8em;
-    margin-bottom: 4px;
-}
-.detect-event-log:empty {
-    display: none;
-}
 
 /* Detection event history panel — header + Retrain (Scope keycap styling) */
 .det-events-header {
@@ -2435,34 +2423,6 @@ canvas.video-thumb-canvas {
 #detectToggleBtn {
     width: 100%;
     margin-bottom: 8px;
-}
-
-.detect-event-row {
-    display: flex;
-    gap: 6px;
-    padding: 3px 4px;
-    border-bottom: 1px solid #222;
-    align-items: center;
-}
-.detect-event-row:hover {
-    background: #1a2a1a;
-}
-.detect-event-time {
-    color: #888;
-    font-family: 'SF Mono', 'Cascadia Code', monospace;
-    flex-shrink: 0;
-    font-size: 0.9em;
-}
-.detect-event-flight {
-    color: #eee;
-    flex: 1;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-}
-.detect-event-sep {
-    color: #4ade80;
-    flex-shrink: 0;
 }
 
 .panel-subtitle {

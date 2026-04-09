@@ -6025,10 +6025,13 @@ function updateDiscLostWarning(lostWarning, diskDetected) {
             el.innerHTML =
                 '<span style="font-size:1.1em;">⚠️</span>' +
                 '<span>Disc lost — telescope may be mispointed or solar tracking is off.</span>';
-            // Insert before the event log inside the detect panel
-            const log = document.getElementById('detectEventLog');
-            if (log && log.parentNode) {
-                log.parentNode.insertBefore(el, log);
+            // Insert before Detection Event History when present.
+            const detectPanel = document.getElementById('detectPanel');
+            const anchor = document.getElementById('detEventsPanel');
+            if (detectPanel && anchor && anchor.parentNode === detectPanel) {
+                detectPanel.insertBefore(el, anchor);
+            } else if (detectPanel) {
+                detectPanel.appendChild(el);
             }
         }
     } else if (el) {
@@ -6054,8 +6057,13 @@ function updatePrimedEventBadge(primedEvents) {
             el.innerHTML =
                 '<span style="font-size:1.1em;">🎯</span>' +
                 `<span id="${badgeId}Text"></span>`;
-            const log = document.getElementById('detectEventLog');
-            if (log && log.parentNode) log.parentNode.insertBefore(el, log);
+            const detectPanel = document.getElementById('detectPanel');
+            const anchor = document.getElementById('detEventsPanel');
+            if (detectPanel && anchor && anchor.parentNode === detectPanel) {
+                detectPanel.insertBefore(el, anchor);
+            } else if (detectPanel) {
+                detectPanel.appendChild(el);
+            }
         }
         const textEl = document.getElementById(`${badgeId}Text`);
         if (textEl) textEl.textContent = text;
@@ -6090,63 +6098,6 @@ function onTransitDetected(event) {
         setTimeout(refreshFiles, 3000);
     }
 
-    // Add to event log
-    appendDetectionEvent(event);
-}
-
-function appendDetectionEvent(event) {
-    const log = document.getElementById('detectEventLog');
-    if (!log) return;
-
-    const ts = new Date(event.timestamp).toLocaleTimeString('en-US', {
-        hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false
-    });
-    const flight = event.flight_info;
-    const flightStr = flight ? `${flight.name} (${flight.aircraft_type})` : 'Unknown';
-    const sepStr = flight ? `${flight.separation_deg}°` : '';
-
-    // D3: numeric confidence score badge
-    const cscore = event.confidence_score;
-    const cCol = (cscore >= 0.65) ? '#4caf50' : (cscore >= 0.4) ? '#ff9800' : '#9e9e9e';
-    const cBadge = (cscore != null)
-        ? ` <span style="color:${cCol};font-size:0.82em" title="Confidence score">${Math.round(cscore * 100)}%</span>`
-        : '';
-    // D3: prediction match badge
-    const predFid = event.predicted_flight_id;
-    const evFlight = event.flight_info;
-    const predMatched = predFid && evFlight && evFlight.name && predFid === evFlight.name;
-    const predBadge = predFid
-        ? (predMatched
-            ? ' <span style="color:#4caf50;font-size:0.75em" title="Prediction matched">✅match</span>'
-            : ` <span style="color:#ff9800;font-size:0.75em" title="Primed for ${predFid}">🎯primed</span>`)
-        : '';
-
-    const row = document.createElement('div');
-    row.className = 'detect-event-row';
-    row.innerHTML =
-        `<span class="detect-event-time">${ts}</span>` +
-        `<span class="detect-event-flight">${flightStr}${cBadge}${predBadge}</span>` +
-        `<span class="detect-event-sep">${sepStr}</span>`;
-
-    // If there's a recording file, make it clickable
-    if (event.recording_file) {
-        row.style.cursor = 'pointer';
-        row.onclick = () => {
-            const url = '/' + event.recording_file;
-            const name = event.recording_file.split('/').pop();
-            viewFile(url, name, { loop: true });
-        };
-    }
-
-    // Prepend (newest first)
-    const empty = log.querySelector('.empty-state');
-    if (empty) empty.remove();
-    log.insertBefore(row, log.firstChild);
-
-    // Cap at 20 entries
-    while (log.children.length > 20) {
-        log.removeChild(log.lastChild);
-    }
 }
 
 function updateDetectionUI() {
@@ -6201,9 +6152,7 @@ async function syncDetectionUI() {
             if (!detectionPollInterval) {
                 detectionPollInterval = setInterval(pollDetectionStatus, 2000);
             }
-            if (result.recent_events) {
-                result.recent_events.forEach(e => appendDetectionEvent(e));
-            }
+            // Detection Event History is sourced from /api/transit-events only.
         }
         // Sync tuning sliders from live detector (overrides localStorage when running)
         if (result && result.settings) {
@@ -6340,10 +6289,9 @@ function ensureTuningUI() {
         <button class="btn btn-secondary btn-compact" style="margin-top:4px;width:100%;" onclick="_resetTuning()">Reset to defaults</button>
     `;
 
-    // Insert before harness panel (or event log)
+    // Insert before harness panel
     const harness = document.getElementById('harnessPanel');
-    const eventLog = document.getElementById('detectEventLog');
-    const ref = harness || eventLog;
+    const ref = harness;
     if (ref && ref.parentNode === detectPanel) {
         detectPanel.insertBefore(body, ref);
     } else {
@@ -6529,16 +6477,11 @@ function ensureHarnessUI() {
             <div id="harnessStatus" class="harness-status" style="display:none"></div>
         `;
 
-        const eventLog = document.getElementById('detectEventLog');
-        if (eventLog && eventLog.parentNode === detectPanel) {
-            detectPanel.insertBefore(panel, eventLog);
+        const detectBtn = document.getElementById('detectToggleBtn');
+        if (detectBtn && detectBtn.parentNode === detectPanel) {
+            detectBtn.insertAdjacentElement('afterend', panel);
         } else {
-            const detectBtn = document.getElementById('detectToggleBtn');
-            if (detectBtn && detectBtn.parentNode === detectPanel) {
-                detectBtn.insertAdjacentElement('afterend', panel);
-            } else {
-                detectPanel.appendChild(panel);
-            }
+            detectPanel.appendChild(panel);
         }
     }
 
@@ -6818,7 +6761,12 @@ async function ensureDetectionEventHistoryPanel() {
     tableWrap.innerHTML = '<div style="color:#555;font-size:0.8em;padding:6px">Loading…</div>';
     _detEventsPanel.appendChild(tableWrap);
 
-    detectPanel.appendChild(_detEventsPanel);
+    const harnessPanel = document.getElementById('harnessPanel');
+    if (harnessPanel && harnessPanel.parentNode === detectPanel) {
+        detectPanel.insertBefore(_detEventsPanel, harnessPanel);
+    } else {
+        detectPanel.appendChild(_detEventsPanel);
+    }
     
     // Keyboard shortcut: Escape to clear selection
     document.addEventListener('keydown', (e) => {
@@ -6925,7 +6873,7 @@ async function _refreshDetectionEventHistory() {
                 const col = active ? _LABEL_COLORS[lbl] : '#333';
                 const bord = active ? _LABEL_COLORS[lbl] : '#444';
                 const tip = _escAttr(_LABEL_TITLES[lbl] || '');
-                return `<button type="button" data-ts="${tsA}" data-lbl="${lbl}" onclick="if(!event.shiftKey&&!event.ctrlKey&&!event.metaKey){event.stopPropagation();_labelEventBtn(this);}"
+                return `<button type="button" data-ts="${tsA}" data-lbl="${lbl}"
                     title="${tip}"
                     style="background:${col};border:1px solid ${bord};color:#fff;
                     padding:1px 5px;border-radius:3px;cursor:pointer;font-size:0.78em;
@@ -6964,12 +6912,30 @@ async function _refreshDetectionEventHistory() {
     });
 
     const tbody = tbl.createTBody();
-    _detEventsSelection.allEvents = events.slice(0, 100);  // cache for shift-range logic
-    events.slice(0, 100).forEach((ev, idx) => {
+    const visibleEvents = events.slice(0, 100);
+    const visibleTimestamps = new Set(
+        visibleEvents.map(ev => ev.timestamp).filter(ts => !!ts)
+    );
+
+    // Prune stale selection entries that no longer exist in the visible table.
+    _detEventsSelection.selected.forEach(ts => {
+        if (!visibleTimestamps.has(ts)) _detEventsSelection.selected.delete(ts);
+    });
+    if (
+        _detEventsSelection.lastClickedIndex !== null &&
+        (_detEventsSelection.lastClickedIndex < 0 ||
+         _detEventsSelection.lastClickedIndex >= visibleEvents.length)
+    ) {
+        _detEventsSelection.lastClickedIndex = null;
+    }
+
+    _detEventsSelection.allEvents = visibleEvents;  // cache for shift-range logic
+    visibleEvents.forEach((ev, idx) => {
         const tr = tbody.insertRow();
         const ts = ev.timestamp || '';
         tr.setAttribute('data-ts', ts);
         tr.setAttribute('data-idx', idx);
+        tr.setAttribute('data-current-label', ev.label || '');
         tr.style.cssText = 'border-bottom:1px solid #1e1e3a;cursor:pointer;user-select:none;';
 
         // Selection state
@@ -6981,36 +6947,6 @@ async function _refreshDetectionEventHistory() {
         tr.onmouseenter = () => { if (!_detEventsSelection.selected.has(ts)) tr.style.background = '#1e1e3a'; };
         tr.onmouseleave = () => { if (!_detEventsSelection.selected.has(ts)) tr.style.background = ''; };
 
-        // Multi-select click handler (buttons always stopPropagation so they never reach here)
-        tr.onclick = (e) => {
-            const timestamp = tr.getAttribute('data-ts');
-            const rowIdx = parseInt(tr.getAttribute('data-idx'), 10);
-
-            if (e.shiftKey && _detEventsSelection.lastClickedIndex !== null) {
-                const start = Math.min(_detEventsSelection.lastClickedIndex, rowIdx);
-                const end = Math.max(_detEventsSelection.lastClickedIndex, rowIdx);
-                for (let i = start; i <= end; i++) {
-                    const evt = _detEventsSelection.allEvents[i];
-                    if (evt && evt.timestamp) _detEventsSelection.selected.add(evt.timestamp);
-                }
-                _detEventsSelection.lastClickedIndex = rowIdx;
-                _updateEventSelectionUI();
-            } else if (e.ctrlKey || e.metaKey) {
-                if (_detEventsSelection.selected.has(timestamp)) {
-                    _detEventsSelection.selected.delete(timestamp);
-                } else {
-                    _detEventsSelection.selected.add(timestamp);
-                }
-                _detEventsSelection.lastClickedIndex = rowIdx;
-                _updateEventSelectionUI();
-            } else {
-                _detEventsSelection.selected.clear();
-                _detEventsSelection.selected.add(timestamp);
-                _detEventsSelection.lastClickedIndex = rowIdx;
-                _updateEventSelectionUI();
-            }
-        };
-        
         cols.forEach(c => {
             const td = tr.insertCell();
             const nowrap = c.key === 'timestamp' ? '' : 'white-space:nowrap;';
@@ -7019,8 +6955,58 @@ async function _refreshDetectionEventHistory() {
         });
     });
 
+    const _selectRow = (tr, e) => {
+        const timestamp = tr.getAttribute('data-ts');
+        const rowIdx = parseInt(tr.getAttribute('data-idx'), 10);
+        if (!timestamp || Number.isNaN(rowIdx)) return;
+
+        if (e.shiftKey && _detEventsSelection.lastClickedIndex !== null) {
+            const start = Math.min(_detEventsSelection.lastClickedIndex, rowIdx);
+            const end = Math.max(_detEventsSelection.lastClickedIndex, rowIdx);
+            for (let i = start; i <= end; i++) {
+                const evt = _detEventsSelection.allEvents[i];
+                if (evt && evt.timestamp) _detEventsSelection.selected.add(evt.timestamp);
+            }
+            _detEventsSelection.lastClickedIndex = rowIdx;
+        } else if (e.ctrlKey || e.metaKey) {
+            if (_detEventsSelection.selected.has(timestamp)) {
+                _detEventsSelection.selected.delete(timestamp);
+            } else {
+                _detEventsSelection.selected.add(timestamp);
+            }
+            _detEventsSelection.lastClickedIndex = rowIdx;
+        } else {
+            _detEventsSelection.selected.clear();
+            _detEventsSelection.selected.add(timestamp);
+            _detEventsSelection.lastClickedIndex = rowIdx;
+        }
+        _updateEventSelectionUI();
+    };
+
+    // Delegate click handling for reliable plain + modifier clicks across rows and label buttons.
+    tbody.addEventListener('click', (e) => {
+        const t = e.target;
+        const targetEl = (t && t.nodeType === 1) ? t : (t && t.parentElement ? t.parentElement : null);
+        const btn = targetEl && targetEl.closest ? targetEl.closest('button[data-lbl][data-ts]') : null;
+        if (btn) {
+            const row = btn.closest('tr[data-ts]');
+            if (e.shiftKey || e.ctrlKey || e.metaKey) {
+                if (row) _selectRow(row, e);
+            } else {
+                _labelEventBtn(btn);
+            }
+            e.preventDefault();
+            e.stopPropagation();
+            return;
+        }
+
+        const row = targetEl && targetEl.closest ? targetEl.closest('tr[data-ts]') : null;
+        if (row) _selectRow(row, e);
+    });
+
     wrap.innerHTML = '';
     wrap.appendChild(tbl);
+    _updateEventSelectionUI();
 }
 
 /** T23 — Send a TP/FP/FN label for a detection event to the backend.
@@ -7035,9 +7021,11 @@ async function _labelEventBtn(btnEl) {
 
     // Toggle off if clicking the already-active label
     const wrap = document.getElementById('detEventsTableWrap');
-    const clickedRow = wrap && wrap.querySelector(`tr[data-ts="${CSS.escape(clickedTs)}"]`);
-    const currentlyActive = clickedRow && clickedRow.querySelector(`button[data-lbl="${label}"]`)
-        ?.style.background !== '#333';
+    const clickedRow = (btnEl && typeof btnEl.closest === 'function')
+        ? btnEl.closest('tr[data-ts]')
+        : (wrap && wrap.querySelector(`tr[data-ts="${CSS.escape(clickedTs)}"]`));
+    const currentLabel = clickedRow ? (clickedRow.getAttribute('data-current-label') || '') : '';
+    const currentlyActive = currentLabel === label;
     const effectiveLabel = currentlyActive ? '' : label;
 
     // Set lastClickedIndex so shift-click works after a button click
@@ -7046,9 +7034,10 @@ async function _labelEventBtn(btnEl) {
         if (!isNaN(idx)) _detEventsSelection.lastClickedIndex = idx;
     }
 
-    // Determine which timestamps to label
+    // Determine which timestamps to label.
+    // Only bulk-apply from the row buttons when the clicked row is in the current selection.
     const sel = _detEventsSelection.selected;
-    const targets = sel.size > 0 ? Array.from(sel) : [clickedTs];
+    const targets = (sel.size > 0 && sel.has(clickedTs)) ? Array.from(sel) : [clickedTs];
 
     // Send requests sequentially
     for (const ts of targets) {
@@ -7064,6 +7053,7 @@ async function _labelEventBtn(btnEl) {
             if (wrap) {
                 const row = wrap.querySelector(`tr[data-ts="${CSS.escape(ts)}"]`);
                 if (row) {
+                    row.setAttribute('data-current-label', effectiveLabel || '');
                     row.querySelectorAll('button[data-lbl]').forEach(b => {
                         const lbl = b.getAttribute('data-lbl');
                         const active = !effectiveLabel ? false : lbl === effectiveLabel;
