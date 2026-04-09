@@ -39,6 +39,8 @@ function toggleFavorite(path, event) {
     });
     // Sync delete button states everywhere
     _updateDeleteBtnState(path, favs.has(path));
+    // Sync rename button states everywhere
+    _updateRenameBtnState(path, favs.has(path));
 }
 
 function _updateDeleteBtnState(path, isFav) {
@@ -62,6 +64,14 @@ function _updateDeleteBtnState(path, isFav) {
     if (viewerFavBtn) {
         viewerFavBtn.textContent = isFav ? '❤️' : '🤍';
     }
+}
+
+function _updateRenameBtnState(path, isFav) {
+    // Filmstrip + grid thumbnail rename buttons
+    document.querySelectorAll(`[data-rename-path="${CSS.escape(path)}"]`).forEach(btn => {
+        btn.disabled = !isFav;
+        btn.title = isFav ? 'Rename (favorites only)' : 'Favorite first to rename';
+    });
 }
 let zoomStep = 0.1;
 let _previewLastError = 0; // timestamp of last preview onerror (ms)
@@ -1429,6 +1439,91 @@ function downloadFile(url, filename) {
     showStatus(`Downloading ${filename}...`, 'info', 3000);
 }
 
+function _findFileByPath(path) {
+    const current = (window.currentFiles || []).find(f => f.path === path);
+    if (current) return current;
+    return (filmstripFiles || []).find(f => f.path === path) || null;
+}
+
+async function renameFavoriteFile(url, event) {
+    if (event) event.stopPropagation();
+
+    const favs = getFavorites();
+    if (!favs.has(url)) {
+        showStatus('Only favorited files can be renamed', 'warning', 3000);
+        return;
+    }
+
+    const file = _findFileByPath(url);
+    const currentName = file?.name || (url.split('/').pop() || '');
+    const dotIdx = currentName.lastIndexOf('.');
+    const hasExt = dotIdx > 0;
+    const currentBase = hasExt ? currentName.slice(0, dotIdx) : currentName;
+    const currentExt = hasExt ? currentName.slice(dotIdx) : '';
+
+    const raw = prompt(
+        `Rename favorite file:\n${currentName}\n\nEnter new name:`,
+        currentBase
+    );
+    if (raw === null) return;
+
+    const typed = raw.trim();
+    if (!typed) {
+        showStatus('Rename failed: name cannot be empty', 'error', 4000);
+        return;
+    }
+    if (typed.includes('/') || typed.includes('\\')) {
+        showStatus('Rename failed: name cannot contain path separators', 'error', 4000);
+        return;
+    }
+
+    const typedExtIdx = typed.lastIndexOf('.');
+    const typedHasExt = typedExtIdx > 0;
+    if (currentExt && typedHasExt && typed.slice(typedExtIdx).toLowerCase() !== currentExt.toLowerCase()) {
+        showStatus(`Rename failed: keep original ${currentExt} extension`, 'error', 4000);
+        return;
+    }
+    const newName = currentExt && !typedHasExt ? `${typed}${currentExt}` : typed;
+    if (newName === currentName) return;
+
+    try {
+        const path = url.replace('/static/', '');
+        const response = await fetch('/telescope/files/rename', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ path, new_name: newName })
+        });
+        const data = await response.json().catch(() => ({}));
+
+        if (!response.ok || !data.success) {
+            showStatus(`Rename failed: ${data.error || response.status}`, 'error', 5000);
+            return;
+        }
+
+        const newUrl = data.url;
+        if (newUrl && favs.has(url)) {
+            favs.delete(url);
+            favs.add(newUrl);
+            saveFavorites(favs);
+        }
+
+        if (filmstripSelection.selected.has(url)) {
+            filmstripSelection.selected.delete(url);
+            if (newUrl) filmstripSelection.selected.add(newUrl);
+        }
+        if (gridSelection.selected.has(url)) {
+            gridSelection.selected.delete(url);
+            if (newUrl) gridSelection.selected.add(newUrl);
+        }
+
+        showStatus(`Renamed to ${data.name || newName}`, 'success', 3000);
+        await refreshFiles();
+        updateFilesGrid();
+    } catch (error) {
+        showStatus(`Rename failed: ${error.message}`, 'error', 5000);
+    }
+}
+
 async function deleteFile(url, filename, skipConfirm) {
     console.log('[Telescope] deleteFile called:', url, filename);
     if (!skipConfirm && !confirm(`Delete ${filename}?`)) {
@@ -2654,6 +2749,7 @@ function updateFilmstrip(files) {
             <div class="filmstrip-info">
                 <div class="filmstrip-actions">
                     <button class="btn-icon btn-fav" data-fav-path="${file.path}" onclick="toggleFavorite('${file.path}', event)" title="${getFavorites().has(file.path) ? 'Unfavorite' : 'Favorite'}">${getFavorites().has(file.path) ? '❤️' : '🤍'}</button>
+                    <button class="btn-icon" data-rename-path="${file.path}" onclick="event.stopPropagation(); renameFavoriteFile('${file.path}', event)" title="${getFavorites().has(file.path) ? 'Rename (favorites only)' : 'Favorite first to rename'}" ${isTemp || !getFavorites().has(file.path) ? 'disabled' : ''}>✏️</button>
                     <button class="btn-icon" onclick="event.stopPropagation(); downloadFile('${file.path}', '${file.name}')" title="Download" ${isTemp ? 'disabled' : ''}>⬇️</button>
                     <button class="btn-icon btn-danger" onclick="event.stopPropagation(); filmstripTrashClick('${file.path}', '${file.name}', event)" title="${getFavorites().has(file.path) ? 'Remove favorite first' : 'Delete selected or this file (⌘/Ctrl+click to skip confirm)'}" ${isTemp || getFavorites().has(file.path) ? 'disabled' : ''}>🗑️</button>
                 </div>
@@ -3211,6 +3307,7 @@ function updateFilesGrid() {
                 <span class="file-name" title="${displayName}">${displayName}</span>
                 <div class="file-actions">
                     <button class="btn-icon btn-fav" data-fav-path="${file.path}" onclick="toggleFavorite('${file.path}', event)" title="${getFavorites().has(file.path) ? 'Unfavorite' : 'Favorite'}">${getFavorites().has(file.path) ? '❤️' : '🤍'}</button>
+                    <button class="btn-icon" data-rename-path="${file.path}" onclick="event.stopPropagation(); renameFavoriteFile('${file.path}', event)" title="${getFavorites().has(file.path) ? 'Rename (favorites only)' : 'Favorite first to rename'}" ${!getFavorites().has(file.path) ? 'disabled' : ''}>✏️</button>
                     <button class="btn-icon" onclick="event.stopPropagation(); downloadFile('${file.path}', '${file.name}')" title="Download">⬇️</button>
                     <button class="btn-icon btn-danger" onclick="event.stopPropagation(); deleteFile('${file.path}', '${file.name}', event.metaKey || event.ctrlKey)" title="${getFavorites().has(file.path) ? 'Remove favorite first' : 'Delete (⌘/Ctrl+click to skip confirm)'}" ${getFavorites().has(file.path) ? 'disabled' : ''}>🗑️</button>
                 </div>

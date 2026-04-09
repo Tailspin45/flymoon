@@ -2288,6 +2288,94 @@ def delete_telescope_file():
         return handle_error(e)
 
 
+def rename_telescope_file():
+    """POST /telescope/files/rename - Rename a captured file in place."""
+    logger.info("[Telescope] POST /telescope/files/rename")
+
+    try:
+        if not request.is_json:
+            return jsonify({"error": "Request must be JSON"}), 400
+
+        file_path = str(request.json.get("path", "")).strip()
+        new_name = str(request.json.get("new_name", "")).strip()
+        if not file_path:
+            return jsonify({"error": "Missing 'path' parameter"}), 400
+        if not new_name:
+            return jsonify({"error": "Missing 'new_name' parameter"}), 400
+
+        # Disallow path traversal and nested paths in new name.
+        if "/" in new_name or "\\" in new_name or new_name in (".", ".."):
+            return jsonify({"error": "Invalid target filename"}), 400
+
+        full_path = os.path.join("static", file_path)
+        abs_old = os.path.abspath(full_path)
+        captures_abs = os.path.abspath("static/captures")
+
+        if not abs_old.startswith(captures_abs):
+            return jsonify({"error": "Invalid file path"}), 403
+        if not os.path.exists(abs_old):
+            return jsonify({"error": "File not found"}), 404
+
+        old_dir = os.path.dirname(abs_old)
+        old_ext = os.path.splitext(abs_old)[1]
+
+        stem_in, ext_in = os.path.splitext(new_name)
+        if not stem_in:
+            return jsonify({"error": "Invalid target filename"}), 400
+        if ext_in and ext_in.lower() != old_ext.lower():
+            return jsonify({"error": f"File extension must remain {old_ext}"}), 400
+        if not ext_in:
+            new_name = f"{new_name}{old_ext}"
+
+        abs_new = os.path.abspath(os.path.join(old_dir, new_name))
+        if not abs_new.startswith(captures_abs):
+            return jsonify({"error": "Invalid target path"}), 403
+        if abs_new == abs_old:
+            rel = os.path.relpath(abs_old, "static").replace(os.sep, "/")
+            return jsonify({"success": True, "name": os.path.basename(abs_old), "path": rel, "url": f"/static/{rel}"}), 200
+        if os.path.exists(abs_new):
+            return jsonify({"error": "A file with that name already exists"}), 409
+
+        os.rename(abs_old, abs_new)
+
+        # Rename companion assets with matching stem if present.
+        old_stem = os.path.splitext(abs_old)[0]
+        new_stem = os.path.splitext(abs_new)[0]
+        for suffix in (".json", "_thumb.jpg", "_diff.jpg", "_frame.jpg", "_analysis.json"):
+            src = old_stem + suffix
+            dst = new_stem + suffix
+            if os.path.exists(src) and not os.path.exists(dst):
+                os.rename(src, dst)
+
+        # Rename analyzed artifacts (analyzed_<stem>.jpg / analyzed_<stem>_analysis.json).
+        old_base = os.path.basename(old_stem)
+        new_base = os.path.basename(new_stem)
+        base_dir = os.path.dirname(old_stem)
+        for suffix in (".jpg", "_analysis.json"):
+            src = os.path.join(base_dir, f"analyzed_{old_base}{suffix}")
+            dst = os.path.join(base_dir, f"analyzed_{new_base}{suffix}")
+            if os.path.exists(src) and not os.path.exists(dst):
+                os.rename(src, dst)
+
+        rel = os.path.relpath(abs_new, "static").replace(os.sep, "/")
+        return (
+            jsonify(
+                {
+                    "success": True,
+                    "message": f"Renamed to {os.path.basename(abs_new)}",
+                    "name": os.path.basename(abs_new),
+                    "path": rel,
+                    "url": f"/static/{rel}",
+                }
+            ),
+            200,
+        )
+
+    except Exception as e:
+        logger.error(f"[Telescope] Error renaming file: {e}", exc_info=True)
+        return handle_error(e)
+
+
 # Video Analysis Endpoint
 
 
@@ -3622,6 +3710,12 @@ def register_routes(app):
         "/telescope/files/delete",
         "telescope_files_delete",
         delete_telescope_file,
+        methods=["POST"],
+    )
+    app.add_url_rule(
+        "/telescope/files/rename",
+        "telescope_files_rename",
+        rename_telescope_file,
         methods=["POST"],
     )
     app.add_url_rule(
