@@ -166,15 +166,23 @@ Zipcatcher connects directly to the Seestar over TCP on port 4700.
 - **GoTo** — slew to any named location or entered alt/az coordinates
 - **Continuous nudge** — fine-position the scope with hold-to-repeat joystick controls
 - **Autofocus** — trigger a focus run from the panel
+- **Focus position control** — focus in/out buttons move from the current position using the selected step size (10/50/100)
+- **Camera gain control** — gain slider uses live camera gain and driver-reported min/max bounds when available
 - **Live preview** — MJPEG stream from the scope displayed directly in the browser
 
-### Focus Odometer
+### Focus Position
 
-A per-session focus-step counter in the sidebar tracks how many focuser steps have been applied since the session started, helping you return to a known focus position after experimenting. ZWO has encrypted the position readout so this is the best we can do.
+The sidebar now shows **Focus Position** (absolute step value) when ALPACA focuser telemetry is available. Focus nudges are applied as step deltas from this current position, so the UI remains aligned with the hardware state instead of using a purely relative session counter.
 
-### ALPACA / seestar_alp
+If absolute focus readback is unavailable, Zipcatcher falls back to relative step behavior and marks the value as estimated.
 
-If you run a `seestar_alp` sidecar, set `SEESTAR_ALPACA_URL` in `.env` to expose the stable `/v1/seestar/*` ALPACA API. Zipcatcher will prefer ALPACA endpoints when available and fall back to direct RPC otherwise.
+### ALPACA Integration
+
+Zipcatcher uses ALPACA for telescope motion plus camera/focuser telemetry where supported. During connection it discovers configured device numbers and connects telescope, camera, and focuser devices so focus position and camera gain can be read reliably.
+
+- **Focus** — reads current focuser position from ALPACA and applies focus moves from that position.
+- **Gain** — reads/writes camera gain via ALPACA when available (with JSON-RPC fallback).
+- **LP Filter / Dew Heater** — currently controlled via Seestar JSON-RPC (`set_setting` / `pi_output_set2`), not ALPACA.
 
 <p align="center">
 <img width="391" height="673" alt="Alpaca panel" src="https://github.com/user-attachments/assets/02823808-ac62-4c69-9d1a-58679770f4bb" />
@@ -284,7 +292,9 @@ Copy `.env.mock` to `.env` and fill in the values relevant to your setup. Run `p
 | `LAT/LONG_LOWER_LEFT / UPPER_RIGHT` | Flight search bounding box |
 | `TELEGRAM_BOT_TOKEN / CHAT_ID` | Telegram alerts (optional) |
 | `ENABLE_SEESTAR / SEESTAR_HOST` | Telescope control (optional) |
-| `SEESTAR_ALPACA_URL` | seestar_alp ALPACA sidecar URL (optional) |
+| `SEESTAR_ALPACA_PORT` | ALPACA port (default: `32323`) |
+| `SEESTAR_ALPACA_TIMEOUT` | ALPACA request timeout in seconds |
+| `SEESTAR_ALPACA_POLL_INTERVAL` | Telescope telemetry poll interval in seconds (2–120) |
 | `SEESTAR_PRE_BUFFER / POST_BUFFER` | Recording window in seconds (default: 10) |
 | `SOLAR_TIMELAPSE_AUTO_RESUME` | Auto-resume today's timelapse after reconnect (`true`/`false`) |
 | `SOLAR_TIMELAPSE_INTERVAL` | Seconds between timelapse frames (default: 120) |
