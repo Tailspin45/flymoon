@@ -402,31 +402,50 @@ async function updateStatus() {
         const focEl = document.getElementById('focusPos');
         const fplEl = document.getElementById('focusPosLabel');
         if (!isConnected && focEl) {
-            focEl.textContent = '0';
-            if (fplEl) fplEl.textContent = 'Relative Focus Steps';
+            focEl.textContent = '—';
+            if (fplEl) fplEl.textContent = 'Focus Position';
         } else if (focEl) {
             let _fp = result.focus_pos;
             if (typeof _fp === 'bigint') _fp = Number(_fp);
             const n = _fp == null || _fp === '' ? NaN : Number(_fp);
-            if (fplEl) {
-                if (result.mock_mode) {
-                    fplEl.textContent = 'Simulated focus steps';
-                } else {
-                    fplEl.textContent =
-                        'Relative Focus Steps';
-                }
-            }
+            if (fplEl) fplEl.textContent = 'Focus Position';
             if (Number.isFinite(n)) {
                 focEl.textContent = String(Math.round(n));
                 if (!result.mock_mode && result.focus_pos_source === 'relative') {
                     focEl.title =
-                        'Δ steps from first focus nudge (hardware did not report absolute position)';
+                        'Estimated from relative focus moves (absolute readback unavailable)';
                 } else {
                     focEl.removeAttribute('title');
                 }
             } else {
-                focEl.textContent = '0';
+                focEl.textContent = '—';
                 focEl.removeAttribute('title');
+            }
+        }
+
+        // Sync camera gain readout/slider with backend state.
+        const gainSliderEl = document.getElementById('gainSlider');
+        const gainValueEl = document.getElementById('gainVal');
+        if (gainSliderEl && gainValueEl) {
+            const toNum = (v) => {
+                if (v === undefined || v === null) return null;
+                if (typeof v === 'string' && v.trim() === '') return null;
+                const n = Number(v);
+                return Number.isFinite(n) ? n : null;
+            };
+            const g = toNum(result.camera_gain);
+            const gMin = toNum(result.camera_gain_min);
+            const gMax = toNum(result.camera_gain_max);
+            const parsedMin = parseInt(gainSliderEl.min || '0', 10);
+            const parsedMax = parseInt(gainSliderEl.max || '120', 10);
+            const sliderMin = gMin != null ? Math.round(gMin) : (Number.isFinite(parsedMin) ? parsedMin : 0);
+            const sliderMax = gMax != null ? Math.round(gMax) : (Number.isFinite(parsedMax) ? parsedMax : 120);
+            if (Number.isFinite(sliderMin)) gainSliderEl.min = String(sliderMin);
+            if (Number.isFinite(sliderMax)) gainSliderEl.max = String(sliderMax);
+            if (g != null) {
+                const clamped = Math.min(sliderMax, Math.max(sliderMin, Math.round(g)));
+                gainSliderEl.value = String(clamped);
+                gainValueEl.textContent = String(clamped);
             }
         }
         _prevConnected = isConnected;
@@ -1862,7 +1881,11 @@ function toggleDewPower() {
 }
 
 async function applyGain() {
-    const gain = parseInt(document.getElementById('gainSlider').value);
+    const slider = document.getElementById('gainSlider');
+    const gainEl = document.getElementById('gainVal');
+    if (!slider) return;
+    const gain = parseInt(slider.value, 10);
+    if (Number.isFinite(gain) && gainEl) gainEl.textContent = String(gain);
     await apiCall('/telescope/settings/camera', 'PATCH', { gain });
 }
 
@@ -8116,7 +8139,7 @@ function _updateAlpacaPanel(data) {
 
     if (!data || !data.connected) {
         // Show panel in disconnected/placeholder state — coords reset to dashes
-        ['alpacaRA','alpacaDec','alpacaAlt','alpacaAz','alpacaLST','alpacaGMT'].forEach(id => {
+        ['alpacaRA','alpacaDec','alpacaAlt','alpacaAz','alpacaLST','alpacaGMT','alpacaFocusPos','alpacaCameraGain'].forEach(id => {
             const el = document.getElementById(id);
             if (el) el.textContent = '—';
         });
@@ -8140,8 +8163,19 @@ function _updateAlpacaPanel(data) {
     const pos = data.position || {};
     const state = data.state || {};
     const info = data.device_info || {};
+    const focuser = data.focuser || {};
+    const camera = data.camera || {};
 
-    const fmt = (v, d) => v !== undefined && v !== null ? Number(v).toFixed(d) : '—';
+    const _toNum = (v) => {
+        if (v === undefined || v === null) return null;
+        if (typeof v === 'string' && v.trim() === '') return null;
+        const n = Number(v);
+        return Number.isFinite(n) ? n : null;
+    };
+    const fmt = (v, d) => {
+        const n = _toNum(v);
+        return n == null ? '—' : n.toFixed(d);
+    };
 
     // Coordinate values
     const ra = document.getElementById('alpacaRA');
@@ -8169,6 +8203,17 @@ function _updateAlpacaPanel(data) {
         const h = now.getUTCHours();
         const m = now.getUTCMinutes();
         gmt.textContent = String(h).padStart(2,'0') + ':' + String(m).padStart(2,'0');
+    }
+
+    const focPos = document.getElementById('alpacaFocusPos');
+    if (focPos) {
+        const n = _toNum(focuser.position);
+        focPos.textContent = n == null ? '—' : String(Math.round(n));
+    }
+    const camGain = document.getElementById('alpacaCameraGain');
+    if (camGain) {
+        const n = _toNum(camera.gain);
+        camGain.textContent = n == null ? '—' : String(Math.round(n));
     }
 
     // Also update the GoTo pointing display with ALPACA data

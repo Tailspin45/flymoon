@@ -68,6 +68,13 @@ class AlpacaClient:
         self._poll_cycle_failures = 0
         self._last_position: Dict[str, float] = {}
         self._last_state: Dict[str, Any] = {}
+        self._device_numbers: Dict[str, int] = {self.DEVICE_TYPE: self.DEVICE_NUMBER}
+        self._configured_devices_loaded = False
+        self._focuser_absolute: Optional[bool] = None
+        self._last_focuser: Dict[str, Any] = {}
+        self._last_camera: Dict[str, Any] = {}
+        self._aux_poll_interval = 12.0
+        self._last_aux_poll_mono = 0.0
 
     @staticmethod
     def _alpaca_bool(v: Any) -> bool:
@@ -83,6 +90,35 @@ class AlpacaClient:
             if s in ("false", "0", "no", ""):
                 return False
         return bool(v)
+
+    @staticmethod
+    def _alpaca_int(v: Any) -> Optional[int]:
+        """Normalize ALPACA numeric value to int (accepts int/float/numeric strings)."""
+        if v is None:
+            return None
+        if isinstance(v, bool):
+            return int(v)
+        if isinstance(v, int):
+            return v
+        if isinstance(v, float):
+            if math.isnan(v) or math.isinf(v):
+                return None
+            return int(round(v))
+        if isinstance(v, str):
+            s = v.strip()
+            if not s:
+                return None
+            try:
+                return int(s)
+            except ValueError:
+                try:
+                    f = float(s)
+                    if math.isnan(f) or math.isinf(f):
+                        return None
+                    return int(round(f))
+                except ValueError:
+                    return None
+        return None
 
     # ── URL helpers ────────────────────────────────────────────────────
 
@@ -105,7 +141,27 @@ class AlpacaClient:
         quiet: bool = False,
         timeout_override: Optional[float] = None,
     ) -> Dict:
-        """GET an ALPACA property.  Returns the parsed JSON response."""
+        """GET an ALPACA telescope property. Returns the parsed JSON response."""
+        return self._get_device(
+            self.DEVICE_TYPE,
+            self.DEVICE_NUMBER,
+            endpoint,
+            extra_params=extra_params,
+            quiet=quiet,
+            timeout_override=timeout_override,
+        )
+
+    def _get_device(
+        self,
+        device_type: str,
+        device_number: int,
+        endpoint: str,
+        extra_params: Optional[Dict] = None,
+        *,
+        quiet: bool = False,
+        timeout_override: Optional[float] = None,
+    ) -> Dict:
+        """GET an ALPACA property for a specific device type/number."""
         txn = self._next_txn()
         params = {
             "ClientID": str(self.CLIENT_ID),
@@ -114,7 +170,9 @@ class AlpacaClient:
         if extra_params:
             params.update(extra_params)
         qs = urllib.parse.urlencode(params)
-        url = f"{self._base_url}/{endpoint}?{qs}"
+        dtype = str(device_type).strip().lower()
+        dnum = int(device_number)
+        url = f"http://{self.host}:{self.port}/api/v1/{dtype}/{dnum}/{endpoint}?{qs}"
         logfn = logger.debug if quiet else logger.warning
         try:
             req = urllib.request.Request(
@@ -132,14 +190,14 @@ class AlpacaClient:
                 err = data.get("ErrorNumber", 0)
                 if err:
                     logfn(
-                        f"ALPACA GET {endpoint}: error {err} — {data.get('ErrorMessage', '')}"
+                        f"ALPACA GET {dtype}/{dnum}/{endpoint}: error {err} — {data.get('ErrorMessage', '')}"
                     )
                 return data
         except urllib.error.URLError as e:
-            logfn(f"ALPACA GET {endpoint} failed: {e}")
+            logfn(f"ALPACA GET {dtype}/{dnum}/{endpoint} failed: {e}")
             return {"error": str(e)}
         except Exception as e:
-            logfn(f"ALPACA GET {endpoint} unexpected: {e}")
+            logfn(f"ALPACA GET {dtype}/{dnum}/{endpoint} unexpected: {e}")
             return {"error": str(e)}
 
     def _put(
@@ -150,7 +208,27 @@ class AlpacaClient:
         *,
         quiet: bool = False,
     ) -> Dict:
-        """PUT an ALPACA command.  Returns the parsed JSON response."""
+        """PUT an ALPACA telescope command. Returns the parsed JSON response."""
+        return self._put_device(
+            self.DEVICE_TYPE,
+            self.DEVICE_NUMBER,
+            endpoint,
+            params=params,
+            timeout_override=timeout_override,
+            quiet=quiet,
+        )
+
+    def _put_device(
+        self,
+        device_type: str,
+        device_number: int,
+        endpoint: str,
+        params: Optional[Dict] = None,
+        timeout_override: Optional[float] = None,
+        *,
+        quiet: bool = False,
+    ) -> Dict:
+        """PUT an ALPACA command for a specific device type/number."""
         txn = self._next_txn()
         form: Dict[str, str] = {
             "ClientID": str(self.CLIENT_ID),
@@ -159,7 +237,9 @@ class AlpacaClient:
         if params:
             form.update({k: str(v) for k, v in params.items()})
         body = urllib.parse.urlencode(form).encode()
-        url = f"{self._base_url}/{endpoint}"
+        dtype = str(device_type).strip().lower()
+        dnum = int(device_number)
+        url = f"http://{self.host}:{self.port}/api/v1/{dtype}/{dnum}/{endpoint}"
         req = urllib.request.Request(url, data=body, method="PUT")
         req.add_header("Content-Type", "application/x-www-form-urlencoded")
         req.add_header("User-Agent", "Zipcatcher/1.0 (ASCOM Alpaca client)")
@@ -175,14 +255,14 @@ class AlpacaClient:
                 err = data.get("ErrorNumber", 0)
                 if err:
                     logfn(
-                        f"ALPACA PUT {endpoint}: error {err} — {data.get('ErrorMessage', '')}"
+                        f"ALPACA PUT {dtype}/{dnum}/{endpoint}: error {err} — {data.get('ErrorMessage', '')}"
                     )
                 return data
         except urllib.error.URLError as e:
-            logfn(f"ALPACA PUT {endpoint} failed: {e}")
+            logfn(f"ALPACA PUT {dtype}/{dnum}/{endpoint} failed: {e}")
             return {"error": str(e)}
         except Exception as e:
-            logfn(f"ALPACA PUT {endpoint} unexpected: {e}")
+            logfn(f"ALPACA PUT {dtype}/{dnum}/{endpoint} unexpected: {e}")
             return {"error": str(e)}
 
     def _mgmt_get(self, path: str) -> Dict:
@@ -303,6 +383,13 @@ class AlpacaClient:
             logger.info(f"ALPACA connected to {self.host}:{self.port}")
             self._load_capabilities()
             self._load_device_info()
+            self._load_configured_devices()
+            for dtype in ("camera", "focuser"):
+                try:
+                    self._ensure_device_connected(dtype, timeout_sec=2.0)
+                except Exception as e:
+                    logger.debug(f"ALPACA auxiliary connect skipped for {dtype}: {e}")
+            self.refresh_aux_state_throttled(min_interval_sec=0.0)
             self._start_polling()
             return True
         else:
@@ -317,6 +404,21 @@ class AlpacaClient:
         self._stop_polling()
         if not self._connected:
             return True
+        for dtype in ("camera", "focuser"):
+            dnum = self._get_device_number(dtype)
+            if dnum is None:
+                continue
+            try:
+                self._put_device(
+                    dtype,
+                    dnum,
+                    "connected",
+                    {"Connected": "false"},
+                    quiet=True,
+                    timeout_override=1.5,
+                )
+            except Exception:
+                pass
         result = self._put("connected", {"Connected": "false"})
         self._connected = False
         if "error" in result:
@@ -376,11 +478,312 @@ class AlpacaClient:
             f"ALPACA device: {self._device_info.get('name', '?')} — {self._device_info.get('driverinfo', '?')}"
         )
 
+    def _load_configured_devices(self) -> None:
+        """Load available Alpaca device numbers from management API."""
+        devices = {self.DEVICE_TYPE: self.DEVICE_NUMBER}
+        response = self._mgmt_get("/management/v1/configureddevices")
+        raw_items = response.get("Value")
+        if isinstance(raw_items, list):
+            for item in raw_items:
+                if not isinstance(item, dict):
+                    continue
+                dtype = str(item.get("DeviceType", "")).strip().lower()
+                dnum = item.get("DeviceNumber")
+                if not dtype:
+                    continue
+                try:
+                    devices[dtype] = int(dnum)
+                except (TypeError, ValueError):
+                    continue
+        self._device_numbers = devices
+        self._configured_devices_loaded = True
+        logger.info(f"ALPACA configured devices: {self._device_numbers}")
+
     def get_capabilities(self) -> Dict[str, Any]:
         return dict(self._capabilities)
 
     def get_device_info(self) -> Dict[str, str]:
         return dict(self._device_info)
+
+    def _get_device_number(self, device_type: str) -> Optional[int]:
+        dtype = str(device_type).strip().lower()
+        if dtype in self._device_numbers:
+            return int(self._device_numbers[dtype])
+        if not self._configured_devices_loaded:
+            self._load_configured_devices()
+            if dtype in self._device_numbers:
+                return int(self._device_numbers[dtype])
+        return None
+
+    def _error_number(self, response: Dict[str, Any]) -> int:
+        """Return ALPACA ErrorNumber as int (0 means success)."""
+        n = self._alpaca_int(response.get("ErrorNumber"))
+        return int(n) if n is not None else 0
+
+    def _ensure_device_connected(
+        self, device_type: str, timeout_sec: Optional[float] = 2.0
+    ) -> bool:
+        """Ensure an ALPACA device type is connected before reading/writing values."""
+        dnum = self._get_device_number(device_type)
+        if dnum is None:
+            return False
+
+        check = self._get_device(
+            device_type,
+            dnum,
+            "connected",
+            quiet=True,
+            timeout_override=timeout_sec,
+        )
+        if self._error_number(check) == 0 and self._alpaca_bool(check.get("Value")):
+            return True
+
+        put = self._put_device(
+            device_type,
+            dnum,
+            "connected",
+            {"Connected": "true"},
+            quiet=True,
+            timeout_override=timeout_sec,
+        )
+        if put.get("error") or self._error_number(put) != 0:
+            return False
+
+        verify = self._get_device(
+            device_type,
+            dnum,
+            "connected",
+            quiet=True,
+            timeout_override=timeout_sec,
+        )
+        return self._error_number(verify) == 0 and self._alpaca_bool(
+            verify.get("Value")
+        )
+
+    def refresh_aux_state_throttled(self, min_interval_sec: Optional[float] = None) -> None:
+        """Refresh focuser/camera values at a low rate to avoid overloading ALPACA."""
+        if not self._connected:
+            return
+        interval = (
+            float(min_interval_sec)
+            if min_interval_sec is not None
+            else float(self._aux_poll_interval)
+        )
+        now = time.monotonic()
+        if interval > 0 and (now - self._last_aux_poll_mono) < interval:
+            return
+        self._last_aux_poll_mono = now
+        self.get_focuser_position(timeout_sec=1.2, refresh=True)
+        self.get_camera_gain(timeout_sec=1.2, refresh=True)
+
+    def get_focuser_position(
+        self, timeout_sec: Optional[float] = 1.2, *, refresh: bool = False
+    ) -> Optional[int]:
+        """Read focuser absolute position from ALPACA focuser device."""
+        cached = self._last_focuser.get("position")
+        if not refresh and isinstance(cached, int):
+            return cached
+        if not self._connected:
+            return None
+        dnum = self._get_device_number("focuser")
+        if dnum is None:
+            self._last_focuser = {"available": False, "position": None}
+            return None
+        if not self._ensure_device_connected("focuser", timeout_sec=timeout_sec):
+            self._last_focuser = {
+                "available": True,
+                "device_number": dnum,
+                "position": None,
+                "error": "focuser not connected",
+            }
+            return None
+        if self._focuser_absolute is None:
+            abs_resp = self._get_device(
+                "focuser",
+                dnum,
+                "absolute",
+                quiet=True,
+                timeout_override=timeout_sec,
+            )
+            if self._error_number(abs_resp) == 0 and "Value" in abs_resp:
+                self._focuser_absolute = self._alpaca_bool(abs_resp.get("Value"))
+        if self._focuser_absolute is False:
+            self._last_focuser = {
+                "available": True,
+                "device_number": dnum,
+                "absolute": False,
+                "position": None,
+            }
+            return None
+        resp = self._get_device(
+            "focuser",
+            dnum,
+            "position",
+            quiet=True,
+            timeout_override=timeout_sec,
+        )
+        payload: Dict[str, Any] = {
+            "available": True,
+            "device_number": dnum,
+            "absolute": self._focuser_absolute,
+            "position": None,
+        }
+        if "Value" in resp and resp["Value"] is not None:
+            pos = self._alpaca_int(resp["Value"]) if self._error_number(resp) == 0 else None
+            if pos is not None:
+                payload["position"] = pos
+                self._last_focuser = payload
+                return payload["position"]
+        err = resp.get("error") or resp.get("ErrorMessage")
+        if self._error_number(resp) != 0 and not err:
+            err = f"ErrorNumber={self._error_number(resp)}"
+        if err:
+            payload["error"] = str(err)
+        self._last_focuser = payload
+        return None
+
+    def get_camera_gain(
+        self, timeout_sec: Optional[float] = 1.2, *, refresh: bool = False
+    ) -> Optional[int]:
+        """Read camera gain from ALPACA camera device."""
+        cached = self._last_camera.get("gain")
+        if not refresh and isinstance(cached, int):
+            return cached
+        if not self._connected:
+            return None
+        dnum = self._get_device_number("camera")
+        if dnum is None:
+            self._last_camera = {"available": False, "gain": None}
+            return None
+        if not self._ensure_device_connected("camera", timeout_sec=timeout_sec):
+            self._last_camera = {
+                "available": True,
+                "device_number": dnum,
+                "gain": None,
+                "error": "camera not connected",
+            }
+            return None
+
+        payload: Dict[str, Any] = {
+            "available": True,
+            "device_number": dnum,
+            "gain": None,
+            "gain_min": self._last_camera.get("gain_min"),
+            "gain_max": self._last_camera.get("gain_max"),
+            "gains": self._last_camera.get("gains"),
+        }
+
+        resp = self._get_device(
+            "camera",
+            dnum,
+            "gain",
+            quiet=True,
+            timeout_override=timeout_sec,
+        )
+        if self._error_number(resp) == 0 and "Value" in resp and resp["Value"] is not None:
+            payload["gain"] = self._alpaca_int(resp["Value"])
+        else:
+            err = resp.get("error") or resp.get("ErrorMessage")
+            if self._error_number(resp) != 0 and not err:
+                err = f"ErrorNumber={self._error_number(resp)}"
+            if err:
+                payload["error"] = str(err)
+
+        if payload["gain_min"] is None:
+            r = self._get_device(
+                "camera", dnum, "gainmin", quiet=True, timeout_override=timeout_sec
+            )
+            if self._error_number(r) == 0 and "Value" in r and r["Value"] is not None:
+                payload["gain_min"] = self._alpaca_int(r["Value"])
+        if payload["gain_max"] is None:
+            r = self._get_device(
+                "camera", dnum, "gainmax", quiet=True, timeout_override=timeout_sec
+            )
+            if self._error_number(r) == 0 and "Value" in r and r["Value"] is not None:
+                payload["gain_max"] = self._alpaca_int(r["Value"])
+        if payload["gains"] is None:
+            r = self._get_device(
+                "camera", dnum, "gains", quiet=True, timeout_override=timeout_sec
+            )
+            if self._error_number(r) == 0 and isinstance(r.get("Value"), list):
+                payload["gains"] = [str(v) for v in r["Value"]]
+
+        self._last_camera = payload
+        return payload["gain"]
+
+    def set_camera_gain(self, gain: int, timeout_sec: Optional[float] = 2.0) -> Dict:
+        """Set ALPACA camera gain on the configured camera device."""
+        if not self._connected:
+            return {"error": "not connected"}
+        dnum = self._get_device_number("camera")
+        if dnum is None:
+            return {"error": "camera device not available"}
+        if not self._ensure_device_connected("camera", timeout_sec=timeout_sec):
+            return {"error": "camera not connected"}
+        gain_value = int(gain)
+        result = self._put_device(
+            "camera",
+            dnum,
+            "gain",
+            {"Gain": gain_value},
+            timeout_override=timeout_sec,
+            quiet=True,
+        )
+        if "error" not in result and not result.get("ErrorNumber"):
+            self._last_camera["available"] = True
+            self._last_camera["device_number"] = dnum
+            self._last_camera["gain"] = gain_value
+        return result
+
+    def move_focuser_steps(
+        self, steps: int, timeout_sec: Optional[float] = 6.0
+    ) -> Dict[str, Any]:
+        """Move focuser by step delta and return absolute position when available."""
+        if not self._connected:
+            return {"error": "not connected"}
+        dnum = self._get_device_number("focuser")
+        if dnum is None:
+            return {"error": "focuser device not available"}
+        if not self._ensure_device_connected("focuser", timeout_sec=timeout_sec):
+            return {"error": "focuser not connected"}
+
+        delta = int(steps)
+        current = self.get_focuser_position(timeout_sec=1.5, refresh=True)
+        absolute_mode = self._focuser_absolute is not False
+        if absolute_mode and current is not None:
+            move_position = int(current) + delta
+            expected_position: Optional[int] = move_position
+        else:
+            # For non-absolute focusers, ASCOM defines Move(Position) as a relative distance.
+            move_position = delta
+            expected_position = None
+
+        result = self._put_device(
+            "focuser",
+            dnum,
+            "move",
+            {"Position": move_position},
+            timeout_override=timeout_sec,
+            quiet=True,
+        )
+        payload: Dict[str, Any] = {
+            "provider": "alpaca",
+            "delta": delta,
+            "target_param": move_position,
+            "focus_source": "absolute" if absolute_mode else "relative",
+            "focus_confirmed": False,
+        }
+        if result.get("error") or result.get("ErrorNumber"):
+            payload.update(result)
+            return payload
+
+        refreshed = self.get_focuser_position(timeout_sec=1.5, refresh=True)
+        if isinstance(refreshed, int):
+            payload["focus_pos"] = refreshed
+            payload["focus_confirmed"] = True
+        elif expected_position is not None:
+            payload["focus_pos"] = expected_position
+        return payload
 
     # ── Position readout ───────────────────────────────────────────────
 
@@ -682,12 +1085,16 @@ class AlpacaClient:
 
     def get_telemetry(self) -> Dict[str, Any]:
         """Combined position + state for UI display."""
+        self.refresh_aux_state_throttled()
         return {
             "connected": self._connected,
             "position": dict(self._last_position),
             "state": dict(self._last_state),
             "device_info": dict(self._device_info),
             "capabilities": dict(self._capabilities),
+            "device_numbers": dict(self._device_numbers),
+            "focuser": dict(self._last_focuser),
+            "camera": dict(self._last_camera),
         }
 
     # ── Alt/Az → RA/Dec conversion ─────────────────────────────────────
@@ -737,6 +1144,12 @@ class AlpacaClient:
             "slewing": self._last_state.get("slewing"),
             "parked": self._last_state.get("parked"),
             "maxrate": self._capabilities.get("maxrate"),
+            "focuser_position": self._last_focuser.get("position"),
+            "focuser_available": self._last_focuser.get("available"),
+            "camera_gain": self._last_camera.get("gain"),
+            "camera_gain_min": self._last_camera.get("gain_min"),
+            "camera_gain_max": self._last_camera.get("gain_max"),
+            "camera_gains": self._last_camera.get("gains"),
         }
 
     def get_poll_interval(self) -> float:
@@ -782,8 +1195,15 @@ class MockAlpacaClient:
             "driverversion": "1.0",
             "interfaceversion": "3",
         }
+        self._device_numbers = {"telescope": 0, "camera": 0, "focuser": 0}
         self._last_position: Dict[str, float] = {}
         self._last_state: Dict[str, Any] = {}
+        self._focuser_absolute = True
+        self._focuser_position = 5000
+        self._camera_gain = 80
+        self._camera_gain_min = 0
+        self._camera_gain_max = 120
+        self._camera_gains = None
         _env_pi = os.getenv("SEESTAR_ALPACA_POLL_INTERVAL")
         if _env_pi:
             try:
@@ -884,6 +1304,36 @@ class MockAlpacaClient:
     def get_cached_state(self) -> Dict[str, Any]:
         return dict(self._last_state)
 
+    def refresh_aux_state_throttled(self, min_interval_sec: Optional[float] = None) -> None:
+        return
+
+    def get_focuser_position(
+        self, timeout_sec: Optional[float] = 1.2, *, refresh: bool = False
+    ) -> Optional[int]:
+        return int(self._focuser_position)
+
+    def get_camera_gain(
+        self, timeout_sec: Optional[float] = 1.2, *, refresh: bool = False
+    ) -> Optional[int]:
+        return int(self._camera_gain)
+
+    def set_camera_gain(self, gain: int, timeout_sec: Optional[float] = 2.0) -> Dict:
+        self._camera_gain = int(gain)
+        return {"success": True}
+
+    def move_focuser_steps(
+        self, steps: int, timeout_sec: Optional[float] = 6.0
+    ) -> Dict[str, Any]:
+        self._focuser_position += int(steps)
+        return {
+            "provider": "alpaca",
+            "delta": int(steps),
+            "target_param": self._focuser_position,
+            "focus_source": "absolute",
+            "focus_pos": self._focuser_position,
+            "focus_confirmed": True,
+        }
+
     def get_telemetry(self) -> Dict[str, Any]:
         return {
             "connected": self._connected,
@@ -891,6 +1341,21 @@ class MockAlpacaClient:
             "state": dict(self._last_state),
             "device_info": dict(self._device_info),
             "capabilities": dict(self._capabilities),
+            "device_numbers": dict(self._device_numbers),
+            "focuser": {
+                "available": True,
+                "device_number": 0,
+                "absolute": self._focuser_absolute,
+                "position": self._focuser_position,
+            },
+            "camera": {
+                "available": True,
+                "device_number": 0,
+                "gain": self._camera_gain,
+                "gain_min": self._camera_gain_min,
+                "gain_max": self._camera_gain_max,
+                "gains": self._camera_gains,
+            },
         }
 
     def get_status(self) -> Dict[str, Any]:
@@ -903,6 +1368,12 @@ class MockAlpacaClient:
             "slewing": self._slewing,
             "parked": self._parked,
             "maxrate": 6.0,
+            "focuser_position": self._focuser_position,
+            "focuser_available": True,
+            "camera_gain": self._camera_gain,
+            "camera_gain_min": self._camera_gain_min,
+            "camera_gain_max": self._camera_gain_max,
+            "camera_gains": self._camera_gains,
         }
 
     def get_poll_interval(self) -> float:

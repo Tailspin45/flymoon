@@ -704,6 +704,17 @@
                                 <span class="alpaca-coord-value" id="alpacaGMT">—</span>
                             </div>
                         </div>
+                        <div class="alpaca-coord-row">
+                            <div class="alpaca-coord-cell">
+                                <span class="alpaca-coord-label">FOC</span>
+                                <span class="alpaca-coord-value" id="alpacaFocusPos">—</span>
+                                <span class="alpaca-coord-unit">stp</span>
+                            </div>
+                            <div class="alpaca-coord-cell">
+                                <span class="alpaca-coord-label">GAIN</span>
+                                <span class="alpaca-coord-value" id="alpacaCameraGain">—</span>
+                            </div>
+                        </div>
                     </div>
                     <div class="alpaca-state-row">
                         <div class="alpaca-state-chip" id="alpacaChipTrk"><span class="alpaca-state-dot" id="alpacaDotTrk"></span>TRK</div>
@@ -780,10 +791,19 @@
                         </div>
                     </div>
                     <div class="focus-odometer">
-                        <span class="focus-odometer-label" id="focusPosLabel">Relative Focus Steps</span>
+                        <span class="focus-odometer-label" id="focusPosLabel">Focus Position</span>
                         <span class="focus-odometer-value" id="focusPos">0</span>
                     </div>
                     <!-- Camera controls -->
+                    <div style="margin-bottom:3px;">
+                        <div style="display:flex; align-items:center; gap:6px;">
+                            <span class="setting-label" style="margin:0; min-width:34px;">Gain</span>
+                            <input type="range" id="gainSlider" min="0" max="120" value="80" class="setting-slider"
+                                   oninput="document.getElementById('gainVal').textContent=this.value"
+                                   onchange="applyGain()">
+                            <span id="gainVal" style="font-size:0.75em; color:#b8e8ff; min-width:24px; font-family:'SF Mono',monospace;">80</span>
+                        </div>
+                    </div>
                     <div style="display:flex; align-items:center; gap:8px; margin-bottom:2px; font-size:0.78em; color:#99a0a8;">
                         <label style="display:flex; align-items:center; gap:4px; cursor:pointer;">
                             <input type="checkbox" id="lpFilterToggle" onchange="applyLpFilter()" style="accent-color:#039c9c;"> LP Filter

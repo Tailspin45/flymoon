@@ -169,6 +169,7 @@ class SeestarClient:
         self._recording = False
         self._recording_start_time: Optional[datetime] = None
         self._focus_pos: Optional[int] = None
+        self._camera_gain: Optional[int] = None
         # When hardware never returns absolute step, accumulate deltas from move_focuser.
         self._focus_relative_odometer: Optional[int] = None
         self._last_focus_poll_mono: float = 0.0
@@ -1633,7 +1634,10 @@ class SeestarClient:
 
     def set_gain(self, gain: int) -> dict:
         """Set camera gain (0–120, default 80)."""
-        self._send_command("set_control_value", params=["gain", int(gain)], expect_response=False)
+        self._send_command(
+            "set_control_value", params=["gain", int(gain)], expect_response=False
+        )
+        self._camera_gain = int(gain)
         logger.info(f"Gain set to {gain}")
         return {}
 

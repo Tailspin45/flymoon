@@ -146,6 +146,7 @@ class MockSeestarClient:
         self._recording = False
         self._recording_start_time: Optional[datetime] = None
         self._focus_pos: Optional[int] = None
+        self._camera_gain: Optional[int] = 80
         self._viewing_mode: Optional[str] = (
             None  # sun | moon | scenery — mirrors SeestarClient
         )
@@ -342,6 +343,7 @@ class MockSeestarClient:
         pass
 
     def set_gain(self, gain):
+        self._camera_gain = int(gain)
         logger.info(f"[Mock] set_gain {gain}")
         return {"result": "ok"}
 
@@ -1036,10 +1038,34 @@ def telescope_focus_step():
     if not client or not client.is_connected():
         return jsonify({"error": "Telescope not connected"}), 503
     try:
+        def _alpaca_failed(resp):
+            if not isinstance(resp, dict):
+                return True
+            if resp.get("error"):
+                return True
+            try:
+                return int(resp.get("ErrorNumber", 0)) != 0
+            except (TypeError, ValueError):
+                return bool(resp.get("ErrorNumber"))
+
         body = request.get_json(silent=True) or {}
         steps = int(body.get("steps", 0))
+        alpaca = get_alpaca_client()
+        if alpaca and alpaca.is_connected():
+            result = alpaca.move_focuser_steps(steps, timeout_sec=6.0)
+            if not _alpaca_failed(result):
+                return (
+                    jsonify({"success": True, "result": result, "provider": "alpaca"}),
+                    200,
+                )
+            logger.info(
+                "[Focus] ALPACA focuser move unavailable, falling back to JSON-RPC"
+            )
         result = client.move_step_focus(steps)
-        return jsonify({"success": True, "result": result}), 200
+        return (
+            jsonify({"success": True, "result": result, "provider": "jsonrpc"}),
+            200,
+        )
     except Exception as e:
         return handle_error(e)
 
@@ -1054,8 +1080,34 @@ def patch_camera_settings():
     results = {}
 
     try:
+        def _alpaca_failed(resp):
+            if not isinstance(resp, dict):
+                return True
+            if resp.get("error"):
+                return True
+            try:
+                return int(resp.get("ErrorNumber", 0)) != 0
+            except (TypeError, ValueError):
+                return bool(resp.get("ErrorNumber"))
+
         if "gain" in data:
-            results["gain"] = client.set_gain(int(data["gain"]))
+            gain_value = int(data["gain"])
+            gain_provider = "jsonrpc"
+            gain_result = None
+            alpaca = get_alpaca_client()
+            if alpaca and alpaca.is_connected():
+                gain_result = alpaca.set_camera_gain(gain_value, timeout_sec=2.0)
+                if _alpaca_failed(gain_result):
+                    logger.info(
+                        "[Camera] ALPACA gain set unavailable, falling back to JSON-RPC"
+                    )
+                    gain_result = client.set_gain(gain_value)
+                else:
+                    gain_provider = "alpaca"
+            else:
+                gain_result = client.set_gain(gain_value)
+            results["gain"] = gain_result
+            results["gain_provider"] = gain_provider
         if "stack_ms" in data or "preview_ms" in data:
             results["exposure"] = client.set_exposure(
                 stack_ms=data.get("stack_ms"),
@@ -1453,6 +1505,11 @@ def get_telescope_status():
                         "port": int(os.getenv("SEESTAR_PORT", "4700")),
                         "ctrl_state": ctrl_state,
                         "eclipse": _get_eclipse_data(),
+                        "focus_pos": None,
+                        "focus_pos_source": None,
+                        "camera_gain": None,
+                        "camera_gain_min": None,
+                        "camera_gain_max": None,
                         "provider": "none",
                         "provider_ready": False,
                         "provider_error": "JSON-RPC client not connected",
@@ -1479,20 +1536,57 @@ def get_telescope_status():
         alpaca = get_alpaca_client()
         alpaca_status = None
         if alpaca and alpaca.is_connected():
+            alpaca.refresh_aux_state_throttled(min_interval_sec=8.0)
             alpaca_status = alpaca.get_status()
 
         abs_fp = getattr(client, "_focus_pos", None)
         rel_fp = getattr(client, "_focus_relative_odometer", None)
+
+        def _coerce_int(v):
+            if v is None:
+                return None
+            if isinstance(v, bool):
+                return None
+            if isinstance(v, int):
+                return v
+            if isinstance(v, float):
+                return int(round(v))
+            if isinstance(v, str):
+                s = v.strip()
+                if not s:
+                    return None
+                try:
+                    return int(s)
+                except ValueError:
+                    try:
+                        return int(round(float(s)))
+                    except ValueError:
+                        return None
+            return None
+
         _raw_fp = abs_fp if abs_fp is not None else rel_fp
-        try:
-            _fp_json = int(_raw_fp) if _raw_fp is not None else None
-        except (TypeError, ValueError):
-            _fp_json = None
+        _fp_json = _coerce_int(_raw_fp)
         _focus_src = (
             "absolute"
             if abs_fp is not None
             else ("relative" if rel_fp is not None else None)
         )
+        if alpaca_status and alpaca_status.get("focuser_position") is not None:
+            _raw_fp = alpaca_status.get("focuser_position")
+            _fp_alpaca = _coerce_int(_raw_fp)
+            if _fp_alpaca is not None:
+                _fp_json = _fp_alpaca
+                _focus_src = "alpaca_absolute"
+
+        cam_gain = None
+        cam_gain_min = None
+        cam_gain_max = None
+        if alpaca_status:
+            cam_gain = _coerce_int(alpaca_status.get("camera_gain"))
+            cam_gain_min = _coerce_int(alpaca_status.get("camera_gain_min"))
+            cam_gain_max = _coerce_int(alpaca_status.get("camera_gain_max"))
+        if cam_gain is None:
+            cam_gain = _coerce_int(getattr(client, "_camera_gain", None))
 
         status = {
             "connected": client.is_connected(),
@@ -1506,6 +1600,9 @@ def get_telescope_status():
             "alpaca": alpaca_status,
             "focus_pos": _fp_json,
             "focus_pos_source": _focus_src,
+            "camera_gain": cam_gain,
+            "camera_gain_min": cam_gain_min,
+            "camera_gain_max": cam_gain_max,
             "provider": "alpaca" if alpaca_status else "jsonrpc",
             "provider_ready": bool(alpaca_status) or bool(client.is_connected()),
             "provider_error": (
@@ -1535,6 +1632,11 @@ def get_telescope_status():
                     "enabled": is_enabled(),
                     "error": str(e),
                     "eclipse": None,
+                    "focus_pos": None,
+                    "focus_pos_source": None,
+                    "camera_gain": None,
+                    "camera_gain_min": None,
+                    "camera_gain_max": None,
                     "provider": "none",
                     "provider_ready": False,
                 }
