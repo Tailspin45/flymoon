@@ -68,7 +68,7 @@ function findFreePort() {
     });
 }
 
-function waitForFlask(port, maxMs = 20000) {
+function waitForFlask(port, maxMs = 90000) {
     return new Promise((resolve, reject) => {
         const deadline = Date.now() + maxMs;
         const attempt = () => {
