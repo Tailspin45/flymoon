@@ -58,11 +58,12 @@
   }
   #aircraft {
     position: absolute;
-    top: 8%;
-    left: -18%;
-    width: 135%;
+    top: 40px;
+    left: 60px;
+    width: 260px;
     height: auto;
-    filter: drop-shadow(0 4px 10px rgba(0,0,0,0.55));
+    z-index: 5;
+    filter: drop-shadow(0 6px 14px rgba(0,0,0,0.55));
   }
 
   /* ── Sun ── */
@@ -207,11 +208,11 @@
   <div id="stars"></div>
   <div id="nebula"></div>
 
-  <!-- Moon + transiting 737 -->
+  <!-- Moon (top-right) and 737 (upper-left) -->
   <div id="moon-wrap">
     <img id="moon" src="assets/moon.png" alt="">
-    <img id="aircraft" src="assets/aircraft-737.png" alt="">
   </div>
+  <img id="aircraft" src="assets/aircraft-737.png" alt="">
 
   <!-- Sun -->
   <div id="sun-wrap">

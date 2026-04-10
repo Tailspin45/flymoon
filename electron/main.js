@@ -437,7 +437,7 @@ app.whenReady().then(async () => {
     });
 
     const splashStart = Date.now();
-    const MIN_SPLASH_MS = 2500;
+    const MIN_SPLASH_MS = 6000;
 
     const closeSplash = async () => {
         const elapsed = Date.now() - splashStart;
