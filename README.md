@@ -196,6 +196,7 @@ Zipcatcher uses ALPACA for telescope motion plus camera/focuser telemetry where 
 ## Capture Gallery
 
 The gallery (📁 **Captured Files** strip at the bottom of the scope panel) shows thumbnails of all recorded clips, detection frames, diff heatmaps, and analysed composites.
+Favorited files can be renamed directly from either the filmstrip or the expanded grid using the ✏️ button (rename is intentionally restricted to favorites).
 
 ### File Viewer
 

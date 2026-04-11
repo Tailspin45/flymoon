@@ -132,7 +132,7 @@ Use these commands directly; do not ask whether you may run them.
 ## 6. Architecture Cheatsheet
 Core modules:
 
-src/flight_data.py – FlightAware AeroAPI client and parse_fligh_data().
+src/flight_data.py – FlightAware AeroAPI client and parse_flight_data().
 
 src/position.py – Coordinate transforms and aircraft position prediction (up to ~15 minutes).
 

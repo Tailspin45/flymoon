@@ -2,7 +2,7 @@
 <html>
 <head>
 <meta charset="utf-8">
-<title>Zipcatcher Setup</title>
+<title>Zipcatcher Preferences</title>
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0; }
   body {
@@ -27,7 +27,14 @@
     align-items: center;
     gap: 10px;
   }
-  .wizard-header .subtitle { font-size: 0.82em; color: #888; margin-top: 4px; }
+  .wizard-header .subtitle {
+    font-size: 0.82em;
+    color: #888;
+    margin-top: 4px;
+    text-decoration: none;
+    font-style: normal;
+  }
+  .wizard-header .subtitle a { color: inherit; text-decoration: none; }
   /* ── Step indicators ── */
   .steps {
     display: flex;
@@ -218,8 +225,8 @@
 <body>
 
 <div class="wizard-header">
-  <h1>🔭 Zipcatcher Setup</h1>
-  <div class="subtitle">Configure your installation — takes about 2 minutes</div>
+  <h1>Zipcatcher Preferences</h1>
+  <div class="subtitle">Adjust your location, API keys, and telescope settings</div>
   <div class="steps">
     <div class="step-dot active" id="dot-0"></div>
     <div class="step-dot" id="dot-1"></div>
@@ -239,31 +246,30 @@
       <h2>Welcome to Zipcatcher</h2>
       <p>Zipcatcher detects aircraft transiting the Sun and Moon in real time, and can automatically trigger your Seestar telescope to capture the event.</p>
       <ul class="feature-list">
-        <li>Live flight tracking via FlightAware AeroAPI</li>
+        <li>Live flight tracking via 4 free ADS-B sources (OpenSky, ADSB-One, adsb.lol, adsb.fi)</li>
         <li>Celestial position calculations (no internet needed for sky math)</li>
         <li>Telegram push notifications for high-probability transits</li>
-        <li>Seestar S50 telescope auto-capture control</li>
+        <li>Seestar telescope auto-capture control</li>
         <li>Interactive map with transit overlay</li>
       </ul>
     </div>
     <div class="info-box">
-      You'll need a <strong>free FlightAware developer account</strong> to get your API key. A Telegram bot and Seestar telescope are optional.
+      FlightAware, Telegram and Seestar are all <strong>optional</strong>. You can skip straight through this wizard and Zipcatcher will run with free ADS-B sources only.
     </div>
   </div>
 
   <!-- Step 1: FlightAware API Key -->
   <div class="step-panel" id="step-1">
-    <h2>✈️ FlightAware API Key</h2>
-    <p class="step-desc">Zipcatcher uses FlightAware AeroAPI to fetch real-time aircraft positions near you. A free Personal tier account includes 10 requests/minute — enough for continuous monitoring.</p>
+    <h2>✈️ FlightAware API Key <span class="optional-badge">optional</span></h2>
+    <p class="step-desc">Zipcatcher can optionally enrich high-probability transits with FlightAware metadata (aircraft type, registration, flight number). The free Personal tier includes 500 queries/month, which is plenty for typical use. Leave blank to run on free ADS-B sources only.</p>
     <div class="info-box">
       1. Sign up at <a onclick="open_('https://www.flightaware.com/aeroapi/portal/')">flightaware.com/aeroapi/portal</a><br>
       2. Create a new API key under the "Personal" plan<br>
       3. Paste the key below
     </div>
     <div class="field">
-      <label>AeroAPI Key <span class="req">*</span></label>
+      <label>AeroAPI Key</label>
       <input type="text" id="aeroapi_key" placeholder="AbCdEf1234567890..." autocomplete="off" spellcheck="false">
-      <div class="error-msg" id="err-aeroapi">Please enter your FlightAware AeroAPI key</div>
     </div>
   </div>
 
@@ -297,26 +303,26 @@
   <!-- Step 3: Bounding Box -->
   <div class="step-panel" id="step-3">
     <h2>🗺️ Search Area</h2>
-    <p class="step-desc">Zipcatcher searches for aircraft within a rectangular area around your location. A ±2° box (~220 km) works well for most observers.</p>
+    <p class="step-desc">Zipcatcher searches for aircraft within a rectangular area around your location. A ±2° box (~220 km) works well for most observers — we've already filled this in for you based on your location. Click Next to accept, or tweak the corners below.</p>
     <button class="detect-btn" id="autoBoxBtn" onclick="autoBox()">
-      ⚡ Auto-compute from my location (±2°)
+      ⚡ Recompute from my location (±2°)
     </button>
     <div class="field-row-2">
       <div class="field">
         <label>SW Corner — Latitude</label>
-        <input type="number" id="bbox_lat_ll" placeholder="Lower-left lat" step="0.01">
+        <input type="number" id="bbox_lat_ll" step="0.01">
       </div>
       <div class="field">
         <label>SW Corner — Longitude</label>
-        <input type="number" id="bbox_lon_ll" placeholder="Lower-left lon" step="0.01">
+        <input type="number" id="bbox_lon_ll" step="0.01">
       </div>
       <div class="field">
         <label>NE Corner — Latitude</label>
-        <input type="number" id="bbox_lat_ur" placeholder="Upper-right lat" step="0.01">
+        <input type="number" id="bbox_lat_ur" step="0.01">
       </div>
       <div class="field">
         <label>NE Corner — Longitude</label>
-        <input type="number" id="bbox_lon_ur" placeholder="Upper-right lon" step="0.01">
+        <input type="number" id="bbox_lon_ur" step="0.01">
       </div>
     </div>
     <div class="error-msg" id="err-bbox">Please fill in all four bounding box values</div>
@@ -327,9 +333,9 @@
     <h2>📱 Telegram Notifications <span class="optional-badge">optional</span></h2>
     <p class="step-desc">Receive a push notification on your phone when a high-probability transit is detected. Skip this step if you only want the web interface.</p>
     <div class="info-box">
-      1. Open Telegram and start a chat with <a onclick="open_('https://t.me/botfather')">@BotFather</a><br>
+      1. <strong>On your mobile device</strong>, download the Telegram app and open a chat with <a onclick="open_('https://t.me/botfather')">@BotFather</a> there<br>
       2. Send <code>/newbot</code> and follow the prompts to get a <strong>Bot Token</strong><br>
-      3. Send any message to your new bot, then open:<br>
+      3. Send any message to your new bot from your phone, then open:<br>
       &nbsp;&nbsp;<a onclick="open_('https://api.telegram.org/bot{YOUR_TOKEN}/getUpdates')">api.telegram.org/bot{token}/getUpdates</a><br>
       4. Your <strong>Chat ID</strong> is the <code>"id"</code> field in the <code>chat</code> object
     </div>
@@ -346,7 +352,7 @@
   <!-- Step 5: Seestar (optional) -->
   <div class="step-panel" id="step-5">
     <h2>🔭 Seestar Telescope <span class="optional-badge">optional</span></h2>
-    <p class="step-desc">If you have a Seestar S50 on your local network, Zipcatcher can automatically start recording when a transit is imminent.</p>
+    <p class="step-desc">If you have a Seestar on your Wi-Fi network in Station Mode, Zipcatcher can automatically start recording when a transit is imminent.</p>
     <div class="toggle-row">
       <input type="checkbox" id="seestar_enabled" onchange="toggleSeestar()">
       <label for="seestar_enabled">Enable Seestar integration</label>
@@ -399,17 +405,22 @@
 </div>
 
 <div class="wizard-footer">
-  <button class="btn btn-secondary" id="btnBack" onclick="back()" style="display:none">← Back</button>
+  <button type="button" class="btn btn-secondary" id="btnBack" onclick="back()" style="display:none">← Back</button>
+  <button type="button" class="btn btn-secondary" id="btnSkipAll" onclick="skipAll()">Skip All</button>
   <span class="step-counter" id="stepCounter">Step 1 of 6</span>
-  <button class="btn btn-primary" id="btnNext" onclick="next()">Next →</button>
+  <button type="button" class="btn btn-secondary" id="btnSkip" onclick="skip()">Skip →</button>
+  <button type="button" class="btn btn-primary" id="btnNext" onclick="next()">Next →</button>
 </div>
 
 <script>
 const STEPS = ['step-0','step-1','step-2','step-3','step-4','step-5','step-review'];
 let current = 0;
+// Mode comes from main.js via the loadFile query string.
+const WIZARD_MODE = new URLSearchParams(location.search).get('mode') || 'preferences';
+const IS_FIRST_LAUNCH = WIZARD_MODE === 'first-launch';
 
 function open_(url) {
-    if (window.flymoon) window.flymoon.openExternal(url);
+    if (window.zipcatcher) window.zipcatcher.openExternal(url);
     else window.open(url, '_blank');
 }
 
@@ -419,45 +430,36 @@ function showStep(idx) {
         if (el) el.style.display = i === idx ? '' : 'none';
         if (el) el.classList.toggle('active', i === idx);
     });
-    // dots
     for (let i = 0; i < 6; i++) {
         const d = document.getElementById(`dot-${i}`);
         if (!d) continue;
         d.className = 'step-dot' + (i < idx ? ' done' : i === idx ? ' active' : '');
     }
     document.getElementById('btnBack').style.display = idx > 0 ? '' : 'none';
+    // Skip All only on Card 1 (index 0).
+    document.getElementById('btnSkipAll').style.display = idx === 0 ? '' : 'none';
     const isLast = idx === STEPS.length - 1;
+    // Skip on cards 1-6, not on Review.
+    document.getElementById('btnSkip').style.display = isLast ? 'none' : '';
+
     const btnNext = document.getElementById('btnNext');
-    btnNext.textContent = isLast ? '🚀 Launch Zipcatcher' : 'Next →';
-    btnNext.className   = 'btn ' + (isLast ? 'btn-success' : 'btn-primary');
+    if (isLast) {
+        btnNext.textContent = IS_FIRST_LAUNCH ? '🚀 Launch Zipcatcher' : 'Save & Close';
+        btnNext.className = 'btn btn-success';
+    } else {
+        btnNext.textContent = 'Next →';
+        btnNext.className = 'btn btn-primary';
+    }
     document.getElementById('stepCounter').textContent = `Step ${Math.min(idx+1, 6)} of 6`;
+
+    // Auto-fill bbox from the current observer location when entering Card 4.
+    // Keeps existing non-empty values — just populates blanks.
+    if (idx === 3) prefillBoundingBoxIfEmpty();
+
     if (isLast) buildReview();
 }
 
-function validate() {
-    if (current === 1) {
-        const key = document.getElementById('aeroapi_key').value.trim();
-        if (!key) { show('err-aeroapi'); return false; }
-        hide('err-aeroapi');
-    }
-    if (current === 2) {
-        const lat = document.getElementById('latitude').value.trim();
-        const lon = document.getElementById('longitude').value.trim();
-        if (!lat || !lon) { show('err-location'); return false; }
-        hide('err-location');
-    }
-    if (current === 3) {
-        const fields = ['bbox_lat_ll','bbox_lon_ll','bbox_lat_ur','bbox_lon_ur'];
-        if (fields.some(f => !document.getElementById(f).value.trim())) {
-            show('err-bbox'); return false;
-        }
-        hide('err-bbox');
-    }
-    return true;
-}
-
 function next() {
-    if (!validate()) return;
     if (current < STEPS.length - 1) {
         current++;
         showStep(current);
@@ -466,17 +468,47 @@ function next() {
     }
 }
 
+function skip() {
+    // Skip = advance without saving this card's values. Existing defaults
+    // (from config or from the form's current state) are kept.
+    if (current < STEPS.length - 1) {
+        current++;
+        showStep(current);
+    } else {
+        finish();
+    }
+}
+
+async function skipAll() {
+    if (!window.zipcatcher) return;
+    await window.zipcatcher.wizardSkipAll();
+}
+
 function back() {
     if (current > 0) { current--; showStep(current); }
 }
-
-function show(id) { const e = document.getElementById(id); if(e) e.style.display='block'; }
-function hide(id) { const e = document.getElementById(id); if(e) e.style.display='none'; }
 
 function toggleSeestar() {
     const on = document.getElementById('seestar_enabled').checked;
     document.getElementById('seestar_fields').style.display = on ? 'block' : 'none';
     document.getElementById('seestar_skip_note').style.display = on ? 'none' : 'block';
+}
+
+function prefillBoundingBoxIfEmpty() {
+    const lat = parseFloat(document.getElementById('latitude').value);
+    const lon = parseFloat(document.getElementById('longitude').value);
+    if (isNaN(lat) || isNaN(lon)) return;
+    const d = 2.0;
+    const fields = [
+        ['bbox_lat_ll', lat - d],
+        ['bbox_lon_ll', lon - d],
+        ['bbox_lat_ur', lat + d],
+        ['bbox_lon_ur', lon + d],
+    ];
+    for (const [id, val] of fields) {
+        const el = document.getElementById(id);
+        if (el && !el.value.trim()) el.value = val.toFixed(3);
+    }
 }
 
 function autoBox() {
@@ -493,48 +525,54 @@ function autoBox() {
     document.getElementById('bbox_lon_ur').value = (lon + d).toFixed(3);
 }
 
+// Try browser geolocation; on denial/failure fall back to the main-process
+// IP geolocation exposed by preload.js.
 async function detectLocation() {
     const btn = document.getElementById('detectBtn');
     const icon = document.getElementById('detectIcon');
     btn.disabled = true;
     icon.textContent = '⏳';
 
-    if (!navigator.geolocation) {
-        alert('Geolocation is not supported on this system. Please enter coordinates manually.');
-        btn.disabled = false; icon.textContent = '📡';
-        return;
-    }
-
-    navigator.geolocation.getCurrentPosition(
-        async (pos) => {
-            const lat = pos.coords.latitude;
-            const lon = pos.coords.longitude;
-            document.getElementById('latitude').value  = lat.toFixed(5);
-            document.getElementById('longitude').value = lon.toFixed(5);
-            icon.textContent = '✅';
-
-            // Fetch elevation from Open-Elevation API (free, no key)
+    const applyCoords = async (lat, lon, fetchElev) => {
+        document.getElementById('latitude').value  = lat.toFixed(5);
+        document.getElementById('longitude').value = lon.toFixed(5);
+        icon.textContent = '✅';
+        if (fetchElev) {
             try {
                 const resp = await fetch(`https://api.open-elevation.com/api/v1/lookup?locations=${lat},${lon}`);
                 if (resp.ok) {
                     const data = await resp.json();
-                    const elev = data.results[0].elevation;
-                    document.getElementById('elevation').value = Math.round(elev);
+                    document.getElementById('elevation').value = Math.round(data.results[0].elevation);
                 }
-            } catch { /* elevation stays blank — no big deal */ }
+            } catch { /* elevation stays blank */ }
+        }
+        btn.disabled = false;
+    };
 
-            btn.disabled = false;
-
-            // Ask if they want to auto-fill bounding box too
-            if (confirm('Location detected! Auto-fill the search area (±2° around your location)?')) {
-                autoBox();
-            }
-        },
-        (err) => {
-            alert(`Location detection failed: ${err.message}\nPlease enter coordinates manually.`);
+    const ipFallback = async (reason) => {
+        if (!window.zipcatcher || !window.zipcatcher.ipGeolocate) {
+            alert(`Location detection failed: ${reason}\nPlease enter coordinates manually.`);
             btn.disabled = false;
             icon.textContent = '📡';
-        },
+            return;
+        }
+        const geo = await window.zipcatcher.ipGeolocate();
+        if (!geo) {
+            alert(`Location detection failed: ${reason}\nPlease enter coordinates manually.`);
+            btn.disabled = false;
+            icon.textContent = '📡';
+            return;
+        }
+        await applyCoords(geo.latitude, geo.longitude, true);
+    };
+
+    if (!navigator.geolocation) {
+        return ipFallback('geolocation not supported');
+    }
+
+    navigator.geolocation.getCurrentPosition(
+        (pos) => applyCoords(pos.coords.latitude, pos.coords.longitude, true),
+        (err) => ipFallback(err.message || 'browser geolocation denied'),
         { enableHighAccuracy: false, timeout: 10000 }
     );
 }
@@ -542,11 +580,11 @@ async function detectLocation() {
 function buildReview() {
     const rows = [
         ['AeroAPI Key',    maskKey(document.getElementById('aeroapi_key').value)],
-        ['Latitude',       document.getElementById('latitude').value],
-        ['Longitude',      document.getElementById('longitude').value],
+        ['Latitude',       document.getElementById('latitude').value || '(default)'],
+        ['Longitude',      document.getElementById('longitude').value || '(default)'],
         ['Elevation',      (document.getElementById('elevation').value || '0') + ' m'],
-        ['Search area SW', `${document.getElementById('bbox_lat_ll').value}, ${document.getElementById('bbox_lon_ll').value}`],
-        ['Search area NE', `${document.getElementById('bbox_lat_ur').value}, ${document.getElementById('bbox_lon_ur').value}`],
+        ['Search area SW', `${document.getElementById('bbox_lat_ll').value || '(default)'}, ${document.getElementById('bbox_lon_ll').value || '(default)'}`],
+        ['Search area NE', `${document.getElementById('bbox_lat_ur').value || '(default)'}, ${document.getElementById('bbox_lon_ur').value || '(default)'}`],
         ['Telegram',       document.getElementById('telegram_token').value ? '✅ Configured' : '— not set'],
         ['Seestar',        document.getElementById('seestar_enabled').checked
                              ? `✅ ${document.getElementById('seestar_host').value}:${document.getElementById('seestar_port').value}`
@@ -562,63 +600,78 @@ function maskKey(k) {
     return k.substring(0, 4) + '••••••••' + k.slice(-4);
 }
 
+// Parse a form field as a number; return undefined if blank/invalid so that
+// main.js's applyGreenwichDefaults fills it in from the fallback config.
+function num(id) {
+    const raw = document.getElementById(id).value;
+    if (raw === '' || raw == null) return undefined;
+    const n = parseFloat(raw);
+    return isFinite(n) ? n : undefined;
+}
+
 async function finish() {
     const cfg = {
         aeroapi_key:     document.getElementById('aeroapi_key').value.trim(),
-        latitude:        parseFloat(document.getElementById('latitude').value),
-        longitude:       parseFloat(document.getElementById('longitude').value),
-        elevation:       parseFloat(document.getElementById('elevation').value || 0),
-        bbox_lat_ll:     parseFloat(document.getElementById('bbox_lat_ll').value),
-        bbox_lon_ll:     parseFloat(document.getElementById('bbox_lon_ll').value),
-        bbox_lat_ur:     parseFloat(document.getElementById('bbox_lat_ur').value),
-        bbox_lon_ur:     parseFloat(document.getElementById('bbox_lon_ur').value),
+        latitude:        num('latitude'),
+        longitude:       num('longitude'),
+        elevation:       num('elevation'),
+        bbox_lat_ll:     num('bbox_lat_ll'),
+        bbox_lon_ll:     num('bbox_lon_ll'),
+        bbox_lat_ur:     num('bbox_lat_ur'),
+        bbox_lon_ur:     num('bbox_lon_ur'),
         telegram_token:  document.getElementById('telegram_token').value.trim(),
         telegram_chat:   document.getElementById('telegram_chat').value.trim(),
         seestar_enabled: document.getElementById('seestar_enabled').checked,
         seestar_host:    document.getElementById('seestar_host').value.trim(),
         seestar_port:    parseInt(document.getElementById('seestar_port').value || 4700),
     };
-    // Switch to launch screen
-    STEPS.forEach(id => {
-        const el = document.getElementById(id);
-        if (el) { el.style.display = 'none'; el.classList.remove('active'); }
-    });
-    const launchEl = document.getElementById('step-launch');
-    launchEl.style.display = '';
-    launchEl.classList.add('active');
-    document.querySelector('.wizard-footer').style.display = 'none';
-    if (window.flymoon) {
-        await window.flymoon.wizardComplete(cfg);
+
+    if (IS_FIRST_LAUNCH) {
+        // Show the launch spinner while Flask boots.
+        STEPS.forEach(id => {
+            const el = document.getElementById(id);
+            if (el) { el.style.display = 'none'; el.classList.remove('active'); }
+        });
+        const launchEl = document.getElementById('step-launch');
+        launchEl.style.display = '';
+        launchEl.classList.add('active');
+        document.querySelector('.wizard-footer').style.display = 'none';
+    }
+
+    if (window.zipcatcher) {
+        await window.zipcatcher.wizardComplete(cfg);
     }
 }
 
-// Pre-fill from existing config if editing preferences
 async function init() {
-    if (!window.flymoon) return;
-    // Listen for Flask boot progress updates
-    if (window.flymoon.onLaunchProgress) {
-        window.flymoon.onLaunchProgress(function(data) {
+    if (!window.zipcatcher) return;
+    if (window.zipcatcher.onLaunchProgress) {
+        window.zipcatcher.onLaunchProgress(function(data) {
             var el = document.getElementById('launchStatusText');
             var bar = document.getElementById('launchProgressBar');
             if (el && data.msg) el.textContent = data.msg;
             if (bar && data.pct !== undefined) bar.style.width = data.pct + '%';
         });
     }
-    const cfg = await window.flymoon.getConfig();
-    if (!cfg || !cfg.aeroapi_key) return;
-    document.getElementById('aeroapi_key').value   = cfg.aeroapi_key   || '';
-    document.getElementById('latitude').value      = cfg.latitude      || '';
-    document.getElementById('longitude').value     = cfg.longitude     || '';
-    document.getElementById('elevation').value     = cfg.elevation     || '';
-    document.getElementById('bbox_lat_ll').value   = cfg.bbox_lat_ll   || '';
-    document.getElementById('bbox_lon_ll').value   = cfg.bbox_lon_ll   || '';
-    document.getElementById('bbox_lat_ur').value   = cfg.bbox_lat_ur   || '';
-    document.getElementById('bbox_lon_ur').value   = cfg.bbox_lon_ur   || '';
-    document.getElementById('telegram_token').value= cfg.telegram_token|| '';
-    document.getElementById('telegram_chat').value = cfg.telegram_chat || '';
+    const cfg = await window.zipcatcher.getConfig();
+    if (!cfg) return;
+    function set(id, val) {
+        var el = document.getElementById(id);
+        if (el && val != null && val !== '') el.value = val;
+    }
+    set('aeroapi_key',   cfg.aeroapi_key);
+    set('latitude',      cfg.latitude);
+    set('longitude',     cfg.longitude);
+    set('elevation',     cfg.elevation);
+    set('bbox_lat_ll',   cfg.bbox_lat_ll);
+    set('bbox_lon_ll',   cfg.bbox_lon_ll);
+    set('bbox_lat_ur',   cfg.bbox_lat_ur);
+    set('bbox_lon_ur',   cfg.bbox_lon_ur);
+    set('telegram_token',cfg.telegram_token);
+    set('telegram_chat', cfg.telegram_chat);
     document.getElementById('seestar_enabled').checked = !!cfg.seestar_enabled;
-    document.getElementById('seestar_host').value  = cfg.seestar_host  || '';
-    document.getElementById('seestar_port').value  = cfg.seestar_port  || 4700;
+    set('seestar_host',  cfg.seestar_host);
+    document.getElementById('seestar_port').value = cfg.seestar_port || 4700;
     toggleSeestar();
 }
 

@@ -1,10 +1,11 @@
 'use strict';
 
-const { app, BrowserWindow, ipcMain, shell, dialog, Menu, screen } = require('electron');
-const path   = require('path');
-const fs     = require('fs');
-const http   = require('http');
-const net    = require('net');
+const { app, BrowserWindow, ipcMain, shell, dialog, Menu, screen, session } = require('electron');
+const path    = require('path');
+const fs      = require('fs');
+const http    = require('http');
+const https   = require('https');
+const net     = require('net');
 const { spawn, execFile } = require('child_process');
 
 // ─── Paths ──────────────────────────────────────────────────────────────────
@@ -19,10 +20,13 @@ let flaskProcess  = null;
 let flaskPort     = null;
 let mainWindow    = null;
 let wizardWindow  = null;
+let wizardMode    = 'preferences'; // 'first-launch' | 'preferences'
 let splashWindow  = null;
+let suppressWindowAllClosed = false;
+let wizardBootInProgress = false;
 
 // ─── Window state persistence ────────────────────────────────────────────────
-const DEFAULT_WIDTH  = 1100;  // Minimum to show map + altitude panel comfortably
+const DEFAULT_WIDTH  = 1920;  // Default launch width
 
 function loadWindowState() {
     try {
@@ -68,7 +72,7 @@ function findFreePort() {
     });
 }
 
-function waitForFlask(port, maxMs = 90000) {
+function waitForFlask(port, maxMs = 30000) {
     return new Promise((resolve, reject) => {
         const deadline = Date.now() + maxMs;
         const attempt = () => {
@@ -81,6 +85,76 @@ function waitForFlask(port, maxMs = 90000) {
         };
         attempt();
     });
+}
+
+// IP-based geolocation fallback for the wizard's auto-detect button when
+// navigator.geolocation is unavailable or denied. Exposed via IPC, not used
+// automatically on first launch.
+function ipGeolocate(timeoutMs = 3000) {
+    return new Promise((resolve) => {
+        const req = https.get('https://ipapi.co/json/', { timeout: timeoutMs }, (res) => {
+            if (res.statusCode !== 200) { res.resume(); return resolve(null); }
+            let body = '';
+            res.setEncoding('utf8');
+            res.on('data', (c) => { body += c; });
+            res.on('end', () => {
+                try {
+                    const j = JSON.parse(body);
+                    if (typeof j.latitude === 'number' && typeof j.longitude === 'number') {
+                        resolve({
+                            latitude:  j.latitude,
+                            longitude: j.longitude,
+                            city:      j.city || '',
+                            region:    j.region || '',
+                            country:   j.country_name || j.country || '',
+                        });
+                    } else {
+                        resolve(null);
+                    }
+                } catch { resolve(null); }
+            });
+        });
+        req.on('timeout', () => { req.destroy(); resolve(null); });
+        req.on('error',   () => resolve(null));
+    });
+}
+
+// Greenwich Observatory — used as the fallback when the user opens the app
+// without any saved config (including Skip All) so Flask always has valid
+// coordinates to render a map and compute celestial positions.
+const GREENWICH = {
+    latitude:  51.4769,
+    longitude: -0.0005,
+    elevation: 46,
+};
+
+function buildGreenwichConfig() {
+    const { latitude: lat, longitude: lon, elevation } = GREENWICH;
+    return {
+        aeroapi_key: '',
+        latitude:  lat,
+        longitude: lon,
+        elevation,
+        bbox_lat_ll: lat - 1.5,
+        bbox_lon_ll: lon - 1.5,
+        bbox_lat_ur: lat + 1.5,
+        bbox_lon_ur: lon + 1.5,
+        seestar_enabled: false,
+    };
+}
+
+// Backfill any missing required fields with Greenwich values so a
+// partially-filled Skip'd wizard still yields a usable config.
+function applyGreenwichDefaults(cfg) {
+    const def = buildGreenwichConfig();
+    const out = { ...def, ...cfg };
+    const requiredNum = ['latitude','longitude','bbox_lat_ll','bbox_lon_ll','bbox_lat_ur','bbox_lon_ur'];
+    for (const k of requiredNum) {
+        const v = parseFloat(out[k]);
+        if (!isFinite(v)) out[k] = def[k];
+    }
+    if (!isFinite(parseFloat(out.elevation))) out.elevation = def.elevation;
+    return out;
 }
 
 function loadConfig() {
@@ -125,21 +199,29 @@ function configToEnv(cfg) {
 // ─── Flask Server ────────────────────────────────────────────────────────────
 
 function detectFfmpeg() {
-    // Check common locations for ffmpeg
+    // Prefer the bundled ffmpeg (ffmpeg-static) so users don't have to
+    // install anything. In packaged mode it lives at
+    //   Contents/Resources/ffmpeg (+ .exe on Windows)
+    // and in dev mode we resolve it via require.resolve from node_modules.
+    const exeName = process.platform === 'win32' ? 'ffmpeg.exe' : 'ffmpeg';
+    const bundled = path.join(RESOURCES, exeName);
+    if (fs.existsSync(bundled)) return bundled;
+
+    if (!IS_PACKAGED) {
+        try {
+            const devPath = require('ffmpeg-static');
+            if (devPath && fs.existsSync(devPath)) return devPath;
+        } catch (_) { /* package not installed in dev env */ }
+    }
+
+    // Fallback: look for a system ffmpeg on PATH or in well-known locations.
     const { execFileSync } = require('child_process');
     const candidates = ['ffmpeg'];
     if (process.platform === 'darwin') {
         candidates.push('/opt/homebrew/bin/ffmpeg', '/usr/local/bin/ffmpeg');
     } else if (process.platform === 'win32') {
-        candidates.push(
-            path.join(RESOURCES, 'ffmpeg.exe'),
-            'C:\\ffmpeg\\bin\\ffmpeg.exe'
-        );
+        candidates.push('C:\\ffmpeg\\bin\\ffmpeg.exe');
     }
-    // Also check if bundled with the app
-    const bundled = path.join(RESOURCES, process.platform === 'win32' ? 'ffmpeg.exe' : 'ffmpeg');
-    if (fs.existsSync(bundled)) return bundled;
-
     for (const cmd of candidates) {
         try {
             execFileSync(cmd, ['-version'], { stdio: 'ignore', timeout: 5000 });
@@ -150,28 +232,17 @@ function detectFfmpeg() {
 }
 
 function resolveBundledServerPath() {
-    const binName = process.platform === 'win32' ? 'flymoon-server.exe' : 'flymoon-server';
+    // PyInstaller onedir layout: Contents/Resources/zipcatcher-server/zipcatcher-server
+    const binName = process.platform === 'win32' ? 'zipcatcher-server.exe' : 'zipcatcher-server';
     const candidates = [
+        path.join(RESOURCES, 'zipcatcher-server', binName),
         path.join(RESOURCES, binName),
         path.join(RESOURCES, 'bin', binName),
-        path.join(RESOURCES, 'flymoon-server', binName),
         path.join(RESOURCES, 'app.asar.unpacked', binName),
     ];
 
     for (const candidate of candidates) {
         if (fs.existsSync(candidate)) return candidate;
-    }
-
-    // Fallback: shallow scan of resources for misplaced bundled server
-    try {
-        const entries = fs.readdirSync(RESOURCES, { withFileTypes: true });
-        for (const entry of entries) {
-            if (!entry.isDirectory()) continue;
-            const candidate = path.join(RESOURCES, entry.name, binName);
-            if (fs.existsSync(candidate)) return candidate;
-        }
-    } catch (_) {
-        // No-op: detailed error is thrown below.
     }
 
     const topLevel = fs.existsSync(RESOURCES) ? fs.readdirSync(RESOURCES).slice(0, 20) : [];
@@ -201,6 +272,12 @@ async function startFlask(cfg) {
     }
 
     env.PORT = String(flaskPort);
+
+    // Suppress Flask's built-in auto-open-browser behavior. Without this,
+    // app.py calls webbrowser.open() on startup and the system default
+    // browser launches an extra window pointing at the Flask port — the
+    // mysterious "standalone app" users saw alongside the Electron shell.
+    env.FLYMOON_NO_BROWSER = '1';
 
     // Detect ffmpeg and pass its path to Flask
     const ffmpegPath = detectFfmpeg();
@@ -318,12 +395,13 @@ function sendWizardProgress(msg, pct) {
     }
 }
 
-function createWizardWindow() {
+function createWizardWindow(mode = 'preferences') {
+    wizardMode = mode;
     wizardWindow = new BrowserWindow({
         width:  720,
         height: 680,
         resizable: false,
-        title: 'Zipcatcher Setup',
+        title: 'Zipcatcher Preferences',
         webPreferences: {
             preload: path.join(__dirname, 'preload.js'),
             contextIsolation: true,
@@ -331,8 +409,39 @@ function createWizardWindow() {
         },
     });
 
-    wizardWindow.loadFile(path.join(__dirname, 'wizard.html'));
-    wizardWindow.on('closed', () => { wizardWindow = null; });
+    wizardWindow.loadFile(path.join(__dirname, 'wizard.html'), {
+        query: { mode },
+    });
+    wizardWindow.on('close', () => {
+        // In first-launch mode, the wizard may close before the main window
+        // exists. Prevent the app-level "window-all-closed" handler from
+        // killing Flask during this intentional handoff.
+        if (wizardBootInProgress || (wizardMode === 'first-launch' && !mainWindow)) {
+            suppressWindowAllClosed = true;
+        }
+    });
+    wizardWindow.on('closed', () => {
+        wizardWindow = null;
+        // If the user closed the wizard on first launch without completing
+        // it (window close button), fall back to Greenwich defaults so the
+        // app still has a usable config.
+        if (wizardMode === 'first-launch' && !loadConfig()) {
+            wizardBootInProgress = true;
+            const cfg = buildGreenwichConfig();
+            saveConfig(cfg);
+            wizardMode = 'preferences';
+            bootFromConfig(cfg).catch((err) => {
+                dialog.showErrorBox('Startup Error', `Failed to start Zipcatcher server:\n\n${err.message}`);
+                app.quit();
+            }).finally(() => {
+                wizardBootInProgress = false;
+                suppressWindowAllClosed = false;
+            });
+            return;
+        }
+        if (!wizardBootInProgress) suppressWindowAllClosed = false;
+        wizardMode = 'preferences';
+    });
 }
 
 function buildMenu() {
@@ -372,7 +481,20 @@ function buildMenu() {
 
 function openWizardForEdit() {
     if (wizardWindow) { wizardWindow.focus(); return; }
-    createWizardWindow();
+    createWizardWindow('preferences');
+}
+
+// Start Flask with the given config and show the main window. Shared by
+// the first-launch wizard flow and the normal startup path.
+async function bootFromConfig(cfg) {
+    setSplashProgress('Starting Zipcatcher server…', 30);
+    await startFlask(cfg);
+    setSplashProgress('Connecting to flight data…', 75);
+    await new Promise(r => setTimeout(r, 200));
+    setSplashProgress('Ready.', 100);
+    if (splashWindow && !splashWindow.isDestroyed()) splashWindow.close();
+    if (!mainWindow) createMainWindow();
+    else mainWindow.show();
 }
 
 // ─── IPC Handlers ─────────────────────────────────────────────────────────────
@@ -384,36 +506,101 @@ ipcMain.handle('save-config', async (_e, cfg) => {
     return { ok: true };
 });
 
+async function restartFlask(cfg) {
+    if (flaskProcess) {
+        const proc = flaskProcess;
+        flaskProcess = null;
+        proc.removeAllListeners('exit');
+        proc.kill();
+        await new Promise(r => setTimeout(r, 300));
+    }
+    await startFlask(cfg);
+}
+
 ipcMain.handle('wizard-complete', async (_e, cfg) => {
-    saveConfig(cfg);
-    if (!mainWindow) {
-        try {
-            sendWizardProgress('Starting server…', 20);
-            await startFlask(cfg);
-            sendWizardProgress('Connecting to services…', 65);
-            await new Promise(r => setTimeout(r, 300));
-            sendWizardProgress('Almost ready…', 95);
-            await new Promise(r => setTimeout(r, 300));
-            sendWizardProgress('Ready!', 100);
-            await new Promise(r => setTimeout(r, 600));
+    const wasFirstLaunch = wizardMode === 'first-launch';
+    const finalCfg = applyGreenwichDefaults(cfg || {});
+    saveConfig(finalCfg);
+
+    try {
+        if (wasFirstLaunch) {
+            wizardBootInProgress = true;
+            suppressWindowAllClosed = true;
+            // Reset mode before we close the window so the `closed` handler
+            // doesn't treat this as an abandoned first-launch.
+            wizardMode = 'preferences';
             if (wizardWindow && !wizardWindow.isDestroyed()) {
                 wizardWindow.close();
                 wizardWindow = null;
             }
-            createMainWindow();
-        } catch (err) {
+            await bootFromConfig(finalCfg);
+        } else {
+            wizardMode = 'preferences';
             if (wizardWindow && !wizardWindow.isDestroyed()) {
                 wizardWindow.close();
                 wizardWindow = null;
             }
-            dialog.showErrorBox('Startup Error', `Failed to start Zipcatcher server:\n\n${err.message}`);
+            // Preferences edit: Flask is already running; restart so the
+            // new env vars take effect, then reload the main window.
+            await restartFlask(finalCfg);
+            if (!mainWindow) createMainWindow();
+            else mainWindow.loadURL(`http://127.0.0.1:${flaskPort}/`);
         }
-    } else {
-        if (wizardWindow && !wizardWindow.isDestroyed()) {
-            wizardWindow.close();
-            wizardWindow = null;
+    } catch (err) {
+        dialog.showErrorBox('Startup Error', `Failed to start Zipcatcher server:\n\n${err.message}`);
+    } finally {
+        if (wasFirstLaunch) {
+            wizardBootInProgress = false;
+            suppressWindowAllClosed = false;
         }
     }
+    return { ok: true };
+});
+
+// Invoked by the wizard's "Skip All" button on Card 1. Writes a Greenwich
+// default config, boots Flask, and shows the main window.
+ipcMain.handle('wizard-skip-all', async () => {
+    const wasFirstLaunch = wizardMode === 'first-launch';
+    const existing = loadConfig();
+    const finalCfg = applyGreenwichDefaults(existing || {});
+    saveConfig(finalCfg);
+
+    try {
+        if (wasFirstLaunch) {
+            wizardBootInProgress = true;
+            suppressWindowAllClosed = true;
+            wizardMode = 'preferences';
+            if (wizardWindow && !wizardWindow.isDestroyed()) {
+                wizardWindow.close();
+                wizardWindow = null;
+            }
+            await bootFromConfig(finalCfg);
+        } else {
+            wizardMode = 'preferences';
+            if (wizardWindow && !wizardWindow.isDestroyed()) {
+                wizardWindow.close();
+                wizardWindow = null;
+            }
+        }
+        // In preferences mode, Flask is already running with the existing
+        // config; nothing to do.
+    } catch (err) {
+        dialog.showErrorBox('Startup Error', `Failed to start Zipcatcher server:\n\n${err.message}`);
+    } finally {
+        if (wasFirstLaunch) {
+            wizardBootInProgress = false;
+            suppressWindowAllClosed = false;
+        }
+    }
+    return { ok: true };
+});
+
+ipcMain.handle('ip-geolocate', async () => {
+    return await ipGeolocate();
+});
+
+ipcMain.handle('open-preferences', () => {
+    openWizardForEdit();
     return { ok: true };
 });
 
@@ -424,10 +611,25 @@ ipcMain.handle('get-resources-path', () => RESOURCES);
 // ─── App Lifecycle ─────────────────────────────────────────────────────────────
 
 app.whenReady().then(async () => {
-    // Always show the splash screen first
-    createSplashWindow();
+    // Grant the wizard renderer permission to use navigator.geolocation.
+    // Without this, Electron silently denies geolocation in non-https
+    // contexts and the wizard's "Auto-detect my location" button fails.
+    session.defaultSession.setPermissionRequestHandler((_wc, permission, callback) => {
+        if (permission === 'geolocation') return callback(true);
+        callback(false);
+    });
 
-    // Wait for splash page to finish loading before proceeding
+    const cfg = loadConfig();
+    if (!cfg) {
+        // First launch: show the wizard, do not start Flask yet, do not
+        // create the main window. Flask boots only after the user completes
+        // or skips the wizard.
+        createWizardWindow('first-launch');
+        return;
+    }
+
+    // Normal startup path: splash → Flask → main window.
+    createSplashWindow();
     await new Promise(resolve => {
         if (splashWindow && !splashWindow.isDestroyed()) {
             splashWindow.webContents.once('did-finish-load', resolve);
@@ -436,41 +638,17 @@ app.whenReady().then(async () => {
         }
     });
 
-    const splashStart = Date.now();
-    const MIN_SPLASH_MS = 6000;
-
-    const closeSplash = async () => {
-        const elapsed = Date.now() - splashStart;
-        const remaining = MIN_SPLASH_MS - elapsed;
-        if (remaining > 0) await new Promise(r => setTimeout(r, remaining));
-        if (splashWindow && !splashWindow.isDestroyed()) {
-            splashWindow.close();
-        }
-    };
-
-    const cfg = loadConfig();
-    if (!cfg || !cfg.aeroapi_key) {
-        // No config — wait minimum time then open wizard
-        await closeSplash();
-        createWizardWindow();
-    } else {
-        try {
-            setSplashProgress('Starting Zipcatcher server…', 20);
-            await startFlask(cfg);
-            setSplashProgress('Connecting to flight data…', 65);
-            await new Promise(r => setTimeout(r, 300));
-            setSplashProgress('Ready.', 100);
-            await closeSplash();
-            createMainWindow();
-        } catch (err) {
-            if (splashWindow && !splashWindow.isDestroyed()) splashWindow.close();
-            dialog.showErrorBox('Startup Error', `Failed to start Zipcatcher server:\n\n${err.message}`);
-            app.quit();
-        }
+    try {
+        await bootFromConfig(cfg);
+    } catch (err) {
+        if (splashWindow && !splashWindow.isDestroyed()) splashWindow.close();
+        dialog.showErrorBox('Startup Error', `Failed to start Zipcatcher server:\n\n${err.message}`);
+        app.quit();
     }
 });
 
 app.on('window-all-closed', () => {
+    if (suppressWindowAllClosed) return;
     if (flaskProcess) flaskProcess.kill();
     if (process.platform !== 'darwin') app.quit();
 });
@@ -482,7 +660,7 @@ app.on('before-quit', () => {
 app.on('activate', async () => {
     if (!mainWindow && !wizardWindow) {
         const cfg = loadConfig();
-        if (cfg && cfg.aeroapi_key) {
+        if (cfg) {
             if (!flaskProcess) await startFlask(cfg);
             createMainWindow();
         }

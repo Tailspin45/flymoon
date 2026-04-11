@@ -303,8 +303,11 @@ var appConfig = {
     autoRefreshIntervalMinutes: 2   // Default 2 minutes
 };
 
-// Load configuration from server
-fetch('/config')
+// Load configuration from server. Exposed as a promise so initialization
+// code (initializeAutoRefresh) can await the form-field seed before reading
+// the latitude input — otherwise on a fresh port origin (e.g. right after a
+// Preferences save restarts Flask) the input is still empty when init runs.
+window.configReady = fetch('/config')
     .then(response => response.json())
     .then(config => {
         appConfig = config;
@@ -313,45 +316,54 @@ fetch('/config')
             console.log('Zipcatcher codeRevision:', config.codeRevision, '(should match git after pull + restart)');
         }
 
-        // Seed localStorage from server config when position is missing
-        // (ensures observer position works regardless of port/origin)
-        const hasPosition = localStorage.getItem("latitude") && localStorage.getItem("latitude") !== "null";
-        if (!hasPosition && config.observerLatitude) {
-            localStorage.setItem("latitude", config.observerLatitude);
-            localStorage.setItem("longitude", config.observerLongitude);
-            localStorage.setItem("elevation", config.observerElevation || "0");
-            console.log('Seeded observer position from server config');
+        // Sync localStorage with the server config. The server config is
+        // authoritative: after a Preferences save Flask restarts with new
+        // env vars, and any stale localStorage values from the previous
+        // session must be overwritten or the UI renders the old location
+        // with no bbox matching the new one.
+        const serverLat = parseFloat(config.observerLatitude);
+        const serverLon = parseFloat(config.observerLongitude);
+        if (!isNaN(serverLat) && !isNaN(serverLon)) {
+            const storedLat = parseFloat(localStorage.getItem("latitude"));
+            const storedLon = parseFloat(localStorage.getItem("longitude"));
+            const observerChanged = isNaN(storedLat) || isNaN(storedLon)
+                || Math.abs(storedLat - serverLat) > 1e-6
+                || Math.abs(storedLon - serverLon) > 1e-6;
 
-            // Populate form fields
-            const latEl = document.getElementById("latitude");
-            const lonEl = document.getElementById("longitude");
-            const elevEl = document.getElementById("elevation");
-            if (latEl) latEl.value = config.observerLatitude;
-            if (lonEl) lonEl.value = config.observerLongitude;
-            if (elevEl) elevEl.value = config.observerElevation || "0";
+            if (observerChanged) {
+                localStorage.setItem("latitude", config.observerLatitude);
+                localStorage.setItem("longitude", config.observerLongitude);
+                localStorage.setItem("elevation", config.observerElevation || "0");
+                console.log('Synced observer position from server config:', serverLat, serverLon);
 
-            // Generate default ±1.5° bbox around the observer
-            const lat = parseFloat(config.observerLatitude);
-            const lon = parseFloat(config.observerLongitude);
-            if (!isNaN(lat) && !isNaN(lon)) {
-                // Prefer server bbox if available, else generate default
-                const bboxLat = parseFloat(config.bboxLatLL);
-                let bbox;
-                if (!isNaN(bboxLat) && bboxLat !== 0) {
-                    bbox = {
-                        latLowerLeft:  parseFloat(config.bboxLatLL),
-                        lonLowerLeft:  parseFloat(config.bboxLonLL),
-                        latUpperRight: parseFloat(config.bboxLatUR),
-                        lonUpperRight: parseFloat(config.bboxLonUR),
-                    };
-                } else {
-                    bbox = {
-                        latLowerLeft:  Math.round((lat - 1.5) * 10000) / 10000,
-                        lonLowerLeft:  Math.round((lon - 1.5) * 10000) / 10000,
-                        latUpperRight: Math.round((lat + 1.5) * 10000) / 10000,
-                        lonUpperRight: Math.round((lon + 1.5) * 10000) / 10000,
-                    };
-                }
+                const latEl = document.getElementById("latitude");
+                const lonEl = document.getElementById("longitude");
+                const elevEl = document.getElementById("elevation");
+                if (latEl) latEl.value = config.observerLatitude;
+                if (lonEl) lonEl.value = config.observerLongitude;
+                if (elevEl) elevEl.value = config.observerElevation || "0";
+            }
+
+            // Seed bbox when (a) observer changed, or (b) window.lastBoundingBox
+            // is unset. Prefer server bbox when present, else default to ±1.5°
+            // around the observer.
+            if (observerChanged || !window.lastBoundingBox) {
+                const bboxLatLL = parseFloat(config.bboxLatLL);
+                const bboxLonLL = parseFloat(config.bboxLonLL);
+                const bboxLatUR = parseFloat(config.bboxLatUR);
+                const bboxLonUR = parseFloat(config.bboxLonUR);
+                const serverBboxValid = [bboxLatLL, bboxLonLL, bboxLatUR, bboxLonUR].every(v => !isNaN(v));
+                const bbox = serverBboxValid ? {
+                    latLowerLeft:  bboxLatLL,
+                    lonLowerLeft:  bboxLonLL,
+                    latUpperRight: bboxLatUR,
+                    lonUpperRight: bboxLonUR,
+                } : {
+                    latLowerLeft:  Math.round((serverLat - 1.5) * 10000) / 10000,
+                    lonLowerLeft:  Math.round((serverLon - 1.5) * 10000) / 10000,
+                    latUpperRight: Math.round((serverLat + 1.5) * 10000) / 10000,
+                    lonUpperRight: Math.round((serverLon + 1.5) * 10000) / 10000,
+                };
                 window.lastBoundingBox = bbox;
                 localStorage.setItem("boundingBox", JSON.stringify(bbox));
                 localStorage.setItem("customBoundingBox", JSON.stringify(bbox));
@@ -359,9 +371,11 @@ fetch('/config')
             }
         }
         // Do not POST observer here — stale localStorage would override .env and break telescope azimuth.
+        return config;
     })
     .catch(error => {
         console.error('Error loading config:', error);
+        return null;
     });
 
 // ─── Data Source Mode ─────────────────────────────────────────────────────────
@@ -375,7 +389,7 @@ const DATA_SOURCES = {
     },
     'opensky-only': {
         icon: '🌐',
-        label: 'No FlightAware',
+        label: 'Multisource (no FA)',
         cost: 'Free',
         color: '#10b981',
         note: 'OpenSky + ADSB-One + adsb.lol + adsb.fi + ADS-B Exchange (if key set) in parallel. No FlightAware enrichment. Zero cost.',
@@ -397,7 +411,7 @@ const DATA_SOURCES = {
 };
 
 function getDataSourceMode() {
-    return localStorage.getItem('flymoonDataSource') || 'hybrid';
+    return localStorage.getItem('flymoonDataSource') || 'opensky-only';
 }
 
 function updateDataSourceButton() {
@@ -2047,6 +2061,19 @@ function fetchFlights() {
     let longitude = document.getElementById("longitude").value;
     let elevation = document.getElementById("elevation").value;
 
+    // Guard against empty/NaN coordinates reaching the server — Flask returns
+    // 400 on float(""), and tooltip-less "Server error: 400" is worthless to
+    // the user. Callers that bypass the isNaN checks (sun/moon toggle,
+    // updateTrackedFlight, direct console calls) land here.
+    const _latN = parseFloat(latitude);
+    const _lonN = parseFloat(longitude);
+    if (!isFinite(_latN) || !isFinite(_lonN)) {
+        console.warn('[fetchFlights] Skipping — observer coordinates not set yet',
+                     { latitude, longitude });
+        document.getElementById("loadingSpinner").style.display = "none";
+        return;
+    }
+
     let hasVeryPossibleTransits = false;
     let transitDetails = []; // Collect high-priority transits for notification
 
@@ -2076,7 +2103,7 @@ function fetchFlights() {
         + `&alt_threshold=${encodeURIComponent(altThreshold)}`
         + `&az_threshold=${encodeURIComponent(azThreshold)}`
         + `&send-notification=true`
-        + `&data_source=${encodeURIComponent(localStorage.getItem('flymoonDataSource') || 'hybrid')}`
+        + `&data_source=${encodeURIComponent(localStorage.getItem('flymoonDataSource') || 'opensky-only')}`
     );
 
     // Pass any user-disabled targets so the server skips them (saves API calls)
@@ -2846,16 +2873,25 @@ window.addEventListener('DOMContentLoaded', () => {
  * - Only fetches if cache expired or missing
  * - Always starts auto-refresh and soft-refresh intervals
  */
-function initializeAutoRefresh() {
+async function initializeAutoRefresh() {
     console.log('[Init] Starting automatic refresh system');
-    
+
     // Clean up old localStorage values from previous manual/auto mode
     localStorage.removeItem('frequency');
-    
+
+    // Wait for the /config fetch to finish seeding localStorage and form
+    // fields before checking the latitude input. Without this, on a fresh
+    // port origin (right after a Preferences save restarts Flask) the field
+    // would still be empty and init would bail out, leaving the countdown
+    // and auto-refresh intervals unstarted.
+    if (window.configReady && typeof window.configReady.then === 'function') {
+        try { await window.configReady; } catch (_) {}
+    }
+
     // Check if we have saved observer coordinates
     const lat = document.getElementById("latitude");
     const latitude = parseFloat(lat.value);
-    
+
     if (isNaN(latitude)) {
         console.log('[Init] No observer coordinates - waiting for user input');
         return;

@@ -98,11 +98,11 @@ def main() -> None:
         glow_radius=18,
     )
 
-    # 737 — upper-left, raised so it doesn't crowd the wordmark.
+    # 737 — upper-left, raised so it sits clear of the drop-target strip.
     paste_with_glow(
         canvas,
         aircraft,
-        box=(40, -10, 260, 260),
+        box=(40, -70, 260, 260),
         glow_color=(0, 0, 0, 0),  # shadow, not glow
         glow_radius=8,
     )

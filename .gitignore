@@ -179,6 +179,7 @@ static/simulations/
 electron/node_modules/
 electron/assets/bin/
 dist-electron/
+bad PyInstaller*/
 flymoon-server
 flymoon-server.exe
 # electron/assets/icon.icns

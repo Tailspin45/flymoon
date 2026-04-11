@@ -10,7 +10,7 @@ on:
       - "templates/**"
       - "static/**"
       - "electron/**"
-      - "flymoon.spec"
+      - "zipcatcher.spec"
       - "requirements.txt"
       - "START-HERE-Install-Zipcatcher.bat"
       - "README-WINDOWS.txt"

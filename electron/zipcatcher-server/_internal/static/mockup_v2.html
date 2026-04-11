@@ -1,0 +1,616 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Zipcatcher — Telescope Control Mockup v2</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body {
+  background: #0a0a0a; color: #ddd;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  font-size: 13px; height: 100vh;
+  display: flex; flex-direction: column; overflow: hidden;
+}
+/* Top bar */
+.topbar {
+  background: #111; border-bottom: 1px solid #2a2a2a;
+  padding: 7px 16px; display: flex; align-items: center; gap: 14px; flex-shrink: 0;
+}
+.topbar .brand { font-weight: 700; font-size: 1em; color: #039c9c; letter-spacing: 1px; }
+.topbar .note  { font-size: 0.72em; color: #444; margin-left: auto; }
+/* 4-column layout */
+.telescope-layout {
+  display: grid; grid-template-columns: 20% 40% 20% 20%;
+  flex: 1; overflow: hidden; min-height: 0;
+}
+.sidebar {
+  background: #1a1a1a; border-right: 1px solid #2a2a2a;
+  overflow-y: auto; overflow-x: hidden;
+}
+.sidebar-right { border-right: none; border-left: 1px solid #2a2a2a; }
+.sidebar-alp   { border-right: none; border-left: 1px solid #2a2a2a; }
+.sidebar-panel { padding: 9px 12px; border-bottom: 1px solid #2a2a2a; }
+.sidebar-panel h3 {
+  margin: 0 0 7px 0; color: #039c9c; font-size: 0.8em;
+  font-weight: 700; text-transform: uppercase; letter-spacing: 0.6px;
+}
+.col-label {
+  position: sticky; top: 0; z-index: 2;
+  background: #111; border-bottom: 1px solid #1e1e1e;
+  padding: 4px 12px; font-size: 0.65em; color: #444;
+  text-transform: uppercase; letter-spacing: 0.08em; font-weight: 700;
+}
+/* Buttons */
+.btn { padding: 6px 10px; border: none; border-radius: 4px; font-size: 0.8em; font-weight: 600; cursor: pointer; transition: background 0.15s; white-space: nowrap; }
+.btn:disabled { opacity: 0.38; cursor: not-allowed; }
+.btn-primary  { background: #039c9c; color: #fff; }
+.btn-primary:hover:not(:disabled)   { background: #027a7a; }
+.btn-secondary{ background: rgba(255,255,255,0.07); color: #bbb; border: 1px solid #333; }
+.btn-secondary:hover:not(:disabled) { background: rgba(255,255,255,0.12); }
+.btn-info     { background: #1a5fb4; color: #fff; }
+.btn-info:hover:not(:disabled)      { background: #1450a0; }
+.btn-danger   { background: #8b0000; color: #fff; }
+.btn-danger:hover:not(:disabled)    { background: #a50000; }
+.btn-warning  { background: #7a4700; color: #ffcc88; border: 1px solid #9a5500; }
+.btn-warning:hover:not(:disabled)   { background: #9a5800; }
+.btn-compact  { padding: 4px 8px; font-size: 0.78em; }
+.button-group { display: flex; flex-wrap: wrap; gap: 5px; }
+.button-group .btn { flex: 1 1 auto; }
+.button-grid-2x2 { display: grid; grid-template-columns: 1fr 1fr; gap: 5px; }
+.btn-icon {
+  background: rgba(255,255,255,0.05); border: 1px solid #333; border-radius: 4px;
+  padding: 3px 9px; cursor: pointer; font-size: 0.85em; color: #aaa; transition: all 0.15s;
+}
+.btn-icon:hover { background: rgba(255,255,255,0.10); color: #ccc; border-color: #444; }
+/* Status */
+.status-dot { width: 9px; height: 9px; border-radius: 50%; display: inline-block; flex-shrink: 0; }
+.dot-green  { background: #32cd32; box-shadow: 0 0 6px rgba(50,205,50,.55); }
+.dot-red    { background: #cc0000; }
+.dot-orange { background: #f08000; box-shadow: 0 0 6px rgba(240,128,0,.5); animation: pulse-orange 1.2s infinite; }
+.dot-grey   { background: #555; }
+@keyframes pulse-orange { 0%,100%{opacity:1} 50%{opacity:.5} }
+.status-indicator { display: flex; align-items: center; gap: 7px; margin-bottom: 7px; font-size: 0.82em; color: #aaa; }
+/* Inputs */
+.input-compact { padding: 4px 7px; border: 1px solid #333; border-radius: 4px; background: #0e0e0e; color: #ddd; font-size: 0.8em; width: 100%; }
+.input-compact:focus { outline: none; border-color: #039c9c; }
+.input-row { display: flex; gap: 5px; align-items: center; }
+.input-label { font-size: 0.72em; color: #555; white-space: nowrap; }
+/* Settings row */
+.setting-item { display: flex; align-items: center; justify-content: space-between; margin-bottom: 7px; gap: 8px; }
+.setting-item:last-child { margin-bottom: 0; }
+.setting-label { font-size: 0.77em; color: #888; white-space: nowrap; min-width: 76px; }
+.setting-slider { flex: 1; accent-color: #4da6ff; height: 4px; cursor: pointer; }
+/* Toggle */
+.toggle-label { display: flex; align-items: center; gap: 8px; cursor: pointer; font-size: 0.82em; color: #ccc; }
+.toggle-slider { width: 30px; height: 16px; border-radius: 8px; background: #333; position: relative; transition: background .2s; flex-shrink: 0; }
+input[type=checkbox]:checked + .toggle-slider { background: #039c9c; }
+.toggle-slider::after { content:''; position:absolute; width:12px; height:12px; border-radius:50%; background:#fff; top:2px; left:2px; transition: left .2s; }
+input[type=checkbox]:checked + .toggle-slider::after { left:16px; }
+.toggle-label input[type=checkbox] { display:none; }
+.setting-info { font-size:0.72em; color:#555; margin-top:4px; line-height:1.4; }
+/* Badges */
+.badge { padding: 2px 6px; border-radius: 10px; font-size: 0.67em; font-weight: 700; text-transform: uppercase; border: 1px solid; white-space: nowrap; }
+.badge-up  { background: rgba(50,205,50,.12); color:#32cd32; border-color:#32cd32; }
+.badge-low { background: rgba(240,128,0,.12);  color:#f08000; border-color:#f08000; }
+.badge-set { background: rgba(100,100,100,.12); color:#666;   border-color:#444; }
+/* Target rows */
+.target-row { display:flex; align-items:center; gap:8px; padding:6px 8px; background:rgba(0,0,0,.35); border:1px solid #333; border-radius:4px; margin-bottom:5px; cursor:pointer; transition:all .15s; }
+.target-row:hover { background:rgba(3,156,156,.09); border-color:#039c9c; }
+.target-icon { font-size:1.25em; }
+.target-info { flex:1; }
+.target-name { font-size:0.82em; font-weight:600; color:#eee; }
+.target-coords { font-size:0.72em; color:#666; }
+/* Preview */
+.preview-area { background:#0d0d0d; display:flex; flex-direction:column; border-left:1px solid #1e1e1e; border-right:1px solid #1e1e1e; }
+.preview-header { background:#111; border-bottom:1px solid #2a2a2a; padding:7px 14px; display:flex; align-items:center; justify-content:space-between; flex-shrink:0; }
+.preview-header h2 { font-size:0.83em; color:#888; font-weight:600; }
+.preview-body { flex:1; display:flex; align-items:center; justify-content:center; background:repeating-linear-gradient(45deg,#0a0a0a 0,#0a0a0a 10px,#0d0d0d 10px,#0d0d0d 20px); position:relative; overflow:hidden; min-height:0; }
+/* Transit cards */
+.transit-card { background:rgba(0,0,0,.4); border:1px solid #2a2a2a; border-radius:4px; padding:6px 8px; margin-bottom:5px; font-size:0.77em; }
+.transit-card .flight { font-weight:700; color:#9cd9ff; }
+.transit-card .eta    { color:#039c9c; font-size:0.88em; margin-top:2px; }
+.transit-card .detail { color:#555; font-size:0.85em; }
+.transit-card.high { border-left:3px solid #f44; }
+.transit-card.med  { border-left:3px solid #fa0; }
+/* Detection */
+.detect-indicator { display:inline-flex; align-items:center; gap:6px; padding:4px 10px; border-radius:12px; font-size:0.78em; font-weight:600; margin-bottom:7px; border:1px solid; }
+.detect-running { color:#32cd32; border-color:#32cd32; background:rgba(50,205,50,.08); }
+.detect-idle    { color:#555;    border-color:#333;    background:rgba(255,255,255,.03); }
+/* Harness */
+.harness-card { background:rgba(255,255,255,.03); border:1px solid #2a2a2a; border-radius:4px; padding:7px 9px; margin-top:8px; }
+.harness-card-title { font-size:0.76em; font-weight:600; color:#666; margin-bottom:6px; }
+.harness-buttons { display:flex; gap:5px; flex-wrap:wrap; }
+.harness-status  { font-size:0.73em; color:#888; margin-top:6px; padding:4px 7px; background:rgba(0,0,0,.3); border-radius:3px; }
+/* Recording status */
+.rec-status { display:flex; align-items:center; gap:6px; padding:4px 8px; background:rgba(0,0,0,.3); border-radius:4px; font-size:0.77em; color:#888; margin-bottom:5px; }
+/* Capture sub-sections */
+.capture-compact { margin-bottom:10px; padding-bottom:10px; border-bottom:1px solid #1e1e1e; }
+.capture-compact:last-child { margin-bottom:0; padding-bottom:0; border-bottom:none; }
+.capture-sub-title { font-size:0.74em; color:#555; margin-bottom:5px; }
+/* Telemetry strip */
+.telemetry-strip { display:flex; flex-wrap:wrap; gap:0; background:#0d1117; border-bottom:1px solid #2a2a2a; }
+.telm-cell { flex:1; min-width:0; padding:6px 8px; border-right:1px solid #1a1a1a; display:flex; flex-direction:column; gap:1px; }
+.telm-cell:last-child { border-right:none; }
+.telm-label { font-size:0.62em; color:#444; text-transform:uppercase; letter-spacing:0.06em; }
+.telm-val   { font-size:0.82em; color:#9cd9ff; font-weight:600; font-variant-numeric:tabular-nums; }
+/* Tooltips */
+.tip-anchor { position:relative; display:inline-flex; align-items:center; cursor:help; }
+.tip-anchor .tip-icon { font-size:0.72em; color:#444; margin-left:3px; border:1px solid #333; border-radius:50%; width:13px; height:13px; display:inline-flex; align-items:center; justify-content:center; flex-shrink:0; transition:color .15s, border-color .15s; }
+.tip-anchor:hover .tip-icon { color:#888; border-color:#666; }
+.tip-anchor .tip-box { display:none; position:absolute; z-index:200; width:200px; padding:7px 9px; background:#1e2430; border:1px solid #3a3a4a; border-radius:5px; font-size:0.75em; color:#ccc; line-height:1.45; box-shadow:0 4px 18px rgba(0,0,0,.7); pointer-events:none; white-space:normal; bottom:calc(100% + 6px); left:50%; transform:translateX(-50%); }
+.tip-anchor:hover .tip-box { display:block; }
+.tip-right .tip-box { left:auto; right:0; transform:none; }
+/* Radio labels */
+.radio-label { font-size:0.82em; color:#bbb; cursor:pointer; display:inline-flex; align-items:center; gap:4px; }
+.radio-label input { accent-color:#4da6ff; }
+/* Named locations select */
+#savedLocations { flex:1; background:#0e0e0e; color:#ddd; border:1px solid #333; border-radius:4px; padding:3px 6px; font-size:0.8em; }
+/* Filmstrip */
+.filmstrip { background:#1a1a1a; border-top:1px solid #2a2a2a; height:170px; flex-shrink:0; display:flex; flex-direction:column; }
+.filmstrip-header { display:flex; align-items:center; justify-content:space-between; padding:4px 16px; border-bottom:1px solid #2a2a2a; flex-shrink:0; }
+.filmstrip-title { font-size:0.83em; font-weight:600; color:#039c9c; }
+.filmstrip-list { flex:1; overflow-x:auto; overflow-y:hidden; display:flex; gap:8px; padding:6px 16px; align-items:stretch; }
+.filmstrip-item { flex-shrink:0; width:150px; position:relative; cursor:pointer; border:2px solid #333; border-radius:4px; overflow:hidden; display:flex; flex-direction:column; }
+.filmstrip-item:hover { border-color:#039c9c; }
+.filmstrip-name { font-size:0.68em; line-height:1.3; color:#ccc; padding:3px 5px; background:#1a1a2e; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; order:-1; }
+.filmstrip-thumb { flex:1; background:#000; display:flex; align-items:center; justify-content:center; font-size:2em; color:#222; }
+
+/* ── NEW: Focus panel ── */
+.focus-step-row { display:flex; align-items:center; gap:5px; margin-bottom:6px; }
+.focus-val { font-size:0.85em; color:#9cd9ff; font-variant-numeric:tabular-nums; min-width:50px; text-align:center; }
+.focus-btn { padding:3px 10px; font-size:0.85em; font-weight:700; }
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <span class="brand">FLYMOON</span>
+  <span style="color:#2a2a2a;">|</span>
+  <span style="color:#555;font-size:0.82em;">Telescope Control</span>
+  <span class="note">UI Mockup v2 — proposed layout after ALP fix</span>
+</div>
+
+<div class="telescope-layout">
+
+  <!-- ══════════════════════════════════════════
+       COL 1 — Transits + Detection
+       ══════════════════════════════════════════ -->
+  <div class="sidebar">
+    <div class="col-label">Transits &amp; Detection</div>
+
+    <!-- Auto-capture -->
+    <div class="sidebar-panel">
+      <h3>🚨 Auto-Capture</h3>
+      <label class="toggle-label">
+        <input type="checkbox" checked>
+        <span class="toggle-slider"></span>
+        <span>Auto-Record Transits</span>
+      </label>
+      <div class="setting-info">Records when a flight enters the pre-buffer window.</div>
+    </div>
+
+    <!-- Upcoming transits -->
+    <div class="sidebar-panel">
+      <h3>✈️ Upcoming Transits</h3>
+      <div class="transit-card high">
+        <div class="flight">UAL2491 <span class="badge badge-up" style="margin-left:3px;">HIGH</span></div>
+        <div class="eta">⏱ 00:47 until transit</div>
+        <div class="detail">☀️ Sun · Alt 52° · Az 184°</div>
+      </div>
+      <div class="transit-card med">
+        <div class="flight">AAL338 <span class="badge badge-low" style="margin-left:3px;">MED</span></div>
+        <div class="eta">⏱ 04:12 until transit</div>
+        <div class="detail">🌙 Moon · Alt 38° · Az 221°</div>
+      </div>
+    </div>
+
+    <!-- Live detection -->
+    <div class="sidebar-panel">
+      <h3>🎯 Live Detection</h3>
+      <div class="detect-indicator detect-running">
+        <span class="status-dot dot-green"></span>
+        Running · 28.4 fps
+      </div>
+      <div style="font-size:0.74em;color:#555;margin-bottom:7px;">3 events this session</div>
+      <div class="button-group">
+        <button class="btn btn-danger btn-compact">⏹ Stop Detection</button>
+      </div>
+      <div class="harness-card">
+        <div class="harness-card-title">🧪 Detection Tester</div>
+        <div class="harness-buttons">
+          <button class="btn btn-secondary btn-compact" title="Inject synthetic transit blob">💉 Inject</button>
+          <button class="btn btn-secondary btn-compact" title="Sweep sensitivity matrix">📊 Sweep</button>
+          <button class="btn btn-secondary btn-compact" title="Validate captured files">✅ Validate</button>
+        </div>
+        <div class="harness-status">Last: Inject passed ✓ (1 detection)</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ══════════════════════════════════════════
+       COL 2 — Live Preview
+       ══════════════════════════════════════════ -->
+  <div class="preview-area">
+    <div class="preview-header">
+      <h2>☀️ Live Preview — Solar Mode</h2>
+      <div style="display:flex;align-items:center;gap:7px;font-size:0.77em;color:#f08000;">
+        <span class="status-dot dot-orange"></span>
+        Recording 00:23
+      </div>
+    </div>
+    <div class="preview-body">
+      <svg width="300" height="300" viewBox="0 0 300 300">
+        <defs>
+          <radialGradient id="sg" cx="48%" cy="44%">
+            <stop offset="0%" stop-color="#fff8e0"/>
+            <stop offset="55%" stop-color="#ffcc00"/>
+            <stop offset="100%" stop-color="#cc6600" stop-opacity="0"/>
+          </radialGradient>
+          <radialGradient id="lg" cx="50%" cy="50%">
+            <stop offset="68%" stop-color="transparent"/>
+            <stop offset="100%" stop-color="rgba(0,0,0,0.42)"/>
+          </radialGradient>
+          <filter id="glow"><feGaussianBlur stdDeviation="7" result="b"/>
+            <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
+          </filter>
+        </defs>
+        <circle cx="150" cy="150" r="145" fill="rgba(255,200,0,0.05)"/>
+        <circle cx="150" cy="150" r="105" fill="url(#sg)" filter="url(#glow)"/>
+        <circle cx="150" cy="150" r="105" fill="url(#lg)"/>
+        <ellipse cx="136" cy="140" rx="7" ry="5" fill="rgba(70,25,0,.7)" transform="rotate(-12,136,140)"/>
+        <ellipse cx="174" cy="155" rx="5" ry="3.5" fill="rgba(70,25,0,.6)"/>
+        <g transform="translate(100,149) rotate(-7)">
+          <rect x="0" y="-1.5" width="27" height="3" rx="1.5" fill="#0a0a0a"/>
+          <polygon points="9,-1.2 17,-6.5 17,-1.2" fill="#0a0a0a"/>
+          <polygon points="9,1.2 17,6.5 17,1.2" fill="#0a0a0a"/>
+        </g>
+        <circle cx="150" cy="150" r="105" fill="none" stroke="rgba(0,200,200,.15)" stroke-width="1" stroke-dasharray="4 6"/>
+        <line x1="150" y1="30" x2="150" y2="62" stroke="rgba(0,200,200,.2)" stroke-width="1"/>
+        <line x1="150" y1="238" x2="150" y2="270" stroke="rgba(0,200,200,.2)" stroke-width="1"/>
+        <line x1="30" y1="150" x2="62" y2="150" stroke="rgba(0,200,200,.2)" stroke-width="1"/>
+        <line x1="238" y1="150" x2="270" y2="150" stroke="rgba(0,200,200,.2)" stroke-width="1"/>
+      </svg>
+      <div style="position:absolute;bottom:14px;left:0;right:0;text-align:center;">
+        <span style="background:rgba(220,30,30,.88);color:#fff;font-size:0.74em;font-weight:700;padding:4px 14px;border-radius:18px;letter-spacing:0.05em;">
+          🎯 TRANSIT DETECTED — UAL2491
+        </span>
+      </div>
+    </div>
+  </div>
+
+  <!-- ══════════════════════════════════════════
+       COL 3 — Capture (unchanged from today)
+       ══════════════════════════════════════════ -->
+  <div class="sidebar sidebar-right">
+    <div class="col-label">Capture</div>
+
+    <!-- Connection -->
+    <div class="sidebar-panel">
+      <h3>🔌 Connection</h3>
+      <div class="status-indicator">
+        <span class="status-dot dot-green"></span>
+        Connected · 192.168.7.1
+      </div>
+      <div class="button-grid-2x2">
+        <button class="btn btn-primary btn-compact" disabled>Connect</button>
+        <button class="btn btn-secondary btn-compact">Disconnect</button>
+        <button class="btn btn-info btn-compact">🔍 Find</button>
+        <button class="btn btn-secondary btn-compact">Simulate</button>
+      </div>
+    </div>
+
+    <!-- Target -->
+    <div class="sidebar-panel">
+      <h3>🎯 Target</h3>
+      <div class="target-row" style="border-color:#039c9c;background:rgba(3,156,156,.08);">
+        <span class="target-icon">☀️</span>
+        <div class="target-info">
+          <div class="target-name">Sun</div>
+          <div class="target-coords">Alt 52.1° · Az 184.3°</div>
+        </div>
+        <span class="badge badge-up">Visible</span>
+      </div>
+      <div class="target-row">
+        <span class="target-icon">🌙</span>
+        <div class="target-info">
+          <div class="target-name">Moon</div>
+          <div class="target-coords">Alt 38.7° · Az 221.0°</div>
+        </div>
+        <span class="badge badge-low">Low</span>
+      </div>
+    </div>
+
+    <!-- Capture -->
+    <div class="sidebar-panel">
+      <h3>📸 Capture</h3>
+      <div class="capture-compact">
+        <div class="capture-sub-title">📷 Photo</div>
+        <button class="btn btn-primary btn-compact" style="width:100%;">📷 Capture</button>
+      </div>
+      <div class="capture-compact">
+        <div class="capture-sub-title">📹 Video</div>
+        <div class="input-row" style="margin-bottom:5px;">
+          <input type="number" value="10" class="input-compact" style="width:58px;flex:unset;">
+          <span class="input-label">seconds</span>
+        </div>
+        <div class="rec-status">
+          <span class="status-dot dot-orange"></span> Recording · 00:23
+        </div>
+        <div class="button-group">
+          <button class="btn btn-danger btn-compact">⏹️ Stop</button>
+        </div>
+      </div>
+      <div class="capture-compact">
+        <div class="capture-sub-title">🌅 Solar Timelapse</div>
+        <div class="rec-status">
+          <span class="status-dot dot-green"></span> Running · next 1:47
+        </div>
+        <div class="button-group">
+          <button class="btn btn-secondary btn-compact">⏸ Pause</button>
+          <button class="btn btn-danger btn-compact">⏹ Stop</button>
+          <button class="btn btn-secondary btn-compact">👁 Preview</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ══════════════════════════════════════════
+       COL 4 — Extended Control  ← REVISED
+       Changes from today:
+         · Manual Focus panel  (NEW)
+         · Telescope panel adds Stop (which currently doesn't work)
+         · GoTo / Saved Locations (already wired, keep)
+         · Camera Settings (already wired, keep)
+         · Remove ALPACA sidecar refs entirely
+       ══════════════════════════════════════════ -->
+  <div class="sidebar sidebar-alp">
+    <div class="col-label">Extended Control</div>
+
+    <!-- Live Telemetry -->
+    <div class="telemetry-strip">
+      <div class="telm-cell">
+        <span class="telm-label">RA</span>
+        <span class="telm-val">5.583h</span>
+      </div>
+      <div class="telm-cell">
+        <span class="telm-label">Dec</span>
+        <span class="telm-val">+22.0°</span>
+      </div>
+      <div class="telm-cell">
+        <span class="telm-label">Alt</span>
+        <span class="telm-val">52.1°</span>
+      </div>
+      <div class="telm-cell">
+        <span class="telm-label">Az</span>
+        <span class="telm-val">184.3°</span>
+      </div>
+    </div>
+
+    <!-- ── Telescope: Park / Stop / Autofocus / Track ── -->
+    <!--   FIXED vs today: Stop and Park now call real routes   -->
+    <div class="sidebar-panel">
+      <h3>Telescope</h3>
+      <div class="button-group" style="margin-bottom:5px;">
+        <button class="btn btn-warning btn-compact"
+          title="Sends iscope_stop_view + iscope_stop_view(stage=Stack) — halts all slews, stacks, and views">
+          ⏹ Stop
+        </button>
+        <button class="btn btn-secondary btn-compact"
+          title="Sends scope_park — slews to home position">
+          Park
+        </button>
+      </div>
+      <div class="button-group">
+        <button class="btn btn-secondary btn-compact"
+          title="Runs start_auto_focuse (~30 s routine)">
+          🔍 Autofocus
+        </button>
+        <button class="btn btn-primary btn-compact"
+          title="iscope_start_view mode=sun">
+          ☀️ Solar
+        </button>
+        <button class="btn btn-primary btn-compact"
+          title="iscope_start_view mode=moon">
+          🌙 Lunar
+        </button>
+      </div>
+    </div>
+
+    <!-- ── Manual Focus  (NEW PANEL) ── -->
+    <!--
+      JSON-RPC method: "move_step_focus" params: [steps]
+        +steps → focus out (further)
+        -steps → focus in (closer)
+      Step size selector controls how many steps per button press.
+      Position readout comes from get_device_state / telemetry polling.
+    -->
+    <div class="sidebar-panel">
+      <h3 class="tip-anchor">
+        Manual Focus
+        <span class="tip-icon">i</span>
+        <span class="tip-box">Sends <code>move_step_focus [±steps]</code>. Each press moves the focuser by the selected step size. Position is read from <code>get_device_state</code>.</span>
+      </h3>
+
+      <!-- Step size picker -->
+      <div class="setting-item" style="margin-bottom:8px;">
+        <span class="setting-label">Step size</span>
+        <div style="display:flex;gap:4px;">
+          <button class="btn btn-secondary btn-compact"
+            style="min-width:30px;background:rgba(3,156,156,.2);border-color:#039c9c;color:#39d9d9;"
+            title="Currently active step size">10</button>
+          <button class="btn btn-secondary btn-compact" style="min-width:30px;" title="Switch to 50 steps per press">50</button>
+          <button class="btn btn-secondary btn-compact" style="min-width:30px;" title="Switch to 100 steps per press">100</button>
+        </div>
+      </div>
+
+      <!-- Focus In / Out buttons + position readout -->
+      <div class="focus-step-row">
+        <button class="btn btn-secondary focus-btn" style="flex:1;"
+          title="move_step_focus [−step_size] — moves focuser closer">
+          ◀ In
+        </button>
+        <span class="focus-val" title="Last known focuser position from get_device_state">4 820</span>
+        <button class="btn btn-secondary focus-btn" style="flex:1;"
+          title="move_step_focus [+step_size] — moves focuser farther">
+          Out ▶
+        </button>
+      </div>
+
+      <!-- Autofocus shortcut (repeat of Telescope panel for convenience) -->
+      <button class="btn btn-secondary btn-compact" style="width:100%;margin-top:3px;"
+        title="start_auto_focuse — runs the scope's built-in auto-focus routine">
+        🔍 Run Autofocus
+      </button>
+    </div>
+
+    <!-- ── GoTo ── -->
+    <div class="sidebar-panel">
+      <h3 class="tip-anchor">
+        GoTo
+        <span class="tip-icon">i</span>
+        <span class="tip-box">Alt/Az is converted to RA/Dec via LST, then sent as <code>scope_goto [ra, dec]</code>. RA/Dec is sent directly.</span>
+      </h3>
+      <div style="display:flex;gap:14px;margin-bottom:8px;">
+        <label class="radio-label"><input type="radio" name="gm" checked> Alt/Az</label>
+        <label class="radio-label"><input type="radio" name="gm"> RA/Dec</label>
+      </div>
+      <div class="input-row" style="gap:5px;margin-bottom:6px;">
+        <div style="flex:1;min-width:0;">
+          <input type="number" class="input-compact" placeholder="Alt °" value="52.1" step="0.1">
+          <div class="input-label" style="margin-top:2px;text-align:center;">Altitude</div>
+        </div>
+        <div style="flex:1;min-width:0;">
+          <input type="number" class="input-compact" placeholder="Az °" value="184.3" step="0.1">
+          <div class="input-label" style="margin-top:2px;text-align:center;">Azimuth</div>
+        </div>
+      </div>
+      <button class="btn btn-primary btn-compact" style="width:100%;">Go ▶</button>
+    </div>
+
+    <!-- ── Saved Locations ── -->
+    <div class="sidebar-panel">
+      <h3>Saved Locations</h3>
+      <div class="input-row" style="gap:5px;margin-bottom:6px;">
+        <select id="savedLocations">
+          <option>The Water Tower</option>
+          <option>The Church</option>
+          <option>Catalina Island</option>
+        </select>
+        <button class="btn btn-secondary btn-compact" title="Slew to selected location">▶</button>
+        <button class="btn btn-danger btn-compact" title="Delete selected location">🗑</button>
+      </div>
+      <div class="input-label" style="margin-bottom:4px;">Save current Alt/Az as:</div>
+      <div class="input-row" style="gap:5px;">
+        <input type="text" class="input-compact" placeholder='e.g. "The Church Tower"' style="flex:1;min-width:0;">
+        <button class="btn btn-info btn-compact">Save</button>
+      </div>
+    </div>
+
+    <!-- ── Camera Settings ── -->
+    <div class="sidebar-panel">
+      <h3>Camera</h3>
+
+      <div class="setting-item">
+        <span class="setting-label tip-anchor">
+          Gain
+          <span class="tip-icon">i</span>
+          <span class="tip-box">0–120, default 80. Sent as <code>set_control_value ["gain", n]</code>.</span>
+        </span>
+        <div style="display:flex;align-items:center;gap:6px;flex:1;margin-left:6px;">
+          <input type="range" min="0" max="120" value="80" class="setting-slider"
+                 oninput="this.nextElementSibling.textContent=this.value">
+          <span style="font-size:0.8em;color:#9cd9ff;min-width:22px;text-align:right;">80</span>
+        </div>
+      </div>
+
+      <div class="setting-item">
+        <span class="setting-label tip-anchor">
+          Stack exp
+          <span class="tip-icon">i</span>
+          <span class="tip-box">Per-frame stacking exposure in ms. Sent via <code>set_setting {exp_ms:{stack_l}}</code>.</span>
+        </span>
+        <div style="display:flex;align-items:center;gap:4px;">
+          <input type="number" class="input-compact" value="10000" style="width:68px;flex:unset;text-align:right;">
+          <span style="font-size:0.72em;color:#555;">ms</span>
+        </div>
+      </div>
+
+      <div class="setting-item">
+        <span class="setting-label tip-anchor">
+          Preview exp
+          <span class="tip-icon">i</span>
+          <span class="tip-box">Live view exposure in ms. Sent via <code>set_setting {exp_ms:{continuous}}</code>.</span>
+        </span>
+        <div style="display:flex;align-items:center;gap:4px;">
+          <input type="number" class="input-compact" value="500" style="width:68px;flex:unset;text-align:right;">
+          <span style="font-size:0.72em;color:#555;">ms</span>
+        </div>
+      </div>
+
+      <div class="setting-item">
+        <span class="setting-label tip-anchor">
+          LP Filter
+          <span class="tip-icon">i</span>
+          <span class="tip-box"><code>set_setting {stack_lenhance: bool}</code>. Off for solar/lunar.</span>
+        </span>
+        <label style="display:flex;align-items:center;gap:5px;cursor:pointer;font-size:0.8em;">
+          <input type="checkbox" style="accent-color:#4da6ff;"> On
+        </label>
+      </div>
+
+      <div class="setting-item">
+        <span class="setting-label tip-anchor">
+          Dew Heater
+          <span class="tip-icon">i</span>
+          <span class="tip-box"><code>pi_output_set2 {heater:{state,value}}</code> where value is power 0–100.</span>
+        </span>
+        <label style="display:flex;align-items:center;gap:5px;cursor:pointer;font-size:0.8em;">
+          <input type="checkbox" id="dewToggle" style="accent-color:#4da6ff;"
+                 onchange="document.getElementById('dewPowerRow').style.display=this.checked?'flex':'none'"> On
+        </label>
+      </div>
+
+      <div id="dewPowerRow" class="setting-item" style="display:none;">
+        <span class="setting-label">Power</span>
+        <div style="display:flex;align-items:center;gap:6px;flex:1;margin-left:6px;">
+          <input type="range" min="0" max="100" value="50" class="setting-slider"
+                 oninput="this.nextElementSibling.textContent=this.value+'%'">
+          <span style="font-size:0.8em;color:#9cd9ff;min-width:32px;text-align:right;">50%</span>
+        </div>
+      </div>
+
+      <button class="btn btn-primary btn-compact" style="width:100%;margin-top:8px;">Apply</button>
+    </div>
+
+  </div><!-- /sidebar-alp -->
+
+</div><!-- /telescope-layout -->
+
+<!-- Filmstrip -->
+<div class="filmstrip">
+  <div class="filmstrip-header">
+    <span class="filmstrip-title">📁 Captured Files (3)</span>
+    <div style="display:flex;gap:6px;">
+      <button class="btn-icon">🔄 Refresh</button>
+      <button class="btn-icon">⛶ All</button>
+    </div>
+  </div>
+  <div class="filmstrip-list">
+    <div class="filmstrip-item">
+      <div class="filmstrip-name">vid_20260318_143012.mp4</div>
+      <div class="filmstrip-thumb">▶</div>
+    </div>
+    <div class="filmstrip-item">
+      <div class="filmstrip-name">capture_20260318_141500.jpg</div>
+      <div class="filmstrip-thumb">🖼</div>
+    </div>
+    <div class="filmstrip-item">
+      <div class="filmstrip-name">timelapse_20260318.mp4</div>
+      <div class="filmstrip-thumb">▶</div>
+    </div>
+  </div>
+</div>
+
+</body>
+</html>

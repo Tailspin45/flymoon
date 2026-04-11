@@ -70,29 +70,36 @@ if [ "$SKIP_ICONS" = false ]; then
   fi
 fi
 
-# ── 3. PyInstaller — bundle Flask backend ─────────────────────────────────
-if [ "$SKIP_PYI" = false ]; then
-  echo "→ Running PyInstaller..."
-  pyinstaller flymoon.spec --distpath "$ROOT/electron/assets/bin" --workpath /tmp/pyi-build --noconfirm
-  # Move binary to project root so electron-builder can find it via extraResources
-  mv "$ROOT/electron/assets/bin/flymoon-server" "$ROOT/flymoon-server" 2>/dev/null || true
-  echo "  ✓ flymoon-server binary built"
+# ── 3. PyInstaller — bundle Flask backend (onedir mode) ──────────────────
+# Output layout: electron/zipcatcher-server/zipcatcher-server
+#                electron/zipcatcher-server/_internal/...
+SERVER_DIR="$ROOT/electron/zipcatcher-server"
+SERVER_BIN="$SERVER_DIR/zipcatcher-server"
 
-  # ── 3a. Codesign the PyInstaller binary (macOS only) ────────────────────
+if [ "$SKIP_PYI" = false ]; then
+  echo "→ Running PyInstaller (onedir)..."
+  rm -rf "$SERVER_DIR"
+  pyinstaller zipcatcher.spec --distpath "$ROOT/electron" --workpath /tmp/pyi-build --noconfirm
+  echo "  ✓ zipcatcher-server built → $SERVER_DIR"
+
+  # ── 3a. Codesign every Mach-O inside the onedir bundle (macOS only) ────
   if [ "$(uname)" = "Darwin" ]; then
-    # Find the signing identity — use CODESIGN_IDENTITY env var if set,
-    # otherwise auto-detect a Developer ID Application certificate
     if [ -z "$CODESIGN_IDENTITY" ]; then
       CODESIGN_IDENTITY=$(security find-identity -v -p codesigning | \
         grep "Developer ID Application" | head -1 | \
         sed 's/.*"\(.*\)".*/\1/')
     fi
     if [ -n "$CODESIGN_IDENTITY" ]; then
-      echo "→ Codesigning flymoon-server with: $CODESIGN_IDENTITY"
+      echo "→ Codesigning zipcatcher-server with: $CODESIGN_IDENTITY"
+      # Sign inner dylibs/.so first (deepest first), then the main binary.
+      find "$SERVER_DIR" -type f \( -name "*.dylib" -o -name "*.so" \) -print0 \
+        | xargs -0 -I {} codesign --force --options runtime \
+            --sign "$CODESIGN_IDENTITY" \
+            --entitlements "$ROOT/electron/entitlements.mac.plist" "{}"
       codesign --force --options runtime --sign "$CODESIGN_IDENTITY" \
         --entitlements "$ROOT/electron/entitlements.mac.plist" \
-        "$ROOT/flymoon-server"
-      echo "  ✓ flymoon-server signed"
+        "$SERVER_BIN"
+      echo "  ✓ zipcatcher-server signed"
     else
       echo "  ⚠ No Developer ID Application certificate found — skipping codesign"
       echo "    Set CODESIGN_IDENTITY env var or install a certificate"

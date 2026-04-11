@@ -440,8 +440,8 @@ def get_all_flights():
 
         has_send_notification = request.args.get("send-notification") == "true"
 
-        # Data source mode: 'hybrid' (default), 'fa-only', 'opensky-only', 'adsb-local'
-        data_source = request.args.get("data_source", "hybrid")
+        # Data source mode: 'opensky-only' (default, no FA), 'hybrid', 'fa-only', 'adsb-local'
+        data_source = request.args.get("data_source", "opensky-only")
 
         # Targets disabled by the user in the UI (comma-separated: "sun", "moon", or "sun,moon")
         _disabled_raw = request.args.get("disabled_targets", "")
@@ -820,8 +820,11 @@ def get_all_flights():
         logger.error(f"Missing required parameter: {e}")
         return jsonify({"error": f"Missing required parameter: {e}"}), 400
     except ValueError as e:
-        logger.error(f"Invalid parameter value: {e}", exc_info=True)
-        return jsonify({"error": "Invalid parameter value"}), 400
+        logger.error(
+            f"Invalid parameter value: {e} | raw args: {dict(request.args)}",
+            exc_info=True,
+        )
+        return jsonify({"error": f"Invalid parameter value: {e}"}), 400
     except Exception as e:
         logger.error(f"Error in /flights endpoint: {str(e)}", exc_info=True)
         return jsonify({"error": "Internal server error"}), 500

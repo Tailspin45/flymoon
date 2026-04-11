@@ -6,7 +6,7 @@ REM Prerequisites:
 REM   - Python 3.9+  https://python.org/downloads/
 REM   - Node.js 18+  https://nodejs.org/
 REM   - Git           https://git-scm.com/
-REM   Run from the flymoon repo root in a regular Command Prompt or PowerShell.
+REM   Run from the zipcatcher repo root in a regular Command Prompt or PowerShell.
 
 setlocal enabledelayedexpansion
 cd /d "%~dp0"
@@ -28,28 +28,21 @@ pip install -q pyinstaller
 echo ^> Downloading astronomical data (de421.bsp)...
 python -c "from skyfield.api import load; load('de421.bsp')"
 
-REM ── 2. PyInstaller ──────────────────────────────────────────────────────
-echo ^> Running PyInstaller...
-pyinstaller flymoon.spec --distpath "%ROOT%\electron\assets\bin" --workpath "%TEMP%\pyi-build" --noconfirm
-move /Y "%ROOT%\electron\assets\bin\flymoon-server.exe" "%ROOT%\flymoon-server.exe"
-if not exist "%ROOT%\flymoon-server.exe" (
-    echo ERROR: flymoon-server.exe not found after PyInstaller build.
+REM ── 2. PyInstaller (onedir mode) ────────────────────────────────────────
+REM Output: electron\zipcatcher-server\zipcatcher-server.exe + _internal\
+echo ^> Running PyInstaller (onedir)...
+if exist "%ROOT%\electron\zipcatcher-server" rmdir /S /Q "%ROOT%\electron\zipcatcher-server"
+pyinstaller zipcatcher.spec --distpath "%ROOT%\electron" --workpath "%TEMP%\pyi-build" --noconfirm
+if not exist "%ROOT%\electron\zipcatcher-server\zipcatcher-server.exe" (
+    echo ERROR: zipcatcher-server.exe not found after PyInstaller build.
     exit /b 1
 )
-echo    flymoon-server.exe built
+echo    zipcatcher-server built
 
 REM ── 3. npm install ──────────────────────────────────────────────────────
 echo ^> Installing npm dependencies...
 cd electron
 call npm install --save-dev electron electron-builder
-
-REM ── 4. Copy server binary into electron dir for packaging ────────────────
-echo ^> Copying flymoon-server.exe into electron folder...
-copy /Y "%ROOT%\flymoon-server.exe" "%ROOT%\electron\flymoon-server.exe"
-if errorlevel 1 (
-    echo ERROR: Could not copy flymoon-server.exe into electron folder.
-    exit /b 1
-)
 
 REM ── 5. electron-builder ─────────────────────────────────────────────────
 echo ^> Building Electron installer...
