@@ -176,6 +176,9 @@ class SeestarClient:
         self._viewing_mode: Optional[str] = (
             None  # Track current viewing mode (sun/moon/None)
         )
+        # Cached working RTSP URL, populated by telescope_routes probe after
+        # connect / mode change. Authoritative over any .env value.
+        self._rtsp_cached_url: Optional[str] = None
         self._message_id = 0
         self._heartbeat_thread: Optional[threading.Thread] = None
         self._heartbeat_running = False
@@ -1187,6 +1190,7 @@ class SeestarClient:
             # one of the Seestar's 8 connection slots permanently.
             self._connected = False
             self._viewing_mode = None
+            self._rtsp_cached_url = None
             if self.socket:
                 try:
                     self.socket.close()
@@ -1369,6 +1373,7 @@ class SeestarClient:
                 "iscope_start_view", params={"mode": "sun"}, expect_response=False
             )
             self._viewing_mode = "sun"
+            self._rtsp_cached_url = None
             logger.info("Started solar viewing mode (async)")
             # Give telescope time to process the command
             time.sleep(1)
@@ -1408,6 +1413,7 @@ class SeestarClient:
                 "iscope_start_view", params={"mode": "moon"}, expect_response=False
             )
             self._viewing_mode = "moon"
+            self._rtsp_cached_url = None
             logger.info("Started lunar viewing mode (async)")
             # Give telescope time to process the command
             time.sleep(1)
@@ -1435,6 +1441,7 @@ class SeestarClient:
                 "iscope_start_view", params={"mode": "scenery"}, expect_response=False
             )
             self._viewing_mode = "scenery"
+            self._rtsp_cached_url = None
             logger.info("Started scenery viewing mode (async)")
             time.sleep(1)
             return True
@@ -1457,11 +1464,13 @@ class SeestarClient:
             )
             _time.sleep(1.0)
             self._viewing_mode = None
+            self._rtsp_cached_url = None
             logger.info("Stopped viewing mode")
             return True
         except Exception as e:
             logger.error(f"Failed to stop view mode: {e}")
             self._viewing_mode = None
+            self._rtsp_cached_url = None
             return False
 
     # ------------------------------------------------------------------ #

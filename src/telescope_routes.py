@@ -96,55 +96,25 @@ def _agent_debug_log(
         pass
 
 
-def _rtsp_port_probe_order(primary: int) -> list[int]:
-    """Ordered RTSP ports for Seestar probing (prefer documented 4554)."""
-    primary = int(primary)
-    ordered = [4554, 8554]
-    if primary not in (4554, 8554, 554):
-        ordered.insert(1, primary)
-    elif primary == 554:
-        logger.warning("[RTSP] Ignoring SEESTAR_RTSP_PORT=554; using Seestar ports 4554/8554")
-    seen: set[int] = set()
-    out: list[int] = []
-    for p in ordered:
-        if p not in seen:
-            seen.add(p)
-            out.append(p)
-    return out
+def _rtsp_port_probe_order(primary: int = 4554) -> list[int]:
+    """Fixed RTSP port probe order for Seestar (4554 then 8554).
+
+    Env overrides were removed because a stale SEESTAR_RTSP_PORT in .env
+    from a previous firmware can mask the working port across restarts.
+    The probe is authoritative.
+    """
+    return [4554, 8554]
 
 
 def _rtsp_path_candidates() -> list[str]:
-    """Ordered RTSP path candidates (default /stream)."""
-    raw = os.getenv("SEESTAR_RTSP_PATH", "")
-    raw = str(raw).split("#", 1)[0].strip().strip('"').strip("'")
-    if not raw:
-        base = "/stream"
-    else:
-        base = raw if raw.startswith("/") else f"/{raw}"
-    if base in ("/str", "/stre", "/st", "/s"):
-        logger.warning(
-            "[RTSP] SEESTAR_RTSP_PATH looks truncated (%r); using /stream",
-            os.getenv("SEESTAR_RTSP_PATH"),
-        )
-        base = "/stream"
-
-    out = [base] if base == "/stream" else [base, "/stream"]
-    if os.getenv("SEESTAR_RTSP_TRY_ROOT", "").strip().lower() in (
-        "1",
-        "true",
-        "yes",
-        "on",
-    ):
-        out.append("/")
-    # Preserve order while removing duplicates
-    return list(dict.fromkeys(out))
+    """Fixed RTSP path probe list for Seestar (/stream)."""
+    return ["/stream"]
 
 
 def _rtsp_candidate_urls(host: str) -> list[str]:
     """All RTSP URL candidates in probe order (port × path)."""
-    primary = int(os.getenv("SEESTAR_RTSP_PORT", "4554"))
     urls: list[str] = []
-    for port in _rtsp_port_probe_order(primary):
+    for port in _rtsp_port_probe_order():
         for path in _rtsp_path_candidates():
             urls.append(f"rtsp://{host}:{port}{path}")
     return list(dict.fromkeys(urls))
@@ -1558,6 +1528,30 @@ def connect_telescope():
                 logger.warning(
                     f"[Telescope] Could not start solar view: {e} — RTSP may be unavailable"
                 )
+
+        # Kick the RTSP probe in the background so the user's first preview
+        # click hits a cached URL instead of paying the probe cost. The probe
+        # is authoritative — any .env-saved port/path is ignored.
+        def _probe_rtsp_async(c):
+            try:
+                url = _resolve_rtsp_stream_url(c.host, timeout_seconds=5)
+                if url:
+                    c._rtsp_cached_url = url
+                    logger.info(f"[RTSP] Probe succeeded on connect: {url}")
+                else:
+                    logger.warning(
+                        "[RTSP] Probe on connect found no working URL — "
+                        "will retry on first preview request"
+                    )
+            except Exception as exc:
+                logger.debug(f"[RTSP] Probe on connect errored: {exc}")
+
+        threading.Thread(
+            target=_probe_rtsp_async,
+            args=(client,),
+            daemon=True,
+            name="rtsp-probe-on-connect",
+        ).start()
 
         auto_resume = os.getenv("SOLAR_TIMELAPSE_AUTO_RESUME", "true").strip().lower()
         if auto_resume in ("1", "true", "yes", "on"):
@@ -3288,6 +3282,24 @@ def switch_to_scenery():
         if not client or not client.is_connected():
             return jsonify({"error": "Not connected to telescope"}), 400
 
+        # Live detection only makes sense against a Sun/Moon disc — stop it
+        # before the scope switches to a freeform scenery view.
+        detection_was_running = False
+        try:
+            from src.transit_detector import get_detector, stop_detector
+
+            det = get_detector()
+            if det and det.is_running:
+                stop_detector()
+                detection_was_running = True
+                logger.info(
+                    "[Telescope] Stopped live detection because scope entered scenery mode"
+                )
+        except Exception as exc:
+            logger.warning(
+                f"[Telescope] Failed to stop live detection on scenery switch: {exc}"
+            )
+
         client.start_scenery_mode()
 
         logger.info("[Telescope] Switched to scenery viewing mode")
@@ -3296,6 +3308,7 @@ def switch_to_scenery():
                 {
                     "success": True,
                     "target": "scenery",
+                    "detection_stopped": detection_was_running,
                     "message": "Scenery mode active — no sidereal tracking, manual positioning enabled",
                 }
             ),
@@ -3320,14 +3333,32 @@ def telescope_preview_stream():
         if not client or not client.is_connected():
             return jsonify({"error": "Not connected to telescope"}), 400
 
-        rtsp_url = _ensure_rtsp_ready(client, timeout_seconds=2)
-        if not rtsp_url:
-            candidates = _rtsp_candidate_urls(client.host)
-            rtsp_url = candidates[0] if candidates else f"rtsp://{client.host}:4554/stream"
-            logger.warning(
-                "[RTSP] Preview probe failed; trying direct stream URL anyway: %s",
-                rtsp_url,
-            )
+        # Prefer a URL that was already validated by the eager probe kicked
+        # off at connect time (or by a previous successful stream). Only
+        # re-run the probe when the cache is empty.
+        rtsp_url = getattr(client, "_rtsp_cached_url", None)
+        if rtsp_url:
+            logger.info(f"[Telescope] Using cached RTSP URL: {rtsp_url}")
+        else:
+            rtsp_url = _ensure_rtsp_ready(client, timeout_seconds=5)
+            if rtsp_url:
+                try:
+                    client._rtsp_cached_url = rtsp_url
+                except Exception:
+                    pass
+            else:
+                # No silent fallback to candidates[0] — that just hands a
+                # broken URL to ffmpeg and the frontend throws `Stream failed`.
+                # Return 503 so the client can retry cleanly.
+                return (
+                    jsonify(
+                        {
+                            "error": "RTSP probe failed; no working stream URL",
+                            "retryable": True,
+                        }
+                    ),
+                    503,
+                )
 
         logger.info(f"[Telescope] Transcoding RTSP stream: {rtsp_url}")
 
@@ -3354,6 +3385,7 @@ def telescope_preview_stream():
             ]
 
             process = None
+            frames_yielded = 0
             try:
                 process = subprocess.Popen(
                     cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, bufsize=0
@@ -3398,6 +3430,7 @@ def telescope_preview_stream():
                             + b"\r\n"
                             b"\r\n" + jpeg_frame + b"\r\n"
                         )
+                        frames_yielded += 1
 
             except GeneratorExit:
                 logger.info("[Telescope] Client disconnected from stream")
@@ -3408,6 +3441,18 @@ def telescope_preview_stream():
                     process.kill()
                     process.wait()
                     logger.info("[Telescope] FFmpeg process terminated")
+                # If ffmpeg never produced a frame the cached URL is stale —
+                # drop it so the next request re-probes instead of looping on
+                # the same bad URL.
+                if frames_yielded == 0:
+                    try:
+                        if getattr(client, "_rtsp_cached_url", None) == rtsp_url:
+                            client._rtsp_cached_url = None
+                            logger.warning(
+                                "[RTSP] Cached URL produced zero frames; cleared cache"
+                            )
+                    except Exception:
+                        pass
 
         return Response(
             generate_mjpeg(), mimetype="multipart/x-mixed-replace; boundary=frame"

@@ -494,11 +494,16 @@ function toggleSeestar() {
     document.getElementById('seestar_skip_note').style.display = on ? 'none' : 'block';
 }
 
+// Default bbox half-width: 0.35° ≈ 40 km N/S, ~30–40 km E/W at most latitudes.
+// Small enough to avoid drowning busy metros (LAX etc.) in 200+ aircraft;
+// users can widen via the wizard inputs if they want more coverage.
+const DEFAULT_BBOX_HALF_WIDTH = 0.35;
+
 function prefillBoundingBoxIfEmpty() {
     const lat = parseFloat(document.getElementById('latitude').value);
     const lon = parseFloat(document.getElementById('longitude').value);
     if (isNaN(lat) || isNaN(lon)) return;
-    const d = 2.0;
+    const d = DEFAULT_BBOX_HALF_WIDTH;
     const fields = [
         ['bbox_lat_ll', lat - d],
         ['bbox_lon_ll', lon - d],
@@ -518,63 +523,58 @@ function autoBox() {
         alert('Please complete your location in Step 2 first.');
         return;
     }
-    const d = 2.0;
+    const d = DEFAULT_BBOX_HALF_WIDTH;
     document.getElementById('bbox_lat_ll').value = (lat - d).toFixed(3);
     document.getElementById('bbox_lon_ll').value = (lon - d).toFixed(3);
     document.getElementById('bbox_lat_ur').value = (lat + d).toFixed(3);
     document.getElementById('bbox_lon_ur').value = (lon + d).toFixed(3);
 }
 
-// Try browser geolocation; on denial/failure fall back to the main-process
-// IP geolocation exposed by preload.js.
+// Auto-detect uses IP-based geolocation via the main process (see main.js
+// ipGeolocate). Electron's navigator.geolocation requires a Google Maps API
+// key and is unusable in packaged builds, so we don't bother trying it.
 async function detectLocation() {
     const btn = document.getElementById('detectBtn');
     const icon = document.getElementById('detectIcon');
     btn.disabled = true;
     icon.textContent = '⏳';
 
-    const applyCoords = async (lat, lon, fetchElev) => {
-        document.getElementById('latitude').value  = lat.toFixed(5);
-        document.getElementById('longitude').value = lon.toFixed(5);
-        icon.textContent = '✅';
-        if (fetchElev) {
-            try {
-                const resp = await fetch(`https://api.open-elevation.com/api/v1/lookup?locations=${lat},${lon}`);
-                if (resp.ok) {
-                    const data = await resp.json();
-                    document.getElementById('elevation').value = Math.round(data.results[0].elevation);
-                }
-            } catch { /* elevation stays blank */ }
-        }
+    const finish = (ok) => {
+        icon.textContent = ok ? '✅' : '📡';
         btn.disabled = false;
     };
 
-    const ipFallback = async (reason) => {
-        if (!window.zipcatcher || !window.zipcatcher.ipGeolocate) {
-            alert(`Location detection failed: ${reason}\nPlease enter coordinates manually.`);
-            btn.disabled = false;
-            icon.textContent = '📡';
-            return;
-        }
-        const geo = await window.zipcatcher.ipGeolocate();
-        if (!geo) {
-            alert(`Location detection failed: ${reason}\nPlease enter coordinates manually.`);
-            btn.disabled = false;
-            icon.textContent = '📡';
-            return;
-        }
-        await applyCoords(geo.latitude, geo.longitude, true);
-    };
-
-    if (!navigator.geolocation) {
-        return ipFallback('geolocation not supported');
+    if (!window.zipcatcher || !window.zipcatcher.ipGeolocate) {
+        alert('Location detection unavailable. Please enter coordinates manually.');
+        return finish(false);
     }
 
-    navigator.geolocation.getCurrentPosition(
-        (pos) => applyCoords(pos.coords.latitude, pos.coords.longitude, true),
-        (err) => ipFallback(err.message || 'browser geolocation denied'),
-        { enableHighAccuracy: false, timeout: 10000 }
-    );
+    let geo = null;
+    try {
+        geo = await window.zipcatcher.ipGeolocate();
+    } catch (e) {
+        console.warn('ipGeolocate threw:', e);
+    }
+
+    if (!geo) {
+        alert('Could not determine your location automatically.\n' +
+              'All IP geolocation providers failed — check your internet connection, ' +
+              'or enter coordinates manually.');
+        return finish(false);
+    }
+
+    document.getElementById('latitude').value  = geo.latitude.toFixed(5);
+    document.getElementById('longitude').value = geo.longitude.toFixed(5);
+
+    try {
+        const resp = await fetch(`https://api.open-elevation.com/api/v1/lookup?locations=${geo.latitude},${geo.longitude}`);
+        if (resp.ok) {
+            const data = await resp.json();
+            document.getElementById('elevation').value = Math.round(data.results[0].elevation);
+        }
+    } catch { /* elevation stays blank */ }
+
+    finish(true);
 }
 
 function buildReview() {

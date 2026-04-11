@@ -1,0 +1,48 @@
+name: Build macOS DMG (unsigned)
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ main ]
+    paths:
+      - "app.py"
+      - "src/**"
+      - "templates/**"
+      - "static/**"
+      - "electron/**"
+      - "zipcatcher.spec"
+      - "requirements.txt"
+      - "build.sh"
+      - ".github/workflows/mac-dmg.yml"
+
+jobs:
+  build-mac-dmg:
+    runs-on: macos-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Build macOS DMG (unsigned)
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: "false"
+        run: |
+          chmod +x build.sh
+          ./build.sh --skip-icons
+
+      - name: Upload DMG artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Zipcatcher-macOS-DMG
+          path: dist-electron/*.dmg
+          if-no-files-found: error

@@ -87,36 +87,92 @@ function waitForFlask(port, maxMs = 30000) {
     });
 }
 
-// IP-based geolocation fallback for the wizard's auto-detect button when
-// navigator.geolocation is unavailable or denied. Exposed via IPC, not used
-// automatically on first launch.
-function ipGeolocate(timeoutMs = 3000) {
+// IP-based geolocation used by the wizard's Auto-detect button. Electron's
+// built-in navigator.geolocation provider is unusable without a Google API
+// key, so the wizard calls this directly.
+//
+// Tries multiple providers in order so one rate-limiting / outage doesn't
+// brick detection. Each provider's response is normalised to a common shape.
+const IP_GEO_PROVIDERS = [
+    {
+        name: 'ipapi.co',
+        url:  'https://ipapi.co/json/',
+        parse: (j) => (typeof j.latitude === 'number' && typeof j.longitude === 'number') ? {
+            latitude:  j.latitude,
+            longitude: j.longitude,
+            city:      j.city || '',
+            region:    j.region || '',
+            country:   j.country_name || j.country || '',
+        } : null,
+    },
+    {
+        name: 'ipinfo.io',
+        url:  'https://ipinfo.io/json',
+        // ipinfo returns "loc":"34.0522,-118.2437"
+        parse: (j) => {
+            if (!j.loc || typeof j.loc !== 'string') return null;
+            const [latS, lonS] = j.loc.split(',');
+            const lat = parseFloat(latS), lon = parseFloat(lonS);
+            if (!isFinite(lat) || !isFinite(lon)) return null;
+            return {
+                latitude:  lat,
+                longitude: lon,
+                city:      j.city || '',
+                region:    j.region || '',
+                country:   j.country || '',
+            };
+        },
+    },
+    {
+        name: 'ip-api.com',
+        url:  'http://ip-api.com/json/', // http-only on free tier
+        parse: (j) => (j.status === 'success' && typeof j.lat === 'number' && typeof j.lon === 'number') ? {
+            latitude:  j.lat,
+            longitude: j.lon,
+            city:      j.city || '',
+            region:    j.regionName || '',
+            country:   j.country || '',
+        } : null,
+    },
+];
+
+function _fetchIpProvider(provider, timeoutMs) {
     return new Promise((resolve) => {
-        const req = https.get('https://ipapi.co/json/', { timeout: timeoutMs }, (res) => {
-            if (res.statusCode !== 200) { res.resume(); return resolve(null); }
+        const client = provider.url.startsWith('https') ? https : http;
+        const req = client.get(provider.url, { timeout: timeoutMs }, (res) => {
+            if (res.statusCode !== 200) {
+                res.resume();
+                return resolve({ ok: false, reason: `HTTP ${res.statusCode}` });
+            }
             let body = '';
             res.setEncoding('utf8');
             res.on('data', (c) => { body += c; });
             res.on('end', () => {
                 try {
                     const j = JSON.parse(body);
-                    if (typeof j.latitude === 'number' && typeof j.longitude === 'number') {
-                        resolve({
-                            latitude:  j.latitude,
-                            longitude: j.longitude,
-                            city:      j.city || '',
-                            region:    j.region || '',
-                            country:   j.country_name || j.country || '',
-                        });
-                    } else {
-                        resolve(null);
-                    }
-                } catch { resolve(null); }
+                    const geo = provider.parse(j);
+                    if (geo) return resolve({ ok: true, geo });
+                    resolve({ ok: false, reason: 'no lat/lon in response' });
+                } catch (e) {
+                    resolve({ ok: false, reason: `parse error: ${e.message}` });
+                }
             });
         });
-        req.on('timeout', () => { req.destroy(); resolve(null); });
-        req.on('error',   () => resolve(null));
+        req.on('timeout', () => { req.destroy(); resolve({ ok: false, reason: 'timeout' }); });
+        req.on('error',   (e) => resolve({ ok: false, reason: `network error: ${e.message}` }));
     });
+}
+
+async function ipGeolocate(timeoutMs = 5000) {
+    for (const provider of IP_GEO_PROVIDERS) {
+        const result = await _fetchIpProvider(provider, timeoutMs);
+        if (result.ok) {
+            console.log(`[ipGeolocate] ${provider.name} → ${result.geo.latitude}, ${result.geo.longitude} (${result.geo.city})`);
+            return result.geo;
+        }
+        console.warn(`[ipGeolocate] ${provider.name} failed: ${result.reason}`);
+    }
+    return null;
 }
 
 // Greenwich Observatory — used as the fallback when the user opens the app
@@ -128,17 +184,21 @@ const GREENWICH = {
     elevation: 46,
 };
 
+// Matches DEFAULT_BBOX_HALF_WIDTH in wizard.html — keep in sync.
+const DEFAULT_BBOX_HALF_WIDTH = 0.35;
+
 function buildGreenwichConfig() {
     const { latitude: lat, longitude: lon, elevation } = GREENWICH;
+    const d = DEFAULT_BBOX_HALF_WIDTH;
     return {
         aeroapi_key: '',
         latitude:  lat,
         longitude: lon,
         elevation,
-        bbox_lat_ll: lat - 1.5,
-        bbox_lon_ll: lon - 1.5,
-        bbox_lat_ur: lat + 1.5,
-        bbox_lon_ur: lon + 1.5,
+        bbox_lat_ll: lat - d,
+        bbox_lon_ll: lon - d,
+        bbox_lat_ur: lat + d,
+        bbox_lon_ur: lon + d,
         seestar_enabled: false,
     };
 }
