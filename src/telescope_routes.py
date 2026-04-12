@@ -1913,7 +1913,8 @@ def start_recording():
 
         # Build FFmpeg command
         if interval > 0:
-            # Timelapse mode: capture frames at specified interval
+            # Timelapse mode: capture frames at specified interval.
+            # -g 1 makes every frame a keyframe (timelapse has few frames).
             cmd = rtsp_input + [
                 "-vf",
                 f"fps=1/{interval}",
@@ -1923,24 +1924,46 @@ def start_recording():
                 "fast",
                 "-crf",
                 "23",
+                "-bf",
+                "0",
+                "-pix_fmt",
+                "yuv420p",
+                "-g",
+                "1",
+                "-an",
+                "-movflags",
+                "+faststart",
                 "-y",
                 filepath,
             ]
         else:
-            # Normal video mode: copy H.264 stream directly (no re-encoding)
-            # frag_keyframe+empty_moov makes the MP4 valid even if interrupted
+            # Normal video mode: re-encode to H.264 with proper keyframes.
+            # Previous approach used -c copy -movflags frag_keyframe+empty_moov
+            # which produced fragmented MP4 with an empty moov atom — editors
+            # could not parse it (reported 0/0 frames).
             cmd = rtsp_input + [
-                "-c",
-                "copy",
+                "-c:v",
+                "libx264",
+                "-preset",
+                "fast",
+                "-crf",
+                "23",
+                "-bf",
+                "0",
+                "-pix_fmt",
+                "yuv420p",
+                "-g",
+                "30",
+                "-an",
                 "-movflags",
-                "frag_keyframe+empty_moov",
+                "+faststart",
                 "-y",
                 filepath,
             ]
 
         # Start FFmpeg in background
         process = subprocess.Popen(
-            cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+            cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE
         )
 
         _recording_state = {
@@ -2457,7 +2480,7 @@ def rename_telescope_file():
         # Rename companion assets with matching stem if present.
         old_stem = os.path.splitext(abs_old)[0]
         new_stem = os.path.splitext(abs_new)[0]
-        for suffix in (".json", "_thumb.jpg", "_diff.jpg", "_frame.jpg", "_analysis.json"):
+        for suffix in (".json", "_thumb.jpg", "_diff.jpg", "_frame.jpg", "_analysis.json", "_analyzed.mp4"):
             src = old_stem + suffix
             dst = new_stem + suffix
             if os.path.exists(src) and not os.path.exists(dst):
@@ -2944,15 +2967,24 @@ def trim_telescope_file():
             out_path = os.path.join(base_dir, f"trim{counter}_" + base_name)
             counter += 1
 
+        # Re-encode to produce a clean MP4 with proper keyframes.
+        # -ss/-to placed after -i for frame-accurate trimming.
         result = subprocess.run(
             [FFMPEG, "-y",
+             "-i", abs_path,
              "-ss", str(float(start_s)),
              "-to", str(float(end_s)),
-             "-i", abs_path,
-             "-c", "copy",
+             "-c:v", "libx264",
+             "-preset", "fast",
+             "-crf", "23",
+             "-bf", "0",
+             "-pix_fmt", "yuv420p",
+             "-g", "30",
+             "-an",
+             "-movflags", "+faststart",
              out_path],
             capture_output=True,
-            timeout=120,
+            timeout=300,
         )
 
         if result.returncode != 0 or not os.path.exists(out_path) or os.path.getsize(out_path) == 0:
@@ -2981,6 +3013,92 @@ def trim_telescope_file():
 
     except Exception as e:
         logger.error(f"[Telescope] Trim error: {e}", exc_info=True)
+        return handle_error(e)
+
+
+# Video Export Endpoint
+
+
+def export_telescope_file():
+    """POST /telescope/files/export - Re-encode a video as a clean, editable MP4.
+
+    Body: { "path": "captures/..." }
+    Returns: { "success": true, "url": "/static/...", "name": "..." }
+    """
+    logger.info("[Telescope] POST /telescope/files/export")
+    try:
+        if not request.is_json:
+            return jsonify({"error": "Request must be JSON"}), 400
+
+        data = request.json
+        file_path = data.get("path")
+
+        if not file_path:
+            return jsonify({"error": "Missing path"}), 400
+
+        full_path = os.path.join("static", file_path)
+        abs_path = os.path.abspath(full_path)
+        captures_abs = os.path.abspath("static/captures")
+        if not abs_path.startswith(captures_abs):
+            return jsonify({"error": "Invalid file path"}), 403
+        if not os.path.exists(abs_path):
+            return jsonify({"error": "File not found"}), 404
+
+        stem, ext = os.path.splitext(abs_path)
+        if ext.lower() not in (".mp4", ".avi", ".mkv", ".webm", ".mov"):
+            return jsonify({"error": "Unsupported video format"}), 400
+
+        # Output alongside original: export_<name>.mp4 (add counter if exists)
+        base_dir = os.path.dirname(abs_path)
+        base_stem = os.path.splitext(os.path.basename(abs_path))[0]
+        out_path = os.path.join(base_dir, f"export_{base_stem}.mp4")
+        counter = 1
+        while os.path.exists(out_path):
+            out_path = os.path.join(base_dir, f"export{counter}_{base_stem}.mp4")
+            counter += 1
+
+        result = subprocess.run(
+            [FFMPEG, "-y",
+             "-i", abs_path,
+             "-c:v", "libx264",
+             "-preset", "fast",
+             "-crf", "23",
+             "-bf", "0",
+             "-pix_fmt", "yuv420p",
+             "-g", "30",
+             "-an",
+             "-movflags", "+faststart",
+             out_path],
+            capture_output=True,
+            timeout=300,
+        )
+
+        if result.returncode != 0 or not os.path.exists(out_path) or os.path.getsize(out_path) == 0:
+            if os.path.exists(out_path):
+                os.remove(out_path)
+            stderr = result.stderr.decode(errors="replace")[-500:]
+            logger.error(f"[Telescope] ffmpeg export failed: {stderr}")
+            return jsonify({"error": f"ffmpeg failed: {stderr}"}), 500
+
+        # Generate thumbnail for the exported file
+        out_stem = os.path.splitext(out_path)[0]
+        thumb_path = out_stem + "_thumb.jpg"
+        try:
+            subprocess.run(
+                [FFMPEG, "-y", "-i", out_path,
+                 "-frames:v", "1", "-update", "1", "-q:v", "5", thumb_path],
+                capture_output=True, timeout=15,
+            )
+        except Exception:
+            pass
+
+        rel_path = os.path.relpath(out_path, "static").replace(os.sep, "/")
+        out_name = os.path.basename(out_path)
+        logger.info(f"[Telescope] Exported {file_path} → {out_name}")
+        return jsonify({"success": True, "url": f"/static/{rel_path}", "name": out_name}), 200
+
+    except Exception as e:
+        logger.error(f"[Telescope] Export error: {e}", exc_info=True)
         return handle_error(e)
 
 
@@ -3921,6 +4039,12 @@ def register_routes(app):
         "/telescope/files/trim",
         "telescope_files_trim",
         trim_telescope_file,
+        methods=["POST"],
+    )
+    app.add_url_rule(
+        "/telescope/files/export",
+        "telescope_files_export",
+        export_telescope_file,
         methods=["POST"],
     )
 

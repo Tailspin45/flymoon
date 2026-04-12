@@ -1798,6 +1798,10 @@ class TransitDetector:
                     "fast",
                     "-crf",
                     "23",
+                    "-bf",
+                    "0",
+                    "-g",
+                    "30",
                     "-pix_fmt",
                     "yuv420p",
                     "-video_track_timescale",
@@ -1810,7 +1814,7 @@ class TransitDetector:
                     ffmpeg_cmd,
                     stdin=subprocess.PIPE,
                     stdout=subprocess.DEVNULL,
-                    stderr=subprocess.DEVNULL,
+                    stderr=subprocess.PIPE,
                 )
                 for jpeg_bytes in all_frames:
                     try:
@@ -1824,6 +1828,15 @@ class TransitDetector:
                     proc.kill()
                     logger.error("[Detector] ffmpeg encode timed out")
                     return
+
+                # Log ffmpeg stderr output
+                ffmpeg_stderr = proc.stderr.read() if proc.stderr else b""
+                if ffmpeg_stderr:
+                    stderr_tail = ffmpeg_stderr.decode(errors="replace")[-500:]
+                    if proc.returncode == 0:
+                        logger.debug(f"[Detector] ffmpeg stderr (tail): {stderr_tail}")
+                    else:
+                        logger.error(f"[Detector] ffmpeg stderr (tail): {stderr_tail}")
 
                 if proc.returncode != 0:
                     logger.error(

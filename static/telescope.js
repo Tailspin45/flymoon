@@ -3954,6 +3954,7 @@ function viewFile(path, name, opts) {
             favBtn +
             labelBtnsHtml +
             `<button class="btn-viewer" onclick="viewerDownload()" title="Download">⬇️ Download</button>` +
+            (isVideo ? `<button class="btn-viewer" onclick="viewerExportMp4()" title="Re-encode as a clean, editable MP4">Export MP4</button>` : '') +
             `<button class="btn-viewer btn-viewer-danger" id="viewerDeleteBtn" onclick="viewerDelete(event)" ${delDisabled}>🗑️ Delete</button>` +
             `<button class="btn-viewer" onclick="viewerNav(1)" title="Next" ${hasNext ? '' : 'disabled'}>▶</button>`;
 
@@ -4467,6 +4468,31 @@ function viewerDownload() {
     }
 
     downloadFile(f.path, f.name);
+}
+
+async function viewerExportMp4() {
+    const files = window.currentFiles || [];
+    let f = (_viewerIndex >= 0 && _viewerIndex < files.length) ? files[_viewerIndex] : _viewerFile;
+    if (!f) return;
+
+    const exportPath = f.path.replace('/static/', '');
+    showStatus('Exporting MP4…', 'info', 0);
+    try {
+        const resp = await fetch('/telescope/files/export', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ path: exportPath }),
+        });
+        const data = await resp.json();
+        if (!resp.ok) {
+            showStatus(`Export failed: ${data.error || resp.status}`, 'error', 6000);
+            return;
+        }
+        showStatus(`Exported → ${data.name}`, 'success', 4000);
+        await refreshFiles();
+    } catch (err) {
+        showStatus(`Export error: ${err.message}`, 'error', 6000);
+    }
 }
 
 async function viewerDelete(e) {

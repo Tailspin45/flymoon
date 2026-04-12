@@ -156,6 +156,10 @@ def _reencode_h264(src: Path, dst: Path) -> None:
                 "fast",
                 "-crf",
                 "23",
+                "-bf",
+                "0",
+                "-g",
+                "30",
                 "-movflags",
                 "+faststart",
                 str(dst),
@@ -380,15 +384,8 @@ def analyze_video(
     ref_bgr_frame = None  # color frame from reference window (composite background)
     mask = _disk_mask((h, w), disk_cx, disk_cy, disk_radius, _disk_margin_pct)
 
-    # ── Output writer — write to temp file, re-encode to H.264 via FFmpeg ────
+    # ── Derive stems for analyzed output paths ──────────────────────────────
     base_stem = path.stem.replace("_analyzed", "")  # always derive from original name
-    temp_path = path.with_name(base_stem + "_analyzed_tmp.mp4")
-    path.with_name(base_stem + "_analyzed.mp4")
-    temp_path.parent.mkdir(parents=True, exist_ok=True)
-    temp_path.unlink(missing_ok=True)  # remove any stale tmp from previous failed run
-    if output_annotated:
-        fourcc, _ = _best_fourcc()
-        cv2.VideoWriter(str(temp_path), fourcc, fps, (w, h))
 
     # ── Detection helpers ───────────────────────────────────────────────────
     ref_blur_cached = [None]  # mutable container so inner fn can cache
