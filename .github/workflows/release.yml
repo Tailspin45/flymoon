@@ -1,0 +1,99 @@
+name: Release (Windows + macOS)
+
+on:
+  push:
+    tags:
+      - "v*"
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Build Windows installer
+        shell: cmd
+        run: build-win.bat
+
+      - name: Package end-user ZIP
+        shell: cmd
+        run: package-win-enduser-zip.bat
+
+      - name: Rename Windows ZIP with version tag
+        shell: pwsh
+        run: |
+          $tag = "${{ github.ref_name }}"
+          Move-Item "dist-windows/Zipcatcher-Windows-EndUser.zip" "dist-windows/Zipcatcher-Windows-EndUser-$tag.zip"
+
+      - name: Upload Windows artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-assets
+          path: |
+            dist-windows/Zipcatcher-Windows-EndUser-*.zip
+            dist-electron/*Setup*.exe
+          if-no-files-found: error
+
+  build-macos:
+    runs-on: macos-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Build macOS DMG (unsigned)
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: "false"
+        run: |
+          chmod +x build.sh
+          ./build.sh --skip-icons
+
+      - name: Upload macOS artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-assets
+          path: dist-electron/*.dmg
+          if-no-files-found: error
+
+  publish-release:
+    needs: [build-windows, build-macos]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download Windows artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: windows-assets
+          path: release-assets
+
+      - name: Download macOS artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: macos-assets
+          path: release-assets
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: release-assets/**/*
+          generate_release_notes: true
+          fail_on_unmatched_files: true
