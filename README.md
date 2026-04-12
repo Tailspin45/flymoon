@@ -1,6 +1,6 @@
 # Zipcatcher — Seestar Aircraft Transit Tracker
 
-**Predict, detect, and photograph aircraft zipping crossing the Sun or Moon in real time.**
+**Predict, detect, and photograph aircraft crossing the Sun or Moon in real time.**
 
 <p align="center">
   <img src="static/images/flymoon-hero.jpg" alt="Zipcatcher — Aircraft Transit Tracker" width="100%">
@@ -16,7 +16,7 @@ It continuously monitors live flight traffic, projects each aircraft's path agai
 
 **Key capabilities:**
 
-- Predicts transits up to **15 minutes ahead** using real-time flight data from six concurrent sources
+- Predicts transits up to **15 minutes ahead** using real-time flight data from multiple concurrent sources
 - Displays flight paths, altitudes, and probability on a live **interactive map**
 - Controls a **Seestar** via direct TCP — no bridge app required
 - Detects aircraft in the live RTSP stream using a **frame-coherence computer-vision pipeline**
@@ -33,7 +33,7 @@ It continuously monitors live flight traffic, projects each aircraft's path agai
 
 - Python 3.9 +
 
-**Flight data sources** — Zipcatcher queries up to six sources concurrently and merges the results. Most work with no account or API key:
+**Flight data sources (all optional)** — Zipcatcher can query multiple sources concurrently and merge the results. You can run the app and use Seestar control/capture without any flight API keys.
 
 | Source | Key required? | Notes |
 |--------|--------------|-------|
@@ -45,11 +45,13 @@ It continuously monitors live flight traffic, projects each aircraft's path agai
 | [ADS-B Exchange](https://www.adsbexchange.com/data/) | Yes — `ADSBX_API_KEY` in `.env` | Optional; skip if you don't have one |
 | Local receiver (dump1090 / tar1090) | No | Point `ADSB_LOCAL_URL` at your own RTL-SDR receiver — optional |
 
-You can run Zipcatcher with zero API keys and still get solid coverage from the four free sources. Adding a FlightAware key enriches results with callsign, route, and aircraft-type data.
+You can run Zipcatcher with **zero API keys**. FlightAware and all other flight-data APIs are optional.  
+With no APIs configured, Zipcatcher still runs normally for Seestar control, recording, and gallery review; you just won't get live flight-based transit predictions.
 
 ### Install and run
 
 Full setup instructions → **[SETUP.md](SETUP.md)**
+Prebuilt macOS and Windows installers are available in GitHub Releases: **https://github.com/Tailspin45/Zipcatcher/releases**
 
 ```bash
 make setup                          # create venv, install deps, create .env from .env.mock
@@ -74,7 +76,7 @@ python3 transit_capture.py --latitude 51.5 --longitude -0.12 --target sun
 ### Prediction Pipeline
 
 
-1. **Flight acquisition** — queries APIs for all aircraft inside the configured bounding box
+1. **Flight acquisition** — queries enabled flight-data sources for aircraft inside the configured bounding box
 2. **Position projection** — extrapolates constant-velocity/heading tracks up to 15 minutes ahead
 3. **Celestial tracking** — computes Sun and Moon position with Skyfield + JPL DE421 ephemeris, including atmospheric refraction
 4. **Angular separation** — numerical optimisation finds the moment of closest approach on-sky
