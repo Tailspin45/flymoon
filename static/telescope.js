@@ -86,6 +86,7 @@ let simulationFiles = []; // Track temporary simulation files
 let filmstripFiles = []; // current files rendered in the horizontal filmstrip
 let _galleryMode = 'video'; // 'video' | 'diff' | 'trigger'
 let _lastDiscoveredSeestarIp = null; // last discovered scope IP
+const _refreshFilesTimers = new Map();
 
 const filmstripSelection = {
     selected: new Set(),   // set of file paths selected in filmstrip
@@ -670,8 +671,8 @@ async function capturePhoto() {
     if (result && result.success) {
         showStatus('Photo captured successfully!', 'success', 5000);
         
-        // Refresh file list after a short delay
-        setTimeout(refreshFiles, 2000);
+        // Retry refresh so delayed disk writes still show up in the filmstrip.
+        scheduleRefreshFiles([0, 2000, 5000, 9000]);
     }
 }
 
@@ -736,8 +737,8 @@ async function stopRecording() {
     const result = await apiCall('/telescope/recording/stop', 'POST');
     if (result && result.success) {
         showStatus('Recording stopped', 'success', 5000);
-        // Refresh file list after a short delay
-        setTimeout(refreshFiles, 2000);
+        // Retry refresh so delayed file finalization still shows up in the filmstrip.
+        scheduleRefreshFiles([0, 2000, 5000, 9000]);
     } else {
         // Backend already stopped (400) — state already reset above, just warn quietly
         showStatus('⚠️ Recording already stopped', 'warning', 3000);
@@ -871,8 +872,8 @@ async function stopTimelapse() {
         updateTimelapseUI();
         _stopTimelapsePoll();
         showStatus('Timelapse stopped — assembling video', 'success', 5000);
-        // Refresh file list after assembly has time to complete
-        setTimeout(refreshFiles, 5000);
+        // Timelapse assembly may finish late; retry refresh until it appears.
+        scheduleRefreshFiles([0, 5000, 10000, 15000]);
     }
 }
 
@@ -1417,12 +1418,28 @@ async function refreshFiles() {
     
     // Update filmstrip
     updateFilmstrip(window.currentFiles);
+    const filesModal = document.getElementById('filesModal');
+    if (filesModal && filesModal.style.display !== 'none') {
+        updateFilesGrid();
+    }
     
     // Enable/disable controls
     const refreshBtn = document.getElementById('refreshFilesBtn');
     const expandBtn = document.getElementById('expandFilesBtn');
     if (refreshBtn) refreshBtn.disabled = false;
     if (expandBtn) expandBtn.disabled = files.length === 0;
+}
+
+function scheduleRefreshFiles(delaysMs = [0]) {
+    delaysMs.forEach(delayMs => {
+        const safeDelay = Math.max(0, Number(delayMs) || 0);
+        if (_refreshFilesTimers.has(safeDelay)) return;
+        const timerId = setTimeout(() => {
+            _refreshFilesTimers.delete(safeDelay);
+            refreshFiles();
+        }, safeDelay);
+        _refreshFilesTimers.set(safeDelay, timerId);
+    });
 }
 
 function downloadFile(url, filename) {
@@ -3992,7 +4009,12 @@ function closeFileViewer() {
     _trimIn = null;
     _trimOut = null;
     _scrubSlider = null;
-    _frameThumbs = [];
+    _frameThumbs = {};
+    _thumbExtractionQueue = [];
+    _thumbExtractionPending = new Set();
+    _thumbExtractionBusy = false;
+    _thumbExtractorCanvas = null;
+    _thumbExtractorCtx = null;
     _currentFrame = 0;
     if (_thumbExtractorVid) {
         try { document.body.removeChild(_thumbExtractorVid); } catch (e) {}
@@ -4212,72 +4234,105 @@ function _updateScrubPosition(vid) {
 // Five-panel viewer: 5 equal big images showing ±2 around current frame
 // ---------------------------------------------------------------------------
 
-var _frameThumbs = [];      // full-quality data-URL images per frame
+var _frameThumbs = {};      // frame index -> data URL
 var _frameTotalCount = 0;
 var _thumbExtractorVid = null;
+var _thumbExtractorCanvas = null;
+var _thumbExtractorCtx = null;
+var _thumbExtractionBusy = false;
+var _thumbExtractionQueue = [];
+var _thumbExtractionPending = new Set();
+var _lastThumbQueueMs = 0;
+const THUMB_QUEUE_THROTTLE_MS = 120;
 
-/** Extract all frames at display size using a hidden video element. */
+/** Prepare a hidden extractor video for lightweight on-demand frame thumbnails. */
 function _extractFrameThumbs(mainVid) {
     if (_thumbExtractorVid) {
         try { document.body.removeChild(_thumbExtractorVid); } catch (e) {}
         _thumbExtractorVid = null;
     }
-    _frameThumbs = [];
+    _frameThumbs = {};
+    _thumbExtractionQueue = [];
+    _thumbExtractionPending = new Set();
+    _thumbExtractionBusy = false;
+    _thumbExtractorCanvas = null;
+    _thumbExtractorCtx = null;
 
     const extVid = document.createElement('video');
     extVid.src = mainVid.src;
     extVid.muted = true;
-    extVid.preload = 'auto';
+    extVid.preload = 'metadata';
     extVid.style.cssText = 'position:absolute;left:-9999px;width:1px;height:1px;';
     document.body.appendChild(extVid);
     _thumbExtractorVid = extVid;
 
-    extVid.addEventListener('loadeddata', () => {
-        // Guard: if a newer viewFile call replaced the extractor, this one is stale
+    extVid.addEventListener('loadedmetadata', () => {
         if (extVid !== _thumbExtractorVid) return;
-
-        const fps = _videoFps || 30;
-        const total = Math.round(extVid.duration * fps);
-        _frameTotalCount = total;
-        _frameThumbs = new Array(total).fill(null);
-
-        const slider = document.getElementById('frameScrubSlider');
-        if (slider) slider.max = total - 1;
 
         const vw = extVid.videoWidth || 640;
         const vh = extVid.videoHeight || 480;
-        // Extract at a reasonable size (panel will be ~20% of viewport width)
         const thumbW = Math.min(vw, 400);
-        const thumbH = Math.round(thumbW * (vh / vw));
-        const canvas = document.createElement('canvas');
-        canvas.width = thumbW;
-        canvas.height = thumbH;
-        const ctx = canvas.getContext('2d');
-
-        let idx = 0;
-        const panel = document.getElementById('fivePanel');
-        function next() {
-            if (idx >= total || !document.getElementById('fivePanel')) {
-                try { document.body.removeChild(extVid); } catch (e) {}
-                _thumbExtractorVid = null;
-                _updateFivePanel();
-                return;
-            }
-            extVid.currentTime = idx / fps;
-            extVid.onseeked = () => {
-                ctx.drawImage(extVid, 0, 0, thumbW, thumbH);
-                _frameThumbs[idx] = canvas.toDataURL('image/jpeg', 0.85);
-                idx++;
-                if (panel && idx % 30 === 0) {
-                    panel.innerHTML = `<span style="color:#555; font-size:0.85em;">Extracting frames ${idx}/${total}…</span>`;
-                }
-                // Show the panel as soon as we have the first few frames
-                if (idx === 5) _updateFivePanel();
-                requestAnimationFrame(next);
-            };
-        }
-        next();
+        const thumbH = Math.max(1, Math.round(thumbW * (vh / vw)));
+        _thumbExtractorCanvas = document.createElement('canvas');
+        _thumbExtractorCanvas.width = thumbW;
+        _thumbExtractorCanvas.height = thumbH;
+        _thumbExtractorCtx = _thumbExtractorCanvas.getContext('2d');
+        _queueFivePanelThumbs(_currentFrame);
     }, { once: true });
+}
+
+function _queueFrameThumb(frameIdx) {
+    if (!_thumbExtractorVid || !_thumbExtractorCtx || !_thumbExtractorCanvas) return;
+    if (frameIdx < 0 || frameIdx >= _frameTotalCount) return;
+    if (_frameThumbs[frameIdx] || _thumbExtractionPending.has(frameIdx)) return;
+    _thumbExtractionPending.add(frameIdx);
+    _thumbExtractionQueue.push(frameIdx);
+}
+
+function _drainThumbQueue() {
+    if (_thumbExtractionBusy) return;
+    if (!_thumbExtractorVid || !_thumbExtractorCtx || !_thumbExtractorCanvas) return;
+    const frameIdx = _thumbExtractionQueue.shift();
+    if (frameIdx === undefined) return;
+
+    _thumbExtractionBusy = true;
+    const extVid = _thumbExtractorVid;
+    const fps = _videoFps || 30;
+
+    extVid.onseeked = () => {
+        if (extVid !== _thumbExtractorVid) {
+            _thumbExtractionPending.delete(frameIdx);
+            _thumbExtractionBusy = false;
+            requestAnimationFrame(_drainThumbQueue);
+            return;
+        }
+        try {
+            _thumbExtractorCtx.drawImage(extVid, 0, 0, _thumbExtractorCanvas.width, _thumbExtractorCanvas.height);
+            _frameThumbs[frameIdx] = _thumbExtractorCanvas.toDataURL('image/jpeg', 0.85);
+        } catch (e) {
+            // Ignore per-frame extraction failures and continue.
+        }
+        _thumbExtractionPending.delete(frameIdx);
+        _thumbExtractionBusy = false;
+        _updateFivePanel();
+        requestAnimationFrame(_drainThumbQueue);
+    };
+
+    try {
+        extVid.currentTime = frameIdx / fps;
+    } catch (e) {
+        _thumbExtractionPending.delete(frameIdx);
+        _thumbExtractionBusy = false;
+        requestAnimationFrame(_drainThumbQueue);
+    }
+}
+
+function _queueFivePanelThumbs(centerFrame) {
+    const now = Date.now();
+    if (now - _lastThumbQueueMs < THUMB_QUEUE_THROTTLE_MS) return;
+    _lastThumbQueueMs = now;
+    [-2, -1, 0, 1, 2].forEach(off => _queueFrameThumb(centerFrame + off));
+    _drainThumbQueue();
 }
 
 /** Render 5 equal big panels: frames [cur-2, cur-1, cur, cur+1, cur+2] */
@@ -4286,8 +4341,7 @@ function _updateFivePanel() {
     if (!panel) return;
     const total = _frameTotalCount || 1;
     const cur = _currentFrame;
-
-    if (!_frameThumbs.length || !_frameThumbs[0]) return; // still extracting
+    _queueFivePanelThumbs(cur);
 
     const offsets = [-2, -1, 0, 1, 2];
     let html = '';
@@ -6260,7 +6314,7 @@ function onTransitDetected(event) {
 
     // Refresh file list to show new recording
     if (event.recording_file) {
-        setTimeout(refreshFiles, 3000);
+        scheduleRefreshFiles([0, 3000, 7000, 11000]);
     }
 
 }

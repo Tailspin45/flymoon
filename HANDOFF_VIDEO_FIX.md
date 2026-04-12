@@ -33,7 +33,9 @@
 **static/telescope.js:**
 - Added "Export MP4" button to viewer action bar (video files only)
 - Added `viewerExportMp4()` function
-- **BUG**: calls `loadFiles()` instead of `refreshFiles()` on success — needs fix (line ~4492)
+- Fixed export success refresh call to `refreshFiles()`
+- Added `scheduleRefreshFiles()` retry refresh helper for photo/recording/timelapse/detection events
+- Reworked five-panel frame extraction from "extract all frames at load" to lightweight on-demand extraction around current frame (reduces viewer flashing/load spikes)
 
 ## What's Verified Working
 - `-bf 0` flag works with the installed ffmpeg (tested, produces 0 B-frames)
@@ -45,16 +47,15 @@
 ## What's NOT Yet Verified
 - **No recording has been made with `-bf 0` in effect** — the app hasn't been restarted since that change
 - **"New recording doesn't appear in filmstrip/grid"** — user reported this BEFORE `-bf 0` was added. Unclear if:
-  - The filmstrip just didn't auto-refresh (timing issue with `setTimeout(refreshFiles, 2000)`)
+  - The filmstrip just didn't auto-refresh (timing issue with single-shot refresh)
   - Or there's a deeper UI bug
   - The backend API DOES return the files correctly, so it's a frontend rendering or refresh issue
-- **Flashing on video load** — likely caused by `_extractFrameThumbs()` (line 4220 in telescope.js) which creates a SECOND hidden video element and seeks through ALL frames simultaneously with the main player. Not yet fixed.
-- **Export button JS bug** — `loadFiles()` should be `refreshFiles()` (line ~4492)
+- **Flashing on video load** — mitigated by on-demand frame extraction; still needs real-device verification for regressions
 
 ## Open Questions
-1. Will the filmstrip show files after restarting with new code? (Might have been a one-time refresh glitch)
+1. Will multi-pass refresh reliably show new recordings in filmstrip/grid on all recording paths?
 2. Does `-bf 0` fully solve the "72 frame limit"? (Theory is solid — 72 = exact P-frame count — but not yet tested with a new recording)
-3. Does the flashing on video load need a separate fix beyond `-bf 0`? (The frame extractor creating a second video element is still aggressive)
+3. Is any viewer flashing still visible after the on-demand extractor change?
 
 ## Key Files
 - `src/telescope_routes.py` — manual/timelapse recording, trim, export, rename, file listing
