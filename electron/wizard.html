@@ -426,13 +426,13 @@
       <label><input type="checkbox">Install/Update App: Download the latest Seestar app and check for firmware updates.</label>
       <label><input type="checkbox">Setup Tripod: Attach the telescope to the tripod; ensure it is stable and level (check in-app level sensor).</label>
       <label><input type="checkbox">Calibrate: Perform compass and level calibration in the app to ensure accurate GoTo performance.</label>
-      <label><input type="checkbox">Remove Lens Cap: Take off the front lens cap for night viewing.</label>
+      <label><input type="checkbox">Remove Lens Cap, Install Solar filter for Sun transits.</label>
       <label><input type="checkbox">Enable communication: turn on mobile Bluetooth and Station Mode Wifi.</label>
     </div>
 
     <div class="checklist-group">
       <h3>Session Checklist</h3>
-      <label><input type="checkbox">Connect Device: Power on the Seestar, connect mobile device.</label>
+      <label><input type="checkbox">Coonect AC power or power bank for long sessions.</label>
       <label><input type="checkbox">Select Mode: Choose Solar System (Sun or Moon) or Scenery mode in the app.</label>
       <label><input type="checkbox">Solar Filter Warning: Ensure the solar filter is installed before pointing at the sun to prevent damage.</label>
       <label><input type="checkbox">Focusing: Use the auto-focus feature before starting a session.</label>
@@ -440,7 +440,7 @@
 
     <div class="checklist-group">
       <h3>Post-Session Checklist</h3>
-      <label><input type="checkbox">Park Telescope: Use the app to "Park" the telescope before powering off.</label>
+      <label><input type="checkbox">Park Telescope: Use the mobile app to "Park" the telescope before powering off.</label>
       <label><input type="checkbox">Power Off: Properly shut down the device via the power button.</label>
       <label><input type="checkbox">Retrieve Images: Transfer images from the app to your phone/tablet gallery.</label>
       <label><input type="checkbox">Check Gear: Clean the lens if necessary, replace the lens cap for storage, fully charge Seestar battery and power bank.</label>
@@ -450,15 +450,10 @@
       <input type="checkbox" id="checklistAck">
       <label for="checklistAck">I have reviewed this checklist and I am ready to continue.</label>
     </div>
-    <button
-      type="button"
-      class="btn btn-secondary"
-      id="btnDisableStartupWizard"
-      onclick="disableStartupWizardAndLaunch()"
-      style="display:none; margin-top:10px"
-    >
-      Disable startup checklist and open app
-    </button>
+    <div class="toggle-row" style="margin-top: 6px;">
+      <input type="checkbox" id="startupChecklistDisable">
+      <label for="startupChecklistDisable">Disable startup checklist on future launches (open app directly).</label>
+    </div>
   </div>
 
 </div>
@@ -481,9 +476,9 @@ const STEPS = IS_FIRST_LAUNCH
     : IS_STARTUP_CHECKLIST
         ? ['step-checklist']
         : ['step-0','step-1','step-2','step-3','step-4','step-5','step-review'];
+const ALL_STEP_IDS = ['step-0','step-1','step-2','step-3','step-4','step-5','step-review','step-checklist','step-launch'];
 let current = 0;
 let startupWizardDisabled = false;
-let disableStartupWizardRequested = false;
 
 function open_(url) {
     if (window.zipcatcher) window.zipcatcher.openExternal(url);
@@ -497,10 +492,12 @@ function isChecklistReady() {
 
 function showStep(idx) {
     const stepId = STEPS[idx];
-    STEPS.forEach((id, i) => {
+    ALL_STEP_IDS.forEach((id) => {
         const el = document.getElementById(id);
-        if (el) el.style.display = i === idx ? '' : 'none';
-        if (el) el.classList.toggle('active', i === idx);
+        if (!el) return;
+        const isActive = id === stepId;
+        el.style.display = isActive ? '' : 'none';
+        el.classList.toggle('active', isActive);
     });
     for (let i = 0; i < 6; i++) {
         const d = document.getElementById(`dot-${i}`);
@@ -511,7 +508,6 @@ function showStep(idx) {
     const btnBack = document.getElementById('btnBack');
     const btnSkipAll = document.getElementById('btnSkipAll');
     const btnSkip = document.getElementById('btnSkip');
-    const btnDisableStartupWizard = document.getElementById('btnDisableStartupWizard');
     if (IS_STARTUP_CHECKLIST) {
         btnBack.style.display = 'none';
         btnSkipAll.style.display = 'none';
@@ -523,10 +519,6 @@ function showStep(idx) {
         // Skip on cards 1-6, not on Review.
         btnSkip.style.display = isLast ? 'none' : '';
     }
-    if (btnDisableStartupWizard) {
-        btnDisableStartupWizard.style.display = (IS_STARTUP_CHECKLIST && stepId === 'step-checklist') ? '' : 'none';
-    }
-
     const btnNext = document.getElementById('btnNext');
     if (isLast) {
         btnNext.textContent = (IS_FIRST_LAUNCH || IS_STARTUP_CHECKLIST) ? '🚀 Launch Zipcatcher' : 'Save & Close';
@@ -584,9 +576,10 @@ async function skipAll() {
     await window.zipcatcher.wizardSkipAll();
 }
 
-async function disableStartupWizardAndLaunch() {
-    disableStartupWizardRequested = true;
-    await finish();
+function startupChecklistDisabledRequested() {
+    const disable = document.getElementById('startupChecklistDisable');
+    if (disable) return !!disable.checked;
+    return startupWizardDisabled;
 }
 
 function back() {
@@ -729,12 +722,12 @@ async function finish() {
         seestar_enabled: document.getElementById('seestar_enabled').checked,
         seestar_host:    document.getElementById('seestar_host').value.trim(),
         seestar_port:    parseInt(document.getElementById('seestar_port').value || 4700),
-        startup_wizard_disabled: disableStartupWizardRequested ? true : startupWizardDisabled,
+        startup_wizard_disabled: startupChecklistDisabledRequested(),
     };
 
     if (IS_FIRST_LAUNCH || IS_STARTUP_CHECKLIST) {
         // Show the launch spinner while Flask boots.
-        STEPS.forEach(id => {
+        ALL_STEP_IDS.forEach(id => {
             const el = document.getElementById(id);
             if (el) { el.style.display = 'none'; el.classList.remove('active'); }
         });
@@ -779,6 +772,8 @@ async function init() {
     set('seestar_host',  cfg.seestar_host);
     document.getElementById('seestar_port').value = cfg.seestar_port || 4700;
     startupWizardDisabled = cfg.startup_wizard_disabled === true || cfg.startup_wizard_disabled === 'true';
+    const startupDisable = document.getElementById('startupChecklistDisable');
+    if (startupDisable) startupDisable.checked = startupWizardDisabled;
     toggleSeestar();
 
     if (IS_STARTUP_CHECKLIST) {
