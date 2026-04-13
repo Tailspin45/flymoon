@@ -1,19 +1,6 @@
 # Zipcatcher — Quick Start
 
-## Option A: Prebuilt desktop app (recommended)
-
-**No Python installation is required** for prebuilt installers.
-
-Download the latest release:
-- https://github.com/Tailspin45/Zipcatcher/releases
-
-Install:
-- **Windows**: run the `Zipcatcher-Setup-*.exe` installer (or `START-HERE-Install-Flymoon.bat` from the end-user ZIP)
-- **macOS**: open the `.dmg`, drag Zipcatcher to **Applications**, then launch it
-
----
-
-## Option B: Docker
+## Option A: Docker (easiest)
 
 ### Step 1 — Install Docker Desktop
 
@@ -61,7 +48,7 @@ To view logs: `docker compose logs -f`
 
 ---
 
-## Option C: From source (Python required, Mac / Linux)
+## Option B: Without Docker (Mac / Linux)
 
 ```bash
 make setup

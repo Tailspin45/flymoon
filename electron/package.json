@@ -1,6 +1,6 @@
 {
   "name": "zipcatcher",
-  "version": "0.1.2",
+  "version": "0.1.4",
   "description": "Track aircraft transiting the Sun and Moon",
   "author": "Aerodite, Inc.",
   "main": "main.js",

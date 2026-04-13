@@ -58,7 +58,16 @@ from zoneinfo import ZoneInfo
 
 import requests
 from dotenv import load_dotenv
-from flask import Flask, Response, jsonify, redirect, render_template, request
+from flask import (
+    Flask,
+    Response,
+    abort,
+    jsonify,
+    redirect,
+    render_template,
+    request,
+    send_from_directory,
+)
 from tzlocal import get_localzone_name
 
 from src.constants import (
@@ -282,6 +291,32 @@ def index():
 def cost_models():
     """Flight data acquisition cost-benefit analysis paper."""
     return render_template("cost_models.html")
+
+
+_HELP_DOC_FILES = {
+    "quick-start": "QUICKSTART.md",
+    "setup-guide": "SETUP.md",
+    "telescope-guide": "TELESCOPE_GUIDE.md",
+    "zipcatcher-article": "Zipcatcher-article.pdf",
+    "transit-position-paper": "transit_capture_position_paper.pdf",
+}
+_DOCS_DIR = _REPO / "docs"
+
+
+@app.route("/help/documents/<doc_id>")
+def help_document(doc_id: str):
+    """Serve allowlisted Help documents for in-app modal viewing."""
+    filename = _HELP_DOC_FILES.get(doc_id)
+    if not filename:
+        abort(404)
+
+    doc_path = _DOCS_DIR / filename
+    if not doc_path.is_file():
+        return jsonify({"error": f"Document not found: {filename}"}), 404
+
+    response = send_from_directory(str(_DOCS_DIR), filename, as_attachment=False)
+    response.headers["Cache-Control"] = "no-store"
+    return response
 
 
 @app.route("/config")

@@ -1754,6 +1754,29 @@ function showCostModal(newValue, inputElement) {
 
 // ─── Help / Info modal ────────────────────────────────────────────────────────
 
+const HELP_DOCUMENTS = {
+    'quick-start': {
+        title: 'Quick Start',
+        url: '/help/documents/quick-start',
+    },
+    'setup-guide': {
+        title: 'Setup Guide',
+        url: '/help/documents/setup-guide',
+    },
+    'telescope-guide': {
+        title: 'Telescope Guide',
+        url: '/help/documents/telescope-guide',
+    },
+    'zipcatcher-article': {
+        title: 'Zipcatcher Article (PDF)',
+        url: '/help/documents/zipcatcher-article',
+    },
+    'transit-position-paper': {
+        title: 'Transit Position Paper (PDF)',
+        url: '/help/documents/transit-position-paper',
+    },
+};
+
 const HELP_CONTENT = {
     'min-angle': {
         title: 'Quadrant Min Angle Dial',
@@ -1863,6 +1886,17 @@ const HELP_CONTENT = {
 <li><strong>Scope</strong> — whether the Seestar was connected and in which mode</li>
 </ul>
 <p>The log is stored on the server and survives restarts. Use it to review events after the fact and identify which flight corridors are transit-prone.</p>`
+    },
+    'help-docs': {
+        title: '📚 Help Documents',
+        body: `<p>Open the main documentation set directly in a large in-app modal:</p>
+<ul>
+<li><a href="#" onclick="return openHelpDocumentModal('quick-start')">Quick Start</a></li>
+<li><a href="#" onclick="return openHelpDocumentModal('setup-guide')">Setup Guide</a></li>
+<li><a href="#" onclick="return openHelpDocumentModal('telescope-guide')">Telescope Guide</a></li>
+<li><a href="#" onclick="return openHelpDocumentModal('zipcatcher-article')">Zipcatcher Article (PDF)</a></li>
+<li><a href="#" onclick="return openHelpDocumentModal('transit-position-paper')">Transit Position Paper (PDF)</a></li>
+</ul>`
     }
 };
 
@@ -1878,6 +1912,37 @@ function showInfo(topic) {
 function closeInfoModal() {
     document.getElementById('infoModal').style.display = 'none';
 }
+
+function openHelpDocumentModal(docId) {
+    const doc = HELP_DOCUMENTS[docId];
+    if (!doc) return false;
+
+    const modal = document.getElementById('helpDocModal');
+    const frame = document.getElementById('helpDocFrame');
+    const title = document.getElementById('helpDocModalTitle');
+    const openNewTabLink = document.getElementById('helpDocOpenNewTab');
+    if (!modal || !frame || !title || !openNewTabLink) return false;
+
+    const url = `${doc.url}?t=${Date.now()}`;
+    title.textContent = doc.title;
+    frame.src = url;
+    openNewTabLink.href = url;
+    modal.style.display = 'flex';
+    return false;
+}
+
+function closeHelpDocumentModal() {
+    const modal = document.getElementById('helpDocModal');
+    const frame = document.getElementById('helpDocFrame');
+    if (frame) frame.src = 'about:blank';
+    if (modal) modal.style.display = 'none';
+}
+
+// Electron Help menu hooks into this to open docs inside the large modal.
+window.openHelpDocumentFromMenu = function (docId) {
+    const opened = openHelpDocumentModal(docId);
+    return opened === false && !!HELP_DOCUMENTS[docId];
+};
 
 function dismissCostModal(keep) {
     document.getElementById('costModal').style.display = 'none';

@@ -85,6 +85,7 @@
         <button id="heatmapToggle" class="btn-sm" onclick="toggleHeatmap()" title="Show traffic density heatmap — accumulates aircraft positions across all refreshes to reveal flight corridors.">🔥 Heatmap</button>
         <button id="heatmapClear" class="btn-sm" onclick="clearHeatmap()" title="Clear all accumulated heatmap data from browser storage" style="opacity:0.6; font-size:0.75em;">🗑</button>
         <button class="btn-help" onclick="showInfo('heatmap')" title="Learn about the heatmap">ℹ️</button>
+        <button class="btn-help" onclick="showInfo('help-docs')" title="Open Quick Start, Setup, Telescope, and PDF help documents">📚 Docs</button>
         <button id="ghostToggle" class="btn-sm" onclick="toggleGhostTrail()" title="Hide ghost trail (breadcrumb dots)" style="opacity:1;">👻 Trail</button>
         <span class="separator">|</span>
         <div class="control-group">
@@ -287,6 +288,18 @@
         <div style="text-align:right; margin-top:18px;">
             <button onclick="closeInfoModal()" class="btn-sm">Close</button>
         </div>
+    </div>
+</div>
+
+<!-- Large Help document modal -->
+<div id="helpDocModal" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.86); z-index:9999; align-items:center; justify-content:center;" onclick="if(event.target===this) closeHelpDocumentModal();">
+    <div style="background:#111827; border:1px solid #4b5563; border-radius:12px; width:92vw; max-width:1600px; height:90vh; max-height:980px; margin:0 auto; display:flex; flex-direction:column; overflow:hidden;">
+        <div style="display:flex; align-items:center; gap:10px; padding:12px 14px; border-bottom:1px solid #374151; background:#0f172a;">
+            <strong id="helpDocModalTitle" style="color:#dbeafe; flex:1;">Help Document</strong>
+            <a id="helpDocOpenNewTab" href="#" target="_blank" rel="noopener noreferrer" class="btn-sm" style="text-decoration:none;">Open in new tab</a>
+            <button onclick="closeHelpDocumentModal()" class="btn-sm">Close</button>
+        </div>
+        <iframe id="helpDocFrame" title="Help document viewer" style="width:100%; height:100%; border:0; background:#0b0f17;"></iframe>
     </div>
 </div>
 

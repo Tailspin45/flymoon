@@ -506,6 +506,31 @@ function createWizardWindow(mode = 'preferences') {
 
 function buildMenu() {
     const docsDir = path.join(RESOURCES, 'docs');
+    const openHelpDoc = (docId, fallbackFilename) => {
+        const fallbackPath = path.join(docsDir, fallbackFilename);
+        const fallbackOpen = () => shell.openPath(fallbackPath);
+
+        if (!mainWindow || mainWindow.isDestroyed()) {
+            fallbackOpen();
+            return;
+        }
+
+        if (mainWindow.isMinimized()) mainWindow.restore();
+        mainWindow.show();
+        mainWindow.focus();
+
+        const script = `(typeof window.openHelpDocumentFromMenu === 'function')
+            ? window.openHelpDocumentFromMenu(${JSON.stringify(docId)})
+            : false;`;
+
+        mainWindow.webContents
+            .executeJavaScript(script, true)
+            .then((handled) => {
+                if (!handled) fallbackOpen();
+            })
+            .catch(() => fallbackOpen());
+    };
+
     const template = [
         {
             label: 'File',
@@ -524,12 +549,12 @@ function buildMenu() {
         {
             label: 'Help',
             submenu: [
-                { label: 'Quick Start',      click: () => shell.openPath(path.join(docsDir, 'QUICKSTART.md')) },
-                { label: 'Setup Guide',      click: () => shell.openPath(path.join(docsDir, 'SETUP.md')) },
-                { label: 'Telescope Guide',  click: () => shell.openPath(path.join(docsDir, 'TELESCOPE_GUIDE.md')) },
+                { label: 'Quick Start',      click: () => openHelpDoc('quick-start', 'QUICKSTART.md') },
+                { label: 'Setup Guide',      click: () => openHelpDoc('setup-guide', 'SETUP.md') },
+                { label: 'Telescope Guide',  click: () => openHelpDoc('telescope-guide', 'TELESCOPE_GUIDE.md') },
                 { type: 'separator' },
-                { label: 'Zipcatcher Article (PDF)',       click: () => shell.openPath(path.join(docsDir, 'Zipcatcher-article.pdf')) },
-                { label: 'Transit Position Paper (PDF)',click: () => shell.openPath(path.join(docsDir, 'transit_capture_position_paper.pdf')) },
+                { label: 'Zipcatcher Article (PDF)',       click: () => openHelpDoc('zipcatcher-article', 'Zipcatcher-article.pdf') },
+                { label: 'Transit Position Paper (PDF)',click: () => openHelpDoc('transit-position-paper', 'transit_capture_position_paper.pdf') },
                 { type: 'separator' },
                 { label: 'Get FlightAware API Key', click: () => shell.openExternal('https://www.flightaware.com/aeroapi/portal/') },
                 { label: 'Create Telegram Bot',     click: () => shell.openExternal('https://t.me/botfather') },

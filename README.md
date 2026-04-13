@@ -31,7 +31,8 @@ It continuously monitors live flight traffic, projects each aircraft's path agai
 
 ### Prerequisites
 
-- Python 3.9 +
+- **Prebuilt macOS/Windows installers:** no Python required
+- **Running from source:** Python 3.9+
 
 **Flight data sources (all optional)** — Zipcatcher can query multiple sources concurrently and merge the results. You can run the app and use Seestar control/capture without any flight API keys.
 
@@ -52,6 +53,10 @@ With no APIs configured, Zipcatcher still runs normally for Seestar control, rec
 
 Full setup instructions → **[SETUP.md](SETUP.md)**
 Prebuilt macOS and Windows installers are available in GitHub Releases: **https://github.com/Tailspin45/Zipcatcher/releases**
+
+**Installer path (macOS/Windows):** download and run the release installer — Python is bundled.
+
+**Source path (Python required):**
 
 ```bash
 make setup                          # create venv, install deps, create .env from .env.mock
