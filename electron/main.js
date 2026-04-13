@@ -20,7 +20,7 @@ let flaskProcess  = null;
 let flaskPort     = null;
 let mainWindow    = null;
 let wizardWindow  = null;
-let wizardMode    = 'preferences'; // 'first-launch' | 'preferences'
+let wizardMode    = 'preferences'; // 'first-launch' | 'startup-checklist' | 'preferences'
 let splashWindow  = null;
 let suppressWindowAllClosed = false;
 let wizardBootInProgress = false;
@@ -604,11 +604,12 @@ async function restartFlask(cfg) {
 
 ipcMain.handle('wizard-complete', async (_e, cfg) => {
     const wasFirstLaunch = wizardMode === 'first-launch';
+    const requiresBoot = wasFirstLaunch || wizardMode === 'startup-checklist';
     const finalCfg = applyGreenwichDefaults(cfg || {});
     saveConfig(finalCfg);
 
     try {
-        if (wasFirstLaunch) {
+        if (requiresBoot) {
             wizardBootInProgress = true;
             suppressWindowAllClosed = true;
             // Reset mode before we close the window so the `closed` handler
@@ -634,7 +635,7 @@ ipcMain.handle('wizard-complete', async (_e, cfg) => {
     } catch (err) {
         dialog.showErrorBox('Startup Error', `Failed to start Zipcatcher server:\n\n${err.message}`);
     } finally {
-        if (wasFirstLaunch) {
+        if (requiresBoot) {
             wizardBootInProgress = false;
             suppressWindowAllClosed = false;
         }
@@ -646,12 +647,13 @@ ipcMain.handle('wizard-complete', async (_e, cfg) => {
 // default config, boots Flask, and shows the main window.
 ipcMain.handle('wizard-skip-all', async () => {
     const wasFirstLaunch = wizardMode === 'first-launch';
+    const requiresBoot = wasFirstLaunch || wizardMode === 'startup-checklist';
     const existing = loadConfig();
     const finalCfg = applyGreenwichDefaults(existing || {});
     saveConfig(finalCfg);
 
     try {
-        if (wasFirstLaunch) {
+        if (requiresBoot) {
             wizardBootInProgress = true;
             suppressWindowAllClosed = true;
             wizardMode = 'preferences';
@@ -672,7 +674,7 @@ ipcMain.handle('wizard-skip-all', async () => {
     } catch (err) {
         dialog.showErrorBox('Startup Error', `Failed to start Zipcatcher server:\n\n${err.message}`);
     } finally {
-        if (wasFirstLaunch) {
+        if (requiresBoot) {
             wizardBootInProgress = false;
             suppressWindowAllClosed = false;
         }
@@ -710,6 +712,14 @@ app.whenReady().then(async () => {
         // create the main window. Flask boots only after the user completes
         // or skips the wizard.
         createWizardWindow('first-launch');
+        return;
+    }
+
+    const startupWizardDisabled = cfg.startup_wizard_disabled === true || cfg.startup_wizard_disabled === 'true';
+    if (!startupWizardDisabled) {
+        // Returning users: require the final checklist acknowledgement before
+        // launching the app unless they disable this startup gate.
+        createWizardWindow('startup-checklist');
         return;
     }
 

@@ -450,6 +450,15 @@
       <input type="checkbox" id="checklistAck">
       <label for="checklistAck">I have reviewed this checklist and I am ready to continue.</label>
     </div>
+    <button
+      type="button"
+      class="btn btn-secondary"
+      id="btnDisableStartupWizard"
+      onclick="disableStartupWizardAndLaunch()"
+      style="display:none; margin-top:10px"
+    >
+      Disable startup checklist and open app
+    </button>
   </div>
 
 </div>
@@ -466,10 +475,15 @@
 // Mode comes from main.js via the loadFile query string.
 const WIZARD_MODE = new URLSearchParams(location.search).get('mode') || 'preferences';
 const IS_FIRST_LAUNCH = WIZARD_MODE === 'first-launch';
+const IS_STARTUP_CHECKLIST = WIZARD_MODE === 'startup-checklist';
 const STEPS = IS_FIRST_LAUNCH
     ? ['step-0','step-1','step-2','step-3','step-4','step-5','step-review','step-checklist']
-    : ['step-0','step-1','step-2','step-3','step-4','step-5','step-review'];
+    : IS_STARTUP_CHECKLIST
+        ? ['step-checklist']
+        : ['step-0','step-1','step-2','step-3','step-4','step-5','step-review'];
 let current = 0;
+let startupWizardDisabled = false;
+let disableStartupWizardRequested = false;
 
 function open_(url) {
     if (window.zipcatcher) window.zipcatcher.openExternal(url);
@@ -493,16 +507,29 @@ function showStep(idx) {
         if (!d) continue;
         d.className = 'step-dot' + (i < idx ? ' done' : i === idx ? ' active' : '');
     }
-    document.getElementById('btnBack').style.display = idx > 0 ? '' : 'none';
-    // Skip All only on Card 1 (index 0).
-    document.getElementById('btnSkipAll').style.display = idx === 0 ? '' : 'none';
     const isLast = idx === STEPS.length - 1;
-    // Skip on cards 1-6, not on Review.
-    document.getElementById('btnSkip').style.display = isLast ? 'none' : '';
+    const btnBack = document.getElementById('btnBack');
+    const btnSkipAll = document.getElementById('btnSkipAll');
+    const btnSkip = document.getElementById('btnSkip');
+    const btnDisableStartupWizard = document.getElementById('btnDisableStartupWizard');
+    if (IS_STARTUP_CHECKLIST) {
+        btnBack.style.display = 'none';
+        btnSkipAll.style.display = 'none';
+        btnSkip.style.display = 'none';
+    } else {
+        btnBack.style.display = idx > 0 ? '' : 'none';
+        // Skip All only on Card 1 (index 0).
+        btnSkipAll.style.display = idx === 0 ? '' : 'none';
+        // Skip on cards 1-6, not on Review.
+        btnSkip.style.display = isLast ? 'none' : '';
+    }
+    if (btnDisableStartupWizard) {
+        btnDisableStartupWizard.style.display = (IS_STARTUP_CHECKLIST && stepId === 'step-checklist') ? '' : 'none';
+    }
 
     const btnNext = document.getElementById('btnNext');
     if (isLast) {
-        btnNext.textContent = IS_FIRST_LAUNCH ? '🚀 Launch Zipcatcher' : 'Save & Close';
+        btnNext.textContent = (IS_FIRST_LAUNCH || IS_STARTUP_CHECKLIST) ? '🚀 Launch Zipcatcher' : 'Save & Close';
         btnNext.className = 'btn btn-success';
     } else {
         btnNext.textContent = 'Next →';
@@ -510,11 +537,15 @@ function showStep(idx) {
     }
     btnNext.disabled = stepId === 'step-checklist' && !isChecklistReady();
 
-    const stepTotal = IS_FIRST_LAUNCH ? 7 : 6;
-    let stepNumber = idx + 1;
-    if (stepId === 'step-review') stepNumber = 6;
-    if (stepId === 'step-checklist') stepNumber = 7;
-    document.getElementById('stepCounter').textContent = `Step ${stepNumber} of ${stepTotal}`;
+    if (IS_STARTUP_CHECKLIST) {
+        document.getElementById('stepCounter').textContent = 'Startup checklist';
+    } else {
+        const stepTotal = IS_FIRST_LAUNCH ? 7 : 6;
+        let stepNumber = idx + 1;
+        if (stepId === 'step-review') stepNumber = 6;
+        if (stepId === 'step-checklist') stepNumber = 7;
+        document.getElementById('stepCounter').textContent = `Step ${stepNumber} of ${stepTotal}`;
+    }
 
     // Auto-fill bbox from the current observer location when entering Card 4.
     // Keeps existing non-empty values — just populates blanks.
@@ -551,6 +582,11 @@ function skip() {
 async function skipAll() {
     if (!window.zipcatcher) return;
     await window.zipcatcher.wizardSkipAll();
+}
+
+async function disableStartupWizardAndLaunch() {
+    disableStartupWizardRequested = true;
+    await finish();
 }
 
 function back() {
@@ -693,9 +729,10 @@ async function finish() {
         seestar_enabled: document.getElementById('seestar_enabled').checked,
         seestar_host:    document.getElementById('seestar_host').value.trim(),
         seestar_port:    parseInt(document.getElementById('seestar_port').value || 4700),
+        startup_wizard_disabled: disableStartupWizardRequested ? true : startupWizardDisabled,
     };
 
-    if (IS_FIRST_LAUNCH) {
+    if (IS_FIRST_LAUNCH || IS_STARTUP_CHECKLIST) {
         // Show the launch spinner while Flask boots.
         STEPS.forEach(id => {
             const el = document.getElementById(id);
@@ -741,7 +778,15 @@ async function init() {
     document.getElementById('seestar_enabled').checked = !!cfg.seestar_enabled;
     set('seestar_host',  cfg.seestar_host);
     document.getElementById('seestar_port').value = cfg.seestar_port || 4700;
+    startupWizardDisabled = cfg.startup_wizard_disabled === true || cfg.startup_wizard_disabled === 'true';
     toggleSeestar();
+
+    if (IS_STARTUP_CHECKLIST) {
+        const subtitle = document.querySelector('.subtitle');
+        if (subtitle) subtitle.textContent = 'Review the checklist before opening Zipcatcher';
+        const steps = document.querySelector('.steps');
+        if (steps) steps.style.display = 'none';
+    }
 }
 
 showStep(0);
