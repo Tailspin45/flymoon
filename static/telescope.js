@@ -27,20 +27,44 @@ function getFavorites() {
 function saveFavorites(favs) {
     localStorage.setItem('flymoon_favorites', JSON.stringify([...favs]));
 }
+function _favoriteTargetsFromContext(path, event) {
+    const el = event && event.currentTarget;
+    if (el && el.closest('.file-item') && gridSelection.selected.size > 0 && gridSelection.selected.has(path)) {
+        return [...gridSelection.selected];
+    }
+    if (el && el.closest('.filmstrip-item') && filmstripSelection.selected.size > 0 && filmstripSelection.selected.has(path)) {
+        return [...filmstripSelection.selected];
+    }
+    return [path];
+}
+function _setFavoriteForPaths(paths, shouldFavorite) {
+    if (!Array.isArray(paths) || paths.length === 0) return;
+    const favs = getFavorites();
+    for (const p of paths) {
+        if (shouldFavorite) favs.add(p);
+        else favs.delete(p);
+    }
+    saveFavorites(favs);
+    for (const p of paths) {
+        const isFav = favs.has(p);
+        document.querySelectorAll(`[data-fav-path="${CSS.escape(p)}"]`).forEach(btn => {
+            btn.textContent = isFav ? '❤️' : '🤍';
+            btn.title = isFav ? 'Unfavorite' : 'Favorite';
+        });
+        _updateDeleteBtnState(p, isFav);
+        _updateRenameBtnState(p, isFav);
+    }
+}
 function toggleFavorite(path, event) {
     if (event) event.stopPropagation();
+    const targets = _favoriteTargetsFromContext(path, event);
     const favs = getFavorites();
-    if (favs.has(path)) favs.delete(path); else favs.add(path);
-    saveFavorites(favs);
-    // Update all heart buttons for this path
-    document.querySelectorAll(`[data-fav-path="${CSS.escape(path)}"]`).forEach(btn => {
-        btn.textContent = favs.has(path) ? '❤️' : '🤍';
-        btn.title = favs.has(path) ? 'Unfavorite' : 'Favorite';
-    });
-    // Sync delete button states everywhere
-    _updateDeleteBtnState(path, favs.has(path));
-    // Sync rename button states everywhere
-    _updateRenameBtnState(path, favs.has(path));
+    const allFav = targets.every(p => favs.has(p));
+    const shouldFavorite = !allFav;
+    _setFavoriteForPaths(targets, shouldFavorite);
+    if (targets.length > 1) {
+        showStatus(`${shouldFavorite ? 'Favorited' : 'Unfavorited'} ${targets.length} files`, 'success', 2000);
+    }
 }
 
 function _updateDeleteBtnState(path, isFav) {
@@ -54,15 +78,17 @@ function _updateDeleteBtnState(path, isFav) {
         delBtn.title = isFav ? 'Remove favorite first' : 'Delete';
     });
     // Viewer delete button
+    const viewerFavBtn = document.getElementById('viewerFavBtn');
+    const viewerPath = viewerFavBtn ? viewerFavBtn.dataset.favPath : '';
     const viewerDelBtn = document.getElementById('viewerDeleteBtn');
-    if (viewerDelBtn) {
+    if (viewerDelBtn && viewerPath === path) {
         viewerDelBtn.disabled = isFav;
         viewerDelBtn.title = isFav ? 'Remove favorite first' : 'Delete (⌘/Ctrl+click to skip confirm)';
     }
     // Viewer fav button text
-    const viewerFavBtn = document.getElementById('viewerFavBtn');
-    if (viewerFavBtn) {
+    if (viewerFavBtn && viewerPath === path) {
         viewerFavBtn.textContent = isFav ? '❤️' : '🤍';
+        viewerFavBtn.title = isFav ? 'Unfavorite' : 'Favorite';
     }
 }
 
@@ -3277,6 +3303,16 @@ function gridDownloadSelected() {
     for (const f of files) {
         if (gridSelection.selected.has(f.path)) downloadFile(f.path, f.name);
     }
+}
+
+function gridFavoriteSelected() {
+    const paths = [...gridSelection.selected];
+    if (paths.length === 0) return;
+    const favs = getFavorites();
+    const allFav = paths.every(p => favs.has(p));
+    const shouldFavorite = !allFav;
+    _setFavoriteForPaths(paths, shouldFavorite);
+    showStatus(`${shouldFavorite ? 'Favorited' : 'Unfavorited'} ${paths.length} file${paths.length > 1 ? 's' : ''}`, 'success', 2000);
 }
 
 function _syncGridSelectionUI() {
