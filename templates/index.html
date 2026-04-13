@@ -759,13 +759,13 @@
                         <!-- D-pad — right side -->
                         <div class="dpad-grid">
                             <div></div>
-                            <button class="btn btn-secondary btn-dpad" onmousedown="nudgeStart(270)" onmouseup="nudgeStop()" onmouseleave="nudgeStop()" title="Up">▲</button>
+                            <button class="btn btn-secondary btn-dpad" onpointerdown="nudgePressStart(270, event)" onpointerup="nudgePressEnd(event)" onpointerleave="nudgePressEnd(event)" onpointercancel="nudgePressEnd(event)" title="Up">▲</button>
                             <div></div>
-                            <button class="btn btn-secondary btn-dpad" onmousedown="nudgeStart(0)" onmouseup="nudgeStop()" onmouseleave="nudgeStop()" title="Left">◀</button>
+                            <button class="btn btn-secondary btn-dpad" onpointerdown="nudgePressStart(0, event)" onpointerup="nudgePressEnd(event)" onpointerleave="nudgePressEnd(event)" onpointercancel="nudgePressEnd(event)" title="Left">◀</button>
                             <button class="btn btn-danger btn-dpad btn-dpad-stop" onclick="nudgeStop()" title="Stop">■</button>
-                            <button class="btn btn-secondary btn-dpad" onmousedown="nudgeStart(180)" onmouseup="nudgeStop()" onmouseleave="nudgeStop()" title="Right">▶</button>
+                            <button class="btn btn-secondary btn-dpad" onpointerdown="nudgePressStart(180, event)" onpointerup="nudgePressEnd(event)" onpointerleave="nudgePressEnd(event)" onpointercancel="nudgePressEnd(event)" title="Right">▶</button>
                             <div></div>
-                            <button class="btn btn-secondary btn-dpad" onmousedown="nudgeStart(90)" onmouseup="nudgeStop()" onmouseleave="nudgeStop()" title="Down">▼</button>
+                            <button class="btn btn-secondary btn-dpad" onpointerdown="nudgePressStart(90, event)" onpointerup="nudgePressEnd(event)" onpointerleave="nudgePressEnd(event)" onpointercancel="nudgePressEnd(event)" title="Down">▼</button>
                             <div></div>
                         </div>
                     </div>

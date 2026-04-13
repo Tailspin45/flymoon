@@ -1752,6 +1752,23 @@ function gotoModeChanged() {
 // -- GoTo execute --
 
 // -- Manual Slew (Joystick) --
+const _NUDGE_TAP_MIN_MS = 180; // ensure a visible micro-move on quick click/tap
+let _nudgeActive = false;
+let _nudgeStartedAt = 0;
+let _nudgeStopTimer = null;
+
+function nudgePressStart(angle, ev) {
+    if (ev) {
+        if (typeof ev.button === 'number' && ev.button !== 0) return;
+        ev.preventDefault();
+    }
+    nudgeStart(angle);
+}
+
+function nudgePressEnd(ev) {
+    if (ev) ev.preventDefault();
+    nudgeStop();
+}
 
 function nudgeStart(angle) {
     if (!_alpacaConnected) {
@@ -1771,11 +1788,28 @@ function nudgeStart(angle) {
     else if (angle === 90)  { axis = 1; dir = -1; } // down = Dec/Alt -
     else if (angle === 180) { axis = 0; dir =  1; } // right = RA/Az +
     else                    { axis = 0; dir = -1; } // left = RA/Az -
+    if (_nudgeStopTimer) {
+        clearTimeout(_nudgeStopTimer);
+        _nudgeStopTimer = null;
+    }
+    _nudgeActive = true;
+    _nudgeStartedAt = Date.now();
     apiCall('/telescope/nudge', 'POST', { axis, rate: rate * dir });
 }
 
 function nudgeStop() {
-    apiCall('/telescope/nudge/stop', 'POST', {});
+    if (!_nudgeActive) return;
+    const elapsed = Date.now() - _nudgeStartedAt;
+    const delay = Math.max(0, _NUDGE_TAP_MIN_MS - elapsed);
+    if (_nudgeStopTimer) {
+        clearTimeout(_nudgeStopTimer);
+        _nudgeStopTimer = null;
+    }
+    _nudgeStopTimer = setTimeout(() => {
+        apiCall('/telescope/nudge/stop', 'POST', {});
+        _nudgeActive = false;
+        _nudgeStopTimer = null;
+    }, delay);
 }
 
 // Mark GoTo inputs as user-edited (prevents accidental resets).

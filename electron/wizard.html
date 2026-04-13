@@ -220,6 +220,19 @@
   .feature-list { text-align: left; max-width: 380px; margin: 0 auto; }
   .feature-list li { font-size: 0.85em; color: #aaa; margin-bottom: 6px; list-style: none; padding-left: 20px; position: relative; }
   .feature-list li::before { content: '✓'; position: absolute; left: 0; color: #2ecc71; }
+  /* ── Final checklist ── */
+  .checklist-group { margin-bottom: 14px; }
+  .checklist-group h3 { font-size: 0.92em; color: #d3d8e6; margin-bottom: 8px; }
+  .checklist-group label {
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+    margin-bottom: 6px;
+    color: #aeb7c9;
+    line-height: 1.4;
+    cursor: pointer;
+  }
+  .checklist-group input[type=checkbox] { margin-top: 2px; }
 </style>
 </head>
 <body>
@@ -395,10 +408,47 @@
   <!-- Step 6 (implicit via review in footer): Review — shown as a summary overlay -->
   <div class="step-panel" id="step-review" style="display:none">
     <h2>✅ Review &amp; Finish</h2>
-    <p class="step-desc">Double-check your settings then click <strong>Launch Zipcatcher</strong>.</p>
+    <p class="step-desc">Double-check your settings, then continue to the final checklist.</p>
     <table class="review-table" id="reviewTable"></table>
     <div class="info-box" style="margin-top:14px">
       You can change any setting later from <strong>File → Preferences</strong>.
+    </div>
+  </div>
+
+  <!-- Step 7: First-launch final checklist -->
+  <div class="step-panel" id="step-checklist" style="display:none">
+    <h2>🧾 Final Checklist</h2>
+    <p class="step-desc">Before launching Zipcatcher, confirm your Seestar setup checklist.</p>
+
+    <div class="checklist-group">
+      <h3>Pre-Session Checklist</h3>
+      <label><input type="checkbox">Charge Battery: Ensure the Seestar is fully charged to avoid power loss during imaging and/or connect power bank.</label>
+      <label><input type="checkbox">Install/Update App: Download the latest Seestar app and check for firmware updates.</label>
+      <label><input type="checkbox">Setup Tripod: Attach the telescope to the tripod; ensure it is stable and level (check in-app level sensor).</label>
+      <label><input type="checkbox">Calibrate: Perform compass and level calibration in the app to ensure accurate GoTo performance.</label>
+      <label><input type="checkbox">Remove Lens Cap: Take off the front lens cap for night viewing.</label>
+      <label><input type="checkbox">Enable communication: turn on mobile Bluetooth and Station Mode Wifi.</label>
+    </div>
+
+    <div class="checklist-group">
+      <h3>Session Checklist</h3>
+      <label><input type="checkbox">Connect Device: Power on the Seestar, connect mobile device.</label>
+      <label><input type="checkbox">Select Mode: Choose Solar System (Sun or Moon) or Scenery mode in the app.</label>
+      <label><input type="checkbox">Solar Filter Warning: Ensure the solar filter is installed before pointing at the sun to prevent damage.</label>
+      <label><input type="checkbox">Focusing: Use the auto-focus feature before starting a session.</label>
+    </div>
+
+    <div class="checklist-group">
+      <h3>Post-Session Checklist</h3>
+      <label><input type="checkbox">Park Telescope: Use the app to "Park" the telescope before powering off.</label>
+      <label><input type="checkbox">Power Off: Properly shut down the device via the power button.</label>
+      <label><input type="checkbox">Retrieve Images: Transfer images from the app to your phone/tablet gallery.</label>
+      <label><input type="checkbox">Check Gear: Clean the lens if necessary, replace the lens cap for storage, fully charge Seestar battery and power bank.</label>
+    </div>
+
+    <div class="toggle-row" style="margin-top: 6px;">
+      <input type="checkbox" id="checklistAck">
+      <label for="checklistAck">I have reviewed this checklist and I am ready to continue.</label>
     </div>
   </div>
 
@@ -413,18 +463,26 @@
 </div>
 
 <script>
-const STEPS = ['step-0','step-1','step-2','step-3','step-4','step-5','step-review'];
-let current = 0;
 // Mode comes from main.js via the loadFile query string.
 const WIZARD_MODE = new URLSearchParams(location.search).get('mode') || 'preferences';
 const IS_FIRST_LAUNCH = WIZARD_MODE === 'first-launch';
+const STEPS = IS_FIRST_LAUNCH
+    ? ['step-0','step-1','step-2','step-3','step-4','step-5','step-review','step-checklist']
+    : ['step-0','step-1','step-2','step-3','step-4','step-5','step-review'];
+let current = 0;
 
 function open_(url) {
     if (window.zipcatcher) window.zipcatcher.openExternal(url);
     else window.open(url, '_blank');
 }
 
+function isChecklistReady() {
+    const ack = document.getElementById('checklistAck');
+    return !!(ack && ack.checked);
+}
+
 function showStep(idx) {
+    const stepId = STEPS[idx];
     STEPS.forEach((id, i) => {
         const el = document.getElementById(id);
         if (el) el.style.display = i === idx ? '' : 'none';
@@ -450,16 +508,27 @@ function showStep(idx) {
         btnNext.textContent = 'Next →';
         btnNext.className = 'btn btn-primary';
     }
-    document.getElementById('stepCounter').textContent = `Step ${Math.min(idx+1, 6)} of 6`;
+    btnNext.disabled = stepId === 'step-checklist' && !isChecklistReady();
+
+    const stepTotal = IS_FIRST_LAUNCH ? 7 : 6;
+    let stepNumber = idx + 1;
+    if (stepId === 'step-review') stepNumber = 6;
+    if (stepId === 'step-checklist') stepNumber = 7;
+    document.getElementById('stepCounter').textContent = `Step ${stepNumber} of ${stepTotal}`;
 
     // Auto-fill bbox from the current observer location when entering Card 4.
     // Keeps existing non-empty values — just populates blanks.
     if (idx === 3) prefillBoundingBoxIfEmpty();
 
-    if (isLast) buildReview();
+    if (stepId === 'step-review') buildReview();
 }
 
 function next() {
+    const stepId = STEPS[current];
+    if (stepId === 'step-checklist' && !isChecklistReady()) {
+        alert('Please check the final acknowledgement before launching Zipcatcher.');
+        return;
+    }
     if (current < STEPS.length - 1) {
         current++;
         showStep(current);
@@ -676,6 +745,15 @@ async function init() {
 }
 
 showStep(0);
+const checklistAck = document.getElementById('checklistAck');
+if (checklistAck) {
+    checklistAck.addEventListener('change', () => {
+        if (STEPS[current] === 'step-checklist') {
+            const btnNext = document.getElementById('btnNext');
+            if (btnNext) btnNext.disabled = !isChecklistReady();
+        }
+    });
+}
 init();
 </script>
 </body>

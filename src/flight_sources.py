@@ -37,7 +37,7 @@ from src.flight_data import normalize_aircraft_display_id
 # ---------------------------------------------------------------------------
 # Request configuration
 # ---------------------------------------------------------------------------
-REQUEST_TIMEOUT: int = 5  # seconds per individual HTTP request
+REQUEST_TIMEOUT: int = 10  # seconds per individual HTTP request
 MULTI_SOURCE_WALL_TIMEOUT = 12  # max wall-clock seconds for the whole parallel fetch
 
 # ADSB-One (airplanes.live) free public API
