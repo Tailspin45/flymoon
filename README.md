@@ -341,7 +341,7 @@ Issues and pull requests welcome — especially transit photographs.
 
 | Component | Project | Licence |
 |-----------|---------|---------|
-| Original idea and foundation code: [David Bettancort Montebello](https://github.com/dbetm/flymoon) | Public Domain
+| Original idea and foundation code: [David Bettancort Montebello](https://github.com/dbetm/flymoon) | Flymoon | Public Domain
 | Interactive map | [Leaflet 1.9.4](https://leafletjs.com) © Vladimir Agafonkin | BSD 2-Clause |
 | Bounding-box drawing | [Leaflet.Editable](https://github.com/Leaflet/Leaflet.editable) © Yoann Aubineau | MIT |
 | Traffic heatmap | [Leaflet.heat](https://github.com/Leaflet/Leaflet.heat) © Vladimir Agafonkin | MIT |
