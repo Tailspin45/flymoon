@@ -12,6 +12,7 @@ import shutil
 import subprocess
 import threading
 import time
+from collections import OrderedDict
 from datetime import datetime
 from enum import Enum
 from typing import Any, Dict, Optional
@@ -460,6 +461,11 @@ _LOCATIONS_FILE = os.path.join(
 )
 _locations_lock = _threading.Lock()
 
+_FAVORITES_FILE = os.path.join(
+    os.path.dirname(__file__), "..", "data", "telescope_favorites.json"
+)
+_favorites_lock = _threading.Lock()
+
 
 def _load_locations() -> dict:
     """Return the saved goto locations dict, or {} on any error."""
@@ -477,6 +483,55 @@ def _save_locations(locs: dict) -> None:
     with open(tmp, "w") as f:
         json.dump(locs, f, indent=2)
     os.replace(tmp, _LOCATIONS_FILE)
+
+
+def _normalize_favorite_url(url: Any) -> Optional[str]:
+    """Normalise a favorite URL to a stable captures-relative URL.
+
+    Favorites are keyed by `/static/captures/...` URL so they remain stable
+    across Flask port changes between app restarts.
+    """
+    if not isinstance(url, str):
+        return None
+    s = url.strip()
+    if not s:
+        return None
+    s = s.split("?", 1)[0].split("#", 1)[0]
+    if not s.startswith("/static/captures/"):
+        return None
+    if ".." in s:
+        return None
+    return s
+
+
+def _load_telescope_favorites() -> list[str]:
+    """Return persisted favorite capture URLs, or [] on any error."""
+    try:
+        with open(_FAVORITES_FILE, "r", encoding="utf-8") as f:
+            raw = json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError, OSError):
+        return []
+
+    if not isinstance(raw, list):
+        return []
+
+    out: list[str] = []
+    seen = set()
+    for item in raw:
+        norm = _normalize_favorite_url(item)
+        if norm and norm not in seen:
+            seen.add(norm)
+            out.append(norm)
+    return out
+
+
+def _save_telescope_favorites(favorites: list[str]) -> None:
+    """Atomically write favorite capture URLs to disk."""
+    os.makedirs(os.path.dirname(_FAVORITES_FILE), exist_ok=True)
+    tmp = _FAVORITES_FILE + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(favorites, f, indent=2)
+    os.replace(tmp, _FAVORITES_FILE)
 
 
 # ------------------------------------------------------------------ #
@@ -2371,6 +2426,42 @@ def list_telescope_files():
         return handle_error(e)
 
 
+def get_telescope_favorites():
+    """GET /telescope/files/favorites - Return persisted favorite capture URLs."""
+    try:
+        with _favorites_lock:
+            favorites = _load_telescope_favorites()
+        return jsonify({"favorites": favorites}), 200
+    except Exception as e:
+        logger.error(f"[Telescope] Error loading favorites: {e}")
+        return handle_error(e)
+
+
+def save_telescope_favorites():
+    """POST /telescope/files/favorites - Persist favorite capture URLs."""
+    try:
+        payload = request.get_json(silent=True) or {}
+        items = payload.get("favorites")
+        if not isinstance(items, list):
+            return jsonify({"error": "favorites must be a list"}), 400
+
+        # Preserve order but de-duplicate after normalisation.
+        dedup: "OrderedDict[str, None]" = OrderedDict()
+        for item in items:
+            norm = _normalize_favorite_url(item)
+            if norm:
+                dedup[norm] = None
+        favorites = list(dedup.keys())
+
+        with _favorites_lock:
+            _save_telescope_favorites(favorites)
+
+        return jsonify({"ok": True, "favorites": favorites}), 200
+    except Exception as e:
+        logger.error(f"[Telescope] Error saving favorites: {e}")
+        return handle_error(e)
+
+
 def get_telescope_file_frame():
     """GET /telescope/files/frame - Extract a specific video frame as JPEG."""
     try:
@@ -4246,6 +4337,18 @@ def register_routes(app):
     # File management
     app.add_url_rule(
         "/telescope/files", "telescope_files", list_telescope_files, methods=["GET"]
+    )
+    app.add_url_rule(
+        "/telescope/files/favorites",
+        "telescope_files_favorites_get",
+        get_telescope_favorites,
+        methods=["GET"],
+    )
+    app.add_url_rule(
+        "/telescope/files/favorites",
+        "telescope_files_favorites_save",
+        save_telescope_favorites,
+        methods=["POST"],
     )
     app.add_url_rule(
         "/telescope/files/frame",

@@ -20,12 +20,84 @@ const capturedTransits = new Set(); // flight IDs triggered this session — per
 let currentZoom = 2.0;
 
 // Favorites stored in localStorage
+const _FAVORITES_KEY = 'flymoon_favorites';
+let _favoritesCache = null;
+let _favoritesSyncInFlight = null;
+
+function _normalizeFavoritePath(path) {
+    if (path == null) return null;
+    let s = String(path).trim();
+    if (!s) return null;
+    s = s.split('?')[0].split('#')[0];
+    if (!s.startsWith('/static/captures/')) return null;
+    if (s.includes('..')) return null;
+    return s;
+}
+
+function _normalizeFavoriteCollection(values) {
+    const out = [];
+    const seen = new Set();
+    const arr = Array.isArray(values) ? values : [];
+    for (const v of arr) {
+        const n = _normalizeFavoritePath(v);
+        if (!n || seen.has(n)) continue;
+        seen.add(n);
+        out.push(n);
+    }
+    return out;
+}
+
+function _getFavoriteCache() {
+    if (_favoritesCache !== null) return _favoritesCache;
+    try {
+        const raw = JSON.parse(localStorage.getItem(_FAVORITES_KEY) || '[]');
+        _favoritesCache = new Set(_normalizeFavoriteCollection(raw));
+    } catch {
+        _favoritesCache = new Set();
+    }
+    return _favoritesCache;
+}
+
+async function _syncFavoritesFromServer() {
+    if (_favoritesSyncInFlight) return _favoritesSyncInFlight;
+    _favoritesSyncInFlight = (async () => {
+        try {
+            const resp = await fetch('/telescope/files/favorites', { cache: 'no-store' });
+            if (!resp.ok) return;
+            const data = await resp.json().catch(() => ({}));
+            const normalized = _normalizeFavoriteCollection(data.favorites || []);
+            _favoritesCache = new Set(normalized);
+            localStorage.setItem(_FAVORITES_KEY, JSON.stringify(normalized));
+        } catch (_) {
+            // Keep local fallback when server sync is unavailable.
+        } finally {
+            _favoritesSyncInFlight = null;
+        }
+    })();
+    return _favoritesSyncInFlight;
+}
+
+async function _saveFavoritesToServer(favs) {
+    const payload = _normalizeFavoriteCollection([...favs]);
+    try {
+        await fetch('/telescope/files/favorites', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ favorites: payload }),
+        });
+    } catch (_) {
+        // localStorage remains the fallback source of truth when offline.
+    }
+}
+
 function getFavorites() {
-    try { return new Set(JSON.parse(localStorage.getItem('flymoon_favorites') || '[]')); }
-    catch { return new Set(); }
+    return new Set(_getFavoriteCache());
 }
 function saveFavorites(favs) {
-    localStorage.setItem('flymoon_favorites', JSON.stringify([...favs]));
+    const normalized = _normalizeFavoriteCollection([...favs]);
+    _favoritesCache = new Set(normalized);
+    localStorage.setItem(_FAVORITES_KEY, JSON.stringify(normalized));
+    _saveFavoritesToServer(_favoritesCache);
 }
 function _favoriteTargetsFromContext(path, event) {
     const el = event && event.currentTarget;
@@ -1415,6 +1487,7 @@ function filmstripScrollTo(pos) {
 
 async function refreshFiles() {
     console.log('[Telescope] Refreshing file list');
+    await _syncFavoritesFromServer();
     
     const result = await apiCall(`/telescope/files?_=${Date.now()}`, 'GET');
     if (!result) return;

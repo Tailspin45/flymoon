@@ -5,7 +5,7 @@ Architecture: lightweight 3D-ConvNet (~48 K parameters)
   Input:  (B, 1, 15, 160, 90)  — grayscale, T=15 frames, H=160, W=90
   Output: (B, 2)               — [logit_no_transit, logit_transit]
 
-Requires: torch, onnx  (training-only; not needed at inference time)
+Requires: torch, onnx, onnxscript  (training-only; not needed at inference time)
 
 Usage
 -----
@@ -194,6 +194,15 @@ def train(
         )
         sys.exit(1)
 
+    try:
+        import onnxscript  # noqa: F401
+    except ImportError:
+        print(
+            "ONNXScript is required for torch.onnx export. Install with: pip install -r requirements.txt",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
     # MPS (Apple GPU) does not implement Conv3d — first forward throws at model(x).
     if device_str == "auto":
         if torch.cuda.is_available():
@@ -309,6 +318,7 @@ def train(
         dummy,
         str(model_out),
         opset_version=17,
+        dynamo=False,
         input_names=["frames"],
         output_names=["logits"],
         dynamic_axes={"frames": {0: "batch"}},

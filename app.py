@@ -1227,7 +1227,7 @@ _cnn_retrain_lock = threading.Lock()
 def _missing_cnn_training_dependencies() -> list[str]:
     """Return missing optional modules required by training.train_model."""
     missing: list[str] = []
-    for mod in ("torch", "onnx"):
+    for mod in ("torch", "onnx", "onnxscript"):
         try:
             __import__(mod)
         except Exception:
