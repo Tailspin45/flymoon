@@ -1759,10 +1759,17 @@ def isolate_transit_frames(
         if not ref_stack:
             return {"error": "Could not read reference frames"}
 
-        reference = np.median(np.stack(ref_stack, axis=0), axis=0)
+        ref_array = np.stack(ref_stack, axis=0)
+        reference = np.median(ref_array, axis=0)
 
-        # Scan all remaining frames
-        scores_raw = [0.0] * ref_count  # reference section: score = 0
+        # Score ALL frames honestly — including reference frames.
+        # First, score the reference frames against the median.
+        scores_raw = []
+        for gray in ref_stack:
+            diff = np.abs(gray - reference)
+            scores_raw.append(float(diff.mean()))
+
+        # Scan remaining frames
         while True:
             ok, frame = cap.read()
             if not ok:
@@ -1775,14 +1782,24 @@ def isolate_transit_frames(
         if len(scores_raw) < 3:
             return {"error": "Video too short to analyse"}
 
-        threshold = luma_drop_frac * 255.0
+        # Adaptive threshold: use the noise floor from reference frames
+        # plus a margin, rather than a fixed absolute value.
+        ref_scores = scores_raw[:ref_count]
+        noise_mean = float(np.mean(ref_scores))
+        noise_std = float(np.std(ref_scores)) if len(ref_scores) > 1 else 0.0
+        # Threshold = noise floor + max(3 sigma, fixed minimum).
+        # The fixed minimum (luma_drop_frac * 255) prevents triggering on
+        # pure-noise clips where std ≈ 0.
+        adaptive_threshold = noise_mean + max(3.0 * noise_std, luma_drop_frac * 255.0)
+
         max_score = max(scores_raw) or 1.0
         scores_norm = [round(s / max_score, 4) for s in scores_raw]
 
-        # Mark transit frames
-        marked = [s >= threshold for s in scores_raw]
+        # Mark transit frames using adaptive threshold
+        marked = [s >= adaptive_threshold for s in scores_raw]
 
-        # Group consecutive marked frames into spans (min 2 consecutive)
+        # Group consecutive marked frames into spans (min 3 consecutive)
+        min_span_len = 3
         spans: List[List[int]] = []
         in_span = False
         start_i = 0
@@ -1792,9 +1809,9 @@ def isolate_transit_frames(
                 start_i = i
             elif not hit and in_span:
                 in_span = False
-                if (i - start_i) >= 2:
+                if (i - start_i) >= min_span_len:
                     spans.append([start_i, i - 1])
-        if in_span and (len(marked) - start_i) >= 2:
+        if in_span and (len(marked) - start_i) >= min_span_len:
             spans.append([start_i, len(marked) - 1])
 
         # Peak frame

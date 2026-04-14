@@ -8,6 +8,7 @@ live preview, and file management.
 
 import json
 import os
+import shutil
 import subprocess
 import threading
 import time
@@ -22,6 +23,12 @@ from src.astro import CelestialObject
 from src.constants import ASTRO_EPHEMERIS, get_ffmpeg_path
 
 FFMPEG = get_ffmpeg_path() or "ffmpeg"
+if os.path.isabs(FFMPEG):
+    _ffprobe_name = "ffprobe.exe" if os.name == "nt" else "ffprobe"
+    _ffprobe_candidate = os.path.join(os.path.dirname(FFMPEG), _ffprobe_name)
+    FFPROBE = _ffprobe_candidate if os.path.exists(_ffprobe_candidate) else "ffprobe"
+else:
+    FFPROBE = shutil.which("ffprobe") or "ffprobe"
 from src.alpaca_client import (
     AlpacaClient,
     MockAlpacaClient,
@@ -2364,6 +2371,255 @@ def list_telescope_files():
         return handle_error(e)
 
 
+def get_telescope_file_frame():
+    """GET /telescope/files/frame - Extract a specific video frame as JPEG."""
+    try:
+        file_path = (request.args.get("path") or "").strip()
+        frame_raw = (request.args.get("frame") or "").strip()
+        fps_raw = (request.args.get("fps") or "30").strip()
+        max_width_raw = (request.args.get("max_width") or "").strip()
+
+        if not file_path:
+            return jsonify({"error": "Missing 'path' parameter"}), 400
+        if frame_raw == "":
+            return jsonify({"error": "Missing 'frame' parameter"}), 400
+
+        try:
+            frame_idx = int(frame_raw)
+        except ValueError:
+            return jsonify({"error": "Invalid frame index"}), 400
+        if frame_idx < 0:
+            return jsonify({"error": "Frame index must be >= 0"}), 400
+
+        try:
+            fps = float(fps_raw)
+        except ValueError:
+            fps = 30.0
+        fps = max(1.0, min(120.0, fps))
+
+        # Optional max_width for display-resolution extraction
+        max_width = 0
+        if max_width_raw:
+            try:
+                max_width = int(max_width_raw)
+            except ValueError:
+                max_width = 0
+            max_width = max(0, min(3840, max_width))
+
+        # Security: constrain to captures directory
+        full_path = os.path.join("static", file_path)
+        abs_path = os.path.abspath(full_path)
+        captures_abs = os.path.abspath("static/captures")
+        if not abs_path.startswith(captures_abs):
+            return jsonify({"error": "Invalid file path"}), 403
+        if not os.path.exists(abs_path):
+            return jsonify({"error": "File not found"}), 404
+        if not abs_path.lower().endswith((".mp4", ".avi", ".mov", ".mkv", ".webm")):
+            return jsonify({"error": "Not a video file"}), 400
+
+        ts = frame_idx / fps
+
+        # Build optional scale filter for display-resolution extraction
+        scale_part = (
+            f",scale={max_width}:-2" if max_width > 0 else ""
+        )
+
+        # Exact frame index extraction first (deterministic for short clips),
+        # then timestamp-based fallbacks.
+        cmds = [
+            [
+                FFMPEG,
+                "-hide_banner",
+                "-loglevel",
+                "error",
+                "-hwaccel",
+                "none",
+                "-i",
+                abs_path,
+                "-an",
+                "-sn",
+                "-dn",
+                "-vf",
+                f"select=eq(n\\,{frame_idx}){scale_part}",
+                "-frames:v",
+                "1",
+                "-q:v",
+                "4",
+                "-f",
+                "image2pipe",
+                "-vcodec",
+                "mjpeg",
+                "-",
+            ],
+            [
+                FFMPEG,
+                "-hide_banner",
+                "-loglevel",
+                "error",
+                "-hwaccel",
+                "none",
+                "-i",
+                abs_path,
+                "-an",
+                "-sn",
+                "-dn",
+                "-ss",
+                f"{ts:.6f}",
+                "-vf",
+                f"null{scale_part}" if scale_part else "null",
+                "-frames:v",
+                "1",
+                "-q:v",
+                "4",
+                "-f",
+                "image2pipe",
+                "-vcodec",
+                "mjpeg",
+                "-",
+            ],
+            [
+                FFMPEG,
+                "-hide_banner",
+                "-loglevel",
+                "error",
+                "-hwaccel",
+                "none",
+                "-ss",
+                f"{ts:.6f}",
+                "-i",
+                abs_path,
+                "-an",
+                "-sn",
+                "-dn",
+                "-vf",
+                f"null{scale_part}" if scale_part else "null",
+                "-frames:v",
+                "1",
+                "-q:v",
+                "4",
+                "-f",
+                "image2pipe",
+                "-vcodec",
+                "mjpeg",
+                "-",
+            ],
+        ]
+
+        jpeg = b""
+        last_err = ""
+        for cmd in cmds:
+            proc = subprocess.run(cmd, capture_output=True, timeout=12)
+            if proc.returncode == 0 and proc.stdout:
+                jpeg = proc.stdout
+                break
+            last_err = (proc.stderr or b"").decode(errors="replace")[-200:]
+
+        if not jpeg:
+            logger.warning(f"[Telescope] Frame extract failed for {file_path}: {last_err}")
+            return jsonify({"error": "Failed to extract frame"}), 500
+
+        resp = Response(jpeg, mimetype="image/jpeg")
+        resp.headers["Cache-Control"] = "no-store"
+        return resp, 200
+
+    except subprocess.TimeoutExpired:
+        return jsonify({"error": "Frame extraction timed out"}), 504
+    except Exception as e:
+        logger.error(f"[Telescope] Error extracting frame: {e}")
+        return handle_error(e)
+
+
+def _parse_rate(rate_raw: str) -> float:
+    if not rate_raw:
+        return 0.0
+    rate_raw = str(rate_raw).strip()
+    if "/" in rate_raw:
+        num_s, den_s = rate_raw.split("/", 1)
+        try:
+            num = float(num_s)
+            den = float(den_s)
+            return (num / den) if den else 0.0
+        except (TypeError, ValueError):
+            return 0.0
+    try:
+        return float(rate_raw)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def get_telescope_video_info():
+    """GET /telescope/files/video-info - Return fps/duration/frame_count for a video."""
+    try:
+        file_path = (request.args.get("path") or "").strip()
+        if not file_path:
+            return jsonify({"error": "Missing 'path' parameter"}), 400
+
+        full_path = os.path.join("static", file_path)
+        abs_path = os.path.abspath(full_path)
+        captures_abs = os.path.abspath("static/captures")
+        if not abs_path.startswith(captures_abs):
+            return jsonify({"error": "Invalid file path"}), 403
+        if not os.path.exists(abs_path):
+            return jsonify({"error": "File not found"}), 404
+        if not abs_path.lower().endswith((".mp4", ".avi", ".mov", ".mkv", ".webm")):
+            return jsonify({"error": "Not a video file"}), 400
+
+        cmd = [
+            FFPROBE,
+            "-v",
+            "error",
+            "-select_streams",
+            "v:0",
+            "-show_entries",
+            "stream=avg_frame_rate,r_frame_rate,nb_frames,duration",
+            "-of",
+            "json",
+            abs_path,
+        ]
+        proc = subprocess.run(cmd, capture_output=True, timeout=8)
+        if proc.returncode != 0:
+            err = (proc.stderr or b"").decode(errors="replace")[-200:]
+            return jsonify({"error": f"ffprobe failed: {err}"}), 500
+
+        payload = json.loads(proc.stdout.decode("utf-8", errors="replace") or "{}")
+        streams = payload.get("streams") or []
+        if not streams:
+            return jsonify({"error": "No video stream found"}), 500
+        stream = streams[0] or {}
+
+        fps = _parse_rate(stream.get("avg_frame_rate")) or _parse_rate(stream.get("r_frame_rate"))
+        duration = 0.0
+        try:
+            duration = float(stream.get("duration") or 0.0)
+        except (TypeError, ValueError):
+            duration = 0.0
+
+        frame_count = 0
+        try:
+            frame_count = int(stream.get("nb_frames") or 0)
+        except (TypeError, ValueError):
+            frame_count = 0
+        if frame_count <= 0 and duration > 0 and fps > 0:
+            frame_count = int(round(duration * fps))
+
+        return (
+            jsonify(
+                {
+                    "success": True,
+                    "fps": fps,
+                    "duration": duration,
+                    "frame_count": frame_count,
+                }
+            ),
+            200,
+        )
+    except subprocess.TimeoutExpired:
+        return jsonify({"error": "Video info probe timed out"}), 504
+    except Exception as e:
+        logger.error(f"[Telescope] Error probing video info: {e}")
+        return handle_error(e)
+
+
 def delete_telescope_file():
     """POST /telescope/files/delete - Delete a captured file."""
     logger.info("[Telescope] POST /telescope/files/delete")
@@ -3990,6 +4246,18 @@ def register_routes(app):
     # File management
     app.add_url_rule(
         "/telescope/files", "telescope_files", list_telescope_files, methods=["GET"]
+    )
+    app.add_url_rule(
+        "/telescope/files/frame",
+        "telescope_files_frame",
+        get_telescope_file_frame,
+        methods=["GET"],
+    )
+    app.add_url_rule(
+        "/telescope/files/video-info",
+        "telescope_files_video_info",
+        get_telescope_video_info,
+        methods=["GET"],
     )
     app.add_url_rule(
         "/telescope/files/delete",

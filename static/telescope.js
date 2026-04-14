@@ -93,11 +93,7 @@ function _updateDeleteBtnState(path, isFav) {
 }
 
 function _updateRenameBtnState(path, isFav) {
-    // Filmstrip + grid thumbnail rename buttons
-    document.querySelectorAll(`[data-rename-path="${CSS.escape(path)}"]`).forEach(btn => {
-        btn.disabled = !isFav;
-        btn.title = isFav ? 'Rename (favorites only)' : 'Favorite first to rename';
-    });
+    // Rename buttons are always enabled (no longer gated on favorites)
 }
 let zoomStep = 0.1;
 let _previewLastError = 0; // timestamp of last preview onerror (ms)
@@ -1492,10 +1488,6 @@ async function renameFavoriteFile(url, event) {
     if (event) event.stopPropagation();
 
     const favs = getFavorites();
-    if (!favs.has(url)) {
-        showStatus('Only favorited files can be renamed', 'warning', 3000);
-        return;
-    }
 
     const file = _findFileByPath(url);
     const currentName = file?.name || (url.split('/').pop() || '');
@@ -2862,13 +2854,13 @@ function updateFilmstrip(files) {
         return `
         <div class="${itemClass}" data-file-path="${file.path}" data-file-idx="${index}" onclick="filmstripSelectItem(${index}, '${file.path}', event)" style="position:relative;">
             ${badge}${detBadge2}
-            <div class="filmstrip-name" title="${displayName}">${displayName}</div>
+            <div class="filmstrip-name" title="Click to rename" onclick="event.stopPropagation(); renameFavoriteFile('${file.path}', event)" style="cursor:text;">${displayName}</div>
             ${thumbnail}
             ${labelBadge}
             <div class="filmstrip-info">
                 <div class="filmstrip-actions">
                     <button class="btn-icon btn-fav" data-fav-path="${file.path}" onclick="toggleFavorite('${file.path}', event)" title="${getFavorites().has(file.path) ? 'Unfavorite' : 'Favorite'}">${getFavorites().has(file.path) ? '❤️' : '🤍'}</button>
-                    <button class="btn-icon" data-rename-path="${file.path}" onclick="event.stopPropagation(); renameFavoriteFile('${file.path}', event)" title="${getFavorites().has(file.path) ? 'Rename (favorites only)' : 'Favorite first to rename'}" ${isTemp || !getFavorites().has(file.path) ? 'disabled' : ''}>✏️</button>
+                    <button class="btn-icon" data-rename-path="${file.path}" onclick="event.stopPropagation(); renameFavoriteFile('${file.path}', event)" title="Rename" ${isTemp ? 'disabled' : ''}>✏️</button>
                     <button class="btn-icon" onclick="event.stopPropagation(); downloadFile('${file.path}', '${file.name}')" title="Download" ${isTemp ? 'disabled' : ''}>⬇️</button>
                     <button class="btn-icon btn-danger" onclick="event.stopPropagation(); filmstripTrashClick('${file.path}', '${file.name}', event)" title="${getFavorites().has(file.path) ? 'Remove favorite first' : 'Delete selected or this file (⌘/Ctrl+click to skip confirm)'}" ${isTemp || getFavorites().has(file.path) ? 'disabled' : ''}>🗑️</button>
                 </div>
@@ -3433,10 +3425,10 @@ function updateFilesGrid() {
              onclick="gridSelectItem(${idx}, '${file.path}', event)" style="position:relative;">
             ${detBadge}${gridLabelBadge}
             <div class="file-info">
-                <span class="file-name" title="${displayName}">${displayName}</span>
+                <span class="file-name" title="Click to rename" onclick="event.stopPropagation(); renameFavoriteFile('${file.path}', event)" style="cursor:text;">${displayName}</span>
                 <div class="file-actions">
                     <button class="btn-icon btn-fav" data-fav-path="${file.path}" onclick="toggleFavorite('${file.path}', event)" title="${getFavorites().has(file.path) ? 'Unfavorite' : 'Favorite'}">${getFavorites().has(file.path) ? '❤️' : '🤍'}</button>
-                    <button class="btn-icon" data-rename-path="${file.path}" onclick="event.stopPropagation(); renameFavoriteFile('${file.path}', event)" title="${getFavorites().has(file.path) ? 'Rename (favorites only)' : 'Favorite first to rename'}" ${!getFavorites().has(file.path) ? 'disabled' : ''}>✏️</button>
+                    <button class="btn-icon" data-rename-path="${file.path}" onclick="event.stopPropagation(); renameFavoriteFile('${file.path}', event)" title="Rename">✏️</button>
                     <button class="btn-icon" onclick="event.stopPropagation(); downloadFile('${file.path}', '${file.name}')" title="Download">⬇️</button>
                     <button class="btn-icon btn-danger" onclick="event.stopPropagation(); deleteFile('${file.path}', '${file.name}', event.metaKey || event.ctrlKey)" title="${getFavorites().has(file.path) ? 'Remove favorite first' : 'Delete (⌘/Ctrl+click to skip confirm)'}" ${getFavorites().has(file.path) ? 'disabled' : ''}>🗑️</button>
                 </div>
@@ -3546,8 +3538,8 @@ function _buildCompanionStrip(fileInfo) {
 
 /**
  * Call the backend isolate-transit endpoint for a det_*.mp4 clip.
- * On success, draws red span marks on markedFrameBar and auto-seeks the
- * hidden video to the peak transit frame, setting a 3s loop around it.
+ * On success, draws red span marks on markedFrameBar and seeks the
+ * hidden video to the peak transit frame without forcing loop playback.
  */
 async function _runIsolateTransit(apiPath, peakHint) {
     _isolateResult = null;
@@ -3566,14 +3558,16 @@ async function _runIsolateTransit(apiPath, peakHint) {
         _drawTransitSpans();
         // Add Prev/Next buttons (idempotent)
         _ensureTransitNavButtons();
-        // Auto-seek to peak and set 3s loop
+        // Seek near peak, but do not force looping playback.
         const vid = document.getElementById('hiddenVid');
         if (vid && data.peak_time_s != null) {
             const ps = parseFloat(data.peak_time_s);
-            const half = 1.5;
-            _loopSegment = { start: Math.max(0, ps - half), end: ps + half };
-            vid.currentTime = _loopSegment.start;
-            vid.play().catch(() => {});
+            const duration = _safeVideoDuration(vid);
+            _loopSegment = null;
+            vid.pause();
+            vid.currentTime = duration > 0
+                ? Math.min(Math.max(0, ps), Math.max(0, duration - 0.001))
+                : Math.max(0, ps);
         }
     } catch (err) {
         console.warn('[isolate] error:', err);
@@ -3718,7 +3712,8 @@ function _loadSidecarSignal(sidecar, videoPath) {
     const step = Math.round(hiresFps / analysisFps);  // detector frames → hires frames
 
     // Build _isolateResult from sidecar data so scrub bar marks work
-    const triggered = sig.triggered || [];
+    const triggered = Array.isArray(sig.triggered) ? sig.triggered : [];
+    const anyTriggered = triggered.some(Boolean);
     const spans = [];
     let inSpan = false, spanStart = 0;
     for (let i = 0; i < triggered.length; i++) {
@@ -3730,32 +3725,55 @@ function _loadSidecarSignal(sidecar, videoPath) {
     }
     if (inSpan) spans.push([spanStart * step, (triggered.length - 1) * step]);
 
-    const transitHiresFrame = sig.transit_hires_frame != null
-        ? sig.transit_hires_frame
-        : Math.round((sidecar.peak_time_s || 1.0) * hiresFps);
+    const transitHiresFrame = Number.isFinite(sig.transit_hires_frame)
+        ? Math.round(sig.transit_hires_frame)
+        : null;
+    const peakTimeS = Number.isFinite(sidecar.peak_time_s)
+        ? Number(sidecar.peak_time_s)
+        : (transitHiresFrame != null ? transitHiresFrame / hiresFps : null);
+    let resolvedSpans = spans.slice();
+    if (resolvedSpans.length === 0 && anyTriggered && transitHiresFrame != null) {
+        resolvedSpans = [[Math.max(0, transitHiresFrame - 8), transitHiresFrame + 8]];
+    }
+    const stemMatch = String(videoPath || '').match(/det_(\d{8}_\d{6})/i);
+    const manualLabel = stemMatch ? ((_stemLabelCache[stemMatch[1]] && _stemLabelCache[stemMatch[1]].label) || '') : '';
+    if (manualLabel === 'fp') {
+        resolvedSpans = [];
+    }
 
     _isolateResult = {
-        spans: spans.length > 0 ? spans : [[Math.max(0, transitHiresFrame - 8), transitHiresFrame + 8]],
+        spans: resolvedSpans,
         peak_frame: transitHiresFrame,
-        peak_time_s: sidecar.peak_time_s || (transitHiresFrame / hiresFps),
+        peak_time_s: peakTimeS,
     };
     _drawTransitSpans();
-    _ensureTransitNavButtons();
+    if (_isolateResult.spans && _isolateResult.spans.length > 0) {
+        _ensureTransitNavButtons();
+    }
 
-    // Auto-seek to transit
+    // Seek to transit, but do not force loop playback.
     const vid = document.getElementById('hiddenVid');
-    if (vid && _isolateResult.peak_time_s != null) {
+    if (vid && _isolateResult.peak_time_s != null && _isolateResult.spans.length > 0) {
         const ps = _isolateResult.peak_time_s;
-        _loopSegment = { start: Math.max(0, ps - 1.0), end: ps + 1.5 };
-        vid.currentTime = _loopSegment.start;
-        vid.play().catch(() => {});
+        const duration = _safeVideoDuration(vid);
+        _loopSegment = null;
+        vid.pause();
+        vid.currentTime = duration > 0
+            ? Math.min(Math.max(0, ps), Math.max(0, duration - 0.001))
+            : Math.max(0, ps);
     }
 
     // Confidence banner
     const conf = sig.confidence_score != null ? `${Math.round(sig.confidence_score * 100)}%` : '';
     const gate = sig.gate_detail || sig.gate_type || '';
     const cnn = sig.cnn_confidence != null ? ` · CNN ${Math.round(sig.cnn_confidence * 100)}%` : '';
-    _setScanBanner('success', `✅ Live detection: ${gate} · confidence ${conf}${cnn}`);
+    if (_isolateResult.spans.length > 0) {
+        _setScanBanner('success', `✅ Live detection: ${gate} · confidence ${conf}${cnn}`);
+    } else if (manualLabel === 'fp') {
+        _setScanBanner('warning', 'Clip is labeled False Positive — transit spans hidden');
+    } else {
+        _setScanBanner('warning', 'No sustained transit span detected in this clip');
+    }
 
     // Draw signal chart
     _drawSidecarSignalChart(sig, step);
@@ -3916,7 +3934,14 @@ function viewFile(path, name, opts) {
               `<video src="${videoSrc}" playsinline${loopAttr} muted style="position:absolute;left:-9999px;width:1px;height:1px;" id="hiddenVid"></video>` +
               `<div style="position:relative; flex-shrink:0;">` +
                 `<div id="fivePanel" style="display:flex; justify-content:center; align-items:center; gap:3px; padding:4px 4px 0; background:#000;">` +
-                  `<span style="color:#555; font-size:0.85em;">Loading…</span>` +
+                  `${[-2,-1,0,1,2].map(off => {
+                    const border = off === 0 ? '3px solid #0ff' : '3px solid #333';
+                    return `<div class="fp-slot" data-fp-offset="${off}" style="position:relative; flex:1; min-width:0; border:${border}; border-radius:4px; cursor:pointer; overflow:hidden;" title="">` +
+                      `<div class="thumb-placeholder" style="width:100%; padding-top:75%; background:#111;"></div>` +
+                      `<div class="fp-label" style="position:absolute;bottom:2px;left:0;right:0;text-align:center;color:#888;font-size:0.75em;font-family:monospace;text-shadow:0 0 4px #000;"></div>` +
+                      `<div class="fp-mark-dot" style="display:none;position:absolute;top:4px;right:4px;width:12px;height:12px;background:#fd0;border-radius:50%;border:1px solid #000;"></div>` +
+                    `</div>`;
+                  }).join('')}` +
                 `</div>` +
                 (companionHtml ? `<div id="companionOverlay" style="position:absolute; top:8px; right:8px; display:flex; flex-direction:column; gap:4px; z-index:10; opacity:0.85;">${companionHtml}</div>` : '') +
               `</div>` +
@@ -3944,16 +3969,37 @@ function viewFile(path, name, opts) {
         const vid = document.getElementById('hiddenVid');
         vid.pause();
         _currentFrame = 0;
+        _frameTotalCount = 0;
+        _videoFps = 30;
+
+        _fetchServerVideoInfo(path).then((info) => {
+            if (!_viewerFile || _viewerFile.path !== path || !info) return;
+            if (Number.isFinite(info.fps) && info.fps > 0) _videoFps = Number(info.fps);
+            if (Number.isFinite(info.frame_count) && info.frame_count > 0) {
+                _frameTotalCount = Math.max(1, Math.round(info.frame_count));
+            } else if (Number.isFinite(info.duration) && info.duration > 0) {
+                _frameTotalCount = Math.max(_frameTotalCount || 0, Math.round(info.duration * (_videoFps || 30)));
+            }
+            const sliderEl = document.getElementById('frameScrubSlider');
+            if (sliderEl && _frameTotalCount > 0) sliderEl.max = _frameTotalCount - 1;
+            _updateScrubPosition(vid);
+            _updateFivePanel();
+        });
 
         const slider = document.getElementById('frameScrubSlider');
         slider.addEventListener('input', () => {
             const f = parseInt(slider.value, 10);
             _currentFrame = f;
-            vid.currentTime = f / _videoFps;
+            const duration = _safeVideoDuration(vid);
+            const targetTime = Math.min(f / (_videoFps || 30), Math.max(0, duration - 0.001));
+            vid.currentTime = targetTime;
         });
 
         const updateAfterSeek = () => {
-            _currentFrame = Math.round(vid.currentTime * _videoFps);
+            _initFrameScrubber(vid);
+            const maxFrame = Math.max(0, (_frameTotalCount || 1) - 1);
+            const nextFrame = Math.round((Number(vid.currentTime) || 0) * (_videoFps || 30));
+            _currentFrame = Math.max(0, Math.min(maxFrame, nextFrame));
             _updateScrubPosition(vid);
             _updateFivePanel();
         };
@@ -3961,11 +4007,15 @@ function viewFile(path, name, opts) {
             if (_loopSegment && _loopSegment.start != null && vid.currentTime >= _loopSegment.end) {
                 vid.currentTime = _loopSegment.start;
             }
-            _currentFrame = Math.round(vid.currentTime * _videoFps);
+            _initFrameScrubber(vid);
+            const maxFrame = Math.max(0, (_frameTotalCount || 1) - 1);
+            const nextFrame = Math.round((Number(vid.currentTime) || 0) * (_videoFps || 30));
+            _currentFrame = Math.max(0, Math.min(maxFrame, nextFrame));
             _updateScrubPosition(vid);
             _updateFivePanel();
         });
         vid.addEventListener('seeked', updateAfterSeek);
+        vid.addEventListener('durationchange', () => _initFrameScrubber(vid));
         const _isDetClip = /\/det_[^/]+\.mp4$/i.test(path);
         // For det_*.mp4 clips: load the sidecar JSON which contains the exact
         // live-detector signal data (no replay needed).  Fall back to lightweight
@@ -3989,6 +4039,7 @@ function viewFile(path, name, opts) {
         };
         vid.addEventListener('loadedmetadata', () => { _initFrameScrubber(vid); updateAfterSeek(); _maybeAutoIsolate(); });
         vid.addEventListener('loadeddata', () => { updateAfterSeek(); });
+        vid.addEventListener('canplay', () => _initFrameScrubber(vid));
         if (vid.readyState >= 1) { _initFrameScrubber(vid); updateAfterSeek(); }
         _extractFrameThumbs(vid);
     } else {
@@ -4261,22 +4312,45 @@ function _scrubPlayTick(ts) {
 
 var _currentFrame = 0;
 
+function _safeVideoDuration(vid) {
+    if (!vid) return 0;
+    let duration = Number.isFinite(vid.duration) && vid.duration > 0 ? vid.duration : 0;
+    if (vid.seekable && vid.seekable.length > 0) {
+        try {
+            const end = vid.seekable.end(vid.seekable.length - 1);
+            if (Number.isFinite(end) && end > duration) duration = end;
+        } catch (_) {}
+    }
+    return duration;
+}
+
 function _stepFrame(dir) {
     const vid = document.getElementById('hiddenVid');
-    if (!vid || !vid.duration) return;
+    const duration = _safeVideoDuration(vid);
+    if (!vid || duration <= 0) return;
     vid.pause();
-    const newFrame = Math.max(0, Math.min(_frameTotalCount - 1, _currentFrame + dir));
+    const maxByDuration = Math.max(0, Math.round(duration * (_videoFps || 30)) - 1);
+    const maxFrame = Math.max(_frameTotalCount - 1, maxByDuration);
+    const newFrame = Math.max(0, Math.min(maxFrame, _currentFrame + dir));
     _currentFrame = newFrame;
-    vid.currentTime = newFrame / _videoFps;
+    const targetTime = Math.min(newFrame / (_videoFps || 30), Math.max(0, duration - 0.001));
+    vid.currentTime = targetTime;
 }
 
 function _initFrameScrubber(vid) {
-    if (!vid || !vid.duration) return;
-    _videoFps = 30;
-    _frameTotalCount = Math.round(vid.duration * _videoFps);
+    if (!vid) return;
+    const duration = _safeVideoDuration(vid);
+    if (!Number.isFinite(_videoFps) || _videoFps <= 0) _videoFps = 30;
+    if (duration > 0) {
+        const fromDuration = Math.max(1, Math.round(duration * _videoFps));
+        _frameTotalCount = Math.max(_frameTotalCount || 0, fromDuration);
+    } else if (!_frameTotalCount || _frameTotalCount < 1) {
+        _frameTotalCount = 1;
+    }
     const slider = document.getElementById('frameScrubSlider');
     if (slider) {
         slider.max = _frameTotalCount - 1;
+        _currentFrame = Math.max(0, Math.min(_currentFrame, _frameTotalCount - 1));
         slider.value = _currentFrame;
     }
     _updateScrubPosition(vid);
@@ -4287,9 +4361,7 @@ function _updateScrubPosition(vid) {
     const slider = document.getElementById('frameScrubSlider');
     if (!vid) return;
     const frame = _currentFrame;
-    if (counter) {
-        counter.textContent = `Frame ${frame} / ${_frameTotalCount || '?'}`;
-    }
+    if (counter) counter.textContent = `Frame ${frame} / ${_frameTotalCount || '?'}`;
     if (slider && !slider.matches(':active')) {
         slider.value = frame;
     }
@@ -4312,8 +4384,6 @@ var _thumbExtractorCtx = null;
 var _thumbExtractionBusy = false;
 var _thumbExtractionQueue = [];
 var _thumbExtractionPending = new Set();
-var _lastThumbQueueMs = 0;
-const THUMB_QUEUE_THROTTLE_MS = 120;
 
 /** Prepare a hidden extractor video for lightweight on-demand frame thumbnails. */
 function _extractFrameThumbs(mainVid) {
@@ -4327,85 +4397,144 @@ function _extractFrameThumbs(mainVid) {
     _thumbExtractionBusy = false;
     _thumbExtractorCanvas = null;
     _thumbExtractorCtx = null;
-
-    const extVid = document.createElement('video');
-    extVid.src = mainVid.src;
-    extVid.muted = true;
-    extVid.preload = 'metadata';
-    extVid.style.cssText = 'position:absolute;left:-9999px;width:1px;height:1px;';
-    document.body.appendChild(extVid);
-    _thumbExtractorVid = extVid;
-
-    extVid.addEventListener('loadedmetadata', () => {
-        if (extVid !== _thumbExtractorVid) return;
-
-        const vw = extVid.videoWidth || 640;
-        const vh = extVid.videoHeight || 480;
-        const thumbW = Math.min(vw, 400);
-        const thumbH = Math.max(1, Math.round(thumbW * (vh / vw)));
-        _thumbExtractorCanvas = document.createElement('canvas');
-        _thumbExtractorCanvas.width = thumbW;
-        _thumbExtractorCanvas.height = thumbH;
-        _thumbExtractorCtx = _thumbExtractorCanvas.getContext('2d');
-        _queueFivePanelThumbs(_currentFrame);
-    }, { once: true });
+    _queueFivePanelThumbs(_currentFrame);
 }
 
-function _queueFrameThumb(frameIdx) {
-    if (!_thumbExtractorVid || !_thumbExtractorCtx || !_thumbExtractorCanvas) return;
+function _queueFrameThumb(frameIdx, prioritize = false) {
     if (frameIdx < 0 || frameIdx >= _frameTotalCount) return;
     if (_frameThumbs[frameIdx] || _thumbExtractionPending.has(frameIdx)) return;
     _thumbExtractionPending.add(frameIdx);
-    _thumbExtractionQueue.push(frameIdx);
+    if (prioritize) _thumbExtractionQueue.unshift(frameIdx);
+    else _thumbExtractionQueue.push(frameIdx);
+}
+
+function _blobToDataUrl(blob) {
+    return new Promise((resolve) => {
+        if (!blob || blob.size === 0) return resolve(null);
+        const fr = new FileReader();
+        fr.onload = () => resolve(typeof fr.result === 'string' ? fr.result : null);
+        fr.onerror = () => resolve(null);
+        fr.readAsDataURL(blob);
+    });
+}
+
+async function _fetchServerFrameThumb(frameIdx) {
+    if (!_viewerFile || !_viewerFile.path) return null;
+    const apiPath = _viewerFile.path.replace(/^\/static\//, '');
+    const fps = _videoFps || 30;
+    // Request display-resolution frames: each five-panel slot is ~1/5 viewport width
+    const panelW = document.getElementById('fivePanel');
+    const slotWidth = panelW ? Math.ceil(panelW.offsetWidth / 5) : 400;
+    const maxWidth = Math.min(1080, Math.max(320, slotWidth * 2)); // 2x for retina
+    const qs = new URLSearchParams({
+        path: apiPath,
+        frame: String(frameIdx),
+        fps: String(fps),
+        max_width: String(maxWidth),
+        t: String(Date.now()),
+    });
+    const ctrl = new AbortController();
+    const timeout = setTimeout(() => ctrl.abort(), 10000);
+    try {
+        const resp = await fetch(`/telescope/files/frame?${qs.toString()}`, {
+            method: 'GET',
+            cache: 'no-store',
+            signal: ctrl.signal,
+        });
+        if (!resp.ok) return null;
+        const blob = await resp.blob();
+        return await _blobToDataUrl(blob);
+    } catch (_) {
+        return null;
+    } finally {
+        clearTimeout(timeout);
+    }
+}
+
+async function _fetchServerVideoInfo(path) {
+    const apiPath = path.replace(/^\/static\//, '');
+    const qs = new URLSearchParams({ path: apiPath, t: String(Date.now()) });
+    const ctrl = new AbortController();
+    const timeout = setTimeout(() => ctrl.abort(), 8000);
+    try {
+        const resp = await fetch(`/telescope/files/video-info?${qs.toString()}`, {
+            method: 'GET',
+            cache: 'no-store',
+            signal: ctrl.signal,
+        });
+        if (!resp.ok) return null;
+        const data = await resp.json();
+        if (!data || !data.success) return null;
+        return data;
+    } catch (_) {
+        return null;
+    } finally {
+        clearTimeout(timeout);
+    }
 }
 
 function _drainThumbQueue() {
     if (_thumbExtractionBusy) return;
-    if (!_thumbExtractorVid || !_thumbExtractorCtx || !_thumbExtractorCanvas) return;
     const frameIdx = _thumbExtractionQueue.shift();
     if (frameIdx === undefined) return;
 
     _thumbExtractionBusy = true;
-    const extVid = _thumbExtractorVid;
-    const fps = _videoFps || 30;
-
-    extVid.onseeked = () => {
-        if (extVid !== _thumbExtractorVid) {
-            _thumbExtractionPending.delete(frameIdx);
-            _thumbExtractionBusy = false;
-            requestAnimationFrame(_drainThumbQueue);
-            return;
-        }
-        try {
-            _thumbExtractorCtx.drawImage(extVid, 0, 0, _thumbExtractorCanvas.width, _thumbExtractorCanvas.height);
-            _frameThumbs[frameIdx] = _thumbExtractorCanvas.toDataURL('image/jpeg', 0.85);
-        } catch (e) {
-            // Ignore per-frame extraction failures and continue.
-        }
+    _fetchServerFrameThumb(frameIdx).then((dataUrl) => {
+        if (dataUrl) _frameThumbs[frameIdx] = dataUrl;
         _thumbExtractionPending.delete(frameIdx);
         _thumbExtractionBusy = false;
-        _updateFivePanel();
+        _patchFivePanelThumb(frameIdx);
         requestAnimationFrame(_drainThumbQueue);
-    };
-
-    try {
-        extVid.currentTime = frameIdx / fps;
-    } catch (e) {
+    }).catch(() => {
         _thumbExtractionPending.delete(frameIdx);
         _thumbExtractionBusy = false;
         requestAnimationFrame(_drainThumbQueue);
-    }
+    });
 }
 
 function _queueFivePanelThumbs(centerFrame) {
-    const now = Date.now();
-    if (now - _lastThumbQueueMs < THUMB_QUEUE_THROTTLE_MS) return;
-    _lastThumbQueueMs = now;
-    [-2, -1, 0, 1, 2].forEach(off => _queueFrameThumb(centerFrame + off));
+    const offsets = [0, -1, 1, -2, 2, -3, 3, -4, 4];
+    const targets = offsets
+        .map(off => centerFrame + off)
+        .filter(f => f >= 0 && f < _frameTotalCount);
+    const targetSet = new Set(targets);
+
+    // Drop stale queued work so current scrub position is always prioritized.
+    _thumbExtractionQueue = _thumbExtractionQueue.filter(f => targetSet.has(f) && !_frameThumbs[f]);
+
+    // Add newest targets to the front in reverse so final order is [0,-1,1,-2,2...].
+    for (let i = targets.length - 1; i >= 0; i--) {
+        _queueFrameThumb(targets[i], true);
+    }
     _drainThumbQueue();
 }
 
-/** Render 5 equal big panels: frames [cur-2, cur-1, cur, cur+1, cur+2] */
+function _patchFivePanelThumb(frameIdx) {
+    const panel = document.getElementById('fivePanel');
+    if (!panel) return;
+    const slot = panel.querySelector(`[data-frame-slot="${frameIdx}"]`);
+    if (!slot) return;
+    const src = _frameThumbs[frameIdx];
+    if (!src) return;
+    const existing = slot.querySelector('img');
+    if (existing) {
+        if (existing.src !== src) existing.src = src;
+        return;
+    }
+    // Replace canvas preview or placeholder with server-quality image
+    const target = slot.querySelector('canvas') || slot.querySelector('.thumb-placeholder');
+    const img = document.createElement('img');
+    img.src = src;
+    img.draggable = false;
+    img.style.display = 'block';
+    img.style.width = '100%';
+    img.style.height = 'auto';
+    if (target && target.parentNode === slot) slot.replaceChild(img, target);
+    else slot.prepend(img);
+}
+
+/** Render 5 equal big panels: frames [cur-2, cur-1, cur, cur+1, cur+2].
+ *  Uses persistent DOM slots created in viewFile() — only updates src/styles. */
 function _updateFivePanel() {
     const panel = document.getElementById('fivePanel');
     if (!panel) return;
@@ -4413,26 +4542,77 @@ function _updateFivePanel() {
     const cur = _currentFrame;
     _queueFivePanelThumbs(cur);
 
+    const slots = panel.querySelectorAll('.fp-slot');
+    if (slots.length !== 5) return;  // slots not yet created
+
     const offsets = [-2, -1, 0, 1, 2];
-    let html = '';
-    offsets.forEach(off => {
+    offsets.forEach((off, i) => {
+        const slot = slots[i];
         const f = cur + off;
         const isCurrent = off === 0;
-        const border = isCurrent ? '3px solid #0ff' : '3px solid #333';
-        const opacity = (f < 0 || f >= total) ? '0.12' : '1';
-        const src = (f >= 0 && f < total && _frameThumbs[f]) ? _frameThumbs[f] : '';
-        const marked = _markedFrames.has(f);
-        const markDot = marked ? `<div style="position:absolute;top:4px;right:4px;width:12px;height:12px;background:#fd0;border-radius:50%;border:1px solid #000;"></div>` : '';
-        const labelColor = isCurrent ? '#0ff' : '#888';
-        html += `<div style="position:relative; flex:1; min-width:0; border:${border}; border-radius:4px; opacity:${opacity}; cursor:pointer; overflow:hidden;" ` +
-                `onclick="_jumpToFrame(${f})" title="Frame ${f}">` +
-                (src ? `<img src="${src}" style="display:block; width:100%; height:auto;" draggable="false">` :
-                       `<div style="width:100%; padding-top:75%; background:#111;"></div>`) +
-                `<div style="position:absolute;bottom:2px;left:0;right:0;text-align:center;color:${labelColor};font-size:0.75em;font-weight:${isCurrent?'bold':'normal'};font-family:monospace;text-shadow:0 0 4px #000;">${f >= 0 && f < total ? f : ''}</div>` +
-                markDot +
-                `</div>`;
+        const inRange = f >= 0 && f < total;
+
+        // Update slot attributes
+        slot.dataset.frameSlot = String(f);
+        slot.onclick = inRange ? () => _jumpToFrame(f) : null;
+        slot.title = inRange ? `Frame ${f}` : '';
+        slot.style.border = isCurrent ? '3px solid #0ff' : '3px solid #333';
+        slot.style.opacity = inRange ? '1' : '0.12';
+
+        // Update image: prefer server thumb > canvas preview > placeholder
+        const src = (inRange && _frameThumbs[f]) ? _frameThumbs[f] : '';
+        let img = slot.querySelector('img');
+        let cvs = slot.querySelector('canvas');
+        let placeholder = slot.querySelector('.thumb-placeholder');
+        const vid = document.getElementById('hiddenVid');
+
+        if (src) {
+            // Server-quality thumb available — use <img>
+            if (cvs && cvs.parentNode === slot) slot.removeChild(cvs);
+            if (!img) {
+                img = document.createElement('img');
+                img.style.cssText = 'display:block; width:100%; height:auto;';
+                img.draggable = false;
+                if (placeholder) slot.replaceChild(img, placeholder);
+                else slot.insertBefore(img, slot.firstChild);
+            }
+            if (img.src !== src) img.src = src;
+        } else if (isCurrent && inRange && vid && vid.videoWidth > 0 && vid.readyState >= 2) {
+            // No server thumb yet for center frame — draw instant canvas preview
+            if (img && img.parentNode === slot) slot.removeChild(img);
+            if (!cvs) {
+                cvs = document.createElement('canvas');
+                cvs.style.cssText = 'display:block; width:100%; height:auto;';
+                if (placeholder) slot.replaceChild(cvs, placeholder);
+                else slot.insertBefore(cvs, slot.firstChild);
+            }
+            cvs.width = vid.videoWidth;
+            cvs.height = vid.videoHeight;
+            try { cvs.getContext('2d').drawImage(vid, 0, 0); } catch (_) {}
+        } else {
+            // No thumb, no canvas source — show placeholder
+            if (img && img.parentNode === slot) slot.removeChild(img);
+            if (cvs && cvs.parentNode === slot) slot.removeChild(cvs);
+            if (!slot.querySelector('.thumb-placeholder')) {
+                placeholder = document.createElement('div');
+                placeholder.className = 'thumb-placeholder';
+                placeholder.style.cssText = 'width:100%; padding-top:75%; background:#111;';
+                slot.insertBefore(placeholder, slot.firstChild);
+            }
+        }
+
+        // Update label
+        const label = slot.querySelector('.fp-label');
+        if (label) {
+            label.textContent = inRange ? String(f) : '';
+            label.style.color = isCurrent ? '#0ff' : '#888';
+            label.style.fontWeight = isCurrent ? 'bold' : 'normal';
+        }
+
+        // Update mark dot
+        const dot = slot.querySelector('.fp-mark-dot');
+        if (dot) dot.style.display = _markedFrames.has(f) ? '' : 'none';
     });
-    panel.innerHTML = html;
 }
 
 function _jumpToFrame(f) {
