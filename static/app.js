@@ -3160,12 +3160,11 @@ startTelescopeStatusPolling();
 // Each response: blink the light if ts advanced since last render, then go dark.
 // Odometer shows server-side call count.
 
-var _apiPaused = false;
 var _lastSourceTs = null; // null = first render this page load
 
 function updateApiSourceLights(sourcesUsed) {
     const panel = document.getElementById('dataSourcesPanel');
-    if (!panel || panel.classList.contains('paused')) return;
+    if (!panel) return;
 
     // On first render after a page load, seed previous timestamps to 0 so any
     // persisted ts from the server triggers a blink immediately.
@@ -3231,28 +3230,6 @@ function _showSourceDeadToast(dead) {
         }
     } else {
         if (toast) toast.remove();
-    }
-}
-
-function toggleApiPause() {
-    _apiPaused = !_apiPaused;
-    const btn = document.getElementById('apiPauseBtn');
-    const panel = document.getElementById('dataSourcesPanel');
-
-    if (_apiPaused) {
-        clearInterval(autoGoInterval);
-        autoGoInterval = null;
-        if (panel) panel.classList.add('paused');
-        if (btn) btn.textContent = 'Resume (lights only)';
-        if (btn) btn.classList.add('btn-warning');
-        if (btn) btn.classList.remove('btn-secondary');
-    } else {
-        autoGoInterval = setInterval(goFetch, currentCheckInterval * 1000);
-        if (panel) panel.classList.remove('paused');
-        if (btn) btn.textContent = 'Pause All (lights only)';
-        if (btn) btn.classList.remove('btn-warning');
-        if (btn) btn.classList.add('btn-secondary');
-        goFetch(); // immediate fetch on resume
     }
 }
 
