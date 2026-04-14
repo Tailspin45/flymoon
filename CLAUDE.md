@@ -160,9 +160,20 @@ src/logger_.py – Logger setup.
 
 Flask routes live in app.py and src/telescope_routes.py, templates in templates/, and frontend JS/CSS in static/.
 
-Always modify active code in /Users/Tom/flymoon/ and never touch legacy files under /Users/Tom/flymoon/archive/development/dist/Zipcatcher-Web/.
+Always modify active code in /Users/Tom/Zipcatcher/ and never touch legacy files under /Users/Tom/Zipcatcher/archive/.
 
 Reference: SEESTAR_CONNECTION_IMPROVEMENTS.md, architecture.svg.
+
+## 6b. v0.2.0 Work In Progress
+
+This branch (`v0.2.0`) is an operational-reliability hardening cycle. Before starting any task, read these in order:
+
+1. [docs/V0_2_0_ROADMAP.md](docs/V0_2_0_ROADMAP.md) — **entry point.** Ordered critical path, effort estimates, exit criteria.
+2. [docs/AS_BUILT_REFERENCE.md](docs/AS_BUILT_REFERENCE.md) — canonical description of what actually ships. Replaces the stale `docs/TRANSIT_PREDICTION_AND_DETECTION.md`.
+3. [docs/OPERATIONAL_RISK_AUDIT.md](docs/OPERATIONAL_RISK_AUDIT.md) — 12 numbered findings with file:line refs.
+4. [docs/TEST_GAPS.md](docs/TEST_GAPS.md) — test suite reality check; the §2.1 tests are the first work item.
+
+The framing is operational reliability, **not** a new reference implementation. Do not propose backbone swaps (detector, prediction model, telescope support) — they are out of scope. See roadmap §4 for the explicit deferred list.
 
 ## 7. Important Domain Rules
 Units and conversions (critical for correctness):
