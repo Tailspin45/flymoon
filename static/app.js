@@ -3233,6 +3233,36 @@ function _showSourceDeadToast(dead) {
     }
 }
 
+// ── ADS-B health polling (roadmap §2.4 / audit finding #7) ──────────────────
+// Polls /api/adsb/health every 30 s and shows a banner when all free sources
+// are in backoff. The banner auto-clears when any source recovers.
+let _adsbHealthInterval = null;
+
+function _updateAdsbSourcesBanner(allDown) {
+    const banner = document.getElementById('adsbSourcesDownBanner');
+    if (!banner) return;
+    banner.style.display = allDown ? 'flex' : 'none';
+}
+
+async function _pollAdsbHealth() {
+    try {
+        const resp = await fetch('/api/adsb/health');
+        if (!resp.ok) return;
+        const data = await resp.json();
+        _updateAdsbSourcesBanner(data.all_required_down === true);
+    } catch (_e) {
+        // Transient network error — do not flip the banner state.
+    }
+}
+
+function _startAdsbHealthPolling() {
+    if (_adsbHealthInterval) return;
+    _pollAdsbHealth(); // immediate first check
+    _adsbHealthInterval = setInterval(_pollAdsbHealth, 30000);
+}
+
+_startAdsbHealthPolling();
+
 // bfcache support: pause all intervals on pagehide so there are no in-flight
 // requests blocking restoration. Restart on pageshow if restored from cache.
 window.addEventListener('pagehide', () => {
@@ -3243,6 +3273,8 @@ window.addEventListener('pagehide', () => {
     _telescopeStatusInterval = null;
     clearInterval(_bothOffReminderInterval);
     _bothOffReminderInterval = null;
+    clearInterval(_adsbHealthInterval);
+    _adsbHealthInterval = null;
 });
 
 window.addEventListener('pageshow', (e) => {
@@ -3256,5 +3288,6 @@ window.addEventListener('pageshow', (e) => {
         if (!_bothOffReminderInterval) {
             _bothOffReminderInterval = setInterval(_bothOffReminderTick, 60000);
         }
+        _startAdsbHealthPolling();
     }
 });

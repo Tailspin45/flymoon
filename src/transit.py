@@ -16,6 +16,7 @@ from tzlocal import get_localzone_name
 
 from src import logger
 from src.astro import CelestialObject
+from src.imm_kalman import angular_sigma as _angular_sigma
 from src.constants import (
     API_URL,
     ASTRO_EPHEMERIS,
@@ -351,14 +352,12 @@ def _compute_sep_1sigma(
     if min_sep_sigma_m is None:
         return None
 
-    from src.imm_kalman import angular_sigma
-
     elev_m = float(response.get("aircraft_elevation") or 0.0)
     target_alt_deg = float(response.get("target_alt") or 0.0)
     plane_elev_m = elev_m if elev_m > 0.0 else 10000.0
     # Avoid near-horizon singularity and division by zero.
     dist_m = plane_elev_m / max(sin(radians(abs(target_alt_deg))), 0.05)
-    return float(angular_sigma(float(min_sep_sigma_m), float(dist_m)))
+    return float(_angular_sigma(float(min_sep_sigma_m), float(dist_m)))
 
 
 def check_transit(
@@ -602,8 +601,21 @@ def check_transit(
             response["sep_1sigma"] = (
                 round(float(sep_1sigma), 4) if sep_1sigma is not None else None
             )
-        except Exception:
+        except Exception as _exc:
+            logger.warning("[transit] sep_1sigma computation failed for %s: %s",
+                           response.get("id", "?"), _exc)
             response["sep_1sigma"] = None
+        # D1: IMM mode weights for operator hover card (CV = straight, CA = manoeuvring)
+        try:
+            if _imm_state is not None and hasattr(_imm_state, "mu"):
+                response["imm_mu_cv"] = round(float(_imm_state.mu[0]), 3)
+                response["imm_mu_ca"] = round(float(_imm_state.mu[1]), 3)
+            else:
+                response["imm_mu_cv"] = None
+                response["imm_mu_ca"] = None
+        except Exception:
+            response["imm_mu_cv"] = None
+            response["imm_mu_ca"] = None
         return response
 
     # Return closest approach data even if threshold not met

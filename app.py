@@ -1235,6 +1235,87 @@ def _missing_cnn_training_dependencies() -> list[str]:
     return missing
 
 
+@app.route("/api/adsb/health")
+def api_adsb_health():
+    """Return per-source ADS-B health: backoff state, streak, seconds remaining.
+
+    Used by the UI status strip to surface a warning when all free sources are
+    in backoff (roadmap §2.4 / audit finding #7).
+
+    Response shape:
+        {
+          "all_required_down": bool,          # True when every free source is in backoff
+          "sources": {
+            "<name>": {
+              "in_backoff": bool,
+              "backoff_remaining": int,       # seconds
+              "streak": int
+            }, ...
+          }
+        }
+    """
+    from src.flight_sources import (
+        _bo_adsb_fi,
+        _bo_adsb_lol,
+        _bo_adsb_one,
+    )
+    from src.opensky import get_backoff_status
+
+    sources = {
+        "opensky": get_backoff_status(),
+        "adsb_one": _bo_adsb_one.status(),
+        "adsb_lol": _bo_adsb_lol.status(),
+        "adsb_fi": _bo_adsb_fi.status(),
+    }
+    all_required_down = all(v["in_backoff"] for v in sources.values())
+    return jsonify({"all_required_down": all_required_down, "sources": sources})
+
+
+@app.route("/api/soak/stats")
+def api_soak_stats():
+    """24-hour rolling operational statistics for the soak-test dashboard (§3.2 D5).
+
+    Response shape::
+
+        {
+          "detections_24h": int,         # transit detections fired in last 24 h
+          "recordings_saved_24h": int,   # recording files written in last 24 h
+          "sources_down_intervals": int, # how many times all-sources went down in 24 h
+          "sources_down_total_s": int,   # cumulative seconds all-sources-down in 24 h
+          "source_activity": {
+            "<name>": {"ts": float, "count": int}, ...
+          }
+        }
+    """
+    from src.flight_sources import get_source_activity, _soak_stats_snapshot
+
+    try:
+        snap = _soak_stats_snapshot()
+    except Exception:
+        snap = {}
+
+    try:
+        from src.transit_detector import get_detector
+        det = get_detector()
+        det_count = det._detection_count if det else 0
+    except Exception:
+        det_count = 0
+
+    try:
+        recorder = get_transit_recorder()
+        rec_count = int(recorder._recordings_saved_count) if recorder and hasattr(recorder, "_recordings_saved_count") else 0
+    except Exception:
+        rec_count = 0
+
+    return jsonify({
+        "detections_24h": det_count,
+        "recordings_saved_24h": rec_count,
+        "sources_down_intervals": snap.get("sources_down_intervals", 0),
+        "sources_down_total_s": snap.get("sources_down_total_s", 0),
+        "source_activity": get_source_activity(),
+    })
+
+
 @app.route("/api/cnn/retrain/status")
 def api_cnn_retrain_status():
     """Poll background CNN retrain job."""

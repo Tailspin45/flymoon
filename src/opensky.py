@@ -263,26 +263,57 @@ def get_backoff_status() -> dict:
     return {"in_backoff": remaining > 0, "backoff_remaining": int(remaining), "streak": 0}
 
 
-def get_latest_snapshot(max_age_s: Optional[float] = None) -> Dict[str, dict]:
-    """Return the most recently fetched aircraft positions from any cached bbox.
+def get_latest_snapshot(
+    max_age_s: Optional[float] = None,
+    lat_ll: Optional[float] = None,
+    lon_ll: Optional[float] = None,
+    lat_ur: Optional[float] = None,
+    lon_ur: Optional[float] = None,
+) -> Dict[str, dict]:
+    """Return cached aircraft positions for the requested bbox.
 
     Used by TransitDetector._enrich_event() to avoid a new OpenSky call at
-    detection time (which may hit 429 backoff or return stale data).  The
-    cached snapshot from the TransitMonitor's last prediction run is typically
-    only 10–30 s old and covers a much wider corridor bbox than the fallback
-    enrichment bbox.
+    detection time (which may hit 429 backoff or return stale data).
+
+    When bbox corners are supplied, the lookup is exact (rounded to 3 dp via
+    _bbox_key). If no matching entry exists, returns {} and logs at WARNING so
+    the caller falls through to a fresh fetch.  This prevents audit finding #6
+    where the wrong bbox's snapshot was silently returned.
+
+    When no bbox corners are supplied the function falls back to the
+    most-recently-fetched entry (legacy behaviour, retained for call sites that
+    don't have the bbox available).
 
     Args:
-        max_age_s: Optional maximum allowed age (seconds) for the newest cache
-            entry. If the freshest entry is older than this value, return {}.
+        max_age_s: Reject entries older than this many seconds.
+        lat_ll, lon_ll, lat_ur, lon_ur: Optional bbox corners.  When all four
+            are provided the lookup matches only that specific bbox.
 
-    Returns an empty dict if no cache entry exists (or if the newest cache is
-    older than max_age_s when provided).
+    Returns an empty dict on any miss.
     """
     if not _cache:
         return {}
+
+    now = time.time()
+
+    # --- Exact-bbox lookup path ------------------------------------------
+    if None not in (lat_ll, lon_ll, lat_ur, lon_ur):
+        key = _bbox_key(lat_ll, lon_ll, lat_ur, lon_ur)
+        entry = _cache.get(key)
+        if entry is None:
+            logger.warning(
+                "[OpenSky] get_latest_snapshot: no cached entry for bbox %s "
+                "(have: %s) — enrichment will fall back to a fresh fetch",
+                key,
+                list(_cache.keys()),
+            )
+            return {}
+        if max_age_s is not None and (now - entry["ts"]) > max_age_s:
+            return {}
+        return deepcopy(entry["data"])
+
+    # --- Timestamp-based fallback (no bbox specified) --------------------
     latest = max(_cache.values(), key=lambda v: v["ts"])
-    if max_age_s is not None and (time.time() - latest["ts"]) > max_age_s:
+    if max_age_s is not None and (now - latest["ts"]) > max_age_s:
         return {}
-    # Return a copy so downstream enrichment cannot mutate cache state.
     return deepcopy(latest["data"])

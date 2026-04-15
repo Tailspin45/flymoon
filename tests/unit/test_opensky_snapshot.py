@@ -48,6 +48,50 @@ def test_get_latest_snapshot_returns_copy_not_live_cache_reference():
     assert opensky._cache["bbox"]["data"]["AAL1"]["nested"]["x"] == 1
 
 
+def test_snapshot_matches_requested_bbox():
+    """Exact-bbox lookup must return only the entry for the requested bbox,
+    not the most-recently-fetched one (audit finding #6 regression)."""
+    now = time.time()
+    # Two disjoint bboxes cached at the same freshness.
+    opensky._cache["37.000,-123.000,38.000,-122.000"] = {
+        "ts": now - 5,
+        "data": {"SFO1": {"lat": 37.6, "lon": -122.4}},
+    }
+    opensky._cache["51.000,-1.000,52.000,0.000"] = {
+        "ts": now - 2,  # newer timestamp
+        "data": {"LHR1": {"lat": 51.5, "lon": -0.1}},
+    }
+
+    # Requesting the SF bbox must NOT return the newer LHR entry.
+    snap = opensky.get_latest_snapshot(lat_ll=37.0, lon_ll=-123.0, lat_ur=38.0, lon_ur=-122.0)
+    assert set(snap.keys()) == {"SFO1"}, (
+        "get_latest_snapshot returned wrong bbox data (audit finding #6)"
+    )
+
+    # Requesting the LHR bbox must return LHR data.
+    snap2 = opensky.get_latest_snapshot(lat_ll=51.0, lon_ll=-1.0, lat_ur=52.0, lon_ur=0.0)
+    assert set(snap2.keys()) == {"LHR1"}
+
+
+def test_snapshot_returns_empty_dict_on_bbox_miss(caplog):
+    """Requesting a bbox that has no cached entry returns {} and logs a WARNING."""
+    import logging
+
+    now = time.time()
+    opensky._cache["10.000,10.000,11.000,11.000"] = {
+        "ts": now,
+        "data": {"XX1": {"lat": 10.5, "lon": 10.5}},
+    }
+
+    caplog.set_level(logging.WARNING)
+    snap = opensky.get_latest_snapshot(lat_ll=50.0, lon_ll=50.0, lat_ur=51.0, lon_ur=51.0)
+
+    assert snap == {}, "Expected empty dict on bbox miss"
+    assert any("get_latest_snapshot" in r.getMessage() for r in caplog.records), (
+        "Expected a WARNING log on bbox miss"
+    )
+
+
 def test_enrichment_uses_fresh_snapshot_policy_and_altitude_m_in_fallback(monkeypatch):
     calls = []
 

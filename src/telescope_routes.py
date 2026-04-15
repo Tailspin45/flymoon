@@ -2,8 +2,14 @@
 Telescope control endpoints for Seestar integration.
 
 Provides RESTful web API for controlling the Seestar telescope, including
-connection management, viewing modes, video recording, photo capture, 
+connection management, viewing modes, video recording, photo capture,
 live preview, and file management.
+
+v0.2.0 §3.1 — mechanical split: isolated concerns now live in sub-modules:
+  src.telescope.debug_log      — NDJSON agent debug logger
+  src.telescope.motor_state    — GoTo/nudge mutex + _CtrlState enum
+  src.telescope.recorder_wiring — TransitRecorder scheduling glue
+The route implementations remain here; src/telescope/routes.py is a shim.
 """
 
 import json
@@ -14,7 +20,6 @@ import threading
 import time
 from collections import OrderedDict
 from datetime import datetime
-from enum import Enum
 from typing import Any, Dict, Optional
 
 from flask import Response, jsonify, request
@@ -45,27 +50,26 @@ from src.site_context import (
 )
 from src.solar_timelapse import get_timelapse
 
+# Sub-module imports (v0.2.0 §3.1 split)
+from src.telescope.debug_log import (  # noqa: E402
+    _agent_debug_log,
+    _auto_detect_rtsp_warn_ts,
+    _rtsp_recover_last_attempt_by_host_mode,
+    _RTSP_RECOVERY_COOLDOWN_SECONDS,
+)
+from src.telescope.motor_state import _CtrlState, ctrl as _motor_ctrl  # noqa: E402
+from src.telescope.recorder_wiring import (  # noqa: E402
+    schedule_recordings_for_transits as _schedule_recordings,
+)
+
 # Get EARTH reference for position calculations
 EARTH = ASTRO_EPHEMERIS["earth"]
 
-# ── Motor control state machine ────────────────────────────────────────────
-# Serialises GoTo and nudge so they never overlap on the same axes.
-
-
-class _CtrlState(Enum):
-    IDLE = "idle"
-    SLEWING = "slewing"
-    NUDGING = "nudging"
-    GOTO_RESUMING = "goto_resuming"
-
-
-_ctrl_state: _CtrlState = _CtrlState.IDLE
-_ctrl_lock = threading.Lock()
-# Whether the active nudge was started while solar/lunar tracking was on.
-# Used to decide whether to re-enable ALPACA tracking after nudge/stop.
-_pre_nudge_tracking: bool = False
-
-# ──────────────────────────────────────────────────────────────────────────
+# ── Motor control state machine ───────────────────────────────────────────
+# _CtrlState enum and the ctrl singleton now live in src.telescope.motor_state.
+# Use _motor_ctrl.state, _motor_ctrl.lock, _motor_ctrl.pre_nudge_tracking
+# throughout this module.
+# ─────────────────────────────────────────────────────────────────────────
 
 # User-adjustable settings pushed from the browser (see /api/settings).
 # Stored here so the heartbeat reconnect logic can read them without a
@@ -73,35 +77,6 @@ _pre_nudge_tracking: bool = False
 _user_settings: dict = {
     "min_reconnect_altitude": None,  # degrees; None → fall back to env var
 }
-
-# NDJSON agent log — only written when FLYMOON_AGENT_DEBUG_LOG is set (file path).
-_DEBUG_LOG_PATH = os.getenv("FLYMOON_AGENT_DEBUG_LOG", "").strip()
-_DEBUG_SESSION_ID = os.getenv("FLYMOON_AGENT_DEBUG_SESSION", "flymoon")
-_rtsp_recover_last_attempt_by_host_mode: dict[str, float] = {}
-_RTSP_RECOVERY_COOLDOWN_SECONDS = 5.0
-_auto_detect_rtsp_warn_ts = 0.0
-
-
-def _agent_debug_log(
-    run_id: str, hypothesis_id: str, location: str, message: str, data: dict
-) -> None:
-    if not _DEBUG_LOG_PATH:
-        return
-    try:
-        payload = {
-            "sessionId": _DEBUG_SESSION_ID,
-            "id": f"log_{int(time.time() * 1000)}_{threading.get_ident()}",
-            "timestamp": int(time.time() * 1000),
-            "location": location,
-            "message": message,
-            "data": data,
-            "runId": run_id,
-            "hypothesisId": hypothesis_id,
-        }
-        with open(_DEBUG_LOG_PATH, "a", encoding="utf-8") as fh:
-            fh.write(json.dumps(payload, separators=(",", ":")) + "\n")
-    except Exception:
-        pass
 
 
 def _rtsp_port_probe_order(primary: int = 4554) -> list[int]:
@@ -722,20 +697,19 @@ def telescope_goto():
         )
 
     # State machine: abort any active nudge before slewing
-    global _ctrl_state, _pre_nudge_tracking
-    with _ctrl_lock:
-        if _ctrl_state == _CtrlState.NUDGING:
+    with _motor_ctrl.lock:
+        if _motor_ctrl.state == _CtrlState.NUDGING:
             logger.info("[GoTo] Aborting active nudge before slew")
             try:
                 alpaca.stop_axes(timeout_sec=2.0)
-                if _pre_nudge_tracking:
+                if _motor_ctrl.pre_nudge_tracking:
                     alpaca.set_tracking(True, timeout_sec=2.0)
-                    _pre_nudge_tracking = False
+                    _motor_ctrl.pre_nudge_tracking = False
             except Exception as ex:
                 logger.warning(f"[GoTo] nudge abort failed: {ex}")
         if _recording_state["active"]:
             return jsonify({"error": "Cannot GoTo while recording is active"}), 409
-        _ctrl_state = _CtrlState.SLEWING
+        _motor_ctrl.state = _CtrlState.SLEWING
 
     try:
         if mode == "radec":
@@ -744,7 +718,6 @@ def telescope_goto():
             result = alpaca.goto_radec(ra, dec, timeout_sec=3.0)
 
             def _wait_radec_complete():
-                global _ctrl_state
                 deadline = time.time() + 60
                 while time.time() < deadline:
                     try:
@@ -753,8 +726,8 @@ def telescope_goto():
                     except Exception:
                         break
                     time.sleep(0.5)
-                with _ctrl_lock:
-                    _ctrl_state = _CtrlState.IDLE
+                with _motor_ctrl.lock:
+                    _motor_ctrl.state = _CtrlState.IDLE
 
             threading.Thread(target=_wait_radec_complete, daemon=True).start()
             # region agent log
@@ -796,13 +769,12 @@ def telescope_goto():
                 resume = ""
 
             def _goto_then_resume():
-                global _ctrl_state
                 result = alpaca.goto_altaz(alt, az, timeout_sec=3.0)
                 logger.info(f"[GoTo] ALPACA goto_altaz dispatched: {result!r}")
                 if resume in ("sun", "moon"):
                     # Wait for slew to complete instead of a fixed sleep
-                    with _ctrl_lock:
-                        _ctrl_state = _CtrlState.GOTO_RESUMING
+                    with _motor_ctrl.lock:
+                        _motor_ctrl.state = _CtrlState.GOTO_RESUMING
                     deadline = time.time() + 60
                     while time.time() < deadline:
                         try:
@@ -826,8 +798,8 @@ def telescope_goto():
                             _maybe_auto_start_detector("moon")
                     except Exception as ex:
                         logger.warning(f"[GoTo] resume_tracking={resume} failed: {ex}")
-                with _ctrl_lock:
-                    _ctrl_state = _CtrlState.IDLE
+                with _motor_ctrl.lock:
+                    _motor_ctrl.state = _CtrlState.IDLE
 
             t = threading.Thread(
                 target=_goto_then_resume,
@@ -855,8 +827,8 @@ def telescope_goto():
             return jsonify({"error": f"Unknown mode '{mode}'"}), 400
 
     except (KeyError, ValueError) as e:
-        with _ctrl_lock:
-            _ctrl_state = _CtrlState.IDLE
+        with _motor_ctrl.lock:
+            _motor_ctrl.state = _CtrlState.IDLE
         # region agent log
         _agent_debug_log(
             run_id,
@@ -868,8 +840,8 @@ def telescope_goto():
         # endregion
         return jsonify({"error": f"Invalid parameters: {e}"}), 400
     except Exception as e:
-        with _ctrl_lock:
-            _ctrl_state = _CtrlState.IDLE
+        with _motor_ctrl.lock:
+            _motor_ctrl.state = _CtrlState.IDLE
         # region agent log
         _agent_debug_log(
             run_id,
@@ -884,7 +856,6 @@ def telescope_goto():
 
 def telescope_stop_view():
     """POST /telescope/stop — stop current view/stack mode and abort any motor activity."""
-    global _ctrl_state, _pre_nudge_tracking
     client = get_telescope_client()
     if not client or not client.is_connected():
         return jsonify({"error": "Telescope not connected"}), 503
@@ -897,9 +868,9 @@ def telescope_stop_view():
             except Exception as ex:
                 logger.warning(f"[Stop] ALPACA abort failed: {ex}")
         client.stop_view_mode()
-        with _ctrl_lock:
-            _ctrl_state = _CtrlState.IDLE
-            _pre_nudge_tracking = False
+        with _motor_ctrl.lock:
+            _motor_ctrl.state = _CtrlState.IDLE
+            _motor_ctrl.pre_nudge_tracking = False
         return jsonify({"success": True, "message": "Stop command sent"}), 200
     except Exception as e:
         return handle_error(e)
@@ -911,7 +882,6 @@ def telescope_nudge():
     Body: {"axis": 0, "rate": 1.0}
       axis: 0=RA/Az, 1=Dec/Alt.  rate: deg/sec (negative=reverse), 0=stop.
     """
-    global _ctrl_state, _pre_nudge_tracking
     alpaca = get_alpaca_client()
     if not alpaca or not alpaca.is_connected():
         return (
@@ -919,9 +889,9 @@ def telescope_nudge():
             503,
         )
 
-    with _ctrl_lock:
-        if _ctrl_state in (_CtrlState.SLEWING, _CtrlState.GOTO_RESUMING):
-            return jsonify({"error": f"Cannot nudge while {_ctrl_state.value}"}), 409
+    with _motor_ctrl.lock:
+        if _motor_ctrl.state in (_CtrlState.SLEWING, _CtrlState.GOTO_RESUMING):
+            return jsonify({"error": f"Cannot nudge while {_motor_ctrl.state.value}"}), 409
 
     data = request.get_json(force=True, silent=True) or {}
     try:
@@ -953,29 +923,28 @@ def telescope_nudge():
 
         result = alpaca.move_axis(axis, rate, timeout_sec=2.0)
 
-        with _ctrl_lock:
-            _pre_nudge_tracking = pre_tracking
-            _ctrl_state = _CtrlState.NUDGING
+        with _motor_ctrl.lock:
+            _motor_ctrl.pre_nudge_tracking = pre_tracking
+            _motor_ctrl.state = _CtrlState.NUDGING
         return jsonify({"success": True, "result": result, "via": "ALPACA"}), 200
     except Exception as e:
-        with _ctrl_lock:
-            _ctrl_state = _CtrlState.IDLE
+        with _motor_ctrl.lock:
+            _motor_ctrl.state = _CtrlState.IDLE
         return handle_error(e)
 
 
 def telescope_nudge_stop():
     """POST /telescope/nudge/stop — stop all motion via ALPACA."""
-    global _ctrl_state, _pre_nudge_tracking
     alpaca = get_alpaca_client()
     if not alpaca or not alpaca.is_connected():
         return jsonify({"error": "ALPACA not connected"}), 503
     try:
         result = alpaca.stop_axes(timeout_sec=2.0)
         # Restore tracking if it was on before the nudge started
-        with _ctrl_lock:
-            restore = _pre_nudge_tracking
-            _pre_nudge_tracking = False
-            _ctrl_state = _CtrlState.IDLE
+        with _motor_ctrl.lock:
+            restore = _motor_ctrl.pre_nudge_tracking
+            _motor_ctrl.pre_nudge_tracking = False
+            _motor_ctrl.state = _CtrlState.IDLE
         if restore:
             try:
                 alpaca.set_tracking(True, timeout_sec=2.0)
@@ -994,9 +963,9 @@ def telescope_nudge_stop():
             200,
         )
     except Exception as e:
-        with _ctrl_lock:
-            _pre_nudge_tracking = False
-            _ctrl_state = _CtrlState.IDLE
+        with _motor_ctrl.lock:
+            _motor_ctrl.pre_nudge_tracking = False
+            _motor_ctrl.state = _CtrlState.IDLE
         return handle_error(e)
 
 
@@ -1727,8 +1696,8 @@ def get_telescope_status():
         client = get_telescope_client()
 
         if not client or not client.is_connected():
-            with _ctrl_lock:
-                ctrl_state = _ctrl_state.value
+            with _motor_ctrl.lock:
+                ctrl_state = _motor_ctrl.state.value
             return (
                 jsonify(
                     {
@@ -1851,8 +1820,8 @@ def get_telescope_status():
             ),
             "jsonrpc_query_enabled": bool(getattr(client, "_query_rpc_enabled", False)),
         }
-        with _ctrl_lock:
-            status["ctrl_state"] = _ctrl_state.value
+        with _motor_ctrl.lock:
+            status["ctrl_state"] = _motor_ctrl.state.value
         if recording_active and _recording_state["start_time"]:
             status["recording_duration"] = (
                 datetime.now() - _recording_state["start_time"]
@@ -4179,20 +4148,19 @@ def alpaca_settings():
 
 def alpaca_abort_slew():
     """POST /telescope/alpaca/abort — abort any in-progress slew."""
-    global _ctrl_state, _pre_nudge_tracking
     alpaca = get_alpaca_client()
     if not alpaca or not alpaca.is_connected():
         return jsonify({"error": "ALPACA not connected"}), 503
     try:
         result = alpaca.abort_slew()
         alpaca.stop_axes()
-        with _ctrl_lock:
-            _ctrl_state = _CtrlState.IDLE
-            _pre_nudge_tracking = False
+        with _motor_ctrl.lock:
+            _motor_ctrl.state = _CtrlState.IDLE
+            _motor_ctrl.pre_nudge_tracking = False
         return jsonify({"success": True, "result": result}), 200
     except Exception as e:
-        with _ctrl_lock:
-            _ctrl_state = _CtrlState.IDLE
+        with _motor_ctrl.lock:
+            _motor_ctrl.state = _CtrlState.IDLE
         return handle_error(e)
 
 
@@ -5351,21 +5319,7 @@ def transit_check():
         try:
             from app import get_transit_recorder  # type: ignore[import]
 
-            recorder = get_transit_recorder()
-            if recorder:
-                for flight in high_flights:
-                    eta_seconds = flight.get("time", 0) * 60
-                    flight_id = flight.get("ident") or flight.get("id", "unknown")
-                    recorder.schedule_transit_recording(
-                        flight_id=flight_id,
-                        eta_seconds=eta_seconds,
-                        transit_duration_estimate=2.0,
-                        sep_deg=flight.get("angular_separation", 0.0),
-                    )
-                    logger.info(
-                        f"[TransitCheck] Scheduled recording for {flight_id} "
-                        f"ETA={eta_seconds:.0f}s via background telescope poll"
-                    )
+            _schedule_recordings(high_flights, get_transit_recorder())
         except Exception as rec_exc:
             logger.debug(f"[TransitCheck] Recorder scheduling skipped: {rec_exc}")
 

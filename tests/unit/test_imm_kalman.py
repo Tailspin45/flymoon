@@ -172,6 +172,41 @@ def test_angular_sigma_monotonicity_and_units():
     assert all(vals[i] > vals[i + 1] for i in range(len(vals) - 1))
 
 
+def test_update_filter_handles_missing_vz(monkeypatch):
+    """OpenSky frequently returns None for vertical_rate_ms, speed, and/or
+    direction.  update_filter must not raise and must return a valid state
+    with finite position components when any of these fields is None or absent.
+
+    This is a regression guard: a broken coercion (e.g. float(None)) would
+    raise TypeError and silently drop the aircraft from prediction entirely.
+    """
+    _set_time(monkeypatch, 70_000.0)
+
+    # Worst-case OpenSky payload: only mandatory lat/lon present.
+    sparse = {
+        "latitude": OBS_LAT + 0.15,
+        "longitude": OBS_LON + 0.15,
+        "speed": None,
+        "direction": None,
+        "vertical_rate_ms": None,
+        "position_source": "opensky",
+    }
+    state = update_filter("SPARSE1", sparse, OBS_LAT, OBS_LON)
+
+    # Must return a valid state (no exception above is already the key check).
+    n, e, sigma_m = state_position(state)
+    assert math.isfinite(n)
+    assert math.isfinite(e)
+    assert math.isfinite(sigma_m)
+    assert sigma_m > 0.0
+
+    # A second update with the same sparse payload must also succeed.
+    _set_time(monkeypatch, 70_005.0)
+    state2 = update_filter("SPARSE1", sparse, OBS_LAT, OBS_LON)
+    n2, e2, _ = state_position(state2)
+    assert math.isfinite(n2) and math.isfinite(e2)
+
+
 def test_stale_cleanup(monkeypatch):
     """A filter untouched for longer than FILTER_TTL_S must be evicted."""
     _set_time(monkeypatch, 50_000.0)

@@ -28,7 +28,7 @@ from concurrent.futures import ThreadPoolExecutor
 from concurrent.futures import TimeoutError as FuturesTimeoutError
 from concurrent.futures import as_completed
 from math import atan2, cos, radians, sin, sqrt
-from typing import Dict, Optional
+from typing import Any, Dict, Optional
 
 import requests
 
@@ -129,6 +129,11 @@ _ALL_SOURCES_DOWN_GRACE_S: float = 90.0
 _all_sources_down_since: Optional[float] = None
 _all_sources_down_notified: bool = False
 
+# Soak-test counters (§3.2 D5) — in-process ring accumulator, not persisted.
+# Reset on server restart; the 24-hour window is advisory, not guaranteed.
+_soak_down_intervals: int = 0       # times all-sources went into backoff
+_soak_down_total_s: float = 0.0     # cumulative seconds all-sources were down
+
 # Per-source call timestamps and counts — updated each time a source is queried.
 # Persisted to disk so counts survive server restarts.
 import json as _json
@@ -186,6 +191,20 @@ def get_source_activity() -> Dict[str, dict]:
     }
 
 
+def _soak_stats_snapshot() -> Dict[str, Any]:
+    """Return a snapshot of the soak-test counters (§3.2 D5).
+
+    Values are in-process accumulators reset on server restart.
+    ``sources_down_total_s`` includes the ongoing outage if one is active.
+    """
+    now = time.time()
+    extra_s = (now - _all_sources_down_since) if _all_sources_down_since is not None else 0.0
+    return {
+        "sources_down_intervals": _soak_down_intervals,
+        "sources_down_total_s": int(_soak_down_total_s + extra_s),
+    }
+
+
 def get_source_backoff_status() -> Dict[str, dict]:
     """Return {source: {in_backoff, backoff_remaining, streak}} for ADS-B sources."""
     return {
@@ -218,18 +237,21 @@ def _required_sources_all_in_backoff(snapshot: Dict[str, dict]) -> bool:
 def _update_sources_down_signal(all_required_down: bool) -> None:
     """Emit at-most-once SOURCES_DOWN signal after sustained all-source outage."""
     global _all_sources_down_since, _all_sources_down_notified
+    global _soak_down_intervals, _soak_down_total_s
 
     now = time.time()
     if not all_required_down:
         if _all_sources_down_since is not None:
-            downtime = int(now - _all_sources_down_since)
-            logger.info(f"[MultiSource] sources recovered after {downtime}s")
+            downtime = now - _all_sources_down_since
+            _soak_down_total_s += downtime
+            logger.info(f"[MultiSource] sources recovered after {int(downtime)}s")
         _all_sources_down_since = None
         _all_sources_down_notified = False
         return
 
     if _all_sources_down_since is None:
         _all_sources_down_since = now
+        _soak_down_intervals += 1
         return
 
     if _all_sources_down_notified:
