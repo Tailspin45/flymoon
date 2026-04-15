@@ -6721,6 +6721,28 @@ const TUNING_DEFAULTS = {
     mf_threshold_frac: 0.70,
 };
 
+const TUNING_PRESETS = {
+    lowFp: {
+        disk_margin_pct: 0.35,
+        centre_ratio_min: 3.5,
+        consec_frames: 10,
+        sensitivity_scale: 1.6,
+        track_min_mag: 3.0,
+        track_min_agree_frac: 0.8,
+        mf_threshold_frac: 0.85,
+    },
+    balanced: { ...TUNING_DEFAULTS },
+    highDect: {
+        disk_margin_pct: 0.20,
+        centre_ratio_min: 1.8,
+        consec_frames: 5,
+        sensitivity_scale: 0.8,
+        track_min_mag: 1.0,
+        track_min_agree_frac: 0.35,
+        mf_threshold_frac: 0.60,
+    },
+};
+
 /** Load saved tuning from localStorage (fallback to defaults). */
 function _loadTuning() {
     return {
@@ -6828,7 +6850,17 @@ function ensureTuningUI() {
         </div>
         ${_tuningSliderRow('tunAlpacaPoll', 'Poll interval (s)', 2, 60, _alpacaPollSec, 1,
             'Seconds between full ALPACA poll cycles (many GETs per cycle). Increase if the scope times out or refuses connections. Also set SEESTAR_ALPACA_POLL_INTERVAL in .env (2–120 s).')}
-        <button class="btn btn-secondary btn-compact" style="margin-top:4px;width:100%;" onclick="_resetTuning()">Reset to defaults</button>
+        <div style="display:flex;gap:6px;margin-top:6px;">
+            <button id="tunPresetLowFp" class="btn btn-secondary btn-compact" style="flex:1;"
+                title="Most conservative profile. Prioritizes fewer false positives, but may produce fewer detections."
+                onclick="_applyTuningPreset('lowFp')">LOW FP</button>
+            <button id="tunPresetBalanced" class="btn btn-secondary btn-compact" style="flex:1;"
+                title="Balanced profile. Good middle ground between false positives and detections for typical seeing conditions."
+                onclick="_applyTuningPreset('balanced')">BALANCED</button>
+            <button id="tunPresetHighDect" class="btn btn-secondary btn-compact" style="flex:1;"
+                title="High DETECT profile. Tuned for more detections, but with more false positives."
+                onclick="_applyTuningPreset('highDect')">HIGH DECT</button>
+        </div>
     `;
 
     // Insert before harness panel
@@ -6874,6 +6906,8 @@ function ensureTuningUI() {
             _debouncedApplyAlpacaPoll();
         });
     }
+
+    _markTuningPreset(localStorage.getItem('det_tuning_preset'));
 }
 
 function _toggleTuningBody() {
@@ -6886,6 +6920,48 @@ function _toggleTuningBody() {
 }
 
 let _tuningDebounceTimer = null;
+
+function _saveDetectionTuningToLocal(settings) {
+    localStorage.setItem('det_disk_margin', settings.disk_margin_pct);
+    localStorage.setItem('det_centre_ratio', settings.centre_ratio_min);
+    localStorage.setItem('det_consec_frames', settings.consec_frames);
+    localStorage.setItem('det_sensitivity', settings.sensitivity_scale);
+    localStorage.setItem('det_track_mag', settings.track_min_mag);
+    localStorage.setItem('det_track_agree', settings.track_min_agree_frac);
+    localStorage.setItem('det_mf_thresh', settings.mf_threshold_frac);
+}
+
+function _markTuningPreset(activePreset) {
+    const buttonMap = {
+        lowFp: 'tunPresetLowFp',
+        balanced: 'tunPresetBalanced',
+        highDect: 'tunPresetHighDect',
+    };
+    Object.entries(buttonMap).forEach(([key, id]) => {
+        const btn = document.getElementById(id);
+        if (!btn) return;
+        btn.classList.toggle('is-active', key === activePreset);
+    });
+}
+
+function _applyTuningPreset(presetKey) {
+    const preset = TUNING_PRESETS[presetKey];
+    if (!preset) return;
+    _syncTuningSliders(preset);
+    _saveDetectionTuningToLocal(preset);
+    localStorage.setItem('det_tuning_preset', presetKey);
+    _markTuningPreset(presetKey);
+    _applyDetectionSettings(preset);
+    if (typeof showStatus === 'function') {
+        const names = {
+            lowFp: 'LOW FP preset applied',
+            balanced: 'BALANCED preset applied',
+            highDect: 'HIGH DECT preset applied',
+        };
+        showStatus(names[presetKey] || 'Preset applied', 'success', 2500);
+    }
+}
+
 function _debouncedApplyTuning() {
     clearTimeout(_tuningDebounceTimer);
     _tuningDebounceTimer = setTimeout(() => {
@@ -6905,13 +6981,9 @@ function _debouncedApplyTuning() {
             track_min_agree_frac: ta ? parseInt(ta.value) / 100   : TUNING_DEFAULTS.track_min_agree_frac,
             mf_threshold_frac:    mf ? parseInt(mf.value)  / 100  : TUNING_DEFAULTS.mf_threshold_frac,
         };
-        localStorage.setItem('det_disk_margin',   settings.disk_margin_pct);
-        localStorage.setItem('det_centre_ratio',  settings.centre_ratio_min);
-        localStorage.setItem('det_consec_frames', settings.consec_frames);
-        localStorage.setItem('det_sensitivity',   settings.sensitivity_scale);
-        localStorage.setItem('det_track_mag',     settings.track_min_mag);
-        localStorage.setItem('det_track_agree',   settings.track_min_agree_frac);
-        localStorage.setItem('det_mf_thresh',     settings.mf_threshold_frac);
+        _saveDetectionTuningToLocal(settings);
+        localStorage.removeItem('det_tuning_preset');
+        _markTuningPreset(null);
         _applyDetectionSettings(settings);
     }, 300);
 }
