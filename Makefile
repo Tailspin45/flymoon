@@ -39,6 +39,13 @@ lint-apply:
 	)
 
 
+test:
+	@( \
+		$(CMD_ACTIVATE_VENV) || exit 1; \
+		pytest tests/unit/ -v --cov=src --cov-report=term-missing; \
+	)
+
+
 create-env:
 	@$(CMD_CHECK_ENV)
 

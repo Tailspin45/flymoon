@@ -2290,7 +2290,7 @@ class TransitDetector:
         try:
             from src.opensky import get_latest_snapshot
 
-            snapshot = get_latest_snapshot()
+            snapshot = get_latest_snapshot(max_age_s=90.0)
             if snapshot:
                 flights = []
                 for callsign, pos in snapshot.items():
@@ -2341,9 +2341,14 @@ class TransitDetector:
                             "name": normalize_aircraft_display_id(callsign),
                             "latitude": lat,
                             "longitude": lon,
-                            "elevation": pos.get("alt", 10000) or 10000,
+                            "elevation": pos.get("altitude_m", pos.get("alt", 10000))
+                            or 10000,
                             "elevation_feet": int(
-                                (pos.get("alt", 10000) or 10000) / 0.3048
+                                (
+                                    pos.get("altitude_m", pos.get("alt", 10000))
+                                    or 10000
+                                )
+                                / 0.3048
                             ),
                             "aircraft_type": "",
                             "origin": "",

@@ -340,6 +340,27 @@ def get_possibility_level(sep: float) -> str:
     return PossibilityLevel.UNLIKELY.value
 
 
+def _compute_sep_1sigma(
+    min_sep_sigma_m: Optional[float], response: Dict[str, Any]
+) -> Optional[float]:
+    """Compute angular 1-sigma uncertainty (degrees) at closest approach.
+
+    Returns None when filter sigma is unavailable or any required geometry
+    value is invalid.
+    """
+    if min_sep_sigma_m is None:
+        return None
+
+    from src.imm_kalman import angular_sigma
+
+    elev_m = float(response.get("aircraft_elevation") or 0.0)
+    target_alt_deg = float(response.get("target_alt") or 0.0)
+    plane_elev_m = elev_m if elev_m > 0.0 else 10000.0
+    # Avoid near-horizon singularity and division by zero.
+    dist_m = plane_elev_m / max(sin(radians(abs(target_alt_deg))), 0.05)
+    return float(angular_sigma(float(min_sep_sigma_m), float(dist_m)))
+
+
 def check_transit(
     flight: dict,
     window_time: list,
@@ -576,30 +597,12 @@ def check_transit(
         response["current_signed_alt_diff"] = round(float(_cur_signed_alt_diff), 3)
         response["current_signed_az_diff"] = round(float(_cur_signed_az_diff), 3)
         # C2: angular uncertainty at closest approach (degrees, 1σ)
-        if _min_sep_sigma_m is not None:
-            try:
-                pass
-
-                from src.imm_kalman import angular_sigma as _angular_sigma
-
-                # Slant distance from observer to aircraft (metres)
-                _elev_m = float(response.get("aircraft_elevation") or 0)
-                float(response.get("angular_separation", 0))
-                # Approximate slant using elevation and (angular_separation gives degrees;
-                # compute rough horizontal distance from altitude and target altitude)
-                _target_alt_deg = float(response.get("target_alt", 1))
-                _plane_elev_m = _elev_m if _elev_m > 0 else 10000.0
-                _dist_m = _plane_elev_m / max(
-                    __import__("math").sin(
-                        __import__("math").radians(abs(_target_alt_deg))
-                    ),
-                    0.05,
-                )
-                _sep_1sigma_deg = _angular_sigma(_min_sep_sigma_m, _dist_m)
-                response["sep_1sigma"] = round(_sep_1sigma_deg, 4)
-            except Exception:
-                response["sep_1sigma"] = None
-        else:
+        try:
+            sep_1sigma = _compute_sep_1sigma(_min_sep_sigma_m, response)
+            response["sep_1sigma"] = (
+                round(float(sep_1sigma), 4) if sep_1sigma is not None else None
+            )
+        except Exception:
             response["sep_1sigma"] = None
         return response
 

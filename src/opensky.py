@@ -21,6 +21,7 @@ the bounding-box result for CACHE_TTL seconds to avoid redundant calls.
 
 import os
 import time
+from copy import deepcopy
 from typing import Dict, Optional
 
 import requests
@@ -262,7 +263,7 @@ def get_backoff_status() -> dict:
     return {"in_backoff": remaining > 0, "backoff_remaining": int(remaining), "streak": 0}
 
 
-def get_latest_snapshot() -> Dict[str, dict]:
+def get_latest_snapshot(max_age_s: Optional[float] = None) -> Dict[str, dict]:
     """Return the most recently fetched aircraft positions from any cached bbox.
 
     Used by TransitDetector._enrich_event() to avoid a new OpenSky call at
@@ -271,9 +272,17 @@ def get_latest_snapshot() -> Dict[str, dict]:
     only 10–30 s old and covers a much wider corridor bbox than the fallback
     enrichment bbox.
 
-    Returns an empty dict if no cache entry exists.
+    Args:
+        max_age_s: Optional maximum allowed age (seconds) for the newest cache
+            entry. If the freshest entry is older than this value, return {}.
+
+    Returns an empty dict if no cache entry exists (or if the newest cache is
+    older than max_age_s when provided).
     """
     if not _cache:
         return {}
     latest = max(_cache.values(), key=lambda v: v["ts"])
-    return latest["data"]
+    if max_age_s is not None and (time.time() - latest["ts"]) > max_age_s:
+        return {}
+    # Return a copy so downstream enrichment cannot mutate cache state.
+    return deepcopy(latest["data"])
