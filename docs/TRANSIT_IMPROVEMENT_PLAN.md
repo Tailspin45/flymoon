@@ -2,7 +2,7 @@
 ## A Research-Grounded Evaluation for Future Development
 
 **Date:** March 2026  
-**Based on:** `TRANSIT_PREDICTION_AND_DETECTION.md` (revision `dc5722d`)  
+**Based on:** Legacy transit reference (revision `dc5722d`)  
 **Status:** Plan only — no code changes until approved.
 
 ---

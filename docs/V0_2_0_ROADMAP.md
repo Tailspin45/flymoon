@@ -16,7 +16,7 @@
 
 1. **Zero silent-failure paths** on the prediction → detection → recording critical chain. Any failure that today drops data on the floor must become either a recovered operation or a logged, alertable event.
 2. **Test-gated refactoring** of the largest risk concentration (telescope_routes.py). No structural changes land without the unit tests that pin current behaviour.
-3. **Documentation that matches the code.** `docs/TRANSIT_PREDICTION_AND_DETECTION.md` is ~8 months stale; [AS_BUILT_REFERENCE.md](AS_BUILT_REFERENCE.md) is its replacement. The stale doc must be retired or clearly marked.
+3. **Documentation that matches the code.** The legacy transit reference is ~8 months stale; [AS_BUILT_REFERENCE.md](AS_BUILT_REFERENCE.md) is its replacement. The stale doc must be retired or clearly marked.
 4. **Complete the surviving work from v0.1's [TRANSIT_IMPROVEMENT_PLAN.md](TRANSIT_IMPROVEMENT_PLAN.md).** Phases A-C are done; Phase D (operator UX) and Phase E (evidence logging) are still open and still valuable.
 
 **Non-goals for v0.2.0:**
@@ -84,18 +84,18 @@ Work:
 
 **Exit criteria:** simulated all-sources-down run for 2 minutes produces exactly one WARN log, one Telegram notification, and one UI state change. No flapping.
 
-### 2.5 Retire `TRANSIT_PREDICTION_AND_DETECTION.md` — ~0.25 d
+### 2.5 Retire legacy transit reference doc — ~0.25 d
 
 **Audit finding 12** (Medium).
 
 The old doc describes a 160×90 @ 15 fps EMA-only pipeline. Reality is 180×320 @ 30 fps with wavelet + matched-filter + CNN. Every onboarding session since Q3 has hit the same wall.
 
 Work:
-1. Replace the body of `docs/TRANSIT_PREDICTION_AND_DETECTION.md` with a one-line pointer: "Superseded by [AS_BUILT_REFERENCE.md](AS_BUILT_REFERENCE.md). See git history for the v0.1 version."
+1. Replace the body of the legacy transit reference doc with a one-line pointer: "Superseded by [AS_BUILT_REFERENCE.md](AS_BUILT_REFERENCE.md). See git history for the v0.1 version."
 2. Update README's docs table-of-contents.
 3. Grep the repo for other references to the old filename and either redirect or delete.
 
-**Exit criteria:** `grep -r TRANSIT_PREDICTION_AND_DETECTION docs/ README.md` returns only the stub pointer.
+**Exit criteria:** legacy transit-reference mentions in active docs are reduced to the superseded stub pointer only.
 
 ### 2.6 Fix stale CLAUDE.md working-directory path — ~0.1 d
 

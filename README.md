@@ -320,6 +320,11 @@ Copy `.env.mock` to `.env` and fill in the values relevant to your setup. Run `p
 |------|---------|
 | [QUICKSTART.md](QUICKSTART.md) | Fastest path to first detection |
 | [SETUP.md](SETUP.md) | Full setup — Telegram, Telescope, Windows |
+| [docs/AS_BUILT_REFERENCE.md](docs/AS_BUILT_REFERENCE.md) | Canonical as-built architecture and behavior |
+| [docs/V0_2_0_ROADMAP.md](docs/V0_2_0_ROADMAP.md) | v0.2.0 reliability hardening plan |
+| [docs/OPERATIONAL_RISK_AUDIT.md](docs/OPERATIONAL_RISK_AUDIT.md) | Prioritized reliability findings with file references |
+| [docs/TEST_GAPS.md](docs/TEST_GAPS.md) | Required test coverage additions for v0.2.0 |
+| [docs/TRANSIT_PREDICTION_AND_DETECTION.md](docs/TRANSIT_PREDICTION_AND_DETECTION.md) | Superseded stub pointing to the as-built reference |
 | [SECURITY.md](SECURITY.md) | Securing the server on a LAN |
 | [ATTRIBUTION.md](ATTRIBUTION.md) | Open-source library credits |
 

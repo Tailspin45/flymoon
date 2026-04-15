@@ -2,7 +2,7 @@
 
 **Date:** 2026-04-14
 **Branch:** `v0.2.0`
-**Supersedes:** `TRANSIT_PREDICTION_AND_DETECTION.md` (rev `dc5722d`, March 2026) — now stale
+**Supersedes:** Legacy transit reference (rev `dc5722d`, March 2026) — now stale
 **Status:** Canonical. Describes the system as-implemented, not aspirational.
 
 This document exists because the March-2026 technical reference is ~8 months behind the code and, read as ground truth, leads new contributors to form incorrect mental models of every subsystem. Treat this file as the authoritative description of what runs in production on `v0.2.0`. When the code changes in a way that invalidates a section here, update this file in the same commit.

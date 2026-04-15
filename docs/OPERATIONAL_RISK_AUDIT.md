@@ -181,11 +181,11 @@ The project instructions tell any assistant "Always modify active code in `/User
 ## 12. Documentation rot is itself an operational risk
 
 **Severity:** Medium
-**Where:** [docs/TRANSIT_PREDICTION_AND_DETECTION.md](./TRANSIT_PREDICTION_AND_DETECTION.md)
+**Where:** Legacy transit reference document (now superseded)
 
 The canonical technical reference is ~8 months behind the code and reads as authoritative. Anyone (human contributor or AI assistant) planning work from that document will re-propose already-built features. This audit itself nearly generated a fully-independent scintillation-rejection blueprint duplicating the existing `TRANSIT_IMPROVEMENT_PLAN.md` before the code was actually read. Documentation drift has a cost measured in wasted engineering time per new contributor.
 
-**Fix direction:** replace TRANSIT_PREDICTION_AND_DETECTION.md contents with a header pointing at `AS_BUILT_REFERENCE.md`, and set a rule (enforced in code review) that any PR touching `src/transit_detector.py`, `src/transit.py`, `src/imm_kalman.py`, or `src/flight_sources.py` must update `AS_BUILT_REFERENCE.md` in the same commit.
+**Fix direction:** replace the legacy transit-reference contents with a header pointing at `AS_BUILT_REFERENCE.md`, and set a rule (enforced in code review) that any PR touching `src/transit_detector.py`, `src/transit.py`, `src/imm_kalman.py`, or `src/flight_sources.py` must update `AS_BUILT_REFERENCE.md` in the same commit.
 
 ---
 
