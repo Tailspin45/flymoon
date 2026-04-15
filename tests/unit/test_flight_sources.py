@@ -1,11 +1,14 @@
 """Pinning tests for the _SourceBackoff state machine in src.flight_sources.
 
 Focuses on the backoff arithmetic + status surface. HTTP-level tests
-(all-sources-down signal, dedup-newer-wins, wall-clock timeout enforcement)
-are deferred to land alongside roadmap §2.4 where they require a fake
-HTTP harness.
+(dedup-newer-wins, wall-clock timeout enforcement) are deferred to land
+alongside roadmap §2.4 where they require a fake HTTP harness.
 """
 
+import logging
+
+from src import opensky
+from src import flight_sources
 from src.flight_sources import _SourceBackoff
 
 
@@ -89,3 +92,56 @@ def test_status_dict_shape(monkeypatch):
     assert status["in_backoff"] is True
     assert status["streak"] == 1
     assert status["backoff_remaining"] == 60
+
+
+def test_sources_down_warns_and_notifies_once_after_90s(monkeypatch, caplog):
+    """Sustained all-required-sources backoff must emit exactly one signal."""
+    now = {"t": 1_000_000.0}
+
+    def _fake_time():
+        return now["t"]
+
+    monkeypatch.setattr("src.flight_sources.time.time", _fake_time)
+    monkeypatch.setattr("src.opensky.time.time", _fake_time)
+
+    sent = []
+
+    async def _fake_send(msg):
+        sent.append(msg)
+        return True
+
+    monkeypatch.setattr("src.telegram_notify.send_telegram_simple", _fake_send)
+
+    # Put every required free source into backoff long enough to cover test time.
+    future = now["t"] + 600
+    flight_sources._bo_adsb_one._until = future
+    flight_sources._bo_adsb_lol._until = future
+    flight_sources._bo_adsb_fi._until = future
+    opensky._backoff_until = future
+
+    caplog.set_level(logging.WARNING)
+
+    # t+0: starts outage timer, no alert yet.
+    flight_sources.fetch_multi_source_positions(0.0, 0.0, 1.0, 1.0)
+    assert sent == []
+
+    # t+89: still below grace window, still no alert.
+    now["t"] += 89
+    flight_sources.fetch_multi_source_positions(0.0, 0.0, 1.0, 1.0)
+    assert sent == []
+
+    # t+91: first eligible emission.
+    now["t"] += 2
+    flight_sources.fetch_multi_source_positions(0.0, 0.0, 1.0, 1.0)
+
+    # t+151: still down, must not flap.
+    now["t"] += 60
+    flight_sources.fetch_multi_source_positions(0.0, 0.0, 1.0, 1.0)
+
+    warn_hits = [
+        r
+        for r in caplog.records
+        if r.levelno == logging.WARNING and "SOURCES_DOWN" in r.getMessage()
+    ]
+    assert len(warn_hits) == 1
+    assert len(sent) == 1

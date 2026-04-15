@@ -23,6 +23,7 @@ ADSB_LOCAL_ENABLED   "true" / "false"  (default true if ADSB_LOCAL_URL is set)
 
 import os
 import time
+import asyncio
 from concurrent.futures import ThreadPoolExecutor
 from concurrent.futures import TimeoutError as FuturesTimeoutError
 from concurrent.futures import as_completed
@@ -123,6 +124,11 @@ _multi_source_cache: Dict[tuple, dict] = {}
 _multi_source_cache_ts: Dict[tuple, float] = {}
 MULTI_SOURCE_CACHE_TTL: int = 20  # seconds
 
+# Persisted all-sources-down operator signal (roadmap §2.4)
+_ALL_SOURCES_DOWN_GRACE_S: float = 90.0
+_all_sources_down_since: Optional[float] = None
+_all_sources_down_notified: bool = False
+
 # Per-source call timestamps and counts — updated each time a source is queried.
 # Persisted to disk so counts survive server restarts.
 import json as _json
@@ -189,6 +195,67 @@ def get_source_backoff_status() -> Dict[str, dict]:
         "adsbx":    _bo_adsbx.status(),
         "local":    _bo_local.status(),
     }
+
+
+def _collect_backoff_snapshot() -> Dict[str, dict]:
+    """Return a unified per-source backoff snapshot including OpenSky."""
+    from src.opensky import get_backoff_status as _get_opensky_backoff_status
+
+    snapshot = get_source_backoff_status()
+    snapshot["opensky"] = _get_opensky_backoff_status()
+    return snapshot
+
+
+def _required_sources_all_in_backoff(snapshot: Dict[str, dict]) -> bool:
+    """Return True when every required free ADS-B source is currently backed off."""
+    required = ("opensky", "adsb_one", "adsb_lol", "adsb_fi")
+    for name in required:
+        if not snapshot.get(name, {}).get("in_backoff", False):
+            return False
+    return True
+
+
+def _update_sources_down_signal(all_required_down: bool) -> None:
+    """Emit at-most-once SOURCES_DOWN signal after sustained all-source outage."""
+    global _all_sources_down_since, _all_sources_down_notified
+
+    now = time.time()
+    if not all_required_down:
+        if _all_sources_down_since is not None:
+            downtime = int(now - _all_sources_down_since)
+            logger.info(f"[MultiSource] sources recovered after {downtime}s")
+        _all_sources_down_since = None
+        _all_sources_down_notified = False
+        return
+
+    if _all_sources_down_since is None:
+        _all_sources_down_since = now
+        return
+
+    if _all_sources_down_notified:
+        return
+
+    elapsed = now - _all_sources_down_since
+    if elapsed < _ALL_SOURCES_DOWN_GRACE_S:
+        return
+
+    logger.warning(
+        "[MultiSource] SOURCES_DOWN: all required ADS-B sources have been in "
+        f"backoff for {int(elapsed)}s"
+    )
+    try:
+        from src.telegram_notify import send_telegram_simple
+
+        asyncio.run(
+            send_telegram_simple(
+                "SOURCES_DOWN: all required ADS-B sources are unavailable; "
+                "flight predictions may be stale."
+            )
+        )
+    except Exception as exc:
+        logger.warning(f"[MultiSource] SOURCES_DOWN alert failed: {exc}")
+
+    _all_sources_down_notified = True
 
 
 # ---------------------------------------------------------------------------
@@ -599,6 +666,12 @@ def fetch_multi_source_positions(
     """
     # Mark the start of a new logical refresh cycle for odometer dedup.
     _mark_cycle_start()
+
+    # Operator signal: detect sustained all-sources-down state regardless of
+    # whether this call returns from cache or performs fresh upstream requests.
+    _update_sources_down_signal(
+        _required_sources_all_in_backoff(_collect_backoff_snapshot())
+    )
 
     # When /flights calls get_transits() for both sun and moon in the same
     # request cycle they use the same bbox; serve the second call from cache.

@@ -53,6 +53,10 @@ def _reset_flight_source_backoffs():
     ):
         bo._until = 0.0
         bo._streak = 0
+    flight_sources._multi_source_cache.clear()
+    flight_sources._multi_source_cache_ts.clear()
+    flight_sources._all_sources_down_since = None
+    flight_sources._all_sources_down_notified = False
     yield
     for bo in (
         flight_sources._bo_adsb_one,
@@ -63,6 +67,10 @@ def _reset_flight_source_backoffs():
     ):
         bo._until = 0.0
         bo._streak = 0
+    flight_sources._multi_source_cache.clear()
+    flight_sources._multi_source_cache_ts.clear()
+    flight_sources._all_sources_down_since = None
+    flight_sources._all_sources_down_notified = False
 
 
 @pytest.fixture(autouse=True)
