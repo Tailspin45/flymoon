@@ -327,16 +327,16 @@ def get_possibility_level(sep: float) -> str:
     seeing it classified LOW confirms the geometry is working.
 
     Thresholds (on-sky degrees):
-    - HIGH:     ≤0.20° — direct transit very likely
-    - MEDIUM:   ≤0.27° — near miss, worth recording
-    - LOW:      ≤0.40° — possible distant transit / near-miss
-    - UNLIKELY: >0.40°
+    - HIGH:     ≤2.0° — direct transit very likely
+    - MEDIUM:   ≤4.0° — near miss, worth recording
+    - LOW:      ≤12.0° — possible distant transit / near-miss
+    - UNLIKELY: >12.0°
     """
-    if sep <= 0.20:
+    if sep <= 2.0:
         return PossibilityLevel.HIGH.value
-    elif sep <= 0.27:
+    elif sep <= 4.0:
         return PossibilityLevel.MEDIUM.value
-    elif sep <= 0.40:
+    elif sep <= 12.0:
         return PossibilityLevel.LOW.value
     return PossibilityLevel.UNLIKELY.value
 

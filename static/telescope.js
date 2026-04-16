@@ -7992,16 +7992,24 @@ function _radarDrawFrame(ts) {
         if (ageSec > 0.5 && (Math.abs(tr.vAltD) > 0.0001 || Math.abs(tr.vAzD) > 0.0001)) {
             const drAltD = tr.altD + tr.vAltD * ageSec;
             const drAzD  = tr.azD  + tr.vAzD  * ageSec;
-            // Off-screen — remove
-            if (Math.hypot(drAltD, drAzD) > RADAR_MAX_SEP_DEG * 1.3) {
+            const isEdgeDr = (tr.curSep ?? 0) > RADAR_MAX_SEP_DEG;
+            // Inside-field tracks that dead-reckon off-screen — remove
+            if (!isEdgeDr && Math.hypot(drAltD, drAzD) > RADAR_MAX_SEP_DEG * 1.3) {
                 _radarTracks.delete(id);
                 continue;
             }
-            // Append dead-reckoned point to trail (min 1s gap)
-            const lastPt = tr.points[tr.points.length - 1];
-            if (!lastPt || nowMs - lastPt.t >= 1000) {
-                tr.points.push({ altD: drAltD, azD: drAzD, t: nowMs });
-                if (tr.points.length > RADAR_HISTORY_MAX) tr.points.shift();
+            if (isEdgeDr) {
+                // Edge track: update bearing in-place (no trail)
+                tr.altD = drAltD;
+                tr.azD  = drAzD;
+                tr.lastUpdateT = nowMs;
+            } else {
+                // Append dead-reckoned point to trail (min 1s gap)
+                const lastPt = tr.points[tr.points.length - 1];
+                if (!lastPt || nowMs - lastPt.t >= 1000) {
+                    tr.points.push({ altD: drAltD, azD: drAzD, t: nowMs });
+                    if (tr.points.length > RADAR_HISTORY_MAX) tr.points.shift();
+                }
             }
         }
         // Compute stale opacity for rendering (1.0 → 0.2 over grace period)
@@ -8123,7 +8131,7 @@ function _radarDrawFrame(ts) {
             ctx.lineWidth = 1;
             ctx.strokeRect(ex - sqR, ey - sqR, sqR * 2, sqR * 2);
 
-            // Label: registration + ETA
+            // Label: registration + ETA (drawn inside the rim to avoid clipping)
             let lbl = track.label;
             if (track.etaSec != null) {
                 const aged = track.etaSec - (nowMs - (track.etaBaseT || nowMs)) / 1000;
@@ -8424,11 +8432,18 @@ window.pushInterceptPoint = function(flight) {
             lastPt.azD  = track.azD;
         }
     } else {
-        // Outside radar field — update bearing for edge marker but don't filter
+        // Outside radar field — update bearing for edge marker; estimate velocity
+        // from consecutive measurements so the bearing moves between server updates.
+        const dt = (now - track.lastUpdateT) / 1000;
+        if (dt > 0.1 && dt < 120) {
+            track.vAltD = (measAltD - track.altD) / dt;
+            track.vAzD  = (measAzD  - track.azD)  / dt;
+        } else {
+            track.vAltD = 0;
+            track.vAzD  = 0;
+        }
         track.altD = measAltD;
         track.azD  = measAzD;
-        track.vAltD = 0;
-        track.vAzD  = 0;
         track.lastUpdateT = now;
         track.points = [];
     }

@@ -95,9 +95,9 @@ This grading system is operational rather than statistical. It reflects the dete
 
 | Level | Separation | Meaning |
 |-------|-----------|---------|
-| 🟢 High | ≤ 0.20° | Direct transit very likely |
-| 🟠 Medium | ≤ 0.27° | Near miss — worth recording |
-| ⚪ Low | ≤ 0.4° | Possible distant transit |
+| 🟢 High | ≤ 2.0° | Direct transit very likely |
+| 🟠 Medium | ≤ 4.0° | Near miss — worth recording |
+| ⚪ Low | ≤ 12.0° | Possible distant transit |
 
 ### Live Video Detection
 

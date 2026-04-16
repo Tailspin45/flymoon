@@ -585,6 +585,7 @@ class TransitDetector:
 
         # B4 — Prediction-detection cross-link
         self._primed_events: dict = {}  # {flight_id: primed-event dict}
+        self._gate_miss_events: collections.deque = collections.deque(maxlen=50)
 
         # D1 — Wavelet detrending: raw Signal-B ring buffer for pywt
         _wt_size = 128  # 4.3 s at 30 fps; level-3 sym4 requires >= 32
@@ -705,6 +706,7 @@ class TransitDetector:
             "fps": round(fps, 1),
             "detections": self._detection_count,
             "recent_events": [e.to_dict() for e in list(self.events)[-10:]],
+            "recent_gate_misses": list(self._gate_miss_events)[-10:],
             "recording_active": self._rec_process is not None,
             "disk_detected": self._disk_detected,
             "disc_lost_warning": self._disc_lost_warning,
@@ -1263,6 +1265,22 @@ class TransitDetector:
         for _fid in [
             fid for fid, e in self._primed_events.items() if _now > e["expires_at"]
         ]:
+            _exp = self._primed_events[_fid]
+            _snr_b = round(score_b / max(thresh_b, 0.001), 3)
+            _mf_hits = sum(list(self._triggered_buf)[-30:])
+            self._gate_miss_events.append({
+                "flight_id": _fid,
+                "sep_deg": _exp.get("sep_deg"),
+                "missed_at": datetime.now().isoformat(),
+                "last_snr_b": _snr_b,
+                "last_mf_hits_30f": int(_mf_hits),
+                "last_consec": self._consec_above,
+            })
+            logger.info(
+                "[Detector] Gate miss: primed window for %s expired without detection "
+                "(sep=%.2f° snr_b=%.3f mf_hits_30f=%d consec=%d)",
+                _fid, _exp.get("sep_deg", 0), _snr_b, _mf_hits, self._consec_above,
+            )
             del self._primed_events[_fid]
 
         effective_consec = (
@@ -1503,6 +1521,7 @@ class TransitDetector:
         # Auto-record — pass a signal snapshot so the sidecar contains the
         # exact per-frame data used by the live detector (no replay needed).
         if self.record_on_detect:
+            _primed = self._primed_events.get(predicted_flight_id or "", {})
             _sig_snapshot = {
                 "scores_a": list(self._scores_a),
                 "scores_b": list(self._scores_b),
@@ -1521,6 +1540,10 @@ class TransitDetector:
                     f"matched_filter:{mf_duration_f}f" if mf_gate else f"consec:{_ec}f"
                 ),
                 "cnn_confidence": float(cnn_confidence) if cnn_confidence else None,
+                # Prediction cross-link — populated when a primed event was active
+                "predicted_flight_id": predicted_flight_id,
+                "predicted_sep": _primed.get("sep_deg"),
+                "sep_1sigma": None,  # filled by enrichment if available
             }
             rec_file = self._start_detection_recording(
                 ts, signal_snapshot=_sig_snapshot
@@ -2079,6 +2102,13 @@ class TransitDetector:
                 "transit_hires_frame": int(ANALYSIS_FPS * 1.0),  # 1s tight-pre
                 "analysis_fps": ANALYSIS_FPS,
             }
+            _pred_fid = signal_snapshot.get("predicted_flight_id")
+            if _pred_fid or signal_snapshot.get("predicted_sep") is not None:
+                meta["prediction"] = {
+                    "flight_id": _pred_fid,
+                    "predicted_sep_deg": signal_snapshot.get("predicted_sep"),
+                    "sep_1sigma_deg": signal_snapshot.get("sep_1sigma"),
+                }
         try:
             with open(meta_path, "w") as f:
                 json.dump(meta, f, indent=2)

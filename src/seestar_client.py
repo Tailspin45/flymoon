@@ -2118,6 +2118,7 @@ class TransitRecorder:
         self.pre_buffer = pre_buffer_seconds
         self.post_buffer = post_buffer_seconds
         self._scheduled_recordings: Dict[str, threading.Timer] = {}
+        self._recordings_saved_count: int = 0
 
         logger.info(
             f"Transit recorder initialized (pre={pre_buffer_seconds}s, post={post_buffer_seconds}s)"
@@ -2267,6 +2268,7 @@ class TransitRecorder:
         try:
             logger.info(f"Stopping recording for transit {flight_id}")
             self.client.stop_recording()
+            self._recordings_saved_count += 1
 
             # Remove from scheduled recordings
             if flight_id in self._scheduled_recordings:
