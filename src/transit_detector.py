@@ -338,6 +338,32 @@ def _build_spatial_masks(h: int, w: int) -> tuple:
 CENTRE_MASK, EDGE_MASK = _build_spatial_masks(ANALYSIS_HEIGHT, ANALYSIS_WIDTH)
 
 
+def _build_center_flux_masks(h: int, w: int) -> tuple:
+    """Build fixed central-aperture and surrounding-ring masks.
+
+    These masks are used for a cloud-robust centering cue: core brightness
+    relative to the local surround and full frame average.
+    """
+    y = np.arange(h).reshape(-1, 1)
+    x = np.arange(w).reshape(1, -1)
+    cy = (h - 1) / 2.0
+    cx = (w - 1) / 2.0
+    dist = np.sqrt((x - cx) ** 2 + (y - cy) ** 2)
+
+    r_core = max(4.0, min(h, w) * 0.09)
+    r_ring_in = max(r_core + 2.0, r_core * 1.6)
+    r_ring_out = max(r_ring_in + 2.0, r_core * 2.7)
+
+    core = dist <= r_core
+    ring = (dist >= r_ring_in) & (dist <= r_ring_out)
+    return core, ring
+
+
+CENTER_FLUX_CORE_MASK, CENTER_FLUX_RING_MASK = _build_center_flux_masks(
+    ANALYSIS_HEIGHT, ANALYSIS_WIDTH
+)
+
+
 # ---------------------------------------------------------------------------
 # Disk detection and disk-aware masks
 # ---------------------------------------------------------------------------
@@ -365,8 +391,17 @@ def _detect_disk(gray: np.ndarray) -> Optional[tuple]:
         maxRadius=max_r,
     )
     if circles is not None:
-        c = np.round(circles[0][0]).astype(int)
-        return int(c[0]), int(c[1]), int(c[2])
+        # Reflections often appear as smaller bright circles. Prefer the
+        # largest plausible disk candidate to bias toward the true solar/lunar disk.
+        candidates = np.round(circles[0]).astype(int)
+        candidates = sorted(candidates, key=lambda c: int(c[2]), reverse=True)
+        for c in candidates:
+            cx, cy, r = int(c[0]), int(c[1]), int(c[2])
+            if r < min_r or r > max_r:
+                continue
+            if cx < 0 or cx >= w or cy < 0 or cy >= h:
+                continue
+            return cx, cy, r
 
     # Fallback: threshold bright region + min enclosing circle
     _, bright = cv2.threshold(blurred, 180, 255, cv2.THRESH_BINARY)
@@ -579,6 +614,13 @@ class TransitDetector:
         self._disk_weight: Optional[np.ndarray] = None  # float32 H×W — smooth weight
         self._disk_detected = False
 
+        # Center-flux telemetry (cloud-robust centering cue)
+        self._center_flux_core_mean: float = 0.0
+        self._center_flux_ring_mean: float = 0.0
+        self._center_flux_frame_mean: float = 0.0
+        self._center_flux_core_to_ring: float = 1.0
+        self._center_flux_core_to_frame: float = 1.0
+
         # Disc-lost watchdog state
         self._disc_lost_frames: int = 0  # consecutive frames without a disc
         self._disc_lost_warning: bool = False  # True once threshold crossed
@@ -650,6 +692,11 @@ class TransitDetector:
         self._limb_mask = None
         self._disk_weight = None
         self._disk_detected = False
+        self._center_flux_core_mean = 0.0
+        self._center_flux_ring_mean = 0.0
+        self._center_flux_frame_mean = 0.0
+        self._center_flux_core_to_ring = 1.0
+        self._center_flux_core_to_frame = 1.0
         self._disc_lost_frames = 0
         self._disc_lost_warning = False
 
@@ -723,6 +770,13 @@ class TransitDetector:
                 if self._disk_detected
                 else None
             ),
+            "center_flux": {
+                "core_mean": round(self._center_flux_core_mean, 3),
+                "ring_mean": round(self._center_flux_ring_mean, 3),
+                "frame_mean": round(self._center_flux_frame_mean, 3),
+                "core_to_ring": round(self._center_flux_core_to_ring, 4),
+                "core_to_frame": round(self._center_flux_core_to_frame, 4),
+            },
             "settings": {
                 "disk_margin_pct": self.disk_margin_pct,
                 "centre_ratio_min": self.centre_ratio_min,
@@ -1000,11 +1054,28 @@ class TransitDetector:
         is found in the frame.
         """
         self._current_frame = frame
+        gray = np.clip(frame.mean(axis=2), 0, 255).astype(np.uint8)
+
+        # --- Center-flux telemetry ---
+        frame_mean = float(gray.mean())
+        if CENTER_FLUX_CORE_MASK.any():
+            core_mean = float(gray[CENTER_FLUX_CORE_MASK].mean())
+        else:
+            core_mean = frame_mean
+        if CENTER_FLUX_RING_MASK.any():
+            ring_mean = float(gray[CENTER_FLUX_RING_MASK].mean())
+        else:
+            ring_mean = frame_mean
+
+        self._center_flux_core_mean = core_mean
+        self._center_flux_ring_mean = ring_mean
+        self._center_flux_frame_mean = frame_mean
+        self._center_flux_core_to_ring = core_mean / max(ring_mean, 1e-3)
+        self._center_flux_core_to_frame = core_mean / max(frame_mean, 1e-3)
 
         # --- Periodic disk detection (every 2s), or immediate rebuild if mask cleared ---
         rebuild_needed = self._disk_mask is None and self._disk_cx is not None
         if self._frame_idx % DISK_DETECT_INTERVAL == 0 or rebuild_needed:
-            gray = np.clip(frame.mean(axis=2), 0, 255).astype(np.uint8)
             result = _detect_disk(gray)
             if result is not None:
                 cx, cy, r = result
@@ -1168,6 +1239,7 @@ class TransitDetector:
                     "ta": round(t_a, 5),
                     "tb": round(t_b, 5),
                     "cr": round(centre_ratio, 2),
+                    "cf": round(self._center_flux_core_to_frame, 3),
                     "disk": self._disk_detected,
                     "tca": self._track_agree_count,
                 }

@@ -42,6 +42,12 @@ from src.alpaca_client import (
 )
 from src.position import get_my_pos
 from src.seestar_client import SeestarClient
+from src.sun_centering import (
+    SunCenteringAdapter,
+    get_sun_center_service,
+    start_sun_center_service,
+    stop_sun_center_service,
+)
 from src.site_context import (
     clear_observer_browser_override,
     get_observer_coordinates,
@@ -54,6 +60,7 @@ from src.solar_timelapse import get_timelapse
 from src.telescope.debug_log import (  # noqa: E402
     _agent_debug_log,
     _auto_detect_rtsp_warn_ts,
+    _rtsp_probe_fail_last_warn_by_host_mode,
     _rtsp_recover_last_attempt_by_host_mode,
     _RTSP_RECOVERY_COOLDOWN_SECONDS,
 )
@@ -137,14 +144,20 @@ def _resolve_rtsp_stream_url(host: str, timeout_seconds: int = 6) -> Optional[st
     return None
 
 
-def _ensure_rtsp_ready(client, *, timeout_seconds: int = 4) -> Optional[str]:
+def _ensure_rtsp_ready(
+    client,
+    *,
+    timeout_seconds: int = 4,
+    allow_mode_reassert: bool = True,
+    warn_cooldown_seconds: float = 20.0,
+) -> Optional[str]:
     """Return a working RTSP URL from probe candidates, else None."""
     rtsp_url = _resolve_rtsp_stream_url(client.host, timeout_seconds=timeout_seconds)
     if rtsp_url:
         return rtsp_url
 
     mode = getattr(client, "_viewing_mode", None)
-    if mode in ("sun", "moon"):
+    if allow_mode_reassert and mode in ("sun", "moon"):
         host_mode = f"{client.host}:{mode}"
         now = time.monotonic()
         last_attempt = _rtsp_recover_last_attempt_by_host_mode.get(host_mode, 0.0)
@@ -173,7 +186,18 @@ def _ensure_rtsp_ready(client, *, timeout_seconds: int = 4) -> Optional[str]:
             logger.debug(
                 "[RTSP] Probe failed (mode=%s) and recovery is cooling down", mode
             )
-    logger.warning(f"[RTSP] Probe failed (mode={mode})")
+
+    host_mode_warn_key = f"{getattr(client, 'host', 'unknown')}:{mode or 'unknown'}"
+    now = time.monotonic()
+    last_warn = _rtsp_probe_fail_last_warn_by_host_mode.get(host_mode_warn_key, 0.0)
+    if now - last_warn >= max(1.0, float(warn_cooldown_seconds)):
+        _rtsp_probe_fail_last_warn_by_host_mode[host_mode_warn_key] = now
+        logger.warning(f"[RTSP] Probe failed (mode={mode})")
+    else:
+        logger.debug(
+            "[RTSP] Probe failed (mode=%s) and warning is cooling down",
+            mode,
+        )
     return None
 
 
@@ -1648,6 +1672,9 @@ def disconnect_telescope():
         alpaca = get_alpaca_client()
         if alpaca:
             alpaca.disconnect()
+
+        # Experimental sun-centering loop must stop when hardware disconnects.
+        stop_sun_center_service()
 
         logger.info("[Telescope] Disconnected from telescope")
         return (
@@ -4467,6 +4494,38 @@ def register_routes(app):
         methods=["GET"],
     )
 
+    # Experimental Sun centering (Solar mode only)
+    app.add_url_rule(
+        "/telescope/sun-center/start",
+        "telescope_sun_center_start",
+        start_sun_centering,
+        methods=["POST"],
+    )
+    app.add_url_rule(
+        "/telescope/sun-center/stop",
+        "telescope_sun_center_stop",
+        stop_sun_centering,
+        methods=["POST"],
+    )
+    app.add_url_rule(
+        "/telescope/sun-center/recenter",
+        "telescope_sun_center_recenter",
+        recenter_sun_centering,
+        methods=["POST"],
+    )
+    app.add_url_rule(
+        "/telescope/sun-center/status",
+        "telescope_sun_center_status",
+        get_sun_centering_status,
+        methods=["GET"],
+    )
+    app.add_url_rule(
+        "/telescope/sun-center/settings",
+        "telescope_sun_center_settings",
+        update_sun_centering_settings,
+        methods=["PATCH"],
+    )
+
     # ── Detection test harness endpoints ──────────────────────────────────
     app.add_url_rule(
         "/telescope/harness/inject",
@@ -4763,6 +4822,238 @@ def _start_detector_watchdog(client) -> None:
 # ---------------------------------------------------------------------------
 
 
+def _build_sun_center_adapter() -> SunCenteringAdapter:
+    """Construct adapter callbacks for the experimental Sun-centering loop."""
+
+    def _scope_connected() -> bool:
+        client = get_telescope_client()
+        return bool(client and client.is_connected())
+
+    def _alpaca_connected() -> bool:
+        alpaca = get_alpaca_client()
+        return bool(alpaca and alpaca.is_connected())
+
+    def _view_mode() -> Optional[str]:
+        client = get_telescope_client()
+        return getattr(client, "_viewing_mode", None) if client else None
+
+    def _sun_altaz() -> Optional[tuple]:
+        try:
+            from tzlocal import get_localzone
+
+            latitude, longitude, elevation = get_observer_coordinates()
+            observer_position = get_my_pos(
+                lat=latitude, lon=longitude, elevation=elevation, base_ref=EARTH
+            )
+            local_tz = get_localzone()
+            ref_datetime = datetime.now(local_tz)
+            sun = CelestialObject(name="sun", observer_position=observer_position)
+            sun.update_position(ref_datetime=ref_datetime)
+            coords = sun.get_coordinates()
+            return float(coords["altitude"]), float(coords["azimuthal"])
+        except Exception as exc:
+            logger.debug("[SunCenter] Failed to compute sun alt/az: %s", exc)
+            return None
+
+    def _goto_altaz(alt: float, az: float) -> Dict[str, Any]:
+        alpaca = get_alpaca_client()
+        if not alpaca:
+            return {"error": "ALPACA unavailable"}
+        return alpaca.goto_altaz(float(alt), float(az), timeout_sec=3.0)
+
+    def _is_slewing() -> bool:
+        alpaca = get_alpaca_client()
+        return bool(alpaca and alpaca.is_connected() and alpaca.is_slewing())
+
+    def _move_axis(axis: int, rate: float) -> Dict[str, Any]:
+        alpaca = get_alpaca_client()
+        if not alpaca:
+            return {"error": "ALPACA unavailable"}
+        return alpaca.move_axis(int(axis), float(rate), timeout_sec=2.0)
+
+    def _stop_axes() -> Dict[str, Any]:
+        alpaca = get_alpaca_client()
+        if not alpaca:
+            return {"error": "ALPACA unavailable"}
+        return alpaca.stop_axes(timeout_sec=2.0)
+
+    def _max_rate(axis: int) -> float:
+        alpaca = get_alpaca_client()
+        if not alpaca:
+            return 1.0
+        return float(alpaca.get_max_move_rate(int(axis)))
+
+    def _detector_status() -> Dict[str, Any]:
+        try:
+            from src.transit_detector import get_detector
+
+            det = get_detector()
+            return det.get_status() if det else {}
+        except Exception:
+            return {}
+
+    return SunCenteringAdapter(
+        is_scope_connected=_scope_connected,
+        is_alpaca_connected=_alpaca_connected,
+        get_viewing_mode=_view_mode,
+        get_sun_altaz=_sun_altaz,
+        goto_altaz=_goto_altaz,
+        is_slewing=_is_slewing,
+        move_axis=_move_axis,
+        stop_axes=_stop_axes,
+        get_max_move_rate=_max_rate,
+        get_detector_status=_detector_status,
+    )
+
+
+def start_sun_centering():
+    """POST /telescope/sun-center/start - start experimental Sun centering."""
+    logger.info("[Telescope] POST /telescope/sun-center/start")
+
+    try:
+        client = get_telescope_client()
+        if not client or not client.is_connected():
+            return jsonify({"error": "Telescope not connected"}), 503
+
+        alpaca = get_alpaca_client()
+        if not alpaca or not alpaca.is_connected():
+            return (
+                jsonify(
+                    {
+                        "error": "ALPACA not connected — Sun centering needs ALPACA mount control"
+                    }
+                ),
+                503,
+            )
+
+        mode = (getattr(client, "_viewing_mode", None) or "").strip().lower()
+        if mode not in {"sun", "solar"}:
+            msg = (
+                "Experimental Sun centering is Solar-only right now. "
+                "Switch to Solar mode and try again."
+            )
+            return (
+                jsonify(
+                    {
+                        "error": msg,
+                        "reason": "solar_mode_required_experimental",
+                        "current_mode": mode or None,
+                        "toast": msg,
+                    }
+                ),
+                409,
+            )
+
+        # Ensure detector is available for disk centroid feedback.
+        from src.transit_detector import get_detector, start_detector
+
+        det = get_detector()
+        if not det or not det.is_running:
+            rtsp_url = _ensure_rtsp_ready(client)
+            if not rtsp_url:
+                return (
+                    jsonify(
+                        {
+                            "error": (
+                                "RTSP stream is not ready. Start Solar view and "
+                                "retry Sun centering."
+                            )
+                        }
+                    ),
+                    503,
+                )
+            start_detector(rtsp_url, record_on_detect=True)
+
+        adapter = _build_sun_center_adapter()
+        service = start_sun_center_service(adapter=adapter)
+
+        body = request.get_json(force=True, silent=True) or {}
+        if body:
+            service.update_settings(body)
+
+        return jsonify({"success": True, **service.get_status()}), 200
+    except Exception as e:
+        return handle_error(e)
+
+
+def stop_sun_centering():
+    """POST /telescope/sun-center/stop - stop experimental Sun centering."""
+    logger.info("[Telescope] POST /telescope/sun-center/stop")
+    try:
+        stop_sun_center_service()
+        return jsonify({"success": True, "running": False, "state": "stopped"}), 200
+    except Exception as e:
+        return handle_error(e)
+
+
+def recenter_sun_centering():
+    """POST /telescope/sun-center/recenter - restart acquisition from scratch."""
+    logger.info("[Telescope] POST /telescope/sun-center/recenter")
+    try:
+        service = get_sun_center_service()
+        if not service or not service.is_running():
+            return (
+                jsonify(
+                    {
+                        "error": "Sun centering is not running",
+                        "reason": "sun_center_not_running",
+                    }
+                ),
+                409,
+            )
+
+        ok = service.recenter()
+        if not ok:
+            return jsonify({"error": "Unable to recenter"}), 500
+        return jsonify({"success": True, **service.get_status()}), 200
+    except Exception as e:
+        return handle_error(e)
+
+
+def get_sun_centering_status():
+    """GET /telescope/sun-center/status - read Sun centering service status."""
+    try:
+        service = get_sun_center_service()
+        if not service:
+            return (
+                jsonify(
+                    {
+                        "running": False,
+                        "state": "stopped",
+                        "message": "Sun centering idle",
+                        "tolerance_mode": "strict",
+                        "error_norm": None,
+                        "recovery_attempts": 0,
+                    }
+                ),
+                200,
+            )
+        return jsonify(service.get_status()), 200
+    except Exception as e:
+        return handle_error(e)
+
+
+def update_sun_centering_settings():
+    """PATCH /telescope/sun-center/settings - update centering behavior."""
+    try:
+        service = get_sun_center_service()
+        if not service or not service.is_running():
+            return (
+                jsonify(
+                    {
+                        "error": "Sun centering is not running",
+                        "reason": "sun_center_not_running",
+                    }
+                ),
+                409,
+            )
+        body = request.get_json(force=True, silent=True) or {}
+        settings = service.update_settings(body)
+        return jsonify({"success": True, "settings": settings, **service.get_status()}), 200
+    except Exception as e:
+        return handle_error(e)
+
+
 def _maybe_auto_start_detector(target: str = "sun") -> None:
     """Auto-start the transit detector when entering solar/lunar mode.
 
@@ -4788,7 +5079,7 @@ def _maybe_auto_start_detector(target: str = "sun") -> None:
             logger.debug("[Telescope] Auto-detect: scope not connected, skipping")
             return
 
-        rtsp_url = _ensure_rtsp_ready(client)
+        rtsp_url = _ensure_rtsp_ready(client, allow_mode_reassert=False)
         if not rtsp_url:
             global _auto_detect_rtsp_warn_ts
             now = time.monotonic()

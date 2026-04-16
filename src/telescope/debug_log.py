@@ -18,6 +18,7 @@ from src import logger
 _DEBUG_LOG_PATH = os.getenv("FLYMOON_AGENT_DEBUG_LOG", "").strip()
 _DEBUG_SESSION_ID = os.getenv("FLYMOON_AGENT_DEBUG_SESSION", "flymoon")
 _rtsp_recover_last_attempt_by_host_mode: dict[str, float] = {}
+_rtsp_probe_fail_last_warn_by_host_mode: dict[str, float] = {}
 _RTSP_RECOVERY_COOLDOWN_SECONDS = 5.0
 _auto_detect_rtsp_warn_ts = 0.0
 

@@ -750,6 +750,36 @@
                     </div>
                 </div>
 
+                <!-- Experimental Sun Centering -->
+                <div class="sidebar-panel" id="sunCenterPanel">
+                    <span class="screw screw-tl"></span><span class="screw screw-tr"></span><span class="screw screw-bl"></span><span class="screw screw-br"></span>
+                    <h3>Sun Center (Exp)</h3>
+                    <div style="display:grid; grid-template-columns:1fr 1fr; gap:4px; margin-bottom:4px; font-size:0.74em; color:#9aa3ab;">
+                        <div>State: <span id="sunCenterState" style="color:#dbe7ef; font-family:'SF Mono','Menlo','Consolas',monospace;">idle</span></div>
+                        <div>Mode: <span id="sunCenterTolMode" style="color:#dbe7ef; font-family:'SF Mono','Menlo','Consolas',monospace;">strict</span></div>
+                        <div>Error: <span id="sunCenterErr" style="color:#b8e8ff; font-family:'SF Mono','Menlo','Consolas',monospace;">-</span></div>
+                        <div>Recov: <span id="sunCenterRecoveries" style="color:#dbe7ef; font-family:'SF Mono','Menlo','Consolas',monospace;">0</span></div>
+                        <div>Pattern: <span id="sunCenterSearchKind" style="color:#dbe7ef; font-family:'SF Mono','Menlo','Consolas',monospace;">-</span></div>
+                    </div>
+                    <div style="display:grid; grid-template-columns:1fr auto; gap:4px; margin-bottom:4px;">
+                        <select id="sunCenterSearchMode" class="input-compact" title="Acquisition search pattern" onchange="sunCenterOnModeChanged()">
+                            <option value="adaptive">adaptive</option>
+                            <option value="spiral">spiral</option>
+                            <option value="raster">raster</option>
+                            <option value="random_walk">random walk</option>
+                        </select>
+                        <button id="sunCenterApplyModeBtn" class="btn btn-secondary btn-compact" onclick="sunCenterApplySearchMode()">Apply</button>
+                    </div>
+                    <div class="button-grid-3col" style="margin-bottom:4px;">
+                        <button id="sunCenterStartBtn" class="btn btn-primary btn-compact" onclick="sunCenterStart()">Start</button>
+                        <button id="sunCenterStopBtn" class="btn btn-secondary btn-compact" onclick="sunCenterStop()">Stop</button>
+                        <button id="sunCenterRecenterBtn" class="btn btn-secondary btn-compact" onclick="sunCenterRecenter()">Recenter</button>
+                    </div>
+                    <div id="sunCenterMsg" style="font-size:0.72em; color:#8f9aa3; min-height:14px;">
+                        Solar mode only for now. Strict-first, auto-fallback to conservative on flail.
+                    </div>
+                </div>
+
                 <!-- GoTo + Slew combined -->
                 <div class="sidebar-panel">
                     <span class="screw screw-tl"></span><span class="screw screw-tr"></span><span class="screw screw-bl"></span><span class="screw screw-br"></span>
