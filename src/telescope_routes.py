@@ -4865,23 +4865,27 @@ def _build_sun_center_adapter() -> SunCenteringAdapter:
         alpaca = get_alpaca_client()
         return bool(alpaca and alpaca.is_connected() and alpaca.is_slewing())
 
-    def _move_axis(axis: int, rate: float) -> Dict[str, Any]:
-        alpaca = get_alpaca_client()
-        if not alpaca:
-            return {"error": "ALPACA unavailable"}
-        return alpaca.move_axis(int(axis), float(rate), timeout_sec=2.0)
-
     def _stop_axes() -> Dict[str, Any]:
         alpaca = get_alpaca_client()
         if not alpaca:
             return {"error": "ALPACA unavailable"}
         return alpaca.stop_axes(timeout_sec=2.0)
 
-    def _max_rate(axis: int) -> float:
+    def _get_position() -> Dict[str, float]:
+        alpaca = get_alpaca_client()
+        if not alpaca or not alpaca.is_connected():
+            return {}
+        try:
+            return alpaca.get_position()
+        except Exception as exc:
+            logger.debug("[SunCenter] get_position failed: %s", exc)
+            return {}
+
+    def _set_tracking(enabled: bool) -> Dict[str, Any]:
         alpaca = get_alpaca_client()
         if not alpaca:
-            return 1.0
-        return float(alpaca.get_max_move_rate(int(axis)))
+            return {"error": "ALPACA unavailable"}
+        return alpaca.set_tracking(bool(enabled), timeout_sec=2.0)
 
     def _detector_status() -> Dict[str, Any]:
         try:
@@ -4899,10 +4903,10 @@ def _build_sun_center_adapter() -> SunCenteringAdapter:
         get_sun_altaz=_sun_altaz,
         goto_altaz=_goto_altaz,
         is_slewing=_is_slewing,
-        move_axis=_move_axis,
         stop_axes=_stop_axes,
-        get_max_move_rate=_max_rate,
         get_detector_status=_detector_status,
+        get_position=_get_position,
+        set_tracking=_set_tracking,
     )
 
 

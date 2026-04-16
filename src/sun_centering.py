@@ -1,20 +1,32 @@
-"""Sun acquisition and centering service.
+"""Sun acquisition, centering, and tracking service — v2.
 
-Hybrid controller:
-1. Coarse astronomical goto to Sun alt/az.
-2. Expanding local acquisition search.
-3. Closed-loop image centering using detector disc centroid.
+GoTo-correction model (replaces v1 rate-command PI controller):
+  - Coarse GoTo from ephemeris.
+  - 2×2 Jacobian calibration (px/deg) via two reference GoTo probes.
+  - Iterative Jacobian GoTo correction loop (no PI gains, no rate commands,
+    no axis-direction probing).
+  - Sidereal tracking enabled in TRACK; periodic GoTo refresh handles solar
+    drift relative to sidereal (~0.0015°/min).
+  - Cloud-aware RECOVER: follows ephemeris silently without grid search when
+    the frame is dark; resumes CENTER (not full re-calibration) when flux
+    returns, because the Jacobian is mount-camera geometry and remains valid.
 
-The service is intentionally conservative and designed for operational safety:
-- Requires Solar mode (validated by route layer before start).
-- Uses infinite recoveries with rest periods when disc is lost.
-- Starts in strict centering and downgrades to conservative if flailing.
+State machine:
+  ACQUIRE → CALIBRATE → CENTER → TRACK
+     ↑                               ↓ (drift or disk loss)
+     └──────────── RECOVER ──────────┘
+     (FAIL_SAFE on unrecoverable errors)
+
+Adapter interface changes from v1:
+  Added:   get_position()  — reads live mount alt/az
+           set_tracking()  — enables/disables sidereal tracking
+  Removed: move_axis()     — no longer used (GoTo only)
+           get_max_move_rate() — no longer used
 """
 
 from __future__ import annotations
 
 import math
-import random
 import threading
 import time
 from dataclasses import dataclass
@@ -22,6 +34,14 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from src import logger
 
+# Mean solar angular radius (degrees).  Used to derive plate scale from the
+# detected disk radius in pixels.
+SUN_ANGULAR_RADIUS_DEG: float = 0.2655
+
+
+# ---------------------------------------------------------------------------
+# Adapter
+# ---------------------------------------------------------------------------
 
 @dataclass
 class SunCenteringAdapter:
@@ -33,92 +53,78 @@ class SunCenteringAdapter:
     get_sun_altaz: Callable[[], Optional[Tuple[float, float]]]
     goto_altaz: Callable[[float, float], Dict[str, Any]]
     is_slewing: Callable[[], bool]
-    move_axis: Callable[[int, float], Dict[str, Any]]
     stop_axes: Callable[[], Dict[str, Any]]
-    get_max_move_rate: Callable[[int], float]
     get_detector_status: Callable[[], Dict[str, Any]]
+    get_position: Callable[[], Dict[str, float]]   # → {alt, az, ra, dec}
+    set_tracking: Callable[[bool], Dict[str, Any]]
 
+
+# ---------------------------------------------------------------------------
+# Settings
+# ---------------------------------------------------------------------------
 
 @dataclass
 class SunCenteringSettings:
     tick_hz: float = 4.0
     min_sun_alt_deg: float = 8.0
 
-    # Strict-first strategy (user preference)
-    strict_tolerance_radii: float = 0.10
-    conservative_tolerance_radii: float = 0.18
+    # ── Acquire ─────────────────────────────────────────────────────────────
+    acquire_slew_timeout_s: float = 30.0
+    acquire_settle_s: float = 2.0
+    # Rings of alt/az offsets (degrees) for the fallback search grid.
+    # Each radius produces 4 cardinal points; default = 8 search positions.
+    acquire_search_radii_deg: Tuple[float, ...] = (0.4, 0.8)
+    acquire_search_settle_s: float = 1.5
+    precheck_busy_timeout_s: float = 60.0
 
-    hold_seconds: float = 2.0
-    drift_recenter_factor: float = 1.25
-    acquire_lock_radii: float = 0.30
-    acquire_flux_core_to_frame: float = 1.20  # SC-07: raised from 1.08
-    acquire_flux_core_to_ring: float = 1.15   # SC-07: raised from 1.03
-    acquire_flux_min_core_mean: float = 14.0
-    acquire_flux_confirm_frames: int = 1
-    acquire_flux_hold_seconds: float = 2.0
-    lock_lost_grace_seconds: float = 4.0
+    # ── Calibrate ───────────────────────────────────────────────────────────
+    probe_deg: float = 0.10          # GoTo offset for each Jacobian probe
+    probe_slew_timeout_s: float = 15.0
+    probe_settle_s: float = 1.5
+    min_jacobian_det: float = 0.01   # determinant gate; below this → retry
+    max_cal_retries: int = 1
 
-    # Flail detection -> conservative fallback
-    flail_cycles: int = 10
-    flail_min_improvement: float = 0.01
+    # ── Center ──────────────────────────────────────────────────────────────
+    tolerance_radii: float = 0.12    # converged when error_radii < this
+    max_center_iters: int = 5
+    center_slew_timeout_s: float = 15.0
+    center_settle_s: float = 1.5
 
-    # Recovery behavior (infinite retries with rest)
-    recover_rest_seconds: float = 6.0
+    # ── Track ───────────────────────────────────────────────────────────────
+    track_refresh_s: float = 15.0
+    drift_threshold_radii: float = 0.08
+    lock_lost_grace_s: float = 4.0
+    track_correction_slew_timeout_s: float = 10.0
+    track_correction_settle_s: float = 1.0
 
-    # Coarse and search behavior
-    coarse_timeout_seconds: float = 25.0
-    coarse_settle_seconds: float = 3.0
-    search_step_deg: float = 0.30
-    search_max_ring: int = 5
-    search_settle_seconds: float = 2.5
-    busy_retry_seconds: float = 1.0
-    precheck_busy_timeout_seconds: float = 60.0  # SC-04: fail-safe if mount stuck slewing
-    # Search strategy: spiral | raster | random_walk | adaptive
-    # adaptive = spiral first pass, raster second pass, random-walk thereafter.
-    search_pattern_mode: str = "adaptive"
-    random_walk_points: int = 72
-    random_walk_seed: int = 4242
+    # ── Recover ─────────────────────────────────────────────────────────────
+    recover_slew_timeout_s: float = 25.0
+    recover_settle_s: float = 2.0
+    cloud_floor_mean: float = 4.0        # flux below this → cloud suspected
+    cloud_track_interval_s: float = 30.0  # ephemeris GoTo cadence during cloud
+    cloud_wait_max_s: float = 300.0      # give up after this long in cloud
 
-    # Closed-loop controller gains/rates
-    kp: float = 0.90
-    ki: float = 0.12
-    integral_limit: float = 2.0
-    max_rate_fraction: float = 0.22
-    min_rate_deg_s: float = 0.08
 
-    # One-time axis sign probing
-    probe_rate_deg_s: float = 0.35
-    probe_pulse_seconds: float = 0.25
-    probe_settle_seconds: float = 0.70
-    probe_min_effect: float = 0.008
-
-    # Disk sanity gate to reject internal reflections / implausible circles.
-    # Fractions are relative to min(analysis_width, analysis_height).
-    min_valid_radius_frac: float = 0.12
-    max_valid_radius_frac: float = 0.58
-    out_of_band_reject_radii: float = 1.80
-
+# ---------------------------------------------------------------------------
+# Service
+# ---------------------------------------------------------------------------
 
 class SunCenteringService:
-    """Background service that acquires and centers the Sun."""
+    """Background service that acquires, calibrates, centers, and tracks the Sun."""
 
-    STATE_PRECHECK = "precheck"
-    STATE_COARSE_POINT = "coarse_point"
-    STATE_ACQUIRE_SEARCH = "acquire_search"
-    STATE_FINE_CENTER = "fine_center"
-    STATE_LOCK_MONITOR = "lock_monitor"
-    STATE_RECOVER_REST = "recover_rest"
+    STATE_ACQUIRE = "acquire"
+    STATE_CALIBRATE = "calibrate"
+    STATE_CENTER = "center"
+    STATE_TRACK = "track"
+    STATE_RECOVER = "recover"
     STATE_FAIL_SAFE = "fail_safe"
     STATE_STOPPED = "stopped"
-
-    MODE_STRICT = "strict"
-    MODE_CONSERVATIVE = "conservative"
 
     def __init__(
         self,
         adapter: SunCenteringAdapter,
         settings: Optional[SunCenteringSettings] = None,
-    ):
+    ) -> None:
         self.adapter = adapter
         self.settings = settings or SunCenteringSettings()
 
@@ -127,235 +133,74 @@ class SunCenteringService:
         self._stop_event = threading.Event()
         self._lock = threading.RLock()
 
-        self.state = self.STATE_PRECHECK
+        # ── State ────────────────────────────────────────────────────────────
+        self.state = self.STATE_STOPPED
         self.state_message = "Initializing"
         self.state_changed_at = time.time()
         self.started_at: Optional[float] = None
+        self._phase: str = "initial"
 
-        self.tolerance_mode = self.MODE_STRICT
+        # ── Timing helpers ───────────────────────────────────────────────────
+        self._slew_deadline_mono: float = 0.0
+        self._settle_until_mono: float = 0.0
+        self._precheck_busy_deadline_mono: float = 0.0
 
-        self.error_u: Optional[float] = None
-        self.error_v: Optional[float] = None
-        self.error_norm: Optional[float] = None
-        self.center_flux_core_mean: Optional[float] = None
-        self.center_flux_core_to_ring: Optional[float] = None
-        self.center_flux_core_to_frame: Optional[float] = None
-        self.disk_detected = False
+        # ── Detector snapshot (refreshed every tick) ─────────────────────────
+        self.disk_detected: bool = False
+        self.disk_cx: Optional[float] = None   # centroid x in pixels
+        self.disk_cy: Optional[float] = None   # centroid y in pixels
+        self.disk_radius: Optional[float] = None
+        self.disk_eu_px: Optional[float] = None  # cx − image_cx
+        self.disk_ev_px: Optional[float] = None  # cy − image_cy
+        self.error_radii: Optional[float] = None  # hypot(eu,ev)/radius
         self.disk_info: Optional[Dict[str, Any]] = None
+        self.center_flux_core_mean: Optional[float] = None
+        self.plate_scale_deg_per_px: Optional[float] = None  # derived on first lock
 
-        self._coarse_deadline_mono = 0.0
-        self._coarse_settle_until_mono: float = 0.0  # SC-01
-        self._next_action_mono = 0.0
-        self._recover_until_mono = 0.0
-        self._precheck_busy_deadline_mono: float = 0.0  # SC-04
+        # ── Calibration (Jacobian) ───────────────────────────────────────────
+        # J maps (dalt, daz) in degrees to (du, dv) in pixels.
+        # J_inv maps (du, dv) in pixels to (dalt, daz) in degrees.
+        self._jacobian_valid: bool = False
+        self._j: Optional[List[List[float]]] = None     # [[du/dalt, du/daz],[dv/dalt,dv/daz]]
+        self._j_inv: Optional[List[List[float]]] = None
+        self._jacobian_age_s: float = 0.0  # seconds since last calibration
+        self._jacobian_at: Optional[float] = None  # monotonic timestamp
 
-        self._search_pattern = self.build_search_pattern(
-            self.settings.search_step_deg,
-            self.settings.search_max_ring,
-        )
-        self._search_pattern_kind = "spiral"
-        self._search_pattern_cycle = 0
-        self._search_index = 0
-        self.search_cycles = 0
+        # Calibration working variables
+        self._cal_ref_alt: float = 0.0
+        self._cal_ref_az: float = 0.0
+        self._cal_ref_cx: float = 0.0
+        self._cal_ref_cy: float = 0.0
+        self._cal_j_col_alt: Optional[List[float]] = None
+        self._cal_j_col_az: Optional[List[float]] = None
+        self._cal_retry: int = 0
 
-        self._set_search_pattern_for_cycle(0)
+        # ── Acquire search ───────────────────────────────────────────────────
+        self._search_offsets: List[Tuple[float, float]] = []
+        self._search_idx: int = 0
+        self._search_sun_alt: float = 0.0   # ephemeris snapshot at search start
+        self._search_sun_az: float = 0.0
 
-        self._axis_sign: Dict[int, int] = {0: 1, 1: 1}
-        self._axis_probe_done: Dict[int, bool] = {0: False, 1: False}
+        # ── Center ───────────────────────────────────────────────────────────
+        self._center_iter_count: int = 0
+        self._center_no_disk_ticks: int = 0
 
-        # Non-blocking axis probe state (SC-02)
-        self._probe_state: str = "idle"  # "idle" | "pulsing" | "settling"
-        self._probe_deadline_mono: float = 0.0
-        self._probe_before_u: float = 0.0
-        self._probe_before_v: float = 0.0
-        self._probe_axis0_delta_u: float = 0.0  # saved for SC-06 cross-coupling
-        self._probe_axis0_delta_v: float = 0.0
+        # ── Track ────────────────────────────────────────────────────────────
+        self._next_refresh_mono: float = 0.0
+        self._lock_lost_until_mono: float = 0.0
 
-        self._int_u = 0.0
-        self._int_v = 0.0
-        self._hold_start_mono: Optional[float] = None
-        self._prev_err_norm: Optional[float] = None
-        self._flail_counter = 0
-        self._center_flux_hit_count = 0
-        self._center_flux_hold_until_mono = 0.0
-        self._lock_lost_grace_until_mono = 0.0
+        # ── Recover / cloud ──────────────────────────────────────────────────
+        self._cloud_start_mono: float = 0.0
+        self._cloud_next_goto_mono: float = 0.0
+        self.recovery_attempts: int = 0
 
-        self.recovery_attempts = 0
+        # ── Diagnostics ──────────────────────────────────────────────────────
         self.last_command: Dict[str, Any] = {}
         self.last_error: Optional[str] = None
 
-    @staticmethod
-    def build_search_pattern(step_deg: float, max_ring: int) -> List[Tuple[float, float]]:
-        """Return expanding search offsets (dalt, daz) in degrees."""
-        pattern: List[Tuple[float, float]] = [(0.0, 0.0)]
-        for ring in range(1, max(1, int(max_ring)) + 1):
-            d = float(ring) * float(step_deg)
-            pattern.extend(
-                [
-                    (+d, 0.0),
-                    (-d, 0.0),
-                    (0.0, +d),
-                    (0.0, -d),
-                    (+d, +d),
-                    (+d, -d),
-                    (-d, +d),
-                    (-d, -d),
-                ]
-            )
-        return pattern
-
-    @staticmethod
-    def build_raster_pattern(step_deg: float, max_ring: int) -> List[Tuple[float, float]]:
-        """Return center-out boustrophedon raster offsets over a square box.
-
-        Starts near the center and expands outward, avoiding an immediate
-        origin->corner jump on the second move.
-        """
-        ring = max(1, int(max_ring))
-        step = float(step_deg)
-
-        seen = set()
-        pattern: List[Tuple[float, float]] = []
-
-        def _center_out_indices(r: int) -> List[int]:
-            seq = [0]
-            for d in range(1, r + 1):
-                seq.extend([-d, +d])
-            return seq
-
-        # Start at origin, then scan from center rows outward to keep early
-        # motions local around ephemeris target.
-        def _append(a: float, b: float) -> None:
-            key = (round(a, 9), round(b, 9))
-            if key in seen:
-                return
-            seen.add(key)
-            pattern.append((a, b))
-
-        _append(0.0, 0.0)
-        y_values = _center_out_indices(ring)
-        x_base = _center_out_indices(ring)
-        for row_i, yi in enumerate(y_values):
-            daz_values = list(x_base)
-            if row_i % 2 == 1:
-                daz_values.reverse()
-            dalt = yi * step
-            for xi in daz_values:
-                _append(dalt, xi * step)
-
-        return pattern
-
-    @staticmethod
-    def build_random_walk_pattern(
-        step_deg: float,
-        max_ring: int,
-        points: int,
-        seed: int,
-    ) -> List[Tuple[float, float]]:
-        """Return bounded random-walk offsets over the local search box."""
-        ring = max(1, int(max_ring))
-        n_points = max(8, int(points))
-        step = float(step_deg)
-        rng = random.Random(int(seed))
-
-        max_off = ring * step
-        pattern: List[Tuple[float, float]] = [(0.0, 0.0)]
-
-        pos_alt = 0.0
-        pos_az = 0.0
-        moves = [
-            (+step, 0.0),
-            (-step, 0.0),
-            (0.0, +step),
-            (0.0, -step),
-            (+step, +step),
-            (+step, -step),
-            (-step, +step),
-            (-step, -step),
-        ]
-
-        for _ in range(n_points - 1):
-            dalt, daz = rng.choice(moves)
-            nxt_alt = max(-max_off, min(max_off, pos_alt + dalt))
-            nxt_az = max(-max_off, min(max_off, pos_az + daz))
-            pos_alt, pos_az = nxt_alt, nxt_az
-            pattern.append((pos_alt, pos_az))
-
-        return pattern
-
-    def _normalized_search_mode(self) -> str:
-        mode = (self.settings.search_pattern_mode or "adaptive").strip().lower()
-        if mode in {"spiral", "raster", "random_walk", "adaptive"}:
-            return mode
-        return "adaptive"
-
-    def _pattern_for_cycle(self, cycle: int) -> Tuple[List[Tuple[float, float]], str]:
-        mode = self._normalized_search_mode()
-        cycle_i = max(0, int(cycle))
-
-        if mode == "spiral":
-            return (
-                self.build_search_pattern(
-                    self.settings.search_step_deg,
-                    self.settings.search_max_ring,
-                ),
-                "spiral",
-            )
-
-        if mode == "raster":
-            return (
-                self.build_raster_pattern(
-                    self.settings.search_step_deg,
-                    self.settings.search_max_ring,
-                ),
-                "raster",
-            )
-
-        if mode == "random_walk":
-            return (
-                self.build_random_walk_pattern(
-                    self.settings.search_step_deg,
-                    self.settings.search_max_ring,
-                    self.settings.random_walk_points,
-                    self.settings.random_walk_seed + cycle_i,
-                ),
-                "random_walk",
-            )
-
-        # Adaptive default: spiral -> raster -> random-walk.
-        if cycle_i <= 0:
-            return (
-                self.build_search_pattern(
-                    self.settings.search_step_deg,
-                    self.settings.search_max_ring,
-                ),
-                "spiral",
-            )
-        if cycle_i == 1:
-            return (
-                self.build_raster_pattern(
-                    self.settings.search_step_deg,
-                    self.settings.search_max_ring,
-                ),
-                "raster",
-            )
-
-        return (
-            self.build_random_walk_pattern(
-                self.settings.search_step_deg,
-                self.settings.search_max_ring,
-                self.settings.random_walk_points,
-                self.settings.random_walk_seed + cycle_i,
-            ),
-            "random_walk",
-        )
-
-    def _set_search_pattern_for_cycle(self, cycle: int) -> None:
-        pattern, kind = self._pattern_for_cycle(cycle)
-        self._search_pattern = pattern if pattern else [(0.0, 0.0)]
-        self._search_pattern_kind = kind
-        self._search_pattern_cycle = max(0, int(cycle))
-        self._search_index = 0
+    # =========================================================================
+    # Public API
+    # =========================================================================
 
     def start(self) -> None:
         with self._lock:
@@ -364,19 +209,18 @@ class SunCenteringService:
             self._running = True
             self._stop_event.clear()
             self.started_at = time.time()
-            self.state = self.STATE_PRECHECK
-            self.state_message = "Precheck"
-            self.state_changed_at = time.time()
             self._precheck_busy_deadline_mono = (
-                time.monotonic() + float(self.settings.precheck_busy_timeout_seconds)
+                time.monotonic() + float(self.settings.precheck_busy_timeout_s)
             )
+            self.state = self.STATE_ACQUIRE
+            self._phase = "initial"
+            self.state_message = "Starting"
+            self.state_changed_at = time.time()
             self._thread = threading.Thread(
-                target=self._run_loop,
-                name="sun-centering",
-                daemon=True,
+                target=self._run_loop, name="sun-centering-v2", daemon=True
             )
             self._thread.start()
-            logger.info("[SunCenter] Service started")
+            logger.info("[SunCenter] Service started (v2 GoTo-correction model)")
 
     def stop(self) -> None:
         with self._lock:
@@ -401,180 +245,117 @@ class SunCenteringService:
             return self._running
 
     def recenter(self) -> bool:
+        """Re-enter ACQUIRE, keeping existing Jacobian if valid (skip CALIBRATE)."""
         with self._lock:
             if not self._running:
                 return False
-            self.search_cycles = 0
-            self._set_search_pattern_for_cycle(0)
-            self._reset_controller(full=True)
-            self._transition(
-                self.STATE_ACQUIRE_SEARCH,
-                "Manual recenter requested; restarting acquisition",
-            )
-            self._next_action_mono = 0.0
+            self.recovery_attempts = 0
+            self._center_iter_count = 0
+            self._transition(self.STATE_ACQUIRE, "Manual recenter requested")
+            self._phase = "initial"
             return True
 
     def update_settings(self, patch: Dict[str, Any]) -> Dict[str, Any]:
         s = self.settings
-        if "strict_tolerance_radii" in patch:
-            s.strict_tolerance_radii = float(max(0.02, min(0.8, patch["strict_tolerance_radii"])))
-        if "conservative_tolerance_radii" in patch:
-            s.conservative_tolerance_radii = float(
-                max(0.04, min(1.2, patch["conservative_tolerance_radii"]))
-            )
-        if "recover_rest_seconds" in patch:
-            s.recover_rest_seconds = float(max(0.5, min(120.0, patch["recover_rest_seconds"])))
-        if "hold_seconds" in patch:
-            s.hold_seconds = float(max(0.2, min(20.0, patch["hold_seconds"])))
-        if "acquire_lock_radii" in patch:
-            s.acquire_lock_radii = float(max(0.05, min(1.5, patch["acquire_lock_radii"])))
-        if "acquire_flux_core_to_frame" in patch:
-            s.acquire_flux_core_to_frame = float(
-                max(1.0, min(3.0, patch["acquire_flux_core_to_frame"]))
-            )
-        if "acquire_flux_core_to_ring" in patch:
-            s.acquire_flux_core_to_ring = float(
-                max(1.0, min(3.0, patch["acquire_flux_core_to_ring"]))
-            )
-        if "acquire_flux_min_core_mean" in patch:
-            s.acquire_flux_min_core_mean = float(
-                max(0.0, min(255.0, patch["acquire_flux_min_core_mean"]))
-            )
-        if "acquire_flux_confirm_frames" in patch:
-            s.acquire_flux_confirm_frames = int(
-                max(1, min(12, int(patch["acquire_flux_confirm_frames"])))
-            )
-        if "acquire_flux_hold_seconds" in patch:
-            s.acquire_flux_hold_seconds = float(
-                max(0.2, min(8.0, patch["acquire_flux_hold_seconds"]))
-            )
-        if "lock_lost_grace_seconds" in patch:
-            s.lock_lost_grace_seconds = float(
-                max(0.5, min(30.0, patch["lock_lost_grace_seconds"]))
-            )
-        if "search_step_deg" in patch:
-            s.search_step_deg = float(max(0.05, min(3.0, patch["search_step_deg"])))
-        if "search_max_ring" in patch:
-            s.search_max_ring = int(max(1, min(20, int(patch["search_max_ring"]))))
-        if "busy_retry_seconds" in patch:
-            s.busy_retry_seconds = float(max(0.2, min(10.0, patch["busy_retry_seconds"])))
-        if "search_pattern_mode" in patch:
-            mode = str(patch["search_pattern_mode"]).strip().lower()
-            if mode in {"spiral", "raster", "random_walk", "adaptive"}:
-                s.search_pattern_mode = mode
-        if "random_walk_points" in patch:
-            s.random_walk_points = int(max(8, min(400, int(patch["random_walk_points"]))))
-        if "random_walk_seed" in patch:
-            s.random_walk_seed = int(patch["random_walk_seed"])
-        if "min_valid_radius_frac" in patch:
-            s.min_valid_radius_frac = float(
-                max(0.02, min(0.45, patch["min_valid_radius_frac"]))
-            )
-        if "max_valid_radius_frac" in patch:
-            s.max_valid_radius_frac = float(
-                max(0.15, min(0.95, patch["max_valid_radius_frac"]))
-            )
-        if "out_of_band_reject_radii" in patch:
-            s.out_of_band_reject_radii = float(
-                max(0.4, min(4.0, patch["out_of_band_reject_radii"]))
-            )
+        _float_clamp = lambda k, lo, hi: setattr(
+            s, k, float(max(lo, min(hi, patch[k])))
+        ) if k in patch else None
+        _int_clamp = lambda k, lo, hi: setattr(
+            s, k, int(max(lo, min(hi, int(patch[k]))))
+        ) if k in patch else None
 
-        # Keep bounds coherent even if user patches them out of order.
-        if s.max_valid_radius_frac <= s.min_valid_radius_frac:
-            s.max_valid_radius_frac = min(0.95, s.min_valid_radius_frac + 0.08)
-
-        self._set_search_pattern_for_cycle(self.search_cycles)
+        _float_clamp("min_sun_alt_deg", 0.0, 45.0)
+        _float_clamp("acquire_settle_s", 0.5, 10.0)
+        _float_clamp("acquire_search_settle_s", 0.5, 10.0)
+        _float_clamp("precheck_busy_timeout_s", 10.0, 300.0)
+        _float_clamp("probe_deg", 0.03, 0.5)
+        _float_clamp("probe_settle_s", 0.5, 5.0)
+        _float_clamp("min_jacobian_det", 0.001, 1.0)
+        _float_clamp("tolerance_radii", 0.02, 0.8)
+        _int_clamp("max_center_iters", 2, 20)
+        _float_clamp("center_settle_s", 0.5, 5.0)
+        _float_clamp("track_refresh_s", 5.0, 120.0)
+        _float_clamp("drift_threshold_radii", 0.02, 0.5)
+        _float_clamp("lock_lost_grace_s", 1.0, 30.0)
+        _float_clamp("recover_settle_s", 0.5, 10.0)
+        _float_clamp("cloud_floor_mean", 0.0, 50.0)
+        _float_clamp("cloud_track_interval_s", 5.0, 120.0)
+        _float_clamp("cloud_wait_max_s", 30.0, 1800.0)
 
         return {
-            "strict_tolerance_radii": s.strict_tolerance_radii,
-            "conservative_tolerance_radii": s.conservative_tolerance_radii,
-            "recover_rest_seconds": s.recover_rest_seconds,
-            "hold_seconds": s.hold_seconds,
-            "acquire_lock_radii": s.acquire_lock_radii,
-            "acquire_flux_core_to_frame": s.acquire_flux_core_to_frame,
-            "acquire_flux_core_to_ring": s.acquire_flux_core_to_ring,
-            "acquire_flux_min_core_mean": s.acquire_flux_min_core_mean,
-            "acquire_flux_confirm_frames": s.acquire_flux_confirm_frames,
-            "acquire_flux_hold_seconds": s.acquire_flux_hold_seconds,
-            "lock_lost_grace_seconds": s.lock_lost_grace_seconds,
-            "search_step_deg": s.search_step_deg,
-            "search_max_ring": s.search_max_ring,
-            "busy_retry_seconds": s.busy_retry_seconds,
-            "search_pattern_mode": s.search_pattern_mode,
-            "random_walk_points": s.random_walk_points,
-            "random_walk_seed": s.random_walk_seed,
-            "min_valid_radius_frac": s.min_valid_radius_frac,
-            "max_valid_radius_frac": s.max_valid_radius_frac,
-            "out_of_band_reject_radii": s.out_of_band_reject_radii,
+            "min_sun_alt_deg": s.min_sun_alt_deg,
+            "acquire_settle_s": s.acquire_settle_s,
+            "probe_deg": s.probe_deg,
+            "probe_settle_s": s.probe_settle_s,
+            "tolerance_radii": s.tolerance_radii,
+            "max_center_iters": s.max_center_iters,
+            "center_settle_s": s.center_settle_s,
+            "track_refresh_s": s.track_refresh_s,
+            "drift_threshold_radii": s.drift_threshold_radii,
+            "lock_lost_grace_s": s.lock_lost_grace_s,
+            "cloud_floor_mean": s.cloud_floor_mean,
+            "cloud_track_interval_s": s.cloud_track_interval_s,
+            "cloud_wait_max_s": s.cloud_wait_max_s,
         }
 
     def get_status(self) -> Dict[str, Any]:
         with self._lock:
-            age = 0.0
-            if self.started_at:
-                age = max(0.0, time.time() - self.started_at)
+            age = round(max(0.0, time.time() - self.started_at), 1) if self.started_at else 0.0
+            j_age = None
+            if self._jacobian_at is not None:
+                j_age = round(time.monotonic() - self._jacobian_at, 1)
             return {
+                # Core
                 "running": self._running,
                 "state": self.state,
+                "phase": self._phase,
                 "message": self.state_message,
                 "state_changed_at": self.state_changed_at,
-                "uptime_s": round(age, 1),
-                "tolerance_mode": self.tolerance_mode,
-                "strict_tolerance_radii": self.settings.strict_tolerance_radii,
-                "conservative_tolerance_radii": self.settings.conservative_tolerance_radii,
-                "acquire_lock_radii": self.settings.acquire_lock_radii,
-                "acquire_flux_core_to_frame": self.settings.acquire_flux_core_to_frame,
-                "acquire_flux_core_to_ring": self.settings.acquire_flux_core_to_ring,
-                "acquire_flux_min_core_mean": self.settings.acquire_flux_min_core_mean,
-                "acquire_flux_confirm_frames": self.settings.acquire_flux_confirm_frames,
-                "acquire_flux_hold_seconds": self.settings.acquire_flux_hold_seconds,
-                "lock_lost_grace_seconds": self.settings.lock_lost_grace_seconds,
-                "search_pattern_mode": self.settings.search_pattern_mode,
-                "search_pattern_kind": self._search_pattern_kind,
-                "busy_retry_seconds": self.settings.busy_retry_seconds,
-                "min_valid_radius_frac": self.settings.min_valid_radius_frac,
-                "max_valid_radius_frac": self.settings.max_valid_radius_frac,
-                "out_of_band_reject_radii": self.settings.out_of_band_reject_radii,
-                "error_u": None if self.error_u is None else round(self.error_u, 4),
-                "error_v": None if self.error_v is None else round(self.error_v, 4),
-                "error_norm": None if self.error_norm is None else round(self.error_norm, 4),
+                "uptime_s": age,
+                # Disk / error
+                "disk_detected": bool(self.disk_detected),
+                "disk_info": self.disk_info,
+                "error_radii": (
+                    None if self.error_radii is None else round(self.error_radii, 4)
+                ),
+                "error_u_px": (
+                    None if self.disk_eu_px is None else round(self.disk_eu_px, 2)
+                ),
+                "error_v_px": (
+                    None if self.disk_ev_px is None else round(self.disk_ev_px, 2)
+                ),
+                "plate_scale_deg_per_px": (
+                    None
+                    if self.plate_scale_deg_per_px is None
+                    else round(self.plate_scale_deg_per_px, 6)
+                ),
+                # Calibration
+                "jacobian_valid": bool(self._jacobian_valid),
+                "jacobian_age_s": j_age,
+                "jacobian": self._j,
+                "jacobian_inv": self._j_inv,
+                # Settings snapshot
+                "tolerance_radii": self.settings.tolerance_radii,
+                "track_refresh_s": self.settings.track_refresh_s,
+                "cloud_floor_mean": self.settings.cloud_floor_mean,
+                # Counters
+                "recovery_attempts": int(self.recovery_attempts),
+                "center_iter_count": int(self._center_iter_count),
+                "search_index": int(self._search_idx),
+                # Diagnostics
+                "last_command": dict(self.last_command),
+                "last_error": self.last_error,
+                # Flux
                 "center_flux_core_mean": (
                     None
                     if self.center_flux_core_mean is None
-                    else round(self.center_flux_core_mean, 3)
+                    else round(self.center_flux_core_mean, 2)
                 ),
-                "center_flux_core_to_ring": (
-                    None
-                    if self.center_flux_core_to_ring is None
-                    else round(self.center_flux_core_to_ring, 4)
-                ),
-                "center_flux_core_to_frame": (
-                    None
-                    if self.center_flux_core_to_frame is None
-                    else round(self.center_flux_core_to_frame, 4)
-                ),
-                "disk_detected": bool(self.disk_detected),
-                "disk_info": self.disk_info,
-                "recovery_attempts": int(self.recovery_attempts),
-                "recover_rest_seconds": self.settings.recover_rest_seconds,
-                "recovering_until": (
-                    None
-                    if self.state != self.STATE_RECOVER_REST
-                    else round(max(0.0, self._recover_until_mono - time.monotonic()), 2)
-                ),
-                "lock_hold_remaining": (
-                    None
-                    if self.state != self.STATE_LOCK_MONITOR
-                    else round(max(0.0, self._lock_lost_grace_until_mono - time.monotonic()), 2)
-                ),
-                "search_index": int(self._search_index),
-                "search_cycles": int(self.search_cycles),
-                "axis_sign": dict(self._axis_sign),
-                "axis_probe_done": dict(self._axis_probe_done),
-                "flail_counter": int(self._flail_counter),
-                "last_command": dict(self.last_command),
-                "last_error": self.last_error,
             }
+
+    # =========================================================================
+    # Main loop
+    # =========================================================================
 
     def _run_loop(self) -> None:
         period = 1.0 / max(0.5, float(self.settings.tick_hz))
@@ -587,383 +368,716 @@ class SunCenteringService:
                 logger.error("[SunCenter] Tick failed: %s", exc, exc_info=True)
                 self._enter_fail_safe("Controller exception")
             elapsed = time.monotonic() - t0
-            sleep_s = max(0.02, period - elapsed)
-            self._stop_event.wait(sleep_s)
+            self._stop_event.wait(max(0.02, period - elapsed))
 
     def _tick_once(self) -> None:
         if not self._running:
             return
 
-        # Always refresh detector snapshot first.
+        # Refresh detector snapshot every tick.
         det = self._safe_detector_status()
-        self._refresh_error_snapshot(det)
+        self._refresh_disk_snapshot(det)
 
         # Hard connection guard.
         if not self.adapter.is_scope_connected() or not self.adapter.is_alpaca_connected():
             self._enter_fail_safe("Scope/ALPACA disconnected")
             return
 
-        # Mode guard: this service is Solar-only for now.
+        # Solar-mode guard.
         mode = (self.adapter.get_viewing_mode() or "").strip().lower()
         if mode not in {"sun", "solar"}:
-            self._enter_fail_safe("Solar mode required (experimental feature)")
+            self._enter_fail_safe("Solar mode required")
             return
 
         state = self.state
-        if state == self.STATE_PRECHECK:
-            self._handle_precheck()
-        elif state == self.STATE_COARSE_POINT:
-            self._handle_coarse_point()
-        elif state == self.STATE_ACQUIRE_SEARCH:
-            self._handle_acquire_search()
-        elif state == self.STATE_FINE_CENTER:
-            self._handle_fine_center()
-        elif state == self.STATE_LOCK_MONITOR:
-            self._handle_lock_monitor()
-        elif state == self.STATE_RECOVER_REST:
-            self._handle_recover_rest()
+        if state == self.STATE_ACQUIRE:
+            self._handle_acquire()
+        elif state == self.STATE_CALIBRATE:
+            self._handle_calibrate()
+        elif state == self.STATE_CENTER:
+            self._handle_center()
+        elif state == self.STATE_TRACK:
+            self._handle_track()
+        elif state == self.STATE_RECOVER:
+            self._handle_recover()
         elif state == self.STATE_FAIL_SAFE:
-            # Stay inert until operator issues manual recenter.
-            pass
+            pass  # inert until manual recenter()
 
-    def _handle_precheck(self) -> None:
+    # =========================================================================
+    # ACQUIRE
+    # =========================================================================
+
+    def _build_search_offsets(self) -> List[Tuple[float, float]]:
+        offsets: List[Tuple[float, float]] = []
+        for r in self.settings.acquire_search_radii_deg:
+            offsets += [(r, 0.0), (-r, 0.0), (0.0, r), (0.0, -r)]
+        return offsets
+
+    def _handle_acquire(self) -> None:
         now = time.monotonic()
-        if now < self._next_action_mono:
-            return
 
-        if self.adapter.is_slewing():
-            # SC-04: fail-safe if mount never stops slewing.
-            if now >= self._precheck_busy_deadline_mono:
+        if self._phase == "initial":
+            sun = self.adapter.get_sun_altaz()
+            if not sun:
+                self._enter_fail_safe("Unable to compute Sun coordinates")
+                return
+            sun_alt, sun_az = sun
+            if float(sun_alt) < float(self.settings.min_sun_alt_deg):
                 self._enter_fail_safe(
-                    f"Mount stuck slewing for >{self.settings.precheck_busy_timeout_seconds:.0f}s"
+                    f"Sun altitude {sun_alt:.1f}° below minimum {self.settings.min_sun_alt_deg:.1f}°"
                 )
                 return
-            self.state_message = "Mount slewing; waiting before coarse point"
-            self._next_action_mono = now + float(self.settings.busy_retry_seconds)
-            return
 
-        sun_altaz = self.adapter.get_sun_altaz()
-        if not sun_altaz:
-            self._enter_fail_safe("Unable to compute Sun coordinates")
-            return
-        sun_alt, sun_az = sun_altaz
-        if float(sun_alt) < float(self.settings.min_sun_alt_deg):
-            self._enter_fail_safe(
-                f"Sun altitude {sun_alt:.2f} below minimum {self.settings.min_sun_alt_deg:.2f}"
+            # Busy-mount guard: if mount is slewing before we even issue a goto,
+            # wait up to precheck_busy_timeout_s before giving up.
+            if self.adapter.is_slewing():
+                if now >= self._precheck_busy_deadline_mono:
+                    self._enter_fail_safe(
+                        f"Mount stuck slewing at startup for "
+                        f">{self.settings.precheck_busy_timeout_s:.0f}s"
+                    )
+                else:
+                    self.state_message = "Waiting for mount to stop slewing before GoTo"
+                return
+
+            self._goto_clamped(sun_alt, sun_az)
+            self._slew_deadline_mono = now + self.settings.acquire_slew_timeout_s
+            self._phase = "slewing"
+            self.state_message = "Coarse GoTo to Sun ephemeris"
+
+        elif self._phase == "slewing":
+            if self._wait_slew("acquire: coarse slew"):
+                return
+            self._settle_until_mono = now + self.settings.acquire_settle_s
+            self._phase = "settling"
+            self.state_message = "Coarse GoTo complete; settling"
+
+        elif self._phase == "settling":
+            if now < self._settle_until_mono:
+                return
+            self._phase = "assess"
+
+        elif self._phase == "assess":
+            if self.disk_detected:
+                self._on_disk_found_in_acquire()
+                return
+            # Disk not found at ephemeris — start grid search.
+            logger.info("[SunCenter] Disk not found at ephemeris; starting search grid")
+            sun = self.adapter.get_sun_altaz()
+            if not sun:
+                self._enter_fail_safe("Sun coordinates unavailable for search")
+                return
+            self._search_sun_alt, self._search_sun_az = sun
+            self._search_offsets = self._build_search_offsets()
+            self._search_idx = 0
+            self._phase = "search_step"
+
+        elif self._phase == "search_step":
+            if self._search_idx >= len(self._search_offsets):
+                self._enter_fail_safe(
+                    f"Sun not found after {len(self._search_offsets)}-point grid search"
+                )
+                return
+            dalt, daz = self._search_offsets[self._search_idx]
+            tgt_alt = self._search_sun_alt + dalt
+            tgt_az = self._search_sun_az + daz
+            self._goto_clamped(tgt_alt, tgt_az)
+            self._slew_deadline_mono = now + self.settings.acquire_slew_timeout_s
+            self._phase = "search_slewing"
+            self.state_message = (
+                f"Grid search step {self._search_idx + 1}/{len(self._search_offsets)} "
+                f"(Δalt={dalt:+.2f}°, Δaz={daz:+.2f}°)"
             )
-            return
 
-        self._issue_coarse_point(float(sun_alt), float(sun_az))
+        elif self._phase == "search_slewing":
+            if self._wait_slew("acquire: search slew"):
+                return
+            self._settle_until_mono = now + self.settings.acquire_search_settle_s
+            self._phase = "search_settling"
 
-    def _issue_coarse_point(self, sun_alt: float, sun_az: float) -> None:
-        resp = self.adapter.goto_altaz(sun_alt, sun_az)
-        self.last_command = {
-            "type": "goto_altaz",
-            "alt": round(sun_alt, 4),
-            "az": round(sun_az % 360.0, 4),
-            "response": resp,
-        }
+        elif self._phase == "search_settling":
+            if now < self._settle_until_mono:
+                return
+            self._phase = "search_assess"
 
-        if self._is_equipment_moving_response(resp):
-            self.state_message = "Mount busy; deferring coarse point retry"
-            self._next_action_mono = time.monotonic() + float(self.settings.busy_retry_seconds)
-            return
+        elif self._phase == "search_assess":
+            if self.disk_detected:
+                self._on_disk_found_in_acquire()
+                return
+            self._search_idx += 1
+            self._phase = "search_step"
 
-        _now = time.monotonic()
-        self._coarse_settle_until_mono = _now + float(self.settings.coarse_settle_seconds)  # SC-01
-        self._coarse_deadline_mono = _now + float(self.settings.coarse_timeout_seconds)
-        self._next_action_mono = _now + float(self.settings.coarse_settle_seconds)
-        self._transition(self.STATE_COARSE_POINT, "Coarse pointing to ephemeris target")
-
-    def _handle_coarse_point(self) -> None:
-        now = time.monotonic()
-
-        # SC-01: enforce settle delay before acting on any detector reading.
-        if now < self._coarse_settle_until_mono:
-            self.state_message = "Coarse point: waiting for mount to settle"
-            return
-
-        if self.disk_detected and self.error_norm is not None:
-            self._enter_fine_center("Disc acquired after coarse point")
-            return
-
-        if now >= self._coarse_deadline_mono:
-            self._transition(self.STATE_ACQUIRE_SEARCH, "Coarse timeout; starting acquisition search")
-            self._next_action_mono = 0.0
-            self.search_cycles = 0
-            self._set_search_pattern_for_cycle(0)
-
-    def _handle_acquire_search(self) -> None:
-        if self.disk_detected and self.error_norm is not None:
-            lock_tol = max(float(self.settings.acquire_lock_radii), self._current_tolerance())
-            if float(self.error_norm) <= lock_tol:
-                try:
-                    self.adapter.stop_axes()
-                except Exception:
-                    pass
-                self._enter_lock_monitor("Disc centered during search; holding lock")
-            else:
-                self._enter_fine_center("Disc acquired during search")
-            return
-
-        now = time.monotonic()
-        if now < self._next_action_mono:
-            return
-
-        if (not self.disk_detected) and self._center_flux_indicates_center_hint():
-            self._center_flux_hit_count += 1
+    def _on_disk_found_in_acquire(self) -> None:
+        if self._jacobian_valid:
+            logger.info(
+                "[SunCenter] Disk found in ACQUIRE; Jacobian valid — skipping CALIBRATE"
+            )
+            self._center_iter_count = 0
+            self._center_no_disk_ticks = 0
+            self._transition(self.STATE_CENTER, "Disk acquired; using cached Jacobian")
+            self._phase = "check"
         else:
-            self._center_flux_hit_count = max(0, self._center_flux_hit_count - 1)
+            logger.info("[SunCenter] Disk found in ACQUIRE — entering CALIBRATE")
+            self._transition(self.STATE_CALIBRATE, "Disk acquired; calibrating Jacobian")
+            self._phase = "record_ref"
 
-        if (
-            not self.disk_detected
-            and self._center_flux_hit_count >= int(self.settings.acquire_flux_confirm_frames)
-        ):
-            try:
-                self.adapter.stop_axes()
-            except Exception:
-                pass
-            self._center_flux_hold_until_mono = now + float(self.settings.acquire_flux_hold_seconds)
-            self._center_flux_hit_count = 0
-            self._enter_fine_center("Center flux peak detected; pausing search for lock")
-            return
+    # =========================================================================
+    # CALIBRATE
+    # =========================================================================
 
-        if self.adapter.is_slewing():
-            self.state_message = (
-                f"Waiting for slew settle before {self._search_pattern_kind} search step"
-            )
-            self._next_action_mono = now + float(self.settings.busy_retry_seconds)
-            return
-
-        sun_altaz = self.adapter.get_sun_altaz()
-        if not sun_altaz:
-            self._enter_fail_safe("Sun coordinates unavailable during search")
-            return
-        sun_alt, sun_az = sun_altaz
-
-        if (not self._search_pattern) or (self._search_pattern_cycle != self.search_cycles):
-            self._set_search_pattern_for_cycle(self.search_cycles)
-
-        if self._search_index >= len(self._search_pattern):
-            self.search_cycles += 1
-            self._set_search_pattern_for_cycle(self.search_cycles)
-
-        idx = self._search_index
-        dalt, daz = self._search_pattern[idx]
-
-        # SC-05: clamp altitude so search offsets never send the mount below the
-        # safety floor or above the gimbal limit.
-        tgt_alt = max(
-            float(self.settings.min_sun_alt_deg) + 0.10,
-            min(88.0, float(sun_alt) + float(dalt)),
-        )
-        tgt_az = (float(sun_az) + float(daz)) % 360.0
-
-        resp = self.adapter.goto_altaz(tgt_alt, tgt_az)
-        if self._is_equipment_moving_response(resp):
-            self.last_command = {
-                "type": "search_goto_busy",
-                "alt": round(tgt_alt, 4),
-                "az": round(tgt_az, 4),
-                "offset": [round(dalt, 4), round(daz, 4)],
-                "response": resp,
-            }
-            self.state_message = (
-                f"Mount busy; retrying {self._search_pattern_kind} step {self._search_index + 1}"
-            )
-            self._next_action_mono = now + float(self.settings.busy_retry_seconds)
-            return
-
-        self._search_index += 1
-        self.last_command = {
-            "type": "search_goto",
-            "alt": round(tgt_alt, 4),
-            "az": round(tgt_az, 4),
-            "offset": [round(dalt, 4), round(daz, 4)],
-            "response": resp,
-        }
-        self.state_message = (
-            f"Searching ({self._search_pattern_kind} step {self._search_index}/"
-            f"{len(self._search_pattern)}, cycle {self.search_cycles})"
-        )
-        self._next_action_mono = now + float(self.settings.search_settle_seconds)
-
-    @staticmethod
-    def _is_equipment_moving_response(resp: Dict[str, Any]) -> bool:
-        if not isinstance(resp, dict):
-            return False
-
-        err_num_raw = resp.get("ErrorNumber", 0)
-        try:
-            err_num = int(err_num_raw)
-        except Exception:
-            err_num = 0
-
-        msg = f"{resp.get('ErrorMessage', '')} {resp.get('error', '')}".strip().lower()
-
-        if "equipment is moving" in msg:
-            return True
-        if err_num == 1279 and ("moving" in msg or "slew" in msg):
-            return True
-        return False
-
-    def _enter_fine_center(self, message: str) -> None:
-        self._reset_controller(full=False)
-        self._axis_probe_done = {0: False, 1: False}
-        self._transition(self.STATE_FINE_CENTER, message)
-
-    def _enter_lock_monitor(self, message: str) -> None:
-        self._lock_lost_grace_until_mono = (
-            time.monotonic() + float(self.settings.lock_lost_grace_seconds)
-        )
-        self._transition(self.STATE_LOCK_MONITOR, message)
-
-    def _handle_fine_center(self) -> None:
+    def _handle_calibrate(self) -> None:
         now = time.monotonic()
 
-        if not self.disk_detected or self.error_norm is None:
-            # SC-02: abort any in-progress probe; axis motion will be stopped below.
-            if self._probe_state != "idle":
-                self._probe_state = "idle"
-
-            if self._center_flux_indicates_center_hint():
-                self._center_flux_hold_until_mono = max(
-                    self._center_flux_hold_until_mono,
-                    now + float(self.settings.acquire_flux_hold_seconds),
-                )
-
-            if now < self._center_flux_hold_until_mono:
-                try:
-                    self.adapter.stop_axes()
-                except Exception:
-                    pass
-                self.state_message = "Center hint active; holding position for lock"
+        if self._phase == "record_ref":
+            if not self.disk_detected:
+                # Disk was there a moment ago (we just came from ACQUIRE).
+                # Give it one grace tick before bailing.
+                self._phase = "record_ref_retry"
                 return
 
-            self._enter_recover_rest("Disc lost during centering")
+            pos = self._safe_get_position()
+            self._cal_ref_alt = pos.get("alt") or self._last_sun_alt()
+            self._cal_ref_az = pos.get("az") or self._last_sun_az()
+            self._cal_ref_cx = float(self.disk_cx or 0.0)
+            self._cal_ref_cy = float(self.disk_cy or 0.0)
+            self._cal_j_col_alt = None
+            self._cal_j_col_az = None
+            self._cal_retry = 0
+            logger.info(
+                "[SunCenter] Calibrate: ref alt=%.4f az=%.4f cx=%.1f cy=%.1f",
+                self._cal_ref_alt, self._cal_ref_az, self._cal_ref_cx, self._cal_ref_cy,
+            )
+            self._phase = "alt_probe"
+
+        elif self._phase == "record_ref_retry":
+            if not self.disk_detected:
+                self._transition(self.STATE_ACQUIRE, "Disk lost before calibration start")
+                self._phase = "initial"
+                return
+            self._phase = "record_ref"
+
+        # ── Altitude probe ───────────────────────────────────────────────────
+        elif self._phase == "alt_probe":
+            self.state_message = "Calibrate: altitude probe (+{:.2f}°)".format(
+                self.settings.probe_deg
+            )
+            self._goto_clamped(
+                self._cal_ref_alt + self.settings.probe_deg, self._cal_ref_az
+            )
+            self._slew_deadline_mono = now + self.settings.probe_slew_timeout_s
+            self._phase = "alt_probe_slew"
+
+        elif self._phase == "alt_probe_slew":
+            if self._wait_slew("calibrate: alt probe"):
+                return
+            self._settle_until_mono = now + self.settings.probe_settle_s
+            self._phase = "alt_probe_settle"
+
+        elif self._phase == "alt_probe_settle":
+            if now < self._settle_until_mono:
+                return
+            self._phase = "alt_probe_sample"
+
+        elif self._phase == "alt_probe_sample":
+            if not self.disk_detected:
+                if self._cal_retry < self.settings.max_cal_retries:
+                    self._cal_retry += 1
+                    logger.warning(
+                        "[SunCenter] Disk lost on alt probe sample; returning to ref (retry %d)",
+                        self._cal_retry,
+                    )
+                    self._goto_clamped(self._cal_ref_alt, self._cal_ref_az)
+                    self._slew_deadline_mono = now + self.settings.probe_slew_timeout_s
+                    self._phase = "alt_probe_retry_slew"
+                else:
+                    logger.warning("[SunCenter] Alt probe: disk lost after retries → ACQUIRE")
+                    self._jacobian_valid = False
+                    self._transition(self.STATE_ACQUIRE, "Disk lost during alt calibration probe")
+                    self._phase = "initial"
+                return
+            self._cal_j_col_alt = [
+                (float(self.disk_cx) - self._cal_ref_cx) / self.settings.probe_deg,
+                (float(self.disk_cy) - self._cal_ref_cy) / self.settings.probe_deg,
+            ]
+            logger.debug(
+                "[SunCenter] Alt probe: J_col=[%.3f, %.3f]",
+                *self._cal_j_col_alt,
+            )
+            self._phase = "alt_return"
+
+        elif self._phase == "alt_probe_retry_slew":
+            if self._wait_slew("calibrate: alt probe retry return"):
+                return
+            self._settle_until_mono = now + self.settings.probe_settle_s
+            self._phase = "alt_probe_retry_settle"
+
+        elif self._phase == "alt_probe_retry_settle":
+            if now < self._settle_until_mono:
+                return
+            self._phase = "alt_probe"   # try probe again
+
+        # ── Return from altitude probe ────────────────────────────────────────
+        elif self._phase == "alt_return":
+            self._goto_clamped(self._cal_ref_alt, self._cal_ref_az)
+            self._slew_deadline_mono = now + self.settings.probe_slew_timeout_s
+            self._phase = "alt_return_slew"
+
+        elif self._phase == "alt_return_slew":
+            if self._wait_slew("calibrate: alt return"):
+                return
+            self._settle_until_mono = now + self.settings.probe_settle_s
+            self._phase = "alt_return_settle"
+
+        elif self._phase == "alt_return_settle":
+            if now < self._settle_until_mono:
+                return
+            self._phase = "az_probe"
+
+        # ── Azimuth probe ─────────────────────────────────────────────────────
+        elif self._phase == "az_probe":
+            self.state_message = "Calibrate: azimuth probe (+{:.2f}°)".format(
+                self.settings.probe_deg
+            )
+            self._goto_clamped(
+                self._cal_ref_alt, self._cal_ref_az + self.settings.probe_deg
+            )
+            self._slew_deadline_mono = now + self.settings.probe_slew_timeout_s
+            self._phase = "az_probe_slew"
+
+        elif self._phase == "az_probe_slew":
+            if self._wait_slew("calibrate: az probe"):
+                return
+            self._settle_until_mono = now + self.settings.probe_settle_s
+            self._phase = "az_probe_settle"
+
+        elif self._phase == "az_probe_settle":
+            if now < self._settle_until_mono:
+                return
+            self._phase = "az_probe_sample"
+
+        elif self._phase == "az_probe_sample":
+            if not self.disk_detected:
+                logger.warning("[SunCenter] Disk lost on az probe; returning to ref → ACQUIRE")
+                self._jacobian_valid = False
+                self._goto_clamped(self._cal_ref_alt, self._cal_ref_az)
+                self._transition(self.STATE_ACQUIRE, "Disk lost during az calibration probe")
+                self._phase = "initial"
+                return
+            self._cal_j_col_az = [
+                (float(self.disk_cx) - self._cal_ref_cx) / self.settings.probe_deg,
+                (float(self.disk_cy) - self._cal_ref_cy) / self.settings.probe_deg,
+            ]
+            logger.debug(
+                "[SunCenter] Az probe: J_col=[%.3f, %.3f]",
+                *self._cal_j_col_az,
+            )
+            self._phase = "az_return"
+
+        # ── Return from azimuth probe ─────────────────────────────────────────
+        elif self._phase == "az_return":
+            self._goto_clamped(self._cal_ref_alt, self._cal_ref_az)
+            self._slew_deadline_mono = now + self.settings.probe_slew_timeout_s
+            self._phase = "az_return_slew"
+
+        elif self._phase == "az_return_slew":
+            if self._wait_slew("calibrate: az return"):
+                return
+            self._settle_until_mono = now + self.settings.probe_settle_s
+            self._phase = "az_return_settle"
+
+        elif self._phase == "az_return_settle":
+            if now < self._settle_until_mono:
+                return
+            self._phase = "compute"
+
+        # ── Compute Jacobian ──────────────────────────────────────────────────
+        elif self._phase == "compute":
+            self._compute_jacobian()
+
+    def _compute_jacobian(self) -> None:
+        col_alt = self._cal_j_col_alt
+        col_az = self._cal_j_col_az
+        if col_alt is None or col_az is None:
+            self._transition(self.STATE_ACQUIRE, "Jacobian columns missing — restart")
+            self._phase = "initial"
             return
 
-        self._center_flux_hold_until_mono = 0.0
+        # J = [[du/dalt, du/daz],
+        #      [dv/dalt, dv/daz]]
+        j00, j10 = col_alt[0], col_alt[1]  # alt column
+        j01, j11 = col_az[0],  col_az[1]   # az column
+        det = j00 * j11 - j01 * j10
 
-        eu = float(self.error_u or 0.0)
-        ev = float(self.error_v or 0.0)
-        en = float(self.error_norm)
-
-        # One-time sign probing — non-blocking, one phase per tick (SC-02).
-        if not self._axis_probe_done[0]:
-            self._advance_axis_probe(0, eu, ev)
-            return
-        if not self._axis_probe_done[1]:
-            self._advance_axis_probe(1, eu, ev)
-            return
-
-        tol = self._current_tolerance()
-        lock_tol = max(float(self.settings.acquire_lock_radii), tol)
-        if en <= lock_tol:
-            try:
-                self.adapter.stop_axes()
-            except Exception:
-                pass
-            self._hold_start_mono = None
-            self._enter_lock_monitor("Centered; holding lock")
-            return
-
-        self._hold_start_mono = None
-
-        self._int_u = max(
-            -self.settings.integral_limit,
-            min(self.settings.integral_limit, self._int_u + eu),
+        logger.info(
+            "[SunCenter] Jacobian: [[%.3f, %.3f], [%.3f, %.3f]]  det=%.4f",
+            j00, j01, j10, j11, det,
         )
-        self._int_v = max(
-            -self.settings.integral_limit,
-            min(self.settings.integral_limit, self._int_v + ev),
+
+        if abs(det) < float(self.settings.min_jacobian_det):
+            logger.warning(
+                "[SunCenter] Jacobian determinant %.4f below threshold %.4f — "
+                "axes may be near-parallel in image; returning to ACQUIRE",
+                det, self.settings.min_jacobian_det,
+            )
+            self._jacobian_valid = False
+            self._transition(self.STATE_ACQUIRE, "Jacobian determinant too small — recalibrate")
+            self._phase = "initial"
+            return
+
+        # Invert 2×2: J_inv = (1/det)*[[j11,-j01],[-j10,j00]]
+        j_inv = [
+            [ j11 / det, -j01 / det],
+            [-j10 / det,  j00 / det],
+        ]
+
+        # Cross-coupling diagnostic
+        primary_alt = abs(j00)
+        cross_alt = abs(j10)
+        coupling_alt = (cross_alt / primary_alt * 100.0) if primary_alt > 0 else 0.0
+        primary_az = abs(j11)
+        cross_az = abs(j01)
+        coupling_az = (cross_az / primary_az * 100.0) if primary_az > 0 else 0.0
+        rotation_deg = math.degrees(math.atan2(abs(j10), abs(j00)))
+        logger.info(
+            "[SunCenter] Jacobian valid: coupling_alt=%.1f%% coupling_az=%.1f%% "
+            "image_rotation_hint=%.1f°",
+            coupling_alt, coupling_az, rotation_deg,
         )
+        if max(coupling_alt, coupling_az) > 30.0:
+            logger.warning(
+                "[SunCenter] Cross-coupling %.0f%% > 30%% — camera axes rotated ~%.0f° "
+                "from mount axes; Jacobian handles this correctly, noting for diagnostics",
+                max(coupling_alt, coupling_az), rotation_deg,
+            )
 
-        max0 = max(0.2, abs(float(self.adapter.get_max_move_rate(0))) * self.settings.max_rate_fraction)
-        max1 = max(0.2, abs(float(self.adapter.get_max_move_rate(1))) * self.settings.max_rate_fraction)
+        self._j = [[j00, j01], [j10, j11]]
+        self._j_inv = j_inv
+        self._jacobian_valid = True
+        self._jacobian_at = time.monotonic()
 
-        ctrl0 = self.settings.kp * eu + self.settings.ki * self._int_u
-        ctrl1 = self.settings.kp * ev + self.settings.ki * self._int_v
+        # Update plate scale from current disk measurement.
+        if self.disk_radius and self.disk_radius > 0:
+            self.plate_scale_deg_per_px = SUN_ANGULAR_RADIUS_DEG / float(self.disk_radius)
+            logger.info(
+                "[SunCenter] Plate scale: %.6f °/px (disk radius %.1fpx)",
+                self.plate_scale_deg_per_px, self.disk_radius,
+            )
 
-        rate0 = self._axis_sign[0] * ctrl0
-        rate1 = self._axis_sign[1] * ctrl1
+        self._center_iter_count = 0
+        self._center_no_disk_ticks = 0
+        self._transition(self.STATE_CENTER, "Jacobian calibrated — entering CENTER")
+        self._phase = "check"
 
-        rate0 = max(-max0, min(max0, rate0))
-        rate1 = max(-max1, min(max1, rate1))
+    # =========================================================================
+    # CENTER
+    # =========================================================================
 
-        if abs(rate0) < self.settings.min_rate_deg_s and abs(eu) > tol:
-            rate0 = math.copysign(self.settings.min_rate_deg_s, rate0 if rate0 != 0 else eu)
-        if abs(rate1) < self.settings.min_rate_deg_s and abs(ev) > tol:
-            rate1 = math.copysign(self.settings.min_rate_deg_s, rate1 if rate1 != 0 else ev)
-
-        r0 = self.adapter.move_axis(0, float(rate0))
-        r1 = self.adapter.move_axis(1, float(rate1))
-        self.last_command = {
-            "type": "move_axis",
-            "axis0_rate": round(float(rate0), 4),
-            "axis1_rate": round(float(rate1), 4),
-            "resp0": r0,
-            "resp1": r1,
-        }
-
-        self._update_flail(en, abs(rate0) >= 0.95 * max0 or abs(rate1) >= 0.95 * max1)
-
-    def _handle_lock_monitor(self) -> None:
+    def _handle_center(self) -> None:
         now = time.monotonic()
 
-        if not self.disk_detected or self.error_norm is None:
-            if self._center_flux_indicates_center_hint():
-                self._lock_lost_grace_until_mono = max(
-                    self._lock_lost_grace_until_mono,
-                    now + float(self.settings.lock_lost_grace_seconds),
-                )
+        if self._phase == "check":
+            if not self.disk_detected:
+                self._center_no_disk_ticks += 1
+                if self._center_no_disk_ticks >= 3:
+                    self._transition_recover("Disk lost in CENTER")
+                return
+            self._center_no_disk_ticks = 0
 
-            if now < self._lock_lost_grace_until_mono:
-                try:
-                    self.adapter.stop_axes()
-                except Exception:
-                    pass
-                self.state_message = "Lock hold; waiting for disk reacquire"
+            if self.error_radii is None:
                 return
 
-            self._enter_recover_rest("Disc lost while locked")
-            return
+            if self.error_radii <= float(self.settings.tolerance_radii):
+                logger.info(
+                    "[SunCenter] Centered: error=%.4f radii — entering TRACK", self.error_radii
+                )
+                self._transition(self.STATE_TRACK, f"Centered (err={self.error_radii:.3f}r)")
+                self._phase = "idle"
+                self._next_refresh_mono = (
+                    time.monotonic() + float(self.settings.track_refresh_s)
+                )
+                self._lock_lost_until_mono = (
+                    time.monotonic() + float(self.settings.lock_lost_grace_s)
+                )
+                self._enable_tracking()
+                return
 
-        self._lock_lost_grace_until_mono = now + float(self.settings.lock_lost_grace_seconds)
+            self._center_iter_count += 1
+            if self._center_iter_count > self.settings.max_center_iters:
+                logger.warning(
+                    "[SunCenter] Max center iterations (%d) exceeded; entering RECOVER",
+                    self.settings.max_center_iters,
+                )
+                self._transition_recover("Max center iterations exceeded")
+                return
 
-        en = float(self.error_norm)
-        tol = self._current_tolerance()
-        if en > tol * float(self.settings.drift_recenter_factor):
-            self._enter_fine_center("Drift exceeded tolerance; recentering")
+            dalt, daz = self._jacobian_correction()
+            pos = self._safe_get_position()
+            ref_alt = pos.get("alt") or self._last_sun_alt()
+            ref_az = pos.get("az") or self._last_sun_az()
 
-    def _handle_recover_rest(self) -> None:
-        if self.disk_detected and self.error_norm is not None:
-            self._enter_fine_center("Disc re-acquired during recovery rest")
-            return
+            tgt_alt = ref_alt - dalt
+            tgt_az = ref_az - daz
+            self.state_message = (
+                f"CENTER iter {self._center_iter_count}/{self.settings.max_center_iters}: "
+                f"err={self.error_radii:.3f}r  Δalt={dalt:+.4f}°  Δaz={daz:+.4f}°"
+            )
+            logger.debug("[SunCenter] %s", self.state_message)
+            self._goto_clamped(tgt_alt, tgt_az)
+            self._slew_deadline_mono = now + self.settings.center_slew_timeout_s
+            self._phase = "slewing"
 
+        elif self._phase == "slewing":
+            if self._wait_slew("center: correction slew"):
+                return
+            self._settle_until_mono = now + self.settings.center_settle_s
+            self._phase = "settling"
+
+        elif self._phase == "settling":
+            if now < self._settle_until_mono:
+                return
+            self._phase = "check"
+
+    def _jacobian_correction(self) -> Tuple[float, float]:
+        """Compute (dalt, daz) in degrees to apply to the current mount position.
+
+        Solves J @ [dalt, daz] = [-eu, -ev]  (shift disk to image centre).
+        With J⁻¹: [dalt, daz] = -J_inv @ [eu, ev].
+        """
+        eu = float(self.disk_eu_px or 0.0)
+        ev = float(self.disk_ev_px or 0.0)
+
+        if self._jacobian_valid and self._j_inv is not None:
+            j = self._j_inv
+            dalt = j[0][0] * eu + j[0][1] * ev
+            daz = j[1][0] * eu + j[1][1] * ev
+        elif self.plate_scale_deg_per_px is not None:
+            # Plate-scale fallback: assumes U≈az, V≈alt (no cross-coupling).
+            dalt = -ev * self.plate_scale_deg_per_px
+            daz = -eu * self.plate_scale_deg_per_px
+        else:
+            # Last resort: fixed estimate (0.004°/px, typical Seestar S50 solar).
+            dalt = -ev * 0.004
+            daz = -eu * 0.004
+
+        return dalt, daz
+
+    # =========================================================================
+    # TRACK
+    # =========================================================================
+
+    def _handle_track(self) -> None:
         now = time.monotonic()
-        if now < self._recover_until_mono:
-            return
 
-        self.recovery_attempts += 1
-        self._reset_controller(full=False)
-        self._set_search_pattern_for_cycle(self.search_cycles)
-        self._next_action_mono = 0.0
-        self._transition(
-            self.STATE_ACQUIRE_SEARCH,
-            f"Recovery attempt #{self.recovery_attempts}",
-        )
+        if self._phase == "idle":
+            if not self.disk_detected:
+                if now >= self._lock_lost_until_mono:
+                    self._transition_recover("Disk lost while tracking")
+                else:
+                    remaining = self._lock_lost_until_mono - now
+                    self.state_message = (
+                        f"Tracking: disk lost — grace {remaining:.1f}s remaining"
+                    )
+                return
 
-    def _enter_recover_rest(self, reason: str) -> None:
+            # Disk present — refresh grace timer.
+            self._lock_lost_until_mono = now + float(self.settings.lock_lost_grace_s)
+
+            if now < self._next_refresh_mono:
+                self.state_message = (
+                    f"Tracking: err={self.error_radii:.3f}r  "
+                    f"next refresh in {self._next_refresh_mono - now:.0f}s"
+                    if self.error_radii is not None
+                    else "Tracking"
+                )
+                return
+
+            # Refresh tick.
+            self._next_refresh_mono = now + float(self.settings.track_refresh_s)
+
+            if (
+                self.error_radii is not None
+                and self.error_radii > float(self.settings.drift_threshold_radii)
+            ):
+                dalt, daz = self._jacobian_correction()
+                pos = self._safe_get_position()
+                ref_alt = pos.get("alt") or self._last_sun_alt()
+                ref_az = pos.get("az") or self._last_sun_az()
+                self.state_message = (
+                    f"Track correction: err={self.error_radii:.3f}r "
+                    f"Δalt={dalt:+.4f}° Δaz={daz:+.4f}°"
+                )
+                logger.debug("[SunCenter] %s", self.state_message)
+                self._goto_clamped(ref_alt - dalt, ref_az - daz)
+                self._slew_deadline_mono = (
+                    now + float(self.settings.track_correction_slew_timeout_s)
+                )
+                self._phase = "correction_slewing"
+            else:
+                self.state_message = (
+                    f"Tracking: err={self.error_radii:.3f}r — within drift threshold"
+                    if self.error_radii is not None
+                    else "Tracking: waiting for disk"
+                )
+
+        elif self._phase == "correction_slewing":
+            if self._wait_slew("track: correction slew"):
+                return
+            self._settle_until_mono = (
+                time.monotonic() + float(self.settings.track_correction_settle_s)
+            )
+            self._phase = "correction_settling"
+
+        elif self._phase == "correction_settling":
+            if time.monotonic() < self._settle_until_mono:
+                return
+            self._enable_tracking()   # re-enable in case GoTo toggled it
+            self._phase = "idle"
+
+    # =========================================================================
+    # RECOVER
+    # =========================================================================
+
+    def _handle_recover(self) -> None:
+        now = time.monotonic()
+
+        if self._phase == "initial":
+            sun = self.adapter.get_sun_altaz()
+            if not sun:
+                self._enter_fail_safe("Cannot get Sun coordinates for recovery")
+                return
+            self._goto_clamped(*sun)
+            self._slew_deadline_mono = now + float(self.settings.recover_slew_timeout_s)
+            self._phase = "slewing"
+            self.state_message = "Recovery: GoTo current ephemeris"
+
+        elif self._phase == "slewing":
+            if self._wait_slew("recover: ephemeris slew"):
+                return
+            self._settle_until_mono = now + float(self.settings.recover_settle_s)
+            self._phase = "settling"
+
+        elif self._phase == "settling":
+            if now < self._settle_until_mono:
+                return
+            self._phase = "assess"
+
+        elif self._phase == "assess":
+            if self.disk_detected:
+                logger.info("[SunCenter] Disk re-acquired in RECOVER → CENTER")
+                self._center_iter_count = 0
+                self._center_no_disk_ticks = 0
+                self._transition(self.STATE_CENTER, "Disk re-acquired after recovery")
+                self._phase = "check"
+                return
+
+            if self._is_cloud():
+                logger.info(
+                    "[SunCenter] Frame dark in RECOVER — cloud suspected; "
+                    "following ephemeris silently"
+                )
+                self._cloud_start_mono = now
+                # First cloud-track GoTo after cloud_track_interval_s.
+                self._cloud_next_goto_mono = now + float(self.settings.cloud_track_interval_s)
+                self._phase = "cloud_wait"
+                self.state_message = (
+                    f"Cloud wait: following ephemeris every "
+                    f"{self.settings.cloud_track_interval_s:.0f}s; "
+                    f"timeout in {self.settings.cloud_wait_max_s:.0f}s"
+                )
+            else:
+                # Flux present but no disk → pointing error → full grid search.
+                self.recovery_attempts += 1
+                logger.info(
+                    "[SunCenter] Flux present but no disk in RECOVER → ACQUIRE "
+                    "(attempt #%d)",
+                    self.recovery_attempts,
+                )
+                self._transition(
+                    self.STATE_ACQUIRE,
+                    f"Recovery #{self.recovery_attempts}: pointing error, reacquiring",
+                )
+                self._phase = "initial"
+
+        elif self._phase == "cloud_wait":
+            if self.disk_detected:
+                logger.info("[SunCenter] Disk recovered after cloud — entering CENTER")
+                self._center_iter_count = 0
+                self._center_no_disk_ticks = 0
+                self._transition(self.STATE_CENTER, "Disk re-acquired after cloud cleared")
+                self._phase = "check"
+                return
+
+            cloud_elapsed = now - self._cloud_start_mono
+            if cloud_elapsed >= float(self.settings.cloud_wait_max_s):
+                self._enter_fail_safe(
+                    f"Cloud cover for >{self.settings.cloud_wait_max_s:.0f}s; "
+                    "manual restart required"
+                )
+                return
+
+            if not self._is_cloud():
+                # Flux returned but disk not detected → pointing error crept in.
+                self.recovery_attempts += 1
+                logger.info(
+                    "[SunCenter] Flux returned after cloud but no disk → ACQUIRE "
+                    "(attempt #%d)",
+                    self.recovery_attempts,
+                )
+                self._transition(
+                    self.STATE_ACQUIRE,
+                    f"Post-cloud recovery #{self.recovery_attempts}",
+                )
+                self._phase = "initial"
+                return
+
+            remaining = self.settings.cloud_wait_max_s - cloud_elapsed
+            self.state_message = (
+                f"Cloud wait: {cloud_elapsed:.0f}s elapsed, {remaining:.0f}s until timeout"
+            )
+
+            if now >= self._cloud_next_goto_mono:
+                sun = self.adapter.get_sun_altaz()
+                if sun:
+                    self._goto_clamped(*sun)
+                    self._slew_deadline_mono = (
+                        now + float(self.settings.recover_slew_timeout_s)
+                    )
+                    self._cloud_next_goto_mono = (
+                        now + float(self.settings.cloud_track_interval_s)
+                    )
+                    self._phase = "cloud_slewing"
+                    logger.debug("[SunCenter] Cloud-track GoTo issued")
+
+        elif self._phase == "cloud_slewing":
+            if self._wait_slew("recover: cloud-track slew"):
+                return
+            # Brief settle, then back to cloud_wait to check for disk.
+            self._settle_until_mono = now + 1.0
+            self._phase = "cloud_settling"
+
+        elif self._phase == "cloud_settling":
+            if now < self._settle_until_mono:
+                return
+            self._phase = "cloud_wait"
+
+    # =========================================================================
+    # Helpers
+    # =========================================================================
+
+    def _transition(self, new_state: str, message: str) -> None:
+        if self.state != new_state:
+            logger.info("[SunCenter] %s → %s  (%s)", self.state, new_state, message)
+        self.state = new_state
+        self.state_message = message
+        self.state_changed_at = time.time()
+
+    def _transition_recover(self, reason: str) -> None:
         try:
             self.adapter.stop_axes()
         except Exception:
             pass
-        self._recover_until_mono = time.monotonic() + float(self.settings.recover_rest_seconds)
-        self._transition(
-            self.STATE_RECOVER_REST,
-            f"{reason}; resting {self.settings.recover_rest_seconds:.1f}s before retry",
-        )
+        self._transition(self.STATE_RECOVER, reason)
+        self._phase = "initial"
 
     def _enter_fail_safe(self, reason: str) -> None:
         if self.state == self.STATE_FAIL_SAFE and self.state_message == reason:
@@ -973,133 +1087,47 @@ class SunCenteringService:
         except Exception:
             pass
         self._transition(self.STATE_FAIL_SAFE, reason)
+        logger.warning("[SunCenter] FAIL_SAFE: %s", reason)
 
-    def _refresh_error_snapshot(self, det: Dict[str, Any]) -> None:
-        disk_detected = bool(det.get("disk_detected"))
-        disk_info = det.get("disk_info") if isinstance(det.get("disk_info"), dict) else None
-        center_flux = det.get("center_flux") if isinstance(det.get("center_flux"), dict) else None
+    def _wait_slew(self, context: str = "") -> bool:
+        """Return True if still slewing (caller should return and wait)."""
+        if self.adapter.is_slewing():
+            if time.monotonic() >= self._slew_deadline_mono:
+                self._enter_fail_safe(f"Slew timed out ({context})")
+            else:
+                self.state_message = f"Slewing… ({context})"
+            return True
+        return False
 
-        self.disk_detected = False
-        self.disk_info = None
-        self.error_u = None
-        self.error_v = None
-        self.error_norm = None
-        self.center_flux_core_mean = None
-        self.center_flux_core_to_ring = None
-        self.center_flux_core_to_frame = None
+    def _goto_clamped(self, alt: float, az: float) -> Dict[str, Any]:
+        alt = float(max(self.settings.min_sun_alt_deg + 0.10, min(88.0, alt)))
+        az = float(az) % 360.0
+        resp = self.adapter.goto_altaz(alt, az)
+        self.last_command = {
+            "type": "goto_altaz",
+            "alt": round(alt, 4),
+            "az": round(az, 4),
+            "response": resp,
+        }
+        return resp
 
-        if center_flux:
-            try:
-                self.center_flux_core_mean = float(center_flux.get("core_mean"))
-            except Exception:
-                self.center_flux_core_mean = None
-            try:
-                self.center_flux_core_to_ring = float(center_flux.get("core_to_ring"))
-            except Exception:
-                self.center_flux_core_to_ring = None
-            try:
-                self.center_flux_core_to_frame = float(center_flux.get("core_to_frame"))
-            except Exception:
-                self.center_flux_core_to_frame = None
-
-        if not disk_detected or not disk_info:
-            return
-
+    def _enable_tracking(self) -> None:
         try:
-            cx = float(disk_info.get("cx"))
-            cy = float(disk_info.get("cy"))
-            rr = float(disk_info.get("radius"))
-            if rr <= 0:
-                return
+            self.adapter.set_tracking(True)
+        except Exception as exc:
+            logger.debug("[SunCenter] set_tracking(True) failed: %s", exc)
 
-            # SC-03: Seestar S50 solar analysis is landscape (320×180).
-            # The old fallback of 180×320 was portrait — wrong image centre.
-            width = 320.0
-            height = 180.0
-            rez = str(det.get("analysis_resolution", ""))
-            if "x" in rez:
-                try:
-                    dim = rez.split("@", 1)[0]
-                    w_s, h_s = dim.split("x", 1)
-                    width = max(10.0, float(w_s))
-                    height = max(10.0, float(h_s))
-                except Exception:
-                    logger.warning(
-                        "[SunCenter] Could not parse analysis_resolution %r; "
-                        "using landscape fallback 320×180 — verify detector output",
-                        rez,
-                    )
-            elif rez:
-                logger.warning(
-                    "[SunCenter] analysis_resolution %r contains no 'x' separator; "
-                    "using landscape fallback 320×180 — verify detector output",
-                    rez,
-                )
+    def _is_cloud(self) -> bool:
+        cm = self.center_flux_core_mean
+        return cm is None or float(cm) < float(self.settings.cloud_floor_mean)
 
-            min_dim = min(width, height)
-            pref_min_rr = max(4.0, min_dim * float(self.settings.min_valid_radius_frac))
-            pref_max_rr = max(pref_min_rr + 1.0, min_dim * float(self.settings.max_valid_radius_frac))
-            hard_min_rr = max(6.0, pref_min_rr * 0.60)
-            hard_max_rr = min(min_dim * 0.95, pref_max_rr * 1.35)
-            if rr < hard_min_rr or rr > hard_max_rr:
-                logger.debug(
-                    "[SunCenter] Ignoring implausible disk radius %.2fpx outside hard [%.2f, %.2f]",
-                    rr,
-                    hard_min_rr,
-                    hard_max_rr,
-                )
-                return
-
-            u0 = (width - 1.0) / 2.0
-            v0 = (height - 1.0) / 2.0
-
-            eu = (cx - u0) / rr
-            ev = (cy - v0) / rr
-            en = math.hypot(eu, ev)
-
-            # Radius just outside preferred band can still be the true disk
-            # when scale/zoom shifts; accept only if already near frame center.
-            if rr < pref_min_rr or rr > pref_max_rr:
-                if en > float(self.settings.out_of_band_reject_radii):
-                    logger.debug(
-                        "[SunCenter] Ignoring off-center out-of-band disk radius %.2fpx (err=%.3f)",
-                        rr,
-                        en,
-                    )
-                    return
-                logger.debug(
-                    "[SunCenter] Accepting near-center disk radius %.2fpx outside preferred [%.2f, %.2f]",
-                    rr,
-                    pref_min_rr,
-                    pref_max_rr,
-                )
-
-            self.disk_detected = True
-            self.disk_info = dict(disk_info)
-            self.error_u = float(eu)
-            self.error_v = float(ev)
-            self.error_norm = float(en)
-        except Exception:
-            self.disk_detected = False
-            self.disk_info = None
-            self.error_u = None
-            self.error_v = None
-            self.error_norm = None
-
-    def _center_flux_indicates_center_hint(self) -> bool:
-        core_mean = self.center_flux_core_mean
-        core_to_ring = self.center_flux_core_to_ring
-        core_to_frame = self.center_flux_core_to_frame
-
-        if core_mean is None or core_to_ring is None or core_to_frame is None:
-            return False
-        if core_mean < float(self.settings.acquire_flux_min_core_mean):
-            return False
-        # SC-07: both ratios must pass to avoid false triggers from clouds /
-        # glare gradients / partial disk passages.
-        frame_ok = core_to_frame >= float(self.settings.acquire_flux_core_to_frame)
-        ring_ok = core_to_ring >= float(self.settings.acquire_flux_core_to_ring)
-        return bool(frame_ok and ring_ok)
+    def _safe_get_position(self) -> Dict[str, float]:
+        try:
+            pos = self.adapter.get_position()
+            return pos if isinstance(pos, dict) else {}
+        except Exception as exc:
+            logger.debug("[SunCenter] get_position failed: %s", exc)
+            return {}
 
     def _safe_detector_status(self) -> Dict[str, Any]:
         try:
@@ -1109,167 +1137,108 @@ class SunCenteringService:
             logger.debug("[SunCenter] detector status read failed: %s", exc)
             return {}
 
-    def _advance_axis_probe(self, axis: int, cur_u: float, cur_v: float) -> None:
-        """Advance one phase of the non-blocking axis sign probe (SC-02 / SC-06).
+    def _last_sun_alt(self) -> float:
+        sun = self.adapter.get_sun_altaz()
+        return float(sun[0]) if sun else 45.0
 
-        Called once per tick from _handle_fine_center.  Each invocation moves the
-        probe forward by one phase and returns immediately — no time.sleep().
+    def _last_sun_az(self) -> float:
+        sun = self.adapter.get_sun_altaz()
+        return float(sun[1]) if sun else 180.0
 
-        Phases: idle → pulsing → settling → (idle, probe done)
-        """
-        now = time.monotonic()
+    # ─── Disk snapshot ───────────────────────────────────────────────────────
 
-        if self._probe_state == "idle":
-            # Snapshot both components before the pulse (for cross-coupling, SC-06).
-            self._probe_before_u = cur_u
-            self._probe_before_v = cur_v
+    def _refresh_disk_snapshot(self, det: Dict[str, Any]) -> None:
+        """Extract disk centroid, error, and flux from detector status dict."""
+        self.disk_detected = False
+        self.disk_cx = None
+        self.disk_cy = None
+        self.disk_radius = None
+        self.disk_eu_px = None
+        self.disk_ev_px = None
+        self.error_radii = None
+        self.disk_info = None
+        self.center_flux_core_mean = None
+
+        # Flux (used for cloud detection; available even without disk).
+        center_flux = det.get("center_flux")
+        if isinstance(center_flux, dict):
             try:
-                self.adapter.move_axis(axis, +float(self.settings.probe_rate_deg_s))
-            except Exception as exc:
-                logger.debug("[SunCenter] probe move_axis failed (axis=%d): %s", axis, exc)
-                self._axis_probe_done[axis] = True
-                return
-            self._probe_deadline_mono = now + float(self.settings.probe_pulse_seconds)
-            self._probe_state = "pulsing"
-            self.state_message = f"Probing axis {axis} sign — pulsing"
-
-        elif self._probe_state == "pulsing":
-            if now < self._probe_deadline_mono:
-                self.state_message = f"Probing axis {axis} sign — pulsing"
-                return
-            try:
-                self.adapter.stop_axes()
+                self.center_flux_core_mean = float(center_flux.get("core_mean"))
             except Exception:
                 pass
-            self._probe_deadline_mono = now + float(self.settings.probe_settle_seconds)
-            self._probe_state = "settling"
-            self.state_message = f"Probing axis {axis} sign — settling"
 
-        elif self._probe_state == "settling":
-            if now < self._probe_deadline_mono:
-                self.state_message = f"Probing axis {axis} sign — settling"
-                return
-
-            # Re-read detector after settle and determine sign.
-            det = self._safe_detector_status()
-            self._refresh_error_snapshot(det)
-
-            sign = self._axis_sign.get(axis, 1)
-            if self.error_norm is not None:
-                after_u = float(self.error_u or 0.0)
-                after_v = float(self.error_v or 0.0)
-                delta_u = after_u - self._probe_before_u
-                delta_v = after_v - self._probe_before_v
-                primary_delta = delta_u if axis == 0 else delta_v
-                cross_delta = delta_v if axis == 0 else delta_u
-
-                if abs(primary_delta) >= float(self.settings.probe_min_effect):
-                    sign = +1 if primary_delta < 0 else -1
-
-                    # SC-06: compute and log cross-axis coupling.
-                    coupling_ratio = (
-                        abs(cross_delta) / abs(primary_delta) if abs(primary_delta) > 0 else 0.0
-                    )
-                    rotation_deg = math.degrees(math.atan2(abs(cross_delta), abs(primary_delta)))
-                    logger.info(
-                        "[SunCenter] axis %d probe: primary_Δ=%.4f cross_Δ=%.4f "
-                        "coupling=%.0f%% image_rotation_hint=%.1f° → sign=%+d",
-                        axis,
-                        primary_delta,
-                        cross_delta,
-                        coupling_ratio * 100.0,
-                        rotation_deg,
-                        sign,
-                    )
-                    if coupling_ratio > 0.30:
-                        logger.warning(
-                            "[SunCenter] axis %d cross-coupling %.0f%% exceeds 30%% — "
-                            "image axes rotated ~%.0f° from mount axes; "
-                            "U/V decomposition may produce a spiralling rather than converging trajectory",
-                            axis,
-                            coupling_ratio * 100.0,
-                            rotation_deg,
-                        )
-
-                    # Save axis-0 deltas so axis-1 probe can compare (future matrix fix).
-                    if axis == 0:
-                        self._probe_axis0_delta_u = delta_u
-                        self._probe_axis0_delta_v = delta_v
-                else:
-                    logger.debug(
-                        "[SunCenter] axis %d probe: |primary_Δ|=%.4f < min_effect=%.4f; "
-                        "keeping sign=%+d",
-                        axis,
-                        abs(primary_delta),
-                        self.settings.probe_min_effect,
-                        sign,
-                    )
-            else:
-                logger.debug(
-                    "[SunCenter] axis %d probe: disk lost during settle; keeping sign=%+d",
-                    axis,
-                    sign,
-                )
-
-            self._axis_sign[axis] = sign
-            self._axis_probe_done[axis] = True
-            self._probe_state = "idle"
-            self.state_message = f"Axis {axis} probe complete: sign={sign:+d}"
-
-    def _update_flail(self, current_err_norm: float, saturated: bool) -> None:
-        prev = self._prev_err_norm
-        if prev is None:
-            self._prev_err_norm = current_err_norm
+        if not det.get("disk_detected"):
             return
 
-        improved = (prev - current_err_norm) >= float(self.settings.flail_min_improvement)
-        if (not improved) and saturated:
-            self._flail_counter += 1
-        else:
-            self._flail_counter = max(0, self._flail_counter - 1)
+        disk_info = det.get("disk_info")
+        if not isinstance(disk_info, dict):
+            return
 
-        self._prev_err_norm = current_err_norm
+        try:
+            cx = float(disk_info["cx"])
+            cy = float(disk_info["cy"])
+            rr = float(disk_info["radius"])
+            if rr <= 0:
+                return
 
-        if (
-            self.tolerance_mode == self.MODE_STRICT
-            and self._flail_counter >= int(self.settings.flail_cycles)
-        ):
-            self.tolerance_mode = self.MODE_CONSERVATIVE
-            self._flail_counter = 0
-            self.state_message = "Flailing detected; switched to conservative tolerance"
-            logger.warning("[SunCenter] Strict -> conservative fallback due to flail")
+            # Resolve image dimensions from analysis_resolution string.
+            # Seestar S50 solar analysis is landscape (320×180).
+            width, height = 320.0, 180.0
+            rez = str(det.get("analysis_resolution", ""))
+            if "x" in rez:
+                try:
+                    dim = rez.split("@", 1)[0]
+                    w_s, h_s = dim.split("x", 1)
+                    width = max(10.0, float(w_s))
+                    height = max(10.0, float(h_s))
+                except Exception:
+                    logger.warning(
+                        "[SunCenter] Cannot parse analysis_resolution %r; "
+                        "using 320×180 fallback",
+                        rez,
+                    )
+            elif rez:
+                logger.warning(
+                    "[SunCenter] analysis_resolution %r has no 'x'; using 320×180 fallback",
+                    rez,
+                )
 
-    def _current_tolerance(self) -> float:
-        if self.tolerance_mode == self.MODE_CONSERVATIVE:
-            return float(self.settings.conservative_tolerance_radii)
-        return float(self.settings.strict_tolerance_radii)
+            # Plausibility gate on disk radius.
+            min_dim = min(width, height)
+            hard_min = max(6.0, min_dim * 0.07)
+            hard_max = min(min_dim * 0.95, min_dim * 0.62)
+            if rr < hard_min or rr > hard_max:
+                logger.debug(
+                    "[SunCenter] Rejecting implausible disk radius %.2fpx (hard bounds [%.1f, %.1f])",
+                    rr, hard_min, hard_max,
+                )
+                return
 
-    def _reset_controller(self, full: bool) -> None:
-        self._int_u = 0.0
-        self._int_v = 0.0
-        self._hold_start_mono = None
-        self._prev_err_norm = None
-        self._flail_counter = 0
-        self._center_flux_hit_count = 0
-        self._center_flux_hold_until_mono = 0.0
-        self._lock_lost_grace_until_mono = 0.0
-        self._probe_state = "idle"  # SC-02: always clear mid-probe state on reset
-        if full:
-            self.tolerance_mode = self.MODE_STRICT
-            self._axis_probe_done = {0: False, 1: False}
-            self._axis_sign = {0: 1, 1: 1}
+            img_cx = (width - 1.0) / 2.0
+            img_cy = (height - 1.0) / 2.0
+            eu = cx - img_cx
+            ev = cy - img_cy
 
-    def _transition(self, new_state: str, message: str) -> None:
-        if self.state != new_state:
-            logger.info("[SunCenter] %s -> %s (%s)", self.state, new_state, message)
-        self.state = new_state
-        self.state_message = message
-        self.state_changed_at = time.time()
+            self.disk_detected = True
+            self.disk_cx = cx
+            self.disk_cy = cy
+            self.disk_radius = rr
+            self.disk_eu_px = eu
+            self.disk_ev_px = ev
+            self.error_radii = math.hypot(eu, ev) / rr
+            self.disk_info = dict(disk_info)
+
+            # Update plate scale whenever we have a good lock.
+            self.plate_scale_deg_per_px = SUN_ANGULAR_RADIUS_DEG / rr
+
+        except Exception:
+            pass  # leave all fields None/False
 
 
 # ---------------------------------------------------------------------------
 # Module-level singleton
 # ---------------------------------------------------------------------------
+
 _service: Optional[SunCenteringService] = None
 _service_lock = threading.Lock()
 
