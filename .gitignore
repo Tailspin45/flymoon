@@ -169,6 +169,9 @@ de421.bsp
 notes.txt
 data/possible-transits/*.csv
 data/possible-transits/log-backup.txt
+data/sun_centering/
+data/training/unlabeled/*.npz
+data/telescope_favorites.json
 
 # misc
 exp.ipynb
