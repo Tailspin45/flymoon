@@ -1077,11 +1077,14 @@ function setupStickyQuadrantInputs() {
  * reconnect logic uses the same threshold the user set in the UI.
  */
 function syncMinAltitudeToServer() {
-    const minAlt = getMinAltitudeAllQuadrants();
+    const q = getQuadrantMinAltitudes();
     fetch('/api/settings', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ min_reconnect_altitude: minAlt }),
+        body: JSON.stringify({
+            min_reconnect_altitude: Math.min(q.min_alt_n, q.min_alt_e, q.min_alt_s, q.min_alt_w),
+            ...q,
+        }),
     }).catch(() => {/* non-critical — server will fall back to .env default */});
 }
 

@@ -751,32 +751,24 @@
                 </div>
 
                 <!-- Experimental Sun Centering -->
-                <div class="sidebar-panel" id="sunCenterPanel">
+                <div class="sidebar-panel sidebar-panel-compact" id="sunCenterPanel">
                     <span class="screw screw-tl"></span><span class="screw screw-tr"></span><span class="screw screw-bl"></span><span class="screw screw-br"></span>
-                    <h3>Sun Center (Exp)</h3>
-                    <div style="display:grid; grid-template-columns:1fr 1fr; gap:4px; margin-bottom:4px; font-size:0.74em; color:#9aa3ab;">
-                        <div>State: <span id="sunCenterState" style="color:#dbe7ef; font-family:'SF Mono','Menlo','Consolas',monospace;">idle</span></div>
-                        <div>Mode: <span id="sunCenterTolMode" style="color:#dbe7ef; font-family:'SF Mono','Menlo','Consolas',monospace;">strict</span></div>
-                        <div>Error: <span id="sunCenterErr" style="color:#b8e8ff; font-family:'SF Mono','Menlo','Consolas',monospace;">-</span></div>
-                        <div>Recov: <span id="sunCenterRecoveries" style="color:#dbe7ef; font-family:'SF Mono','Menlo','Consolas',monospace;">0</span></div>
-                        <div>Pattern: <span id="sunCenterSearchKind" style="color:#dbe7ef; font-family:'SF Mono','Menlo','Consolas',monospace;">-</span></div>
+                    <h3 style="margin-bottom:4px; padding-bottom:4px;">Sun Center (Exp)</h3>
+                    <div id="sunCenterWarn" style="display:none; font-size:0.70em; color:#f5a623; background:#2a1f0a; border:1px solid #6b4810; border-radius:3px; padding:2px 5px; margin-bottom:3px;"></div>
+                    <div style="display:grid; grid-template-columns:1fr 1fr; gap:2px; margin-bottom:3px; font-size:0.72em; color:#9aa3ab; line-height:1.5;">
+                        <div style="grid-column:1/-1;"><span style="color:#6b7a85;">state/phase</span> <span id="sunCenterState" style="color:#dbe7ef; font-family:'SF Mono','Menlo','Consolas',monospace;">idle</span><span style="color:#6b7a85;">/</span><span id="sunCenterPhase" style="color:#9aa3ab; font-family:'SF Mono','Menlo','Consolas',monospace;">-</span></div>
+                        <div>err <span id="sunCenterErr" style="color:#b8e8ff; font-family:'SF Mono','Menlo','Consolas',monospace;">-</span></div>
+                        <div>recov <span id="sunCenterRecoveries" style="color:#dbe7ef; font-family:'SF Mono','Menlo','Consolas',monospace;">0</span></div>
+                        <div>offset <span id="sunCenterOffset" style="color:#b8e8ff; font-family:'SF Mono','Menlo','Consolas',monospace;">-</span></div>
+                        <div>J <span id="sunCenterJacobian" style="color:#dbe7ef; font-family:'SF Mono','Menlo','Consolas',monospace;">-</span></div>
                     </div>
-                    <div style="display:grid; grid-template-columns:1fr auto; gap:4px; margin-bottom:4px;">
-                        <select id="sunCenterSearchMode" class="input-compact" title="Acquisition search pattern" onchange="sunCenterOnModeChanged()">
-                            <option value="adaptive">adaptive</option>
-                            <option value="spiral">spiral</option>
-                            <option value="raster">raster</option>
-                            <option value="random_walk">random walk</option>
-                        </select>
-                        <button id="sunCenterApplyModeBtn" class="btn btn-secondary btn-compact" onclick="sunCenterApplySearchMode()">Apply</button>
-                    </div>
-                    <div class="button-grid-3col" style="margin-bottom:4px;">
+                    <div class="button-grid-3col" style="margin-bottom:3px;">
                         <button id="sunCenterStartBtn" class="btn btn-primary btn-compact" onclick="sunCenterStart()">Start</button>
                         <button id="sunCenterStopBtn" class="btn btn-secondary btn-compact" onclick="sunCenterStop()">Stop</button>
                         <button id="sunCenterRecenterBtn" class="btn btn-secondary btn-compact" onclick="sunCenterRecenter()">Recenter</button>
                     </div>
-                    <div id="sunCenterMsg" style="font-size:0.72em; color:#8f9aa3; min-height:14px;">
-                        Solar mode only for now. Strict-first, auto-fallback to conservative on flail.
+                    <div id="sunCenterMsg" style="font-size:0.70em; color:#8f9aa3;">
+                        Solar mode only. Experimental feature.
                     </div>
                 </div>
 

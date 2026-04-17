@@ -83,6 +83,12 @@ EARTH = ASTRO_EPHEMERIS["earth"]
 # circular import back to app.py.
 _user_settings: dict = {
     "min_reconnect_altitude": None,  # degrees; None → fall back to env var
+    # Per-quadrant minimum safe altitudes (degrees).  None → no restriction.
+    # Quadrant boundaries match the UI (app.js getMinAltForAzimuth):
+    "min_alt_n": None,   # azimuth   0°–90°  (N→E quadrant)
+    "min_alt_e": None,   # azimuth  90°–180° (E→S quadrant)
+    "min_alt_s": None,   # azimuth 180°–270° (S→W quadrant)
+    "min_alt_w": None,   # azimuth 270°–360° (W→N quadrant)
 }
 
 
@@ -4008,6 +4014,12 @@ def update_user_settings():
             )
         except (TypeError, ValueError):
             return jsonify({"error": "min_reconnect_altitude must be a number"}), 400
+    for _quad_key in ("min_alt_n", "min_alt_e", "min_alt_s", "min_alt_w"):
+        if _quad_key in data:
+            try:
+                _user_settings[_quad_key] = float(data[_quad_key])
+            except (TypeError, ValueError):
+                _user_settings[_quad_key] = None
     if data.get("observer_revert_to_env") is True:
         clear_observer_browser_override()
         logger.info(
@@ -4896,6 +4908,27 @@ def _build_sun_center_adapter() -> SunCenteringAdapter:
         except Exception:
             return {}
 
+    def _horizon_min_alt(az: float) -> float:
+        """Return the operator's quadrant minimum altitude for the given azimuth.
+
+        Quadrant boundaries match the UI (app.js getMinAltForAzimuth):
+          0°– 90° → min_alt_n   (N→E)
+         90°–180° → min_alt_e   (E→S)
+        180°–270° → min_alt_s   (S→W)
+        270°–360° → min_alt_w   (W→N)
+        """
+        az = float(az) % 360.0
+        if az < 90.0:
+            key = "min_alt_n"
+        elif az < 180.0:
+            key = "min_alt_e"
+        elif az < 270.0:
+            key = "min_alt_s"
+        else:
+            key = "min_alt_w"
+        v = _user_settings.get(key)
+        return float(v) if v is not None else 0.0
+
     return SunCenteringAdapter(
         is_scope_connected=_scope_connected,
         is_alpaca_connected=_alpaca_connected,
@@ -4907,6 +4940,7 @@ def _build_sun_center_adapter() -> SunCenteringAdapter:
         get_detector_status=_detector_status,
         get_position=_get_position,
         set_tracking=_set_tracking,
+        get_horizon_min_alt=_horizon_min_alt,
     )
 
 
@@ -5025,9 +5059,11 @@ def get_sun_centering_status():
                         "running": False,
                         "state": "stopped",
                         "message": "Sun centering idle",
-                        "tolerance_mode": "strict",
-                        "error_norm": None,
+                        "disk_detected": False,
+                        "error_radii": None,
+                        "jacobian_valid": False,
                         "recovery_attempts": 0,
+                        "acquisition_attempts": 0,
                     }
                 ),
                 200,

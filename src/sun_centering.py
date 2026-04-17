@@ -26,7 +26,9 @@ Adapter interface changes from v1:
 
 from __future__ import annotations
 
+import json
 import math
+import os
 import threading
 import time
 from dataclasses import dataclass
@@ -57,6 +59,9 @@ class SunCenteringAdapter:
     get_detector_status: Callable[[], Dict[str, Any]]
     get_position: Callable[[], Dict[str, float]]   # → {alt, az, ra, dec}
     set_tracking: Callable[[bool], Dict[str, Any]]
+    # Returns the operator's minimum safe altitude for a given azimuth (degrees).
+    # Defaults to a no-restriction function so existing callers need no changes.
+    get_horizon_min_alt: Callable[[float], float] = lambda az: 0.0
 
 
 # ---------------------------------------------------------------------------
@@ -71,10 +76,15 @@ class SunCenteringSettings:
     # ── Acquire ─────────────────────────────────────────────────────────────
     acquire_slew_timeout_s: float = 30.0
     acquire_settle_s: float = 2.0
-    # Rings of alt/az offsets (degrees) for the fallback search grid.
+    # Rings of alt/az offsets (degrees) for the first-attempt search grid.
     # Each radius produces 4 cardinal points; default = 8 search positions.
     acquire_search_radii_deg: Tuple[float, ...] = (0.4, 0.8)
+    # Wider grid used on retry attempts (acquisition_attempts >= 1).
+    # Default: adds a 1.2° ring for 12 total positions.
+    acquire_search_radii_retry_deg: Tuple[float, ...] = (0.4, 0.8, 1.2)
     acquire_search_settle_s: float = 1.5
+    # Rest between failed acquisition attempts before re-issuing coarse GoTo.
+    acquire_retry_rest_s: float = 5.0
     precheck_busy_timeout_s: float = 60.0
 
     # ── Calibrate ───────────────────────────────────────────────────────────
@@ -102,7 +112,7 @@ class SunCenteringSettings:
     recover_settle_s: float = 2.0
     cloud_floor_mean: float = 4.0        # flux below this → cloud suspected
     cloud_track_interval_s: float = 30.0  # ephemeris GoTo cadence during cloud
-    cloud_wait_max_s: float = 300.0      # give up after this long in cloud
+    cloud_wait_max_s: float = 1800.0     # after this long in cloud, restart ACQUIRE (not FAIL_SAFE)
 
 
 # ---------------------------------------------------------------------------
@@ -180,6 +190,7 @@ class SunCenteringService:
         self._search_idx: int = 0
         self._search_sun_alt: float = 0.0   # ephemeris snapshot at search start
         self._search_sun_az: float = 0.0
+        self._acquire_rest_until_mono: float = 0.0
 
         # ── Center ───────────────────────────────────────────────────────────
         self._center_iter_count: int = 0
@@ -193,10 +204,13 @@ class SunCenteringService:
         self._cloud_start_mono: float = 0.0
         self._cloud_next_goto_mono: float = 0.0
         self.recovery_attempts: int = 0
+        self.acquisition_attempts: int = 0
 
         # ── Diagnostics ──────────────────────────────────────────────────────
         self.last_command: Dict[str, Any] = {}
         self.last_error: Optional[str] = None
+        self._last_tick_at: float = 0.0
+        self._last_goto_log_mono: float = 0.0   # rate-limit GoTo command logs
 
     # =========================================================================
     # Public API
@@ -216,6 +230,8 @@ class SunCenteringService:
             self._phase = "initial"
             self.state_message = "Starting"
             self.state_changed_at = time.time()
+            self.acquisition_attempts = 0
+            self.recovery_attempts = 0
             self._thread = threading.Thread(
                 target=self._run_loop, name="sun-centering-v2", daemon=True
             )
@@ -239,6 +255,7 @@ class SunCenteringService:
             self.state_message = "Stopped"
             self.state_changed_at = time.time()
             logger.info("[SunCenter] Service stopped")
+        self._write_session_summary()
 
     def is_running(self) -> bool:
         with self._lock:
@@ -250,6 +267,7 @@ class SunCenteringService:
             if not self._running:
                 return False
             self.recovery_attempts = 0
+            self.acquisition_attempts = 0
             self._center_iter_count = 0
             self._transition(self.STATE_ACQUIRE, "Manual recenter requested")
             self._phase = "initial"
@@ -340,11 +358,16 @@ class SunCenteringService:
                 "cloud_floor_mean": self.settings.cloud_floor_mean,
                 # Counters
                 "recovery_attempts": int(self.recovery_attempts),
+                "acquisition_attempts": int(self.acquisition_attempts),
                 "center_iter_count": int(self._center_iter_count),
                 "search_index": int(self._search_idx),
-                # Diagnostics
+                # Diagnostics / freshness
                 "last_command": dict(self.last_command),
                 "last_error": self.last_error,
+                "tick_age_s": (
+                    None if self._last_tick_at == 0.0
+                    else round(time.time() - self._last_tick_at, 2)
+                ),
                 # Flux
                 "center_flux_core_mean": (
                     None
@@ -373,6 +396,8 @@ class SunCenteringService:
     def _tick_once(self) -> None:
         if not self._running:
             return
+
+        self._last_tick_at = time.time()
 
         # Refresh detector snapshot every tick.
         det = self._safe_detector_status()
@@ -408,8 +433,13 @@ class SunCenteringService:
     # =========================================================================
 
     def _build_search_offsets(self) -> List[Tuple[float, float]]:
+        radii = (
+            self.settings.acquire_search_radii_retry_deg
+            if self.acquisition_attempts > 0
+            else self.settings.acquire_search_radii_deg
+        )
         offsets: List[Tuple[float, float]] = []
-        for r in self.settings.acquire_search_radii_deg:
+        for r in radii:
             offsets += [(r, 0.0), (-r, 0.0), (0.0, r), (0.0, -r)]
         return offsets
 
@@ -422,9 +452,11 @@ class SunCenteringService:
                 self._enter_fail_safe("Unable to compute Sun coordinates")
                 return
             sun_alt, sun_az = sun
-            if float(sun_alt) < float(self.settings.min_sun_alt_deg):
+            horizon_floor = self._horizon_floor(sun_az)
+            if float(sun_alt) < horizon_floor:
                 self._enter_fail_safe(
-                    f"Sun altitude {sun_alt:.1f}° below minimum {self.settings.min_sun_alt_deg:.1f}°"
+                    f"Sun altitude {sun_alt:.1f}° below floor {horizon_floor:.1f}° "
+                    f"for azimuth {sun_az:.1f}°"
                 )
                 return
 
@@ -472,15 +504,47 @@ class SunCenteringService:
             self._search_idx = 0
             self._phase = "search_step"
 
+        elif self._phase == "resting":
+            if now < self._acquire_rest_until_mono:
+                return
+            # Rest complete — restart coarse GoTo with fresh ephemeris.
+            self._phase = "initial"
+
         elif self._phase == "search_step":
             if self._search_idx >= len(self._search_offsets):
-                self._enter_fail_safe(
-                    f"Sun not found after {len(self._search_offsets)}-point grid search"
+                # Grid exhausted without finding the disk.  Rest briefly, then
+                # restart from the coarse GoTo using the current ephemeris.
+                # This keeps the service alive through an obstruction at session
+                # start or a wide pointing error, rather than going to FAIL_SAFE.
+                self.acquisition_attempts += 1
+                logger.warning(
+                    "[SunCenter] Grid search exhausted (%d points) without finding "
+                    "Sun disk — resting %.0fs then retrying (attempt #%d)",
+                    len(self._search_offsets),
+                    self.settings.acquire_retry_rest_s,
+                    self.acquisition_attempts,
                 )
+                self.state_message = (
+                    f"Sun not found after {len(self._search_offsets)}-point search "
+                    f"(attempt #{self.acquisition_attempts}) — "
+                    f"retrying in {self.settings.acquire_retry_rest_s:.0f}s"
+                )
+                self._acquire_rest_until_mono = now + self.settings.acquire_retry_rest_s
+                self._phase = "resting"
                 return
             dalt, daz = self._search_offsets[self._search_idx]
             tgt_alt = self._search_sun_alt + dalt
-            tgt_az = self._search_sun_az + daz
+            tgt_az = (self._search_sun_az + daz) % 360.0
+            # Skip this grid point if it falls below the operator's horizon floor.
+            if tgt_alt < self._horizon_floor(tgt_az):
+                logger.debug(
+                    "[SunCenter] Search step %d skipped — below horizon floor "
+                    "(alt=%.2f° az=%.2f°)",
+                    self._search_idx + 1, tgt_alt, tgt_az,
+                )
+                self._search_idx += 1
+                # Stay in search_step; the next tick will try the following offset.
+                return
             self._goto_clamped(tgt_alt, tgt_az)
             self._slew_deadline_mono = now + self.settings.acquire_slew_timeout_s
             self._phase = "search_slewing"
@@ -987,10 +1051,11 @@ class SunCenteringService:
             else:
                 # Flux present but no disk → pointing error → full grid search.
                 self.recovery_attempts += 1
+                self.acquisition_attempts += 1
                 logger.info(
                     "[SunCenter] Flux present but no disk in RECOVER → ACQUIRE "
-                    "(attempt #%d)",
-                    self.recovery_attempts,
+                    "(attempt #%d, acquisition #%d)",
+                    self.recovery_attempts, self.acquisition_attempts,
                 )
                 self._transition(
                     self.STATE_ACQUIRE,
@@ -1009,19 +1074,31 @@ class SunCenteringService:
 
             cloud_elapsed = now - self._cloud_start_mono
             if cloud_elapsed >= float(self.settings.cloud_wait_max_s):
-                self._enter_fail_safe(
-                    f"Cloud cover for >{self.settings.cloud_wait_max_s:.0f}s; "
-                    "manual restart required"
+                # Cloud timeout: restart ACQUIRE (mount follows ephemeris) rather
+                # than entering FAIL_SAFE so the service self-heals when sky clears.
+                self.recovery_attempts += 1
+                self.acquisition_attempts += 1
+                logger.warning(
+                    "[SunCenter] Cloud cover for >%.0fs — restarting ACQUIRE "
+                    "(attempt #%d); will keep trying until sky clears",
+                    self.settings.cloud_wait_max_s,
+                    self.recovery_attempts,
                 )
+                self._transition(
+                    self.STATE_ACQUIRE,
+                    f"Cloud timeout after {self.settings.cloud_wait_max_s:.0f}s — reacquiring",
+                )
+                self._phase = "initial"
                 return
 
             if not self._is_cloud():
                 # Flux returned but disk not detected → pointing error crept in.
                 self.recovery_attempts += 1
+                self.acquisition_attempts += 1
                 logger.info(
                     "[SunCenter] Flux returned after cloud but no disk → ACQUIRE "
-                    "(attempt #%d)",
-                    self.recovery_attempts,
+                    "(attempt #%d, acquisition #%d)",
+                    self.recovery_attempts, self.acquisition_attempts,
                 )
                 self._transition(
                     self.STATE_ACQUIRE,
@@ -1088,6 +1165,7 @@ class SunCenteringService:
             pass
         self._transition(self.STATE_FAIL_SAFE, reason)
         logger.warning("[SunCenter] FAIL_SAFE: %s", reason)
+        self._write_failure_snapshot(reason)
 
     def _wait_slew(self, context: str = "") -> bool:
         """Return True if still slewing (caller should return and wait)."""
@@ -1099,9 +1177,19 @@ class SunCenteringService:
             return True
         return False
 
+    def _horizon_floor(self, az: float) -> float:
+        """Return the effective altitude floor for this azimuth: the higher of
+        min_sun_alt_deg and the operator's quadrant minimum."""
+        try:
+            quad_min = float(self.adapter.get_horizon_min_alt(float(az)))
+        except Exception:
+            quad_min = 0.0
+        return max(float(self.settings.min_sun_alt_deg), quad_min)
+
     def _goto_clamped(self, alt: float, az: float) -> Dict[str, Any]:
-        alt = float(max(self.settings.min_sun_alt_deg + 0.10, min(88.0, alt)))
         az = float(az) % 360.0
+        floor = self._horizon_floor(az) + 0.10   # 0.10° clearance above floor
+        alt = float(max(floor, min(88.0, alt)))
         resp = self.adapter.goto_altaz(alt, az)
         self.last_command = {
             "type": "goto_altaz",
@@ -1109,6 +1197,15 @@ class SunCenteringService:
             "az": round(az, 4),
             "response": resp,
         }
+        # Rate-limited command log (at most once per 2 s to avoid flooding).
+        now_mono = time.monotonic()
+        if now_mono - self._last_goto_log_mono >= 2.0:
+            self._last_goto_log_mono = now_mono
+            ok = resp.get("success") if isinstance(resp, dict) else False
+            logger.debug(
+                "[SunCenter] GoTo alt=%.4f° az=%.4f° state=%s phase=%s ok=%s",
+                alt, az, self.state, self._phase, ok,
+            )
         return resp
 
     def _enable_tracking(self) -> None:
@@ -1233,6 +1330,67 @@ class SunCenteringService:
 
         except Exception:
             pass  # leave all fields None/False
+
+    # ─── Session / failure persistence ───────────────────────────────────────
+
+    def _session_dir(self) -> str:
+        base = os.path.join(os.path.dirname(__file__), "..", "data", "sun_centering")
+        os.makedirs(base, exist_ok=True)
+        return os.path.abspath(base)
+
+    def _write_session_summary(self) -> None:
+        if not self.started_at:
+            return
+        duration_s = round(time.time() - self.started_at, 1)
+        summary = {
+            "started_at": self.started_at,
+            "ended_at": time.time(),
+            "duration_s": duration_s,
+            "final_state": self.state,
+            "recovery_attempts": self.recovery_attempts,
+            "acquisition_attempts": self.acquisition_attempts,
+            "center_iter_count": self._center_iter_count,
+            "jacobian_valid": bool(self._jacobian_valid),
+            "last_error": self.last_error,
+            "last_command": dict(self.last_command),
+        }
+        fname = os.path.join(
+            self._session_dir(),
+            f"session_{int(self.started_at)}.json",
+        )
+        try:
+            with open(fname, "w") as fh:
+                json.dump(summary, fh, indent=2)
+            logger.info("[SunCenter] Session summary → %s", fname)
+        except Exception as exc:
+            logger.warning("[SunCenter] Could not write session summary: %s", exc)
+
+    def _write_failure_snapshot(self, reason: str) -> None:
+        snapshot = {
+            "timestamp": time.time(),
+            "reason": reason,
+            "state": self.state,
+            "phase": self._phase,
+            "recovery_attempts": self.recovery_attempts,
+            "acquisition_attempts": self.acquisition_attempts,
+            "disk_detected": bool(self.disk_detected),
+            "error_radii": self.error_radii,
+            "disk_eu_px": self.disk_eu_px,
+            "disk_ev_px": self.disk_ev_px,
+            "center_flux_core_mean": self.center_flux_core_mean,
+            "jacobian_valid": bool(self._jacobian_valid),
+            "last_command": dict(self.last_command),
+        }
+        fname = os.path.join(
+            self._session_dir(),
+            f"fail_{int(snapshot['timestamp'])}.json",
+        )
+        try:
+            with open(fname, "w") as fh:
+                json.dump(snapshot, fh, indent=2)
+            logger.info("[SunCenter] Failure snapshot → %s", fname)
+        except Exception as exc:
+            logger.warning("[SunCenter] Could not write failure snapshot: %s", exc)
 
 
 # ---------------------------------------------------------------------------

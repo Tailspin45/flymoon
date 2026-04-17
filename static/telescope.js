@@ -198,15 +198,6 @@ let sunCenterPollInterval = null;
 let sunCenterStatus = null;
 let _sunCenterApiUnavailable = false;
 let _sunCenterApiWarningShown = false;
-let _sunCenterSelectedSearchMode = (() => {
-    try {
-        const v = localStorage.getItem('sunCenterSearchMode');
-        return ['adaptive', 'spiral', 'raster', 'random_walk'].includes(v) ? v : 'adaptive';
-    } catch (_) {
-        return 'adaptive';
-    }
-})();
-let _sunCenterSearchModeDirty = false;
 
 // Eclipse state
 let eclipseData = null;         // populated from /telescope/status
@@ -459,7 +450,6 @@ function updateButtonStates() {
         'sunCenterStartBtn',
         'sunCenterStopBtn',
         'sunCenterRecenterBtn',
-        'sunCenterApplyModeBtn'
     ];
     
     buttons.forEach(id => {
@@ -1823,96 +1813,74 @@ function _renderSunCenterStatus(data) {
     const panel = document.getElementById('sunCenterPanel');
     if (!panel) return;
 
-    const stateEl = document.getElementById('sunCenterState');
-    const modeEl = document.getElementById('sunCenterTolMode');
-    const errEl = document.getElementById('sunCenterErr');
-    const recEl = document.getElementById('sunCenterRecoveries');
-    const searchKindEl = document.getElementById('sunCenterSearchKind');
-    const msgEl = document.getElementById('sunCenterMsg');
-    const startBtn = document.getElementById('sunCenterStartBtn');
-    const stopBtn = document.getElementById('sunCenterStopBtn');
+    const stateEl    = document.getElementById('sunCenterState');
+    const phaseEl    = document.getElementById('sunCenterPhase');
+    const errEl      = document.getElementById('sunCenterErr');
+    const recEl      = document.getElementById('sunCenterRecoveries');
+    const offsetEl   = document.getElementById('sunCenterOffset');
+    const jacobianEl = document.getElementById('sunCenterJacobian');
+    const warnEl     = document.getElementById('sunCenterWarn');
+    const msgEl      = document.getElementById('sunCenterMsg');
+    const startBtn   = document.getElementById('sunCenterStartBtn');
+    const stopBtn    = document.getElementById('sunCenterStopBtn');
     const recenterBtn = document.getElementById('sunCenterRecenterBtn');
-    const modeSelect = document.getElementById('sunCenterSearchMode');
-    const applyModeBtn = document.getElementById('sunCenterApplyModeBtn');
 
-    const running = !!(data && data.running);
-    const state = (data && data.state) ? String(data.state) : 'idle';
+    const running     = !!(data && data.running);
+    const state       = (data && data.state)   ? String(data.state)   : 'idle';
+    const phase       = (data && data.phase)   ? String(data.phase)   : '-';
     const unavailable = state === 'unavailable';
-    const tolMode = (data && data.tolerance_mode) ? String(data.tolerance_mode) : 'strict';
-    const serverSearchMode = (data && data.search_pattern_mode) ? String(data.search_pattern_mode) : null;
-    const activeSearchKind = (data && data.search_pattern_kind)
-        ? String(data.search_pattern_kind)
-        : null;
-    const configuredSearchMode = serverSearchMode || _sunCenterSelectedSearchMode || '-';
-    const err = (data && data.error_norm != null) ? Number(data.error_norm) : null;
-    const recov = (data && data.recovery_attempts != null) ? Number(data.recovery_attempts) : 0;
-    const msg = (data && data.message) ? String(data.message) : 'Solar mode only. Experimental feature.';
+    const err         = (data && data.error_radii != null) ? Number(data.error_radii) : null;
+    const recov       = (data && data.recovery_attempts != null) ? Number(data.recovery_attempts) : 0;
+    const eu          = (data && data.error_u_px != null) ? Number(data.error_u_px) : null;
+    const ev          = (data && data.error_v_px != null) ? Number(data.error_v_px) : null;
+    const jValid      = !!(data && data.jacobian_valid);
+    const jAge        = (data && data.jacobian_age_s != null) ? Number(data.jacobian_age_s) : null;
+    const msg         = (data && data.message) ? String(data.message) : 'Solar mode only. Experimental feature.';
 
-    if (stateEl) stateEl.textContent = state;
-    if (modeEl) modeEl.textContent = tolMode;
-    if (searchKindEl) {
-        let searchDisplay = '-';
-        if (configuredSearchMode === 'adaptive') {
-            searchDisplay = activeSearchKind ? `adaptive (${activeSearchKind})` : 'adaptive';
-        } else if (configuredSearchMode && configuredSearchMode !== '-') {
-            if (activeSearchKind && activeSearchKind !== configuredSearchMode) {
-                searchDisplay = `${configuredSearchMode} (${activeSearchKind})`;
-            } else {
-                searchDisplay = configuredSearchMode;
-            }
-        } else {
-            searchDisplay = activeSearchKind || '-';
-        }
+    if (stateEl)    stateEl.textContent = state;
+    if (phaseEl)    phaseEl.textContent = phase;
+    if (errEl)      errEl.textContent   = Number.isFinite(err) ? err.toFixed(3) : '-';
+    if (recEl)      recEl.textContent   = String(recov);
 
-        if (_sunCenterSearchModeDirty) {
-            searchKindEl.textContent = `${searchDisplay} (pending ${_sunCenterSelectedSearchMode})`;
+    if (offsetEl) {
+        if (Number.isFinite(eu) && Number.isFinite(ev)) {
+            offsetEl.textContent = `u${eu >= 0 ? '+' : ''}${eu.toFixed(1)} v${ev >= 0 ? '+' : ''}${ev.toFixed(1)}px`;
         } else {
-            searchKindEl.textContent = searchDisplay;
+            offsetEl.textContent = '-';
         }
     }
-    if (errEl) errEl.textContent = Number.isFinite(err) ? err.toFixed(3) : '-';
-    if (recEl) recEl.textContent = String(Number.isFinite(recov) ? recov : 0);
 
-    if (modeSelect) {
-        const allowed = ['adaptive', 'spiral', 'raster', 'random_walk'];
-        if (allowed.includes(serverSearchMode)) {
-            if (_sunCenterSearchModeDirty) {
-                if (serverSearchMode === _sunCenterSelectedSearchMode) {
-                    _sunCenterSearchModeDirty = false;
-                }
-            } else {
-                _sunCenterSelectedSearchMode = serverSearchMode;
-                try { localStorage.setItem('sunCenterSearchMode', _sunCenterSelectedSearchMode); } catch (_) {}
-            }
+    if (jacobianEl) {
+        if (jValid && Number.isFinite(jAge)) {
+            jacobianEl.textContent = `yes (${jAge.toFixed(0)}s)`;
+        } else if (jValid) {
+            jacobianEl.textContent = 'yes';
+        } else {
+            jacobianEl.textContent = 'no';
         }
-        if (allowed.includes(_sunCenterSelectedSearchMode)) {
-            modeSelect.value = _sunCenterSelectedSearchMode;
+    }
+
+    // Recovery warning banner: show when ≥3 repeated recoveries.
+    if (warnEl) {
+        const WARN_THRESHOLD = 3;
+        if (running && recov >= WARN_THRESHOLD) {
+            warnEl.textContent = `\u26a0 ${recov} recovery attempt${recov === 1 ? '' : 's'} — check pointing model or sky conditions`;
+            warnEl.style.display = 'block';
+        } else {
+            warnEl.style.display = 'none';
         }
     }
 
     let footer = msg;
-    const mode = (currentViewingMode || '').toLowerCase();
-    if (mode && mode !== 'sun') {
-        footer = 'Experimental and Solar-only for now. Switch to Solar mode to start.';
+    const viewMode = (currentViewingMode || '').toLowerCase();
+    if (viewMode && viewMode !== 'sun' && viewMode !== 'solar') {
+        footer = 'Solar mode only. Switch to Solar mode to start.';
     }
     if (msgEl) msgEl.textContent = footer;
 
-    if (startBtn) {
-        startBtn.disabled = unavailable || !isConnected || running;
-    }
-    if (stopBtn) stopBtn.disabled = unavailable || !running;
+    if (startBtn)    startBtn.disabled    = unavailable || !isConnected || running;
+    if (stopBtn)     stopBtn.disabled     = unavailable || !running;
     if (recenterBtn) recenterBtn.disabled = unavailable || !running;
-    if (modeSelect) modeSelect.disabled = unavailable || !isConnected;
-    if (applyModeBtn) applyModeBtn.disabled = unavailable || !isConnected;
-}
-
-function sunCenterOnModeChanged() {
-    const modeSelect = document.getElementById('sunCenterSearchMode');
-    const mode = modeSelect ? String(modeSelect.value || '').trim() : '';
-    if (!['adaptive', 'spiral', 'raster', 'random_walk'].includes(mode)) return;
-    _sunCenterSelectedSearchMode = mode;
-    _sunCenterSearchModeDirty = true;
-    try { localStorage.setItem('sunCenterSearchMode', mode); } catch (_) {}
 }
 
 function _markSunCenterApiUnavailable(message) {
@@ -1925,8 +1893,11 @@ function _markSunCenterApiUnavailable(message) {
     sunCenterStatus = {
         running: false,
         state: 'unavailable',
-        tolerance_mode: 'strict',
-        error_norm: null,
+        phase: '-',
+        error_radii: null,
+        error_u_px: null,
+        error_v_px: null,
+        jacobian_valid: false,
         recovery_attempts: 0,
         message: message,
     };
@@ -1988,17 +1959,7 @@ async function sunCenterStart() {
         showStatus('Sun centering API unavailable. Restart backend and reload this page.', 'warning', 7000);
         return;
     }
-    const modeSelect = document.getElementById('sunCenterSearchMode');
-    const mode = modeSelect ? String(modeSelect.value || '').trim() : _sunCenterSelectedSearchMode;
-    if (['adaptive', 'spiral', 'raster', 'random_walk'].includes(mode)) {
-        _sunCenterSelectedSearchMode = mode;
-        _sunCenterSearchModeDirty = false;
-        try { localStorage.setItem('sunCenterSearchMode', mode); } catch (_) {}
-    }
-
-    const result = await apiCall('/telescope/sun-center/start', 'POST', {
-        search_pattern_mode: _sunCenterSelectedSearchMode,
-    });
+    const result = await apiCall('/telescope/sun-center/start', 'POST', {});
     if (!result) return;
     sunCenterStatus = result;
     _renderSunCenterStatus(result);
@@ -2029,40 +1990,6 @@ async function sunCenterRecenter() {
     showStatus('Recenter requested: acquisition restarted', 'info', 3000);
 }
 
-async function sunCenterApplySearchMode() {
-    if (_sunCenterApiUnavailable) {
-        showStatus('Sun centering API unavailable. Restart backend and reload this page.', 'warning', 7000);
-        return;
-    }
-
-    const modeSelect = document.getElementById('sunCenterSearchMode');
-    const mode = modeSelect ? String(modeSelect.value || '').trim() : '';
-    if (!['adaptive', 'spiral', 'raster', 'random_walk'].includes(mode)) {
-        showStatus('Invalid search mode selection', 'warning', 3500);
-        return;
-    }
-
-    _sunCenterSelectedSearchMode = mode;
-    try { localStorage.setItem('sunCenterSearchMode', mode); } catch (_) {}
-
-    const running = !!(sunCenterStatus && sunCenterStatus.running);
-    if (!running) {
-        _sunCenterSearchModeDirty = false;
-        _renderSunCenterStatus(sunCenterStatus || { running: false, state: 'idle' });
-        showStatus(`Sun search mode saved (${mode}); it will apply on next start`, 'info', 3200);
-        return;
-    }
-
-    const result = await apiCall('/telescope/sun-center/settings', 'PATCH', {
-        search_pattern_mode: mode,
-    });
-    if (!result) return;
-
-    _sunCenterSearchModeDirty = false;
-    sunCenterStatus = result;
-    _renderSunCenterStatus(result);
-    showStatus(`Sun search mode set to ${mode}`, 'info', 2500);
-}
 
 function initControlPanel() {
     loadSavedLocations();
