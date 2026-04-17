@@ -63,21 +63,6 @@
                 <div id="sunInfo" style="text-align:center;"></div>
                 <div id="moonInfo" style="text-align:center;"></div>
             </div>        </div>
-        <!-- Quadrant Min Altitude Control -->
-        <div class="quadrant-circle">
-            <!-- Labels outside circle -->
-            <label class="quadrant-label quadrant-label-n" title="North quadrant minimum altitude">N</label>
-            <label class="quadrant-label quadrant-label-e" title="East quadrant minimum altitude">E</label>
-            <label class="quadrant-label quadrant-label-s" title="South quadrant minimum altitude">S</label>
-            <label class="quadrant-label quadrant-label-w" title="West quadrant minimum altitude">W</label>
-            <!-- Inputs inside quadrants -->
-            <input type="number" id="minAltN" class="quadrant-input quadrant-input-n" placeholder="30" min="0" max="90" title="Min altitude (°) for the north quadrant — set to your lowest clear line-of-sight above obstructions (trees, buildings) in that direction">
-            <input type="number" id="minAltE" class="quadrant-input quadrant-input-e" placeholder="30" min="0" max="90" title="Min altitude (°) for the east quadrant — set to your lowest clear line-of-sight above obstructions in that direction">
-            <input type="number" id="minAltS" class="quadrant-input quadrant-input-s" placeholder="30" min="0" max="90" title="Min altitude (°) for the south quadrant — set to your lowest clear line-of-sight above obstructions in that direction">
-            <input type="number" id="minAltW" class="quadrant-input quadrant-input-w" placeholder="30" min="0" max="90" title="Min altitude (°) for the west quadrant — set to your lowest clear line-of-sight above obstructions in that direction">
-            <div class="quadrant-center" onclick="resetQuadrantValues()" title="Click to reset all quadrant minimum altitudes to 0°">Min Angle</div>
-            <button class="btn-help quadrant-info-btn" onclick="showInfo('min-angle')" title="Learn about quadrant min-angle obstruction masking">ℹ️</button>
-        </div>
     </div>
 
     <!-- Near-miss log panel -->
@@ -155,6 +140,21 @@
         <div style="display: flex; align-items: flex-start; gap: 0;">
             <div class="map-pane-with-scope" style="position: relative; flex: 1; min-width: 0; margin: 20px 0;">
                 <div id="map" style="height: 500px; width: 100%;"></div>
+                <!-- Quadrant Min Altitude Control -->
+                <div class="quadrant-circle">
+                    <!-- Labels outside circle -->
+                    <label class="quadrant-label quadrant-label-n" title="North quadrant minimum altitude">N</label>
+                    <label class="quadrant-label quadrant-label-e" title="East quadrant minimum altitude">E</label>
+                    <label class="quadrant-label quadrant-label-s" title="South quadrant minimum altitude">S</label>
+                    <label class="quadrant-label quadrant-label-w" title="West quadrant minimum altitude">W</label>
+                    <!-- Inputs inside quadrants -->
+                    <input type="number" id="minAltN" class="quadrant-input quadrant-input-n" placeholder="30" min="0" max="90" title="Min altitude (°) for the north quadrant — set to your lowest clear line-of-sight above obstructions (trees, buildings) in that direction">
+                    <input type="number" id="minAltE" class="quadrant-input quadrant-input-e" placeholder="30" min="0" max="90" title="Min altitude (°) for the east quadrant — set to your lowest clear line-of-sight above obstructions in that direction">
+                    <input type="number" id="minAltS" class="quadrant-input quadrant-input-s" placeholder="30" min="0" max="90" title="Min altitude (°) for the south quadrant — set to your lowest clear line-of-sight above obstructions in that direction">
+                    <input type="number" id="minAltW" class="quadrant-input quadrant-input-w" placeholder="30" min="0" max="90" title="Min altitude (°) for the west quadrant — set to your lowest clear line-of-sight above obstructions in that direction">
+                    <div class="quadrant-center" onclick="resetQuadrantValues()" title="Click to reset all quadrant minimum altitudes to 0°">Min Angle</div>
+                    <button class="btn-help quadrant-info-btn" onclick="showInfo('min-angle')" title="Learn about quadrant min-angle obstruction masking">ℹ️</button>
+                </div>
                 <button type="button" class="nav-toggle-btn nav-toggle-on-map" onclick="showPanel('telescope')" title="Scope Control (Ctrl/Cmd+S)">
                     Scope
                     <span id="telescopeStatusLight" style="display:inline-block; width:8px; height:8px; border-radius:50%; background-color:#999; margin-left:6px; vertical-align:middle;" title="Telescope disconnected"></span>
