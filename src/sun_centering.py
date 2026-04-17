@@ -153,6 +153,7 @@ class SunCenteringService:
         # ── Timing helpers ───────────────────────────────────────────────────
         self._slew_deadline_mono: float = 0.0
         self._settle_until_mono: float = 0.0
+        self._settle_start_mono: float = 0.0   # set whenever a settle phase begins
         self._precheck_busy_deadline_mono: float = 0.0
 
         # ── Detector snapshot (refreshed every tick) ─────────────────────────
@@ -164,6 +165,7 @@ class SunCenteringService:
         self.disk_ev_px: Optional[float] = None  # cy − image_cy
         self.error_radii: Optional[float] = None  # hypot(eu,ev)/radius
         self.disk_info: Optional[Dict[str, Any]] = None
+        self.disk_detected_at: float = 0.0     # monotonic; when detector last confirmed disc
         self.center_flux_core_mean: Optional[float] = None
         self.plate_scale_deg_per_px: Optional[float] = None  # derived on first lock
 
@@ -635,10 +637,15 @@ class SunCenteringService:
             if self._wait_slew("calibrate: alt probe"):
                 return
             self._settle_until_mono = now + self.settings.probe_settle_s
+            self._settle_start_mono = now
             self._phase = "alt_probe_settle"
 
         elif self._phase == "alt_probe_settle":
             if now < self._settle_until_mono:
+                return
+            # Wait for a disc reading that post-dates the settle start (max 4s).
+            if (self.disk_detected_at < self._settle_start_mono
+                    and now < self._settle_start_mono + 4.0):
                 return
             self._phase = "alt_probe_sample"
 
@@ -712,10 +719,15 @@ class SunCenteringService:
             if self._wait_slew("calibrate: az probe"):
                 return
             self._settle_until_mono = now + self.settings.probe_settle_s
+            self._settle_start_mono = now
             self._phase = "az_probe_settle"
 
         elif self._phase == "az_probe_settle":
             if now < self._settle_until_mono:
+                return
+            # Wait for a disc reading that post-dates the settle start (max 4s).
+            if (self.disk_detected_at < self._settle_start_mono
+                    and now < self._settle_start_mono + 4.0):
                 return
             self._phase = "az_probe_sample"
 
@@ -894,10 +906,15 @@ class SunCenteringService:
             if self._wait_slew("center: correction slew"):
                 return
             self._settle_until_mono = now + self.settings.center_settle_s
+            self._settle_start_mono = now
             self._phase = "settling"
 
         elif self._phase == "settling":
             if now < self._settle_until_mono:
+                return
+            # Wait for a disc reading that post-dates the settle start (max 4s).
+            if (self.disk_detected_at < self._settle_start_mono
+                    and now < self._settle_start_mono + 4.0):
                 return
             self._phase = "check"
 
@@ -1255,6 +1272,12 @@ class SunCenteringService:
         self.error_radii = None
         self.disk_info = None
         self.center_flux_core_mean = None
+        try:
+            _at = float(det.get("disk_detected_at") or 0.0)
+            if _at > 0.0:
+                self.disk_detected_at = _at
+        except Exception:
+            pass
 
         # Flux (used for cloud detection; available even without disk).
         center_flux = det.get("center_flux")

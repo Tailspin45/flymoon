@@ -3055,7 +3055,7 @@ function updateTelegramMuteBtn(muted) {
     // Update header toolbar button (top bar) — no emojis
     const btn = document.getElementById('telegramMuteBtn');
     if (btn) {
-        btn.textContent = muted ? 'Muted' : 'Notif';
+        btn.textContent = muted ? 'Muted' : 'Notify';
         btn.title = muted ? 'Telegram alerts muted — click to unmute' : 'Mute Telegram alerts';
     }
     // Update sidebar panel button: .is-active = muted (locked-down keycap)
