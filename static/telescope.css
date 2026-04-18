@@ -31,12 +31,18 @@ body:has(#telescopeView:not([style*="display:none"]):not([style*="display: none"
 /* Compact header on the scope page so the filmstrip fits in the viewport. */
 #telescopeView > .header-row {
     min-height: 0;
-    padding-top: 4px;
-    padding-bottom: 4px;
+    padding: 1px 10px 2px;
     margin-bottom: 0;
+    gap: 8px;
+    align-items: center;
+    flex-wrap: nowrap;
 }
 #telescopeView > .header-row .logo {
-    height: 24px;
+    height: 20px;
+}
+
+#telescopeView .scope-header-title-wrap {
+    line-height: 1;
 }
 
 #telescopeView > .telescope-container {

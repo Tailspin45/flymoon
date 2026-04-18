@@ -38,15 +38,6 @@
   <span style="color:#fed7aa; font-weight:bold;">ADS-B Sources Unavailable</span>
   <span style="color:#ccc; font-size:0.9em;">All free flight-data sources are in backoff — predictions may be stale. Will recover automatically.</span>
 </div>
-<!-- 24-hour soak stats dashboard — roadmap §3.2 D5 -->
-<div id="soakDashboard" style="display:none; padding:6px 18px; background:#111; border-bottom:1px solid #222; font-size:0.83em; color:#aaa; cursor:pointer;" onclick="document.getElementById('soakDashboard').style.display='none'">
-  <strong style="color:#7eb8f7">24h Stats</strong>&nbsp;
-  <span id="soakDetections">—</span> detections |
-  <span id="soakRecordings">—</span> recordings |
-  <span id="soakDownIntervals">—</span>× down
-  (<span id="soakDownTotal">—</span>s)
-  <span style="color:#555; margin-left:8px; font-size:0.9em">[click to dismiss]</span>
-</div>
 <div id="mapView">
     <!-- Hero image — visible on load, slides up after first flight fetch -->
     <div id="heroImageWrap" style="padding:0; margin:0; overflow:hidden; height:280px; max-height:280px; transition: max-height 0.6s ease, opacity 0.5s ease; opacity:1;
@@ -345,12 +336,9 @@
     </div>
     <div class="header-row">
         <img src="{{ url_for('static', filename='images/logo.svg') }}" alt="Zipcatcher Transit Tracker" class="logo" />
-        <div style="flex: 1; text-align: center;">
-                <div style="font-size: 1.2em; letter-spacing: 1px; font-weight: 600; color: #9aa4aa;">Seestar Control</div>
+        <div class="scope-header-title-wrap" style="flex: 1; text-align: center;">
+            <div class="scope-header-title" style="font-size: 1.05em; letter-spacing: 1px; font-weight: 600; color: #9aa4aa;">Seestar Control</div>
             </div>
-        <div style="display: flex; gap: 8px; align-items: center;">
-            <button id="telegramMuteBtn" class="btn-sm" onclick="toggleTelegramMute()" title="Mute/unmute Telegram alerts">Notify</button>
-        </div>
     </div>
 
     <div class="telescope-container">
@@ -611,6 +599,21 @@
                     </div>
                 </div>
 
+                <!-- Locations — compact -->
+                <div class="sidebar-panel">
+                    <span class="screw screw-tl"></span><span class="screw screw-tr"></span><span class="screw screw-bl"></span><span class="screw screw-br"></span>
+                    <h3>Locations</h3>
+                    <select id="savedLocations" class="input-compact" style="width:100%; margin-bottom:3px;"></select>
+                    <!-- Go / Del / Save as equal-width 3-column cluster -->
+                    <div class="button-grid-3col" style="margin-bottom:3px;">
+                        <button class="btn btn-primary btn-compact" onclick="gotoSavedLocation()" title="Go to selected location">Go</button>
+                        <button class="btn btn-danger btn-compact" onclick="deleteSelectedLocation()" title="Delete selected location">Del</button>
+                        <button class="btn btn-secondary btn-compact" onclick="saveCurrentLocation()">Save</button>
+                    </div>
+                    <input type="text" id="saveLocationName" class="input-compact" placeholder="Name to save" style="width:100%; box-sizing:border-box;">
+                    <div id="locationsStatus" style="font-size:0.68em; color:#6a7a85; margin-top:2px; min-height:12px;"></div>
+                </div>
+
                 <!-- Data Sources activity panel -->
                 <div class="sidebar-panel panel-dense" id="dataSourcesPanel" style="flex:1;">
                     <span class="screw screw-tl"></span><span class="screw screw-tr"></span><span class="screw screw-bl"></span><span class="screw screw-br"></span>
@@ -805,21 +808,6 @@
                             <div></div>
                         </div>
                     </div>
-                </div>
-
-                <!-- Locations — compact -->
-                <div class="sidebar-panel">
-                    <span class="screw screw-tl"></span><span class="screw screw-tr"></span><span class="screw screw-bl"></span><span class="screw screw-br"></span>
-                    <h3>Locations</h3>
-                    <select id="savedLocations" class="input-compact" style="width:100%; margin-bottom:3px;"></select>
-                    <!-- Go / Del / Save as equal-width 3-column cluster -->
-                    <div class="button-grid-3col" style="margin-bottom:3px;">
-                        <button class="btn btn-primary btn-compact" onclick="gotoSavedLocation()" title="Go to selected location">Go</button>
-                        <button class="btn btn-danger btn-compact" onclick="deleteSelectedLocation()" title="Delete selected location">Del</button>
-                        <button class="btn btn-secondary btn-compact" onclick="saveCurrentLocation()">Save</button>
-                    </div>
-                    <input type="text" id="saveLocationName" class="input-compact" placeholder="Name to save" style="width:100%; box-sizing:border-box;">
-                    <div id="locationsStatus" style="font-size:0.68em; color:#6a7a85; margin-top:2px; min-height:12px;"></div>
                 </div>
 
                 <!-- Focus + Camera — merged -->

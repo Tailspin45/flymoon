@@ -426,6 +426,83 @@ function updateDataSourceButton() {
     }
 }
 
+const TOP_OVERLAY_BANNER_IDS = [
+    'dataSourceBanner',
+    'telescopeDisconnectBanner',
+    'adsbSourcesDownBanner',
+    'eclipseBanner',
+    'mismatchBanner',
+    'transitCountdown',
+];
+
+let _topOverlayLayoutRaf = null;
+
+function _isVisibleTopOverlayBanner(el) {
+    if (!el) return false;
+    const cs = window.getComputedStyle(el);
+    return cs.display !== 'none' && cs.visibility !== 'hidden';
+}
+
+function _layoutTopOverlayBanners() {
+    let topPx = 0;
+    for (const id of TOP_OVERLAY_BANNER_IDS) {
+        const el = document.getElementById(id);
+        if (!el) continue;
+        if (_isVisibleTopOverlayBanner(el)) {
+            el.style.top = `${topPx}px`;
+            topPx += Math.ceil(el.getBoundingClientRect().height);
+        } else {
+            el.style.top = '';
+        }
+    }
+}
+
+function scheduleTopOverlayBannersLayout() {
+    if (_topOverlayLayoutRaf !== null) return;
+    _topOverlayLayoutRaf = window.requestAnimationFrame(() => {
+        _topOverlayLayoutRaf = null;
+        _layoutTopOverlayBanners();
+    });
+}
+
+function _initTopOverlayBanners() {
+    const banners = TOP_OVERLAY_BANNER_IDS
+        .map(id => document.getElementById(id))
+        .filter(Boolean);
+    if (!banners.length) return;
+
+    const mutationObserver = new MutationObserver(() => {
+        scheduleTopOverlayBannersLayout();
+    });
+
+    for (const banner of banners) {
+        mutationObserver.observe(banner, {
+            attributes: true,
+            attributeFilter: ['style', 'class'],
+        });
+    }
+
+    if (typeof ResizeObserver !== 'undefined') {
+        const resizeObserver = new ResizeObserver(() => {
+            scheduleTopOverlayBannersLayout();
+        });
+        for (const banner of banners) {
+            resizeObserver.observe(banner);
+        }
+    }
+
+    window.addEventListener('resize', scheduleTopOverlayBannersLayout);
+    scheduleTopOverlayBannersLayout();
+}
+
+window.scheduleTopOverlayBannersLayout = scheduleTopOverlayBannersLayout;
+
+if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', _initTopOverlayBanners);
+} else {
+    _initTopOverlayBanners();
+}
+
 // Show startup banner once per browser session (sessionStorage flag)
 (function showDataSourceBanner() {
     if (sessionStorage.getItem('dsbDismissed')) return;
@@ -3271,38 +3348,6 @@ function _startAdsbHealthPolling() {
 
 _startAdsbHealthPolling();
 
-// ── Soak-test dashboard polling (roadmap §3.2 D5) ───────────────────────────
-// Polls /api/soak/stats every 5 minutes and populates the soakDashboard bar.
-// The bar is shown once the first successful response arrives and dismissed
-// by clicking it (onclick handler in the HTML).
-let _soakStatsInterval = null;
-
-async function _pollSoakStats() {
-    try {
-        const resp = await fetch('/api/soak/stats');
-        if (!resp.ok) return;
-        const d = await resp.json();
-        const bar = document.getElementById('soakDashboard');
-        if (!bar) return;
-        const set = (id, v) => { const el = document.getElementById(id); if (el) el.textContent = v; };
-        set('soakDetections',    d.detections_24h    ?? '—');
-        set('soakRecordings',    d.recordings_saved_24h ?? '—');
-        set('soakDownIntervals', d.sources_down_intervals ?? '—');
-        set('soakDownTotal',     d.sources_down_total_s != null ? d.sources_down_total_s.toFixed(0) : '—');
-        bar.style.display = 'block';
-    } catch (_e) {
-        // Transient network error — leave bar as-is.
-    }
-}
-
-function _startSoakStatsPolling() {
-    if (_soakStatsInterval) return;
-    _pollSoakStats(); // immediate first check
-    _soakStatsInterval = setInterval(_pollSoakStats, 300000); // 5 min
-}
-
-_startSoakStatsPolling();
-
 // bfcache support: pause all intervals on pagehide so there are no in-flight
 // requests blocking restoration. Restart on pageshow if restored from cache.
 window.addEventListener('pagehide', () => {
@@ -3315,8 +3360,6 @@ window.addEventListener('pagehide', () => {
     _bothOffReminderInterval = null;
     clearInterval(_adsbHealthInterval);
     _adsbHealthInterval = null;
-    clearInterval(_soakStatsInterval);
-    _soakStatsInterval = null;
 });
 
 window.addEventListener('pageshow', (e) => {
@@ -3331,6 +3374,5 @@ window.addEventListener('pageshow', (e) => {
             _bothOffReminderInterval = setInterval(_bothOffReminderTick, 60000);
         }
         _startAdsbHealthPolling();
-        _startSoakStatsPolling();
     }
 });
