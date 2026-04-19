@@ -163,8 +163,12 @@ def _ensure_rtsp_ready(
         return rtsp_url
 
     mode = getattr(client, "_viewing_mode", None)
-    if allow_mode_reassert and mode in ("sun", "moon"):
-        host_mode = f"{client.host}:{mode}"
+    # Reassert when mode is known solar/lunar, OR when mode is None/unknown
+    # (scope may have been started via native app — default to solar since
+    # RTSP requires an active viewing mode and solar is the Zipcatcher default).
+    reassert_mode = mode if mode in ("sun", "moon") else ("sun" if mode is None else None)
+    if allow_mode_reassert and reassert_mode is not None:
+        host_mode = f"{client.host}:{reassert_mode}"
         now = time.monotonic()
         last_attempt = _rtsp_recover_last_attempt_by_host_mode.get(host_mode, 0.0)
         if now - last_attempt >= _RTSP_RECOVERY_COOLDOWN_SECONDS:
@@ -172,10 +176,9 @@ def _ensure_rtsp_ready(
             try:
                 logger.warning(
                     "[RTSP] Probe failed (mode=%s) — reasserting %s live view",
-                    mode,
-                    mode,
+                    mode, reassert_mode,
                 )
-                if mode == "moon":
+                if reassert_mode == "moon":
                     client.start_lunar_mode()
                 else:
                     client.start_solar_mode()
@@ -184,7 +187,7 @@ def _ensure_rtsp_ready(
                     client.host, timeout_seconds=max(timeout_seconds, 6)
                 )
                 if rtsp_url:
-                    logger.info("[RTSP] Stream recovered after %s mode reassertion", mode)
+                    logger.info("[RTSP] Stream recovered after %s mode reassertion", reassert_mode)
                     return rtsp_url
             except Exception as e:
                 logger.debug("[RTSP] Mode reassertion failed: %s", e)
@@ -1584,7 +1587,7 @@ def connect_telescope():
                 client.start_solar_mode()
                 import time
 
-                time.sleep(2)  # Let scope spin up RTSP
+                time.sleep(4)  # Let scope spin up RTSP (Seestar typically takes 3-4s)
             except Exception as e:
                 logger.warning(
                     f"[Telescope] Could not start solar view: {e} — RTSP may be unavailable"
@@ -4888,7 +4891,7 @@ def _build_sun_center_adapter() -> SunCenteringAdapter:
         if not alpaca or not alpaca.is_connected():
             return {}
         try:
-            return alpaca.get_position()
+            return alpaca.get_cached_position()
         except Exception as exc:
             logger.debug("[SunCenter] get_position failed: %s", exc)
             return {}
@@ -4929,6 +4932,16 @@ def _build_sun_center_adapter() -> SunCenteringAdapter:
         v = _user_settings.get(key)
         return float(v) if v is not None else 0.0
 
+    def _start_solar_mode() -> bool:
+        scope = get_telescope_client()
+        if not scope or not scope.is_connected():
+            return False
+        try:
+            return scope.start_solar_mode()
+        except Exception as exc:
+            logger.warning("[SunCenter] start_solar_mode failed: %s", exc)
+            return False
+
     return SunCenteringAdapter(
         is_scope_connected=_scope_connected,
         is_alpaca_connected=_alpaca_connected,
@@ -4940,6 +4953,7 @@ def _build_sun_center_adapter() -> SunCenteringAdapter:
         get_detector_status=_detector_status,
         get_position=_get_position,
         set_tracking=_set_tracking,
+        start_solar_mode=_start_solar_mode,
         get_horizon_min_alt=_horizon_min_alt,
     )
 
@@ -4965,9 +4979,13 @@ def start_sun_centering():
             )
 
         mode = (getattr(client, "_viewing_mode", None) or "").strip().lower()
-        if mode not in {"sun", "solar"}:
+        # Block only on explicitly non-solar modes.  None/empty means the scope
+        # mode wasn't started through our app (e.g. Seestar native app) — allow
+        # it since firmware 1.2.0-3 no longer fires SolarViewStart events.
+        _NON_SOLAR = {"moon", "star", "scenery", "lunar", "deep_sky"}
+        if mode and mode in _NON_SOLAR:
             msg = (
-                "Experimental Sun centering is Solar-only right now. "
+                f"Sun centering requires Solar mode (scope is in {mode!r} mode). "
                 "Switch to Solar mode and try again."
             )
             return (
@@ -4975,7 +4993,7 @@ def start_sun_centering():
                     {
                         "error": msg,
                         "reason": "solar_mode_required_experimental",
-                        "current_mode": mode or None,
+                        "current_mode": mode,
                         "toast": msg,
                     }
                 ),

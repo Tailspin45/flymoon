@@ -59,6 +59,9 @@ class SunCenteringAdapter:
     get_detector_status: Callable[[], Dict[str, Any]]
     get_position: Callable[[], Dict[str, float]]   # → {alt, az, ra, dec}
     set_tracking: Callable[[bool], Dict[str, Any]]
+    # Optional: trigger the Seestar's native solar GoTo (uses sun sensor).
+    # If provided, used as Phase 1 of acquisition before any ALPACA GoTo.
+    start_solar_mode: Optional[Callable[[], bool]] = None
     # Returns the operator's minimum safe altitude for a given azimuth (degrees).
     # Defaults to a no-restriction function so existing callers need no changes.
     get_horizon_min_alt: Callable[[float], float] = lambda az: 0.0
@@ -77,22 +80,24 @@ class SunCenteringSettings:
     acquire_slew_timeout_s: float = 30.0
     acquire_settle_s: float = 2.0
     # Rings of alt/az offsets (degrees) for the first-attempt search grid.
-    # Each radius produces 4 cardinal points; default = 8 search positions.
-    acquire_search_radii_deg: Tuple[float, ...] = (0.4, 0.8)
+    # Each radius produces 8 points (4 cardinal + 4 diagonal).
+    # Wide default: Seestar pointing model can be 2–5° off without alignment.
+    acquire_search_radii_deg: Tuple[float, ...] = (0.5, 1.5, 3.0, 5.0)
     # Wider grid used on retry attempts (acquisition_attempts >= 1).
-    # Default: adds a 1.2° ring for 12 total positions.
-    acquire_search_radii_retry_deg: Tuple[float, ...] = (0.4, 0.8, 1.2)
+    acquire_search_radii_retry_deg: Tuple[float, ...] = (0.5, 1.5, 3.0, 5.0, 6.0)
     acquire_search_settle_s: float = 1.5
     # Rest between failed acquisition attempts before re-issuing coarse GoTo.
     acquire_retry_rest_s: float = 5.0
     precheck_busy_timeout_s: float = 60.0
+    # How long to wait for the disc to appear after a native solar GoTo.
+    solar_goto_timeout_s: float = 45.0
 
     # ── Calibrate ───────────────────────────────────────────────────────────
-    probe_deg: float = 0.10          # GoTo offset for each Jacobian probe
+    probe_deg: float = 0.15          # GoTo offset for each Jacobian probe (≈40px — 3× larger than sidereal drift noise)
     probe_slew_timeout_s: float = 15.0
     probe_settle_s: float = 1.5
     min_jacobian_det: float = 0.01   # determinant gate; below this → retry
-    max_cal_retries: int = 1
+    max_cal_retries: int = 4
 
     # ── Center ──────────────────────────────────────────────────────────────
     tolerance_radii: float = 0.12    # converged when error_radii < this
@@ -150,11 +155,16 @@ class SunCenteringService:
         self.started_at: Optional[float] = None
         self._phase: str = "initial"
 
+        # ── Sun ephemeris snapshot (cached each tick — cheap skyfield call) ────
+        self._sun_ephem_alt: Optional[float] = None
+        self._sun_ephem_az: Optional[float] = None
+
         # ── Timing helpers ───────────────────────────────────────────────────
         self._slew_deadline_mono: float = 0.0
         self._settle_until_mono: float = 0.0
         self._settle_start_mono: float = 0.0   # set whenever a settle phase begins
         self._precheck_busy_deadline_mono: float = 0.0
+        self._last_goto_ok: bool = True         # False when scope rejected the GoTo (error 1279)
 
         # ── Detector snapshot (refreshed every tick) ─────────────────────────
         self.disk_detected: bool = False
@@ -183,16 +193,23 @@ class SunCenteringService:
         self._cal_ref_az: float = 0.0
         self._cal_ref_cx: float = 0.0
         self._cal_ref_cy: float = 0.0
+        self._probe_alt_sign: float = 1.0   # flipped on retry to probe opposite direction
+        self._probe_az_sign: float = 1.0
         self._cal_j_col_alt: Optional[List[float]] = None
         self._cal_j_col_az: Optional[List[float]] = None
         self._cal_retry: int = 0
 
         # ── Acquire search ───────────────────────────────────────────────────
+        self._solar_mode_tried: bool = False   # True after native solar GoTo attempt
         self._search_offsets: List[Tuple[float, float]] = []
         self._search_idx: int = 0
         self._search_sun_alt: float = 0.0   # ephemeris snapshot at search start
         self._search_sun_az: float = 0.0
         self._acquire_rest_until_mono: float = 0.0
+
+        # ── Cached mount position (updated each tick for status readout) ─────
+        self._mount_alt: Optional[float] = None
+        self._mount_az: Optional[float] = None
 
         # ── Center ───────────────────────────────────────────────────────────
         self._center_iter_count: int = 0
@@ -213,6 +230,9 @@ class SunCenteringService:
         self.last_error: Optional[str] = None
         self._last_tick_at: float = 0.0
         self._last_goto_log_mono: float = 0.0   # rate-limit GoTo command logs
+        self._goto_issued_at: float = 0.0       # monotonic timestamp of last _goto_clamped call
+        self._mode_unknown_since: Optional[float] = None  # grace timer: mode None after reconnect
+        self._debug_log_fh = None               # open JSONL session log file handle
 
     # =========================================================================
     # Public API
@@ -234,6 +254,9 @@ class SunCenteringService:
             self.state_changed_at = time.time()
             self.acquisition_attempts = 0
             self.recovery_attempts = 0
+            self._solar_mode_tried = False
+            self._load_jacobian()
+            self._open_debug_log()
             self._thread = threading.Thread(
                 target=self._run_loop, name="sun-centering-v2", daemon=True
             )
@@ -257,6 +280,7 @@ class SunCenteringService:
             self.state_message = "Stopped"
             self.state_changed_at = time.time()
             logger.info("[SunCenter] Service stopped")
+        self._close_debug_log()
         self._write_session_summary()
 
     def is_running(self) -> bool:
@@ -363,6 +387,21 @@ class SunCenteringService:
                 "acquisition_attempts": int(self.acquisition_attempts),
                 "center_iter_count": int(self._center_iter_count),
                 "search_index": int(self._search_idx),
+                # Pointing — Sun ephemeris, live mount position, last GoTo target
+                "sun_ephem_alt": (
+                    None if self._sun_ephem_alt is None else round(self._sun_ephem_alt, 2)
+                ),
+                "sun_ephem_az": (
+                    None if self._sun_ephem_az is None else round(self._sun_ephem_az, 2)
+                ),
+                "mount_alt": (
+                    None if self._mount_alt is None else round(self._mount_alt, 2)
+                ),
+                "mount_az": (
+                    None if self._mount_az is None else round(self._mount_az, 2)
+                ),
+                "last_goto_alt": self.last_command.get("alt"),
+                "last_goto_az": self.last_command.get("az"),
                 # Diagnostics / freshness
                 "last_command": dict(self.last_command),
                 "last_error": self.last_error,
@@ -405,16 +444,30 @@ class SunCenteringService:
         det = self._safe_detector_status()
         self._refresh_disk_snapshot(det)
 
+        # Cache Sun ephemeris (lightweight skyfield call; used by UI panel).
+        try:
+            sun = self.adapter.get_sun_altaz()
+            if sun:
+                self._sun_ephem_alt, self._sun_ephem_az = float(sun[0]), float(sun[1])
+        except Exception:
+            pass
+
+
         # Hard connection guard.
         if not self.adapter.is_scope_connected() or not self.adapter.is_alpaca_connected():
             self._enter_fail_safe("Scope/ALPACA disconnected")
             return
 
-        # Solar-mode guard.
+        # Solar-mode guard.  Only abort on explicitly non-solar modes.
+        # None/empty means the scope was put in solar mode via the Seestar
+        # native app (or firmware 1.2.0-3 didn't fire a SolarViewStart event
+        # after reconnect) — in that case, trust the user and proceed.
         mode = (self.adapter.get_viewing_mode() or "").strip().lower()
-        if mode not in {"sun", "solar"}:
-            self._enter_fail_safe("Solar mode required")
+        _NON_SOLAR = {"moon", "star", "scenery", "lunar", "deep_sky"}
+        if mode and mode in _NON_SOLAR:
+            self._enter_fail_safe(f"Solar mode required (current mode: {mode!r})")
             return
+        self._mode_unknown_since = None
 
         state = self.state
         if state == self.STATE_ACQUIRE:
@@ -441,14 +494,52 @@ class SunCenteringService:
             else self.settings.acquire_search_radii_deg
         )
         offsets: List[Tuple[float, float]] = []
+        diag = 0.7071  # 1/√2
         for r in radii:
             offsets += [(r, 0.0), (-r, 0.0), (0.0, r), (0.0, -r)]
+            d = r * diag
+            offsets += [(d, d), (-d, d), (d, -d), (-d, -d)]
         return offsets
 
     def _handle_acquire(self) -> None:
         now = time.monotonic()
 
         if self._phase == "initial":
+            # Disc already visible — skip any GoTo; don't move the scope.
+            if self.disk_detected:
+                logger.info("[SunCenter] Disk visible at start — skipping coarse GoTo")
+                self._on_disk_found_in_acquire()
+                return
+
+            # Brief back-off after a rejected GoTo before retrying.
+            if now < self._acquire_rest_until_mono:
+                self.state_message = (
+                    f"GoTo retry in {self._acquire_rest_until_mono - now:.0f}s…"
+                )
+                return
+
+            # ── Phase 1: native solar GoTo (sun sensor, bypasses pointing model) ──
+            # Only on the first attempt; if it timed out we skip to ALPACA GoTo.
+            if self.adapter.start_solar_mode is not None and not self._solar_mode_tried:
+                self._solar_mode_tried = True
+                try:
+                    ok = self.adapter.start_solar_mode()
+                    if ok:
+                        logger.info(
+                            "[SunCenter] Native solar GoTo issued — waiting up to %.0fs for disc",
+                            self.settings.solar_goto_timeout_s,
+                        )
+                        self._slew_deadline_mono = now + self.settings.solar_goto_timeout_s
+                        self._phase = "solar_wait"
+                        self.state_message = "Native solar GoTo — waiting for disc…"
+                        return
+                except Exception as exc:
+                    logger.warning("[SunCenter] start_solar_mode failed: %s — using ALPACA GoTo", exc)
+
+            # ── Phase 2: ALPACA GoTo to ephemeris (fallback / retry path) ─────────
+            # Stop sidereal tracking — its internal GoTos cause error 1279.
+            self._disable_tracking()
+
             sun = self.adapter.get_sun_altaz()
             if not sun:
                 self._enter_fail_safe("Unable to compute Sun coordinates")
@@ -462,8 +553,6 @@ class SunCenteringService:
                 )
                 return
 
-            # Busy-mount guard: if mount is slewing before we even issue a goto,
-            # wait up to precheck_busy_timeout_s before giving up.
             if self.adapter.is_slewing():
                 if now >= self._precheck_busy_deadline_mono:
                     self._enter_fail_safe(
@@ -474,13 +563,57 @@ class SunCenteringService:
                     self.state_message = "Waiting for mount to stop slewing before GoTo"
                 return
 
+            pos = self._safe_get_position()
+            mount_alt = pos.get("alt")
+            mount_az = pos.get("az")
+            if mount_alt is not None and mount_az is not None:
+                dalt = sun_alt - mount_alt
+                daz = sun_az - mount_az
+                logger.info(
+                    "[SunCenter] ACQUIRE ALPACA GoTo — Sun ephem alt=%.2f° az=%.2f° | "
+                    "mount alt=%.2f° az=%.2f° | Δalt=%+.2f° Δaz=%+.2f°",
+                    sun_alt, sun_az, mount_alt, mount_az, dalt, daz,
+                )
+                self.state_message = (
+                    f"ALPACA GoTo: ephem alt={sun_alt:.2f}° az={sun_az:.2f}° | "
+                    f"mount alt={mount_alt:.2f}° az={mount_az:.2f}°"
+                )
+            else:
+                logger.info(
+                    "[SunCenter] ACQUIRE ALPACA GoTo — Sun ephem alt=%.2f° az=%.2f°",
+                    sun_alt, sun_az,
+                )
+                self.state_message = f"ALPACA GoTo: Sun ephem alt={sun_alt:.2f}° az={sun_az:.2f}°"
             self._goto_clamped(sun_alt, sun_az)
             self._slew_deadline_mono = now + self.settings.acquire_slew_timeout_s
             self._phase = "slewing"
-            self.state_message = "Coarse GoTo to Sun ephemeris"
+
+        elif self._phase == "solar_wait":
+            # Waiting for disc after native solar GoTo.
+            if self.disk_detected:
+                logger.info("[SunCenter] Disc found after native solar GoTo")
+                self._on_disk_found_in_acquire()
+                return
+            remaining = self._slew_deadline_mono - now
+            if remaining <= 0:
+                logger.warning(
+                    "[SunCenter] Native solar GoTo timed out (%.0fs) — "
+                    "falling back to ALPACA GoTo + grid search",
+                    self.settings.solar_goto_timeout_s,
+                )
+                self._phase = "initial"
+                return
+            self.state_message = f"Native solar GoTo — searching for disc ({remaining:.0f}s)"
 
         elif self._phase == "slewing":
             if self._wait_slew("acquire: coarse slew"):
+                return
+            if not self._last_goto_ok:
+                # GoTo was rejected (network timeout or scope busy) — back-off
+                # and re-issue from initial rather than proceeding as if it worked.
+                logger.warning("[SunCenter] ACQUIRE coarse GoTo rejected — waiting 2s before retry")
+                self._acquire_rest_until_mono = now + 2.0
+                self._phase = "initial"
                 return
             self._settle_until_mono = now + self.settings.acquire_settle_s
             self._phase = "settling"
@@ -488,6 +621,8 @@ class SunCenteringService:
 
         elif self._phase == "settling":
             if now < self._settle_until_mono:
+                remaining = self._settle_until_mono - now
+                self.state_message = f"Settling… {remaining:.1f}s remaining"
                 return
             self._phase = "assess"
 
@@ -495,19 +630,44 @@ class SunCenteringService:
             if self.disk_detected:
                 self._on_disk_found_in_acquire()
                 return
-            # Disk not found at ephemeris — start grid search.
-            logger.info("[SunCenter] Disk not found at ephemeris; starting search grid")
+            # Disk not found at ephemeris — log position and start grid search.
             sun = self.adapter.get_sun_altaz()
             if not sun:
                 self._enter_fail_safe("Sun coordinates unavailable for search")
                 return
+            pos = self._safe_get_position()
+            mount_alt = pos.get("alt")
+            mount_az = pos.get("az")
+            if mount_alt is not None and mount_az is not None:
+                dalt = sun[0] - mount_alt
+                daz = sun[1] - mount_az
+                logger.warning(
+                    "[SunCenter] No disk at ephemeris — Sun ephem alt=%.2f° az=%.2f° | "
+                    "mount landed alt=%.2f° az=%.2f° | pointing error Δalt=%+.2f° Δaz=%+.2f°",
+                    sun[0], sun[1], mount_alt, mount_az, dalt, daz,
+                )
+            else:
+                logger.warning(
+                    "[SunCenter] No disk at ephemeris — Sun ephem alt=%.2f° az=%.2f° "
+                    "(mount position unavailable)",
+                    sun[0], sun[1],
+                )
             self._search_sun_alt, self._search_sun_az = sun
             self._search_offsets = self._build_search_offsets()
             self._search_idx = 0
             self._phase = "search_step"
 
         elif self._phase == "resting":
-            if now < self._acquire_rest_until_mono:
+            remaining = self._acquire_rest_until_mono - now
+            if remaining > 0:
+                sun = self.adapter.get_sun_altaz()
+                ephem_str = (
+                    f"Sun ephem alt={sun[0]:.2f}° az={sun[1]:.2f}°" if sun else "Sun ephem unavailable"
+                )
+                self.state_message = (
+                    f"Search failed (attempt #{self.acquisition_attempts}) — "
+                    f"retrying in {remaining:.0f}s | {ephem_str}"
+                )
                 return
             # Rest complete — restart coarse GoTo with fresh ephemeris.
             self._phase = "initial"
@@ -516,19 +676,28 @@ class SunCenteringService:
             if self._search_idx >= len(self._search_offsets):
                 # Grid exhausted without finding the disk.  Rest briefly, then
                 # restart from the coarse GoTo using the current ephemeris.
-                # This keeps the service alive through an obstruction at session
-                # start or a wide pointing error, rather than going to FAIL_SAFE.
                 self.acquisition_attempts += 1
+                sun = self.adapter.get_sun_altaz()
+                pos = self._safe_get_position()
+                mount_alt = pos.get("alt")
+                mount_az = pos.get("az")
+                ephem_info = (
+                    f"Sun ephem alt={sun[0]:.2f}° az={sun[1]:.2f}°" if sun
+                    else "Sun ephem unavailable"
+                )
+                mount_info = (
+                    f"mount at alt={mount_alt:.2f}° az={mount_az:.2f}°"
+                    if mount_alt is not None else "mount pos unavailable"
+                )
                 logger.warning(
-                    "[SunCenter] Grid search exhausted (%d points) without finding "
-                    "Sun disk — resting %.0fs then retrying (attempt #%d)",
-                    len(self._search_offsets),
-                    self.settings.acquire_retry_rest_s,
-                    self.acquisition_attempts,
+                    "[SunCenter] Grid search exhausted (%d points) — %s | %s | "
+                    "resting %.0fs then retrying (attempt #%d)",
+                    len(self._search_offsets), ephem_info, mount_info,
+                    self.settings.acquire_retry_rest_s, self.acquisition_attempts,
                 )
                 self.state_message = (
-                    f"Sun not found after {len(self._search_offsets)}-point search "
-                    f"(attempt #{self.acquisition_attempts}) — "
+                    f"Sun not found ({len(self._search_offsets)}-pt search, "
+                    f"attempt #{self.acquisition_attempts}) | {ephem_info} | "
                     f"retrying in {self.settings.acquire_retry_rest_s:.0f}s"
                 )
                 self._acquire_rest_until_mono = now + self.settings.acquire_retry_rest_s
@@ -545,24 +714,34 @@ class SunCenteringService:
                     self._search_idx + 1, tgt_alt, tgt_az,
                 )
                 self._search_idx += 1
-                # Stay in search_step; the next tick will try the following offset.
                 return
             self._goto_clamped(tgt_alt, tgt_az)
             self._slew_deadline_mono = now + self.settings.acquire_slew_timeout_s
             self._phase = "search_slewing"
             self.state_message = (
-                f"Grid search step {self._search_idx + 1}/{len(self._search_offsets)} "
-                f"(Δalt={dalt:+.2f}°, Δaz={daz:+.2f}°)"
+                f"Search {self._search_idx + 1}/{len(self._search_offsets)}: "
+                f"tgt alt={tgt_alt:.2f}° az={tgt_az:.2f}° "
+                f"(Δalt={dalt:+.2f}° Δaz={daz:+.2f}° from "
+                f"ephem alt={self._search_sun_alt:.2f}° az={self._search_sun_az:.2f}°)"
             )
 
         elif self._phase == "search_slewing":
             if self._wait_slew("acquire: search slew"):
+                return
+            if not self._last_goto_ok:
+                # GoTo rejected — retry this search step rather than skipping it.
+                self._phase = "search_step"
                 return
             self._settle_until_mono = now + self.settings.acquire_search_settle_s
             self._phase = "search_settling"
 
         elif self._phase == "search_settling":
             if now < self._settle_until_mono:
+                remaining = self._settle_until_mono - now
+                self.state_message = (
+                    self.state_message.split(" — settling")[0]
+                    + f" — settling {remaining:.1f}s"
+                )
                 return
             self._phase = "search_assess"
 
@@ -570,16 +749,28 @@ class SunCenteringService:
             if self.disk_detected:
                 self._on_disk_found_in_acquire()
                 return
+            pos = self._safe_get_position()
+            mount_alt = pos.get("alt")
+            mount_az = pos.get("az")
+            if mount_alt is not None:
+                logger.debug(
+                    "[SunCenter] No disk at search pos alt=%.2f° az=%.2f° "
+                    "(step %d/%d)",
+                    mount_alt, mount_az,
+                    self._search_idx + 1, len(self._search_offsets),
+                )
             self._search_idx += 1
             self._phase = "search_step"
 
     def _on_disk_found_in_acquire(self) -> None:
+        # Ensure tracking off before any calibration or correction GoTos.
+        self._disable_tracking()
+        self._center_iter_count = 0
+        self._center_no_disk_ticks = 0
         if self._jacobian_valid:
             logger.info(
                 "[SunCenter] Disk found in ACQUIRE; Jacobian valid — skipping CALIBRATE"
             )
-            self._center_iter_count = 0
-            self._center_no_disk_ticks = 0
             self._transition(self.STATE_CENTER, "Disk acquired; using cached Jacobian")
             self._phase = "check"
         else:
@@ -609,6 +800,8 @@ class SunCenteringService:
             self._cal_j_col_alt = None
             self._cal_j_col_az = None
             self._cal_retry = 0
+            self._probe_alt_sign = 1.0
+            self._probe_az_sign = 1.0
             logger.info(
                 "[SunCenter] Calibrate: ref alt=%.4f az=%.4f cx=%.1f cy=%.1f",
                 self._cal_ref_alt, self._cal_ref_az, self._cal_ref_cx, self._cal_ref_cy,
@@ -624,17 +817,22 @@ class SunCenteringService:
 
         # ── Altitude probe ───────────────────────────────────────────────────
         elif self._phase == "alt_probe":
-            self.state_message = "Calibrate: altitude probe (+{:.2f}°)".format(
-                self.settings.probe_deg
+            self.state_message = "Calibrate: altitude probe ({:+.2f}°)".format(
+                self._probe_alt_sign * self.settings.probe_deg
             )
             self._goto_clamped(
-                self._cal_ref_alt + self.settings.probe_deg, self._cal_ref_az
+                self._cal_ref_alt + self._probe_alt_sign * self.settings.probe_deg,
+                self._cal_ref_az,
             )
             self._slew_deadline_mono = now + self.settings.probe_slew_timeout_s
             self._phase = "alt_probe_slew"
 
         elif self._phase == "alt_probe_slew":
             if self._wait_slew("calibrate: alt probe"):
+                return
+            if not self._last_goto_ok:
+                # GoTo was rejected while scope was busy — re-issue once it settled.
+                self._phase = "alt_probe"
                 return
             self._settle_until_mono = now + self.settings.probe_settle_s
             self._settle_start_mono = now
@@ -666,9 +864,10 @@ class SunCenteringService:
                     self._transition(self.STATE_ACQUIRE, "Disk lost during alt calibration probe")
                     self._phase = "initial"
                 return
+            signed_probe = self._probe_alt_sign * self.settings.probe_deg
             self._cal_j_col_alt = [
-                (float(self.disk_cx) - self._cal_ref_cx) / self.settings.probe_deg,
-                (float(self.disk_cy) - self._cal_ref_cy) / self.settings.probe_deg,
+                (float(self.disk_cx) - self._cal_ref_cx) / signed_probe,
+                (float(self.disk_cy) - self._cal_ref_cy) / signed_probe,
             ]
             logger.debug(
                 "[SunCenter] Alt probe: J_col=[%.3f, %.3f]",
@@ -685,7 +884,8 @@ class SunCenteringService:
         elif self._phase == "alt_probe_retry_settle":
             if now < self._settle_until_mono:
                 return
-            self._phase = "alt_probe"   # try probe again
+            self._probe_alt_sign *= -1.0   # try opposite direction
+            self._phase = "alt_probe"
 
         # ── Return from altitude probe ────────────────────────────────────────
         elif self._phase == "alt_return":
@@ -706,17 +906,21 @@ class SunCenteringService:
 
         # ── Azimuth probe ─────────────────────────────────────────────────────
         elif self._phase == "az_probe":
-            self.state_message = "Calibrate: azimuth probe (+{:.2f}°)".format(
-                self.settings.probe_deg
+            self.state_message = "Calibrate: azimuth probe ({:+.2f}°)".format(
+                self._probe_az_sign * self.settings.probe_deg
             )
             self._goto_clamped(
-                self._cal_ref_alt, self._cal_ref_az + self.settings.probe_deg
+                self._cal_ref_alt,
+                self._cal_ref_az + self._probe_az_sign * self.settings.probe_deg,
             )
             self._slew_deadline_mono = now + self.settings.probe_slew_timeout_s
             self._phase = "az_probe_slew"
 
         elif self._phase == "az_probe_slew":
             if self._wait_slew("calibrate: az probe"):
+                return
+            if not self._last_goto_ok:
+                self._phase = "az_probe"
                 return
             self._settle_until_mono = now + self.settings.probe_settle_s
             self._settle_start_mono = now
@@ -733,15 +937,26 @@ class SunCenteringService:
 
         elif self._phase == "az_probe_sample":
             if not self.disk_detected:
-                logger.warning("[SunCenter] Disk lost on az probe; returning to ref → ACQUIRE")
-                self._jacobian_valid = False
-                self._goto_clamped(self._cal_ref_alt, self._cal_ref_az)
-                self._transition(self.STATE_ACQUIRE, "Disk lost during az calibration probe")
-                self._phase = "initial"
+                if self._cal_retry < self.settings.max_cal_retries:
+                    self._cal_retry += 1
+                    logger.warning(
+                        "[SunCenter] Disk lost on az probe sample; returning to ref (retry %d)",
+                        self._cal_retry,
+                    )
+                    self._goto_clamped(self._cal_ref_alt, self._cal_ref_az)
+                    self._slew_deadline_mono = now + self.settings.probe_slew_timeout_s
+                    self._phase = "az_probe_retry_slew"
+                else:
+                    logger.warning("[SunCenter] Az probe: disk lost after retries → ACQUIRE")
+                    self._jacobian_valid = False
+                    self._goto_clamped(self._cal_ref_alt, self._cal_ref_az)
+                    self._transition(self.STATE_ACQUIRE, "Disk lost during az calibration probe")
+                    self._phase = "initial"
                 return
+            signed_probe = self._probe_az_sign * self.settings.probe_deg
             self._cal_j_col_az = [
-                (float(self.disk_cx) - self._cal_ref_cx) / self.settings.probe_deg,
-                (float(self.disk_cy) - self._cal_ref_cy) / self.settings.probe_deg,
+                (float(self.disk_cx) - self._cal_ref_cx) / signed_probe,
+                (float(self.disk_cy) - self._cal_ref_cy) / signed_probe,
             ]
             logger.debug(
                 "[SunCenter] Az probe: J_col=[%.3f, %.3f]",
@@ -765,6 +980,19 @@ class SunCenteringService:
             if now < self._settle_until_mono:
                 return
             self._phase = "compute"
+
+        elif self._phase == "az_probe_retry_slew":
+            if self._wait_slew("calibrate: az probe retry return"):
+                return
+            self._settle_until_mono = now + self.settings.probe_settle_s
+            self._phase = "az_probe_retry_settle"
+
+        elif self._phase == "az_probe_retry_settle":
+            if now < self._settle_until_mono:
+                return
+            self._probe_az_sign *= -1.0   # try opposite direction
+            self._cal_retry = 0
+            self._phase = "az_probe"
 
         # ── Compute Jacobian ──────────────────────────────────────────────────
         elif self._phase == "compute":
@@ -830,6 +1058,14 @@ class SunCenteringService:
         self._j_inv = j_inv
         self._jacobian_valid = True
         self._jacobian_at = time.monotonic()
+        self._save_jacobian()
+        self._log_event(
+            "jacobian",
+            j=[[round(j00,3), round(j01,3)], [round(j10,3), round(j11,3)]],
+            det=round(det, 4),
+            coupling_alt=round(coupling_alt, 1),
+            coupling_az=round(coupling_az, 1),
+        )
 
         # Update plate scale from current disk measurement.
         if self.disk_radius and self.disk_radius > 0:
@@ -905,6 +1141,10 @@ class SunCenteringService:
         elif self._phase == "slewing":
             if self._wait_slew("center: correction slew"):
                 return
+            if not self._last_goto_ok:
+                # GoTo rejected — disc hasn't moved; re-sample and re-issue.
+                self._phase = "check"
+                return
             self._settle_until_mono = now + self.settings.center_settle_s
             self._settle_start_mono = now
             self._phase = "settling"
@@ -931,15 +1171,25 @@ class SunCenteringService:
             j = self._j_inv
             dalt = j[0][0] * eu + j[0][1] * ev
             daz = j[1][0] * eu + j[1][1] * ev
+            method = "jacobian"
         elif self.plate_scale_deg_per_px is not None:
             # Plate-scale fallback: assumes U≈az, V≈alt (no cross-coupling).
             dalt = -ev * self.plate_scale_deg_per_px
             daz = -eu * self.plate_scale_deg_per_px
+            method = "plate_scale"
         else:
             # Last resort: fixed estimate (0.004°/px, typical Seestar S50 solar).
             dalt = -ev * 0.004
             daz = -eu * 0.004
+            method = "fixed"
 
+        self._log_event(
+            "correction",
+            eu=round(eu, 2), ev=round(ev, 2),
+            dalt=round(dalt, 5), daz=round(daz, 5),
+            method=method,
+            state=self.state, phase=self._phase,
+        )
         return dalt, daz
 
     # =========================================================================
@@ -1022,6 +1272,7 @@ class SunCenteringService:
         now = time.monotonic()
 
         if self._phase == "initial":
+            self._disable_tracking()
             sun = self.adapter.get_sun_altaz()
             if not sun:
                 self._enter_fail_safe("Cannot get Sun coordinates for recovery")
@@ -1161,6 +1412,7 @@ class SunCenteringService:
     def _transition(self, new_state: str, message: str) -> None:
         if self.state != new_state:
             logger.info("[SunCenter] %s → %s  (%s)", self.state, new_state, message)
+            self._log_event("state", from_state=self.state, to_state=new_state, msg=message)
         self.state = new_state
         self.state_message = message
         self.state_changed_at = time.time()
@@ -1176,6 +1428,7 @@ class SunCenteringService:
     def _enter_fail_safe(self, reason: str) -> None:
         if self.state == self.STATE_FAIL_SAFE and self.state_message == reason:
             return
+        self._log_event("fail_safe", reason=reason, state=self.state, phase=self._phase)
         try:
             self.adapter.stop_axes()
         except Exception:
@@ -1186,6 +1439,11 @@ class SunCenteringService:
 
     def _wait_slew(self, context: str = "") -> bool:
         """Return True if still slewing (caller should return and wait)."""
+        # Minimum 0.4s after GoTo before declaring slew done — prevents the race
+        # where is_slewing() returns False before the mount has started moving
+        # (Seestar's slew registration latency is typically 100–400ms).
+        if time.monotonic() < self._goto_issued_at + 0.4:
+            return True
         if self.adapter.is_slewing():
             if time.monotonic() >= self._slew_deadline_mono:
                 self._enter_fail_safe(f"Slew timed out ({context})")
@@ -1203,11 +1461,16 @@ class SunCenteringService:
             quad_min = 0.0
         return max(float(self.settings.min_sun_alt_deg), quad_min)
 
-    def _goto_clamped(self, alt: float, az: float) -> Dict[str, Any]:
+    def _goto_clamped(self, alt: float, az: float) -> bool:
+        """Issue a GoTo and return True if accepted, False if rejected (e.g. error 1279)."""
         az = float(az) % 360.0
         floor = self._horizon_floor(az) + 0.10   # 0.10° clearance above floor
         alt = float(max(floor, min(88.0, alt)))
+        self._goto_issued_at = time.monotonic()
         resp = self.adapter.goto_altaz(alt, az)
+        err_num = int(resp.get("ErrorNumber") or 0) if isinstance(resp, dict) else 0
+        ok = isinstance(resp, dict) and err_num == 0 and not resp.get("error")
+        self._last_goto_ok = ok
         self.last_command = {
             "type": "goto_altaz",
             "alt": round(alt, 4),
@@ -1218,18 +1481,36 @@ class SunCenteringService:
         now_mono = time.monotonic()
         if now_mono - self._last_goto_log_mono >= 2.0:
             self._last_goto_log_mono = now_mono
-            ok = resp.get("success") if isinstance(resp, dict) else False
             logger.debug(
                 "[SunCenter] GoTo alt=%.4f° az=%.4f° state=%s phase=%s ok=%s",
                 alt, az, self.state, self._phase, ok,
             )
-        return resp
+        self._log_event(
+            "goto",
+            alt=round(alt, 4), az=round(az, 4),
+            ok=ok, err_num=err_num,
+            state=self.state, phase=self._phase,
+        )
+        if not ok:
+            logger.warning(
+                "[SunCenter] GoTo rejected (ErrorNumber=%d) in %s/%s — will retry after current slew",
+                err_num, self.state, self._phase,
+            )
+        return ok
 
     def _enable_tracking(self) -> None:
         try:
             self.adapter.set_tracking(True)
         except Exception as exc:
             logger.debug("[SunCenter] set_tracking(True) failed: %s", exc)
+
+    def _disable_tracking(self) -> None:
+        """Stop sidereal tracking so the scope's internal GoTos don't block ours."""
+        try:
+            self.adapter.set_tracking(False)
+            logger.info("[SunCenter] Tracking disabled for acquisition")
+        except Exception as exc:
+            logger.debug("[SunCenter] set_tracking(False) failed: %s", exc)
 
     def _is_cloud(self) -> bool:
         cm = self.center_flux_core_mean
@@ -1238,7 +1519,13 @@ class SunCenteringService:
     def _safe_get_position(self) -> Dict[str, float]:
         try:
             pos = self.adapter.get_position()
-            return pos if isinstance(pos, dict) else {}
+            if isinstance(pos, dict):
+                if pos.get("alt") is not None:
+                    self._mount_alt = float(pos["alt"])
+                if pos.get("az") is not None:
+                    self._mount_az = float(pos["az"])
+                return pos
+            return {}
         except Exception as exc:
             logger.debug("[SunCenter] get_position failed: %s", exc)
             return {}
@@ -1347,6 +1634,13 @@ class SunCenteringService:
             self.disk_ev_px = ev
             self.error_radii = math.hypot(eu, ev) / rr
             self.disk_info = dict(disk_info)
+            self._log_event(
+                "disc",
+                cx=round(cx, 2), cy=round(cy, 2), r=round(rr, 2),
+                eu=round(eu, 2), ev=round(ev, 2),
+                err=round(self.error_radii, 4),
+                state=self.state, phase=self._phase,
+            )
 
             # Update plate scale whenever we have a good lock.
             self.plate_scale_deg_per_px = SUN_ANGULAR_RADIUS_DEG / rr
@@ -1387,6 +1681,90 @@ class SunCenteringService:
             logger.info("[SunCenter] Session summary → %s", fname)
         except Exception as exc:
             logger.warning("[SunCenter] Could not write session summary: %s", exc)
+
+    # ─── Jacobian persistence ─────────────────────────────────────────────────
+
+    def _jacobian_path(self) -> str:
+        return os.path.join(self._session_dir(), "jacobian.json")
+
+    def _load_jacobian(self) -> None:
+        """Load a previously computed Jacobian from disk if < 24 hours old."""
+        path = self._jacobian_path()
+        try:
+            with open(path) as fh:
+                data = json.load(fh)
+            age_h = (time.time() - float(data["saved_at"])) / 3600.0
+            if age_h > 24.0:
+                logger.info("[SunCenter] Cached Jacobian is %.1fh old — will recalibrate", age_h)
+                return
+            j = data["j"]
+            j_inv = data["j_inv"]
+            if (len(j) == 2 and len(j[0]) == 2
+                    and len(j_inv) == 2 and len(j_inv[0]) == 2):
+                self._j = j
+                self._j_inv = j_inv
+                self._jacobian_valid = True
+                self._jacobian_at = time.monotonic()
+                if data.get("plate_scale_deg_per_px"):
+                    self.plate_scale_deg_per_px = float(data["plate_scale_deg_per_px"])
+                logger.info(
+                    "[SunCenter] Loaded cached Jacobian (%.1fh old): "
+                    "[[%.3f, %.3f], [%.3f, %.3f]]",
+                    age_h, j[0][0], j[0][1], j[1][0], j[1][1],
+                )
+        except FileNotFoundError:
+            pass  # no cached Jacobian yet — normal on first run
+        except Exception as exc:
+            logger.warning("[SunCenter] Failed to load cached Jacobian: %s", exc)
+
+    def _save_jacobian(self) -> None:
+        """Persist the current Jacobian so future sessions can skip CALIBRATE."""
+        if not self._jacobian_valid or self._j is None:
+            return
+        path = self._jacobian_path()
+        data = {
+            "saved_at": time.time(),
+            "j": self._j,
+            "j_inv": self._j_inv,
+            "plate_scale_deg_per_px": self.plate_scale_deg_per_px,
+        }
+        try:
+            with open(path, "w") as fh:
+                json.dump(data, fh, indent=2)
+            logger.info("[SunCenter] Jacobian saved → %s", path)
+        except Exception as exc:
+            logger.warning("[SunCenter] Failed to save Jacobian: %s", exc)
+
+    # ─── Session debug log (JSONL) ────────────────────────────────────────────
+
+    def _open_debug_log(self) -> None:
+        """Open a per-session JSONL event log for post-hoc analysis."""
+        try:
+            ts = int(self.started_at or time.time())
+            path = os.path.join(self._session_dir(), f"debug_{ts}.jsonl")
+            self._debug_log_fh = open(path, "a")
+            logger.info("[SunCenter] Debug log → %s", path)
+        except Exception as exc:
+            logger.warning("[SunCenter] Could not open debug log: %s", exc)
+
+    def _close_debug_log(self) -> None:
+        try:
+            if self._debug_log_fh:
+                self._debug_log_fh.close()
+                self._debug_log_fh = None
+        except Exception:
+            pass
+
+    def _log_event(self, event: str, **kwargs) -> None:
+        """Append one JSON line to the session debug log (never raises)."""
+        if self._debug_log_fh is None:
+            return
+        try:
+            row = {"t": round(time.time(), 3), "ev": event, **kwargs}
+            self._debug_log_fh.write(json.dumps(row) + "\n")
+            self._debug_log_fh.flush()
+        except Exception:
+            pass
 
     def _write_failure_snapshot(self, reason: str) -> None:
         snapshot = {

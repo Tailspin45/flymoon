@@ -287,6 +287,7 @@ class TestDiscLossRecoveryPath:
         # Simulate slew complete.
         svc.adapter.is_slewing = lambda: False  # type: ignore[method-assign]
         svc._slew_deadline_mono = time.monotonic() + 10.0
+        svc._goto_issued_at = 0.0  # bypass 0.4s minimum-wait gate
 
         # Tick 3: RECOVER slewing → settling (settle_s=0 → goes straight to assess).
         svc._tick_once()

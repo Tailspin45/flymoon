@@ -369,30 +369,69 @@ CENTER_FLUX_CORE_MASK, CENTER_FLUX_RING_MASK = _build_center_flux_masks(
 # ---------------------------------------------------------------------------
 
 
+def _algebraic_circle_fit(pts: np.ndarray):
+    """Algebraic (Bookstein) least-squares circle fit to 2-D point array.
+
+    Solves the linear system  x·D + y·E + F = -(x²+y²)  in the least-squares
+    sense.  Unlike minEnclosingCircle, the result extrapolates correctly for
+    partial arcs — the fitted center may lie outside the image bounds, which is
+    exactly what we need when the solar disc is clipped at the frame edge.
+
+    Returns (cx, cy, r) as floats, or (None, None, None) on failure.
+    Requires at least 5 points and a positive radius solution.
+    """
+    if len(pts) < 5:
+        return None, None, None
+    x = pts[:, 0].astype(np.float64)
+    y = pts[:, 1].astype(np.float64)
+    # Centre data for numerical stability.
+    x0, y0 = x.mean(), y.mean()
+    xc, yc = x - x0, y - y0
+    A = np.column_stack([xc, yc, np.ones(len(pts))])
+    b = -(xc ** 2 + yc ** 2)
+    try:
+        result, _, rank, _ = np.linalg.lstsq(A, b, rcond=None)
+    except np.linalg.LinAlgError:
+        return None, None, None
+    if rank < 3:
+        return None, None, None
+    D, E, F = result
+    cx = -D / 2.0 + x0
+    cy = -E / 2.0 + y0
+    r_sq = (D / 2.0) ** 2 + (E / 2.0) ** 2 - F
+    if r_sq <= 0.0:
+        return None, None, None
+    return cx, cy, math.sqrt(r_sq)
+
+
 def _detect_disk(gray: np.ndarray) -> Optional[tuple]:
     """Find the Sun/Moon disk in a downscaled grayscale frame.
 
-    Returns (cx, cy, radius) or None if no disk found.
-    Uses Hough circle detection with a bright-threshold fallback.
+    Returns (cx, cy, radius) or None if no disk found.  The center may lie
+    outside the image bounds when the disk is partially clipped at a frame
+    edge — callers must tolerate negative or out-of-range cx/cy values.
     """
     h, w = gray.shape[:2]
     blurred = cv2.GaussianBlur(gray, (5, 5), 1)
-    min_r = min(h, w) // 8  # ~11 px
-    max_r = min(h, w) // 2  # ~45 px
+    min_r = min(h, w) // 8  # ~22 px at 180×320
+    max_r = min(h, w) // 2  # ~90 px
 
-    circles = cv2.HoughCircles(
-        blurred,
-        cv2.HOUGH_GRADIENT,
-        dp=1.0,
-        minDist=min(h, w) // 2,
-        param1=30,
-        param2=15,
-        minRadius=min_r,
-        maxRadius=max_r,
-    )
+    # Try progressively more permissive Hough accumulator thresholds.
+    for _param2 in (15, 10, 7):
+        circles = cv2.HoughCircles(
+            blurred,
+            cv2.HOUGH_GRADIENT,
+            dp=1.0,
+            minDist=min(h, w) // 2,
+            param1=30,
+            param2=_param2,
+            minRadius=min_r,
+            maxRadius=max_r,
+        )
+        if circles is not None:
+            break
     if circles is not None:
-        # Reflections often appear as smaller bright circles. Prefer the
-        # largest plausible disk candidate to bias toward the true solar/lunar disk.
+        # Prefer largest plausible candidate (reflections tend to be smaller).
         candidates = np.round(circles[0]).astype(int)
         candidates = sorted(candidates, key=lambda c: int(c[2]), reverse=True)
         for c in candidates:
@@ -403,16 +442,29 @@ def _detect_disk(gray: np.ndarray) -> Optional[tuple]:
                 continue
             return cx, cy, r
 
-    # Fallback: threshold bright region + min enclosing circle
-    _, bright = cv2.threshold(blurred, 180, 255, cv2.THRESH_BINARY)
+    # Fallback: threshold bright region then fit a circle algebraically.
+    # The algebraic fit correctly extrapolates the disc center when the disc
+    # is partially outside the frame; minEnclosingCircle (below) is biased
+    # toward the visible arc and should only be used as a last resort.
+    # Use Otsu's method to pick threshold automatically; fall back to fixed 160.
+    otsu_thresh, _ = cv2.threshold(blurred, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+    fixed_thresh = min(160, max(80, int(otsu_thresh * 0.85)))
+    _, bright = cv2.threshold(blurred, fixed_thresh, 255, cv2.THRESH_BINARY)
     contours, _ = cv2.findContours(bright, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-    if contours:
-        largest = max(contours, key=cv2.contourArea)
-        if cv2.contourArea(largest) > np.pi * min_r * min_r:
-            (cx, cy), radius = cv2.minEnclosingCircle(largest)
-            return int(cx), int(cy), int(radius)
+    if not contours:
+        return None
+    largest = max(contours, key=cv2.contourArea)
+    if cv2.contourArea(largest) < np.pi * min_r * min_r:
+        return None
 
-    return None
+    pts = largest.reshape(-1, 2).astype(np.float64)
+    cx_f, cy_f, r_f = _algebraic_circle_fit(pts)
+    if cx_f is not None and min_r <= r_f <= max_r * 1.5:
+        return int(round(cx_f)), int(round(cy_f)), int(round(r_f))
+
+    # Last resort: minEnclosingCircle (biased for edge/corner discs).
+    (cx, cy), radius = cv2.minEnclosingCircle(largest)
+    return int(cx), int(cy), int(radius)
 
 
 def _build_disk_masks(

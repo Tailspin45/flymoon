@@ -255,8 +255,8 @@ def test_acquire_initial_issues_goto_to_ephemeris():
 
 
 def test_acquire_assess_enters_calibrate_when_disk_found():
+    """Disc found with no valid Jacobian → enter CALIBRATE to measure Jacobian first."""
     fake = _FakeAdapter()
-    # Disk at image centre so radius check passes.
     fake.detector_status = {
         "disk_detected": True,
         "analysis_resolution": "320x180@30fps",
@@ -269,6 +269,8 @@ def test_acquire_assess_enters_calibrate_when_disk_found():
     service._jacobian_valid = False
     service._tick_once()
     assert service.state == SunCenteringService.STATE_CALIBRATE
+
+
 
 
 def test_acquire_assess_skips_calibrate_when_jacobian_cached():
@@ -294,8 +296,8 @@ def test_build_search_offsets_count_matches_radii_config():
     settings = SunCenteringSettings(acquire_search_radii_deg=(0.4, 0.8))
     service = SunCenteringService(adapter=fake.as_adapter(), settings=settings)
     offsets = service._build_search_offsets()
-    # Each radius produces 4 cardinal points.
-    assert len(offsets) == 2 * 4
+    # Each radius produces 4 cardinal + 4 diagonal points.
+    assert len(offsets) == 2 * 8
     assert (0.4, 0.0) in offsets
     assert (-0.4, 0.0) in offsets
     assert (0.0, 0.4) in offsets
@@ -314,12 +316,12 @@ def test_build_search_offsets_widens_on_retry():
     # First attempt uses narrow grid.
     service.acquisition_attempts = 0
     first = service._build_search_offsets()
-    assert len(first) == 2 * 4
+    assert len(first) == 2 * 8
 
     # After one failed attempt, uses wider grid.
     service.acquisition_attempts = 1
     retry = service._build_search_offsets()
-    assert len(retry) == 3 * 4
+    assert len(retry) == 3 * 8
     assert (1.2, 0.0) in retry
 
 
