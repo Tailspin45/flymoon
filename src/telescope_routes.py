@@ -762,6 +762,21 @@ def telescope_goto():
                                 "[GoTo] Resumed lunar tracking after Alt/Az GoTo"
                             )
                             _maybe_auto_start_detector("moon")
+                        # Optional closed-loop visual centering (default on).
+                        if os.getenv("SEESTAR_AUTO_CENTER", "1") == "1":
+                            try:
+                                from src.disk_center import center_on_disk
+
+                                cr = center_on_disk(
+                                    client, alpaca, None, target=resume
+                                )
+                                logger.info(
+                                    f"[GoTo] center_on_disk ({resume}): {cr}"
+                                )
+                            except Exception as ex:
+                                logger.warning(
+                                    f"[GoTo] center_on_disk failed (non-fatal): {ex}"
+                                )
                     except Exception as ex:
                         logger.warning(f"[GoTo] resume_tracking={resume} failed: {ex}")
                 with _ctrl_lock:
@@ -817,6 +832,48 @@ def telescope_goto():
             {"error": str(e), "type": type(e).__name__},
         )
         # endregion
+        return handle_error(e)
+
+
+def telescope_center_on_disk():
+    """POST /telescope/center_on_disk — run one closed-loop visual centering pass.
+
+    Body (all optional): {
+        "target": "sun"|"moon",
+        "max_iterations": 6,
+        "tolerance_px": 8,
+        "settle_s": 1.5
+    }
+    """
+    client = get_telescope_client()
+    alpaca = get_alpaca_client()
+    if not client or not client.is_connected():
+        return jsonify({"error": "Telescope not connected"}), 503
+    if not alpaca or not alpaca.is_connected():
+        return (
+            jsonify({"error": "ALPACA not connected — motor commands require ALPACA"}),
+            503,
+        )
+
+    data = request.get_json(force=True, silent=True) or {}
+    target = (data.get("target") or client._viewing_mode or "sun").lower()
+    if target not in ("sun", "moon"):
+        return jsonify({"error": "target must be 'sun' or 'moon'"}), 400
+
+    try:
+        from src.disk_center import center_on_disk
+
+        result = center_on_disk(
+            client,
+            alpaca,
+            None,
+            target=target,
+            max_iterations=int(data.get("max_iterations", 6)),
+            tolerance_px=int(data.get("tolerance_px", 8)),
+            settle_s=float(data.get("settle_s", 1.5)),
+        )
+        return jsonify(result), 200
+    except Exception as e:
         return handle_error(e)
 
 
@@ -4171,6 +4228,12 @@ def register_routes(app):
         "/telescope/nudge/stop",
         "telescope_nudge_stop",
         telescope_nudge_stop,
+        methods=["POST"],
+    )
+    app.add_url_rule(
+        "/telescope/center_on_disk",
+        "telescope_center_on_disk",
+        telescope_center_on_disk,
         methods=["POST"],
     )
     app.add_url_rule(
