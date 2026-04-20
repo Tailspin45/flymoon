@@ -943,6 +943,13 @@
                     <button class="btn-icon gallery-mode-btn"        data-mode="diff"    onclick="setGalleryMode('diff')"    title="Show diff heatmaps">🌡️</button>
                     <button class="btn-icon gallery-mode-btn"        data-mode="trigger" onclick="setGalleryMode('trigger')" title="Show trigger frames">🎯</button>
                 </span>
+                <span id="filmstripSelectionToolbar" class="filmstrip-sel-toolbar">
+                    <span id="filmstripSelCount" class="filmstrip-sel-count">0 selected</span>
+                    <button id="filmstripFavBtn" class="btn-icon" onclick="filmstripFavoriteSelected()" title="Favorite/unfavorite selected">🤍</button>
+                    <button id="filmstripRenameBtn" class="btn-icon" onclick="filmstripRenameSelected()" title="Rename selected (single selection)">✏️</button>
+                    <button id="filmstripDownloadBtn" class="btn-icon" onclick="filmstripDownloadSelected()" title="Download selected">⬇️</button>
+                    <button id="filmstripDeleteBtn" class="btn-icon btn-danger" onclick="filmstripDeleteSelected(event)" title="Delete selected (⌘/Ctrl+click to skip confirm)">🗑️</button>
+                </span>
                 <span id="filmstripLabelToolbar" style="display:none;gap:3px;align-items:center;margin-right:6px;">
                     <button class="strip-lbl-btn" data-lbl="tp" onclick="filmstripLabelSelected('tp')" title="Label selected as True Positive">✅ TP</button>
                     <button class="strip-lbl-btn" data-lbl="fp" onclick="filmstripLabelSelected('fp')" title="Label selected as False Positive">❌ FP</button>

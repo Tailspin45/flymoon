@@ -1174,11 +1174,35 @@ body:has(#telescopeView:not([style*="display:none"]):not([style*="display: none"
 
 .filmstrip-controls {
     display: flex;
+    align-items: center;
+    flex-wrap: wrap;
     gap: 6px;
     justify-self: end;
     grid-column: 4;
     min-width: 0;
     flex-shrink: 0;
+}
+
+.filmstrip-sel-toolbar {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    background: rgba(3, 156, 156, 0.15);
+    border: 1px solid rgba(3, 156, 156, 0.3);
+    border-radius: 16px;
+    padding: 2px 8px;
+}
+
+.filmstrip-sel-count {
+    font-size: 0.75em;
+    color: #6edddd;
+    font-weight: 600;
+    white-space: nowrap;
+}
+
+.filmstrip-sel-toolbar .btn-icon {
+    padding: 2px 6px;
+    font-size: 0.82em;
 }
 
 /* Filmstrip scroll navigation — centered in preview column */
