@@ -3414,7 +3414,10 @@ function _syncFilmstripSelectionUI() {
         selToolbar.style.display = 'inline-flex';
 
         const cnt = document.getElementById('filmstripSelCount');
-        if (cnt) cnt.textContent = `${selectedCount} selected`;
+        if (cnt) {
+            cnt.textContent = String(selectedCount);
+            cnt.title = `${selectedCount} selected`;
+        }
 
         const favBtn = document.getElementById('filmstripFavBtn');
         if (favBtn) {
