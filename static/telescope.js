@@ -126,6 +126,7 @@ function _setFavoriteForPaths(paths, shouldFavorite) {
         _updateDeleteBtnState(p, isFav);
         _updateRenameBtnState(p, isFav);
     }
+    _syncFilmstripSelectionUI();
 }
 function toggleFavorite(path, event) {
     if (event) event.stopPropagation();
@@ -3167,6 +3168,7 @@ function updateFilmstrip(files) {
         filmstripSelection.selected.clear();
         filmstripSelection.lastClicked = null;
         filmstrip.innerHTML = '<p class="empty-state">No files captured yet</p>';
+        _syncFilmstripSelectionUI();
         return;
     }
     
@@ -3211,14 +3213,6 @@ function updateFilmstrip(files) {
             <div class="filmstrip-name" title="Click to rename" onclick="event.stopPropagation(); renameFavoriteFile('${file.path}', event)" style="cursor:text;">${displayName}</div>
             ${thumbnail}
             ${labelBadge}
-            <div class="filmstrip-info">
-                <div class="filmstrip-actions">
-                    <button class="btn-icon btn-fav" data-fav-path="${file.path}" onclick="toggleFavorite('${file.path}', event)" title="${getFavorites().has(file.path) ? 'Unfavorite' : 'Favorite'}">${getFavorites().has(file.path) ? '❤️' : '🤍'}</button>
-                    <button class="btn-icon" data-rename-path="${file.path}" onclick="event.stopPropagation(); renameFavoriteFile('${file.path}', event)" title="Rename" ${isTemp ? 'disabled' : ''}>✏️</button>
-                    <button class="btn-icon" onclick="event.stopPropagation(); downloadFile('${file.path}', '${file.name}')" title="Download" ${isTemp ? 'disabled' : ''}>⬇️</button>
-                    <button class="btn-icon btn-danger" onclick="event.stopPropagation(); filmstripTrashClick('${file.path}', '${file.name}', event)" title="${getFavorites().has(file.path) ? 'Remove favorite first' : 'Delete selected or this file (⌘/Ctrl+click to skip confirm)'}" ${isTemp || getFavorites().has(file.path) ? 'disabled' : ''}>🗑️</button>
-                </div>
-            </div>
         </div>
     `;
     }).join('');
@@ -3228,6 +3222,7 @@ function updateFilmstrip(files) {
 
     // Paint existing labels onto det_* items (one fetch, async)
     _paintFilmstripLabels(filmstrip);
+    _syncFilmstripSelectionUI();
 }
 
 const _LC = { tp: '#4caf50', fp: '#f44336', fn: '#ff9800' };
@@ -3390,6 +3385,10 @@ async function gridLabelSelected(label) {
     if (ok > 0) showStatus(`Labeled ${ok} clip${ok > 1 ? 's' : ''} as ${label || 'cleared'}`, 'success', 2000);
 }
 
+function _selectedFilmstripFiles() {
+    return filmstripFiles.filter(f => filmstripSelection.selected.has(f.path));
+}
+
 function _syncFilmstripSelectionUI() {
     const filmstrip = document.getElementById('filmstripList');
     if (!filmstrip) return;
@@ -3397,6 +3396,55 @@ function _syncFilmstripSelectionUI() {
         const path = el.dataset.filePath;
         el.classList.toggle('selected', filmstripSelection.selected.has(path));
     });
+
+    const selectedFiles = _selectedFilmstripFiles();
+    const selectedCount = selectedFiles.length;
+    const favs = getFavorites();
+
+    const selToolbar = document.getElementById('filmstripSelectionToolbar');
+    if (selToolbar) {
+        selToolbar.style.display = 'inline-flex';
+
+        const cnt = document.getElementById('filmstripSelCount');
+        if (cnt) cnt.textContent = `${selectedCount} selected`;
+
+        const favBtn = document.getElementById('filmstripFavBtn');
+        if (favBtn) {
+            const allFav = selectedCount > 0 && selectedFiles.every(f => favs.has(f.path));
+            favBtn.textContent = allFav ? '❤️' : '🤍';
+            favBtn.title = allFav ? 'Unfavorite selected' : 'Favorite selected';
+            favBtn.disabled = selectedCount === 0;
+        }
+
+        const renameBtn = document.getElementById('filmstripRenameBtn');
+        if (renameBtn) {
+            const canRename = selectedCount === 1 && !selectedFiles[0].isSimulation;
+            renameBtn.disabled = !canRename;
+            renameBtn.title = canRename
+                ? 'Rename selected (single selection)'
+                : selectedCount === 1
+                    ? 'Temporary simulation files cannot be renamed'
+                    : 'Rename selected (single selection)';
+        }
+
+        const downloadBtn = document.getElementById('filmstripDownloadBtn');
+        if (downloadBtn) {
+            const downloadable = selectedFiles.filter(f => !f.isSimulation).length;
+            downloadBtn.disabled = downloadable === 0;
+            downloadBtn.title = downloadable > 0
+                ? 'Download selected'
+                : 'Temporary simulation files cannot be downloaded';
+        }
+
+        const deleteBtn = document.getElementById('filmstripDeleteBtn');
+        if (deleteBtn) {
+            const deletable = selectedFiles.filter(f => !f.isSimulation && !favs.has(f.path)).length;
+            deleteBtn.disabled = deletable === 0;
+            deleteBtn.title = deletable > 0
+                ? 'Delete selected (⌘/Ctrl+click to skip confirm)'
+                : 'Remove favorite first (temporary files cannot be deleted)';
+        }
+    }
 
     // Show label toolbar only when at least one det_*.mp4 is selected
     const toolbar = document.getElementById('filmstripLabelToolbar');
@@ -3444,28 +3492,88 @@ function filmstripSelectItem(index, path, event) {
     _syncFilmstripSelectionUI();
 }
 
+function filmstripFavoriteSelected() {
+    const selectedFiles = _selectedFilmstripFiles();
+    const paths = selectedFiles.map(f => f.path);
+    if (paths.length === 0) return;
+    const favs = getFavorites();
+    const allFav = paths.every(p => favs.has(p));
+    const shouldFavorite = !allFav;
+    _setFavoriteForPaths(paths, shouldFavorite);
+    _syncFilmstripSelectionUI();
+    showStatus(`${shouldFavorite ? 'Favorited' : 'Unfavorited'} ${paths.length} file${paths.length > 1 ? 's' : ''}`, 'success', 2000);
+}
+
+async function filmstripRenameSelected() {
+    const selectedFiles = _selectedFilmstripFiles();
+    if (selectedFiles.length !== 1) {
+        showStatus('Select exactly one file to rename', 'warning', 2500);
+        return;
+    }
+    if (selectedFiles[0].isSimulation) {
+        showStatus('Temporary simulation files cannot be renamed', 'warning', 2500);
+        return;
+    }
+    await renameFavoriteFile(selectedFiles[0].path);
+}
+
+function filmstripDownloadSelected() {
+    const selectedFiles = _selectedFilmstripFiles();
+    if (selectedFiles.length === 0) return;
+    const downloadable = selectedFiles.filter(f => !f.isSimulation);
+    if (downloadable.length === 0) {
+        showStatus('Temporary simulation files cannot be downloaded', 'warning', 2500);
+        return;
+    }
+    for (const f of downloadable) {
+        downloadFile(f.path, f.name);
+    }
+}
+
+async function filmstripDeleteSelected(event) {
+    const skipConfirm = event && (event.metaKey || event.ctrlKey);
+    await _filmstripDeleteSelected({ skipConfirm });
+}
+
 function filmstripTrashClick(path, name, event) {
     if (filmstripSelection.selected.size > 0) {
-        filmstripDeleteSelectedSkipConfirm();
+        filmstripDeleteSelected(event);
     } else {
         deleteFile(path, name, event.metaKey || event.ctrlKey);
     }
 }
 
-async function filmstripDeleteSelectedSkipConfirm() {
-    const paths = [...filmstripSelection.selected];
-    const n = paths.length;
+async function _filmstripDeleteSelected({ skipConfirm = true } = {}) {
+    const selectedFiles = _selectedFilmstripFiles();
+    const n = selectedFiles.length;
     if (n === 0) return;
+
     const favs = getFavorites();
-    const deletable = paths.filter(p => !favs.has(p));
+    const favorited = selectedFiles.filter(f => favs.has(f.path));
+    const temporary = selectedFiles.filter(f => f.isSimulation);
+    const deletable = selectedFiles.filter(f => !f.isSimulation && !favs.has(f.path));
+
     if (deletable.length === 0) {
-        showStatus('Selected file(s) are favorited — remove ❤️ first', 'warning', 3000);
+        if (favorited.length > 0) {
+            showStatus('Selected file(s) are favorited — remove ❤️ first', 'warning', 3000);
+        } else {
+            showStatus('Temporary simulation files cannot be deleted', 'warning', 3000);
+        }
         return;
     }
+
+    if (!skipConfirm) {
+        const skipped = favorited.length + temporary.length;
+        const skipNote = skipped > 0
+            ? ` (${skipped} file${skipped > 1 ? 's' : ''} skipped)`
+            : '';
+        if (!confirm(`Delete ${deletable.length} file${deletable.length > 1 ? 's' : ''}?${skipNote}`)) return;
+    }
+
     let deleted = 0;
-    for (const filePath of deletable) {
+    for (const file of deletable) {
         try {
-            const p = filePath.replace('/static/', '');
+            const p = file.path.replace('/static/', '');
             const response = await fetch('/telescope/files/delete', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
@@ -3474,13 +3582,19 @@ async function filmstripDeleteSelectedSkipConfirm() {
             const data = await response.json();
             if (response.ok && data.success) deleted++;
         } catch (err) {
-            console.error('[Filmstrip] Delete error for', filePath, err);
+            console.error('[Filmstrip] Delete error for', file.path, err);
         }
     }
+
     filmstripSelection.selected.clear();
     filmstripSelection.lastClicked = null;
+    _syncFilmstripSelectionUI();
     showStatus(`Deleted ${deleted} of ${n} file${n > 1 ? 's' : ''}`, deleted > 0 ? 'success' : 'error', 3000);
     await refreshFiles();
+}
+
+async function filmstripDeleteSelectedSkipConfirm() {
+    await _filmstripDeleteSelected({ skipConfirm: true });
 }
 
 // ── Multi-select state for expanded files grid ──
