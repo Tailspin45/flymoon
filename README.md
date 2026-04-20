@@ -34,6 +34,11 @@ It continuously monitors live flight traffic, projects each aircraft's path agai
 - **Prebuilt macOS/Windows installers:** no Python required
 - **Running from source:** Python 3.9+
 
+> **iPhone Seestar app coexistence.** The iPhone Seestar app can coexist with
+> Zipcatcher, but Zipcatcher must win the `master_cli` race. If motion commands
+> are silently ignored, force-quit the app and let Zipcatcher reclaim master on
+> next mode change. See [docs/SEESTAR_APP_COEXISTENCE.md](docs/SEESTAR_APP_COEXISTENCE.md).
+
 **Flight data sources (all optional)** — Zipcatcher can query multiple sources concurrently and merge the results. You can run the app and use Seestar control/capture without any flight API keys.
 
 | Source | Key required? | Notes |

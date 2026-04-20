@@ -1,5 +1,10 @@
 # Zipcatcher — Quick Start
 
+> The iPhone Seestar app can coexist with Zipcatcher, but Zipcatcher must win the
+> `master_cli` race. If motion commands seem to be ignored, force-quit the app and
+> trigger a mode change so Zipcatcher reclaims master (see
+> [docs/SEESTAR_APP_COEXISTENCE.md](docs/SEESTAR_APP_COEXISTENCE.md)).
+
 ## Option A: Prebuilt desktop app (recommended)
 
 **No Python installation is required** for prebuilt installers.

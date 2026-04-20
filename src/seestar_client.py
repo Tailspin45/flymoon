@@ -176,6 +176,12 @@ class SeestarClient:
         self._viewing_mode: Optional[str] = (
             None  # Track current viewing mode (sun/moon/None)
         )
+        # Master control state: "held" (we own master_cli), "contested" (last
+        # reclaim was rejected/no-ack), or "unknown" (not probed yet). The
+        # iPhone Seestar app can silently steal master; motion commands are
+        # then accepted over TCP but ignored by firmware.
+        self._master_state: str = "unknown"
+        self._last_start_result: Optional[Dict[str, Any]] = None
         # Cached working RTSP URL, populated by telescope_routes probe after
         # connect / mode change. Authoritative over any .env value.
         self._rtsp_cached_url: Optional[str] = None
@@ -562,6 +568,8 @@ class SeestarClient:
         hard_fail_count = 0
         _timeout_logged = False  # log timeout once, not every 3 seconds
         initial_b, max_b, max_fails, mult = self._reconnect_policy()
+        MASTER_PROBE_INTERVAL = 30.0  # seconds between passive master probes
+        next_master_probe = time.monotonic() + MASTER_PROBE_INTERVAL
 
         while self._heartbeat_running:
             # Auto-reconnect when connection has dropped
@@ -666,6 +674,28 @@ class SeestarClient:
             finally:
                 self._cmd_seq_lock.release()
 
+            # Low-frequency master-cli probe: only log on state transitions
+            # (held → contested, contested → held) to avoid spam.
+            if time.monotonic() >= next_master_probe:
+                next_master_probe = time.monotonic() + MASTER_PROBE_INTERVAL
+                if self._cmd_seq_lock.acquire(blocking=False):
+                    try:
+                        prev = self._master_state
+                        self._reclaim_master(quiet=True)
+                        cur = self._master_state
+                        if prev != cur and prev != "unknown":
+                            if cur == "contested":
+                                logger.warning(
+                                    "[Master] master_cli now contested — iPhone "
+                                    "Seestar app appears to hold master"
+                                )
+                            elif cur == "held":
+                                logger.warning(
+                                    "[Master] master_cli reclaimed (was contested)"
+                                )
+                    finally:
+                        self._cmd_seq_lock.release()
+
             # Sleep in small intervals to allow quick shutdown
             for _ in range(self.heartbeat_interval):
                 if not self._heartbeat_running:
@@ -724,6 +754,38 @@ class SeestarClient:
         except Exception:
             return False
 
+    def _reclaim_master(self, quiet: bool = True) -> bool:
+        """Send set_setting master_cli=True and wait briefly for an ack.
+
+        Returns True when the firmware acks, False otherwise (timeout, no body,
+        or JSON-RPC error). Never raises — callers use this before motion
+        commands to detect a contested master (iPhone Seestar app).
+        """
+        if not self._connected or not self.socket:
+            self._master_state = "unknown"
+            return False
+        try:
+            resp = self._send_command(
+                "set_setting",
+                params={"master_cli": True},
+                expect_response=True,
+                timeout_override=2,
+                quiet=quiet,
+            )
+            ok = bool(resp) and resp.get("error") is None if isinstance(resp, dict) else bool(resp)
+            self._master_state = "held" if ok else "contested"
+            return ok
+        except Exception as e:
+            if not quiet:
+                logger.debug(f"_reclaim_master exception: {e}")
+            self._master_state = "contested"
+            return False
+
+    @property
+    def master_state(self) -> str:
+        """Return current master_cli ownership state: held|contested|unknown."""
+        return self._master_state
+
     def _send_init_sequence(self) -> None:
         """
         Send ALP-style post-connect initialization to the scope.
@@ -744,45 +806,101 @@ class SeestarClient:
         import socket as _socket
         from datetime import datetime, timezone
 
-        # 1. Location sync — fire-and-forget (scope does not always ACK this)
+        # 1. Location sync — wait for ack (3 s) and validate deltas
         lat, lon, _elev = get_observer_coordinates()
-        try:
-            self._send_command(
-                "set_user_location",
-                params={"lat": lat, "lon": lon, "force": True},
-                expect_response=False,
-                quiet=True,
-            )
-            logger.warning(f"[Init] set_user_location sent (lat={lat} lon={lon})")
-        except Exception as e:
-            logger.warning(
-                f"[Init] set_user_location FAILED (lat={lat} lon={lon}): {e}"
-            )
 
-        # 2. Clock sync — fire-and-forget
-        try:
-            now = datetime.now(timezone.utc)
-            self._send_command(
-                "pi_set_time",
-                params=[
-                    {
-                        "year": now.year,
-                        "mon": now.month,
-                        "day": now.day,
-                        "hour": now.hour,
-                        "min": now.minute,
-                        "sec": now.second,
-                        "time_zone": "UTC",
-                    }
-                ],
-                expect_response=False,
-                quiet=True,
-            )
-            logger.warning(
-                f"[Init] pi_set_time sent ({now.strftime('%Y-%m-%dT%H:%M:%SZ')})"
-            )
-        except Exception as e:
-            logger.warning(f"[Init] pi_set_time FAILED: {e}")
+        def _location_body(resp: Any) -> dict:
+            if isinstance(resp, dict):
+                inner = resp.get("result") if isinstance(resp.get("result"), dict) else resp
+                return inner or {}
+            return {}
+
+        for attempt in (1, 2):
+            try:
+                resp = self._send_command(
+                    "set_user_location",
+                    params={"lat": lat, "lon": lon, "force": True},
+                    expect_response=True,
+                    timeout_override=3,
+                    quiet=True,
+                )
+                body = _location_body(resp)
+                rlat = body.get("lat")
+                rlon = body.get("lon")
+                delta_deg = None
+                if isinstance(rlat, (int, float)) and isinstance(rlon, (int, float)):
+                    delta_deg = max(abs(float(rlat) - lat), abs(float(rlon) - lon))
+                logger.info(
+                    f"[Init] set_user_location ack host=({lat:.6f},{lon:.6f}) "
+                    f"scope=({rlat},{rlon}) delta={delta_deg}"
+                )
+                if delta_deg is not None and delta_deg > 0.01 and attempt == 1:
+                    logger.warning(
+                        f"[Init] location delta {delta_deg:.4f}° > 0.01° — retrying"
+                    )
+                    continue
+                break
+            except Exception as e:
+                logger.warning(
+                    f"[Init] set_user_location attempt {attempt} FAILED "
+                    f"(lat={lat} lon={lon}): {e}"
+                )
+                if attempt == 2:
+                    break
+
+        # 2. Clock sync — wait for ack (3 s) and validate delta
+        for attempt in (1, 2):
+            try:
+                now = datetime.now(timezone.utc)
+                resp = self._send_command(
+                    "pi_set_time",
+                    params=[
+                        {
+                            "year": now.year,
+                            "mon": now.month,
+                            "day": now.day,
+                            "hour": now.hour,
+                            "min": now.minute,
+                            "sec": now.second,
+                            "time_zone": "UTC",
+                        }
+                    ],
+                    expect_response=True,
+                    timeout_override=3,
+                    quiet=True,
+                )
+                body = _location_body(resp)
+                # Some firmware reports the scope-side timestamp echoed back.
+                scope_ts = None
+                for k in ("utc", "scope_time", "time", "server_time"):
+                    if isinstance(body.get(k), str):
+                        scope_ts = body.get(k)
+                        break
+                delta_s = None
+                if scope_ts:
+                    try:
+                        parsed = datetime.fromisoformat(
+                            scope_ts.replace("Z", "+00:00")
+                        )
+                        delta_s = abs(
+                            (datetime.now(timezone.utc) - parsed).total_seconds()
+                        )
+                    except Exception:
+                        delta_s = None
+                logger.info(
+                    f"[Init] pi_set_time ack host={now.strftime('%Y-%m-%dT%H:%M:%SZ')} "
+                    f"scope={scope_ts} delta_s={delta_s}"
+                )
+                if delta_s is not None and delta_s > 60 and attempt == 1:
+                    logger.warning(
+                        f"[Init] time delta {delta_s:.1f}s > 60s — retrying"
+                    )
+                    continue
+                break
+            except Exception as e:
+                logger.warning(f"[Init] pi_set_time attempt {attempt} FAILED: {e}")
+                if attempt == 2:
+                    break
 
         # 3. Session verification
         try:
@@ -798,16 +916,13 @@ class SeestarClient:
         # 4. Claim master control — firmware >2300 requires this before accepting
         #    motor commands (scope_speed_move, iscope_start_view with target, etc.)
         #    Without it, commands are accepted over TCP but silently ignored.
-        try:
-            self._send_command(
-                "set_setting",
-                params={"master_cli": True},
-                expect_response=False,
-                quiet=True,
+        if self._reclaim_master(quiet=True):
+            logger.info("[Init] master_cli acknowledged (master held)")
+        else:
+            logger.warning(
+                "[Init] master_cli NOT acknowledged — iPhone Seestar app likely "
+                "holds master; motion commands may be ignored"
             )
-            logger.warning("[Init] set_setting master_cli=True sent (claimed master)")
-        except Exception as e:
-            logger.warning(f"[Init] set_setting master_cli FAILED: {e}")
 
         # 5. Identify this client
         try:
@@ -1342,45 +1457,104 @@ class SeestarClient:
 
     def start_solar_mode(self) -> bool:
         """
-        Start solar viewing mode.
+        Start solar viewing mode with master reclaim, mode/tracking verification.
 
-        Returns
-        -------
-        bool
-            True if mode started successfully
-
-        Notes
-        -----
-        This must be called before video recording for solar transits.
-        Seestar will switch to solar viewing mode with appropriate filter.
-        iscope_start_view may not send immediate response, so we don't wait.
+        Result detail is stashed on ``self._last_start_result`` as a dict with
+        keys ``success``, ``mode_confirmed``, ``tracking_confirmed``,
+        ``master_held``. This method still returns a plain bool so existing
+        truthy callers continue to work.
         """
-        try:
-            # The Seestar app can steal master control while we stay connected.
-            # Re-claiming master before view changes avoids silently ignored mode switches.
-            try:
-                self._send_command(
-                    "set_setting",
-                    params={"master_cli": True},
-                    expect_response=False,
-                    quiet=True,
-                )
-            except Exception as _e:
-                logger.debug(f"start_solar_mode: master claim failed (non-fatal): {_e}")
+        return self._start_tracked_mode("sun")
 
-            # Don't expect immediate response - Seestar may take time to switch modes
+    def start_lunar_mode(self) -> bool:
+        """Start lunar viewing mode (see ``start_solar_mode`` for details)."""
+        return self._start_tracked_mode("moon")
+
+    def _start_tracked_mode(self, target: str) -> bool:
+        if target not in ("sun", "moon"):
+            raise ValueError(f"unsupported target: {target}")
+        detail: Dict[str, Any] = {
+            "success": False,
+            "mode_confirmed": False,
+            "tracking_confirmed": False,
+            "master_held": False,
+        }
+        try:
+            # Reclaim master (iPhone Seestar app may have stolen it)
+            held = self._reclaim_master(quiet=True)
+            detail["master_held"] = held
+            if not held:
+                logger.warning(
+                    f"[Master] Reclaim failed before {target} mode — iPhone Seestar "
+                    "app likely holds master; motion may be ignored"
+                )
+
             self._send_command(
-                "iscope_start_view", params={"mode": "sun"}, expect_response=False
+                "iscope_start_view", params={"mode": target}, expect_response=False
             )
-            self._viewing_mode = "sun"
+            self._viewing_mode = target
             self._rtsp_cached_url = None
-            logger.info("Started solar viewing mode (async)")
-            # Give telescope time to process the command
+            logger.info(f"Started {target} viewing mode (async)")
             time.sleep(1)
+
+            # Verify mode via get_view_state (up to 5 s; preserve solar_sys/lunar aliases)
+            deadline = time.monotonic() + 5.0
+            alias = {"sun": ("sun", "solar_sys"), "moon": ("moon", "lunar")}[target]
+            while time.monotonic() < deadline:
+                try:
+                    r = self._send_command(
+                        "get_view_state", quiet=True, timeout_override=2
+                    )
+                    view = (r or {}).get("View") or r or {}
+                    mode = None
+                    if isinstance(view, dict):
+                        mode = view.get("mode") or view.get("Mode")
+                        inner = view.get("View") or view.get("view")
+                        if mode is None and isinstance(inner, dict):
+                            mode = inner.get("mode") or inner.get("Mode")
+                    if isinstance(mode, str) and mode.lower() in alias:
+                        detail["mode_confirmed"] = True
+                        break
+                except Exception as _e:
+                    logger.debug(f"[{target}] get_view_state poll failed: {_e}")
+                time.sleep(0.5)
+            if not detail["mode_confirmed"]:
+                logger.warning(
+                    f"[{target}] mode not confirmed via get_view_state within 5 s"
+                )
+
+            # Verify tracking via ALPACA
+            try:
+                from src.telescope_routes import get_alpaca_client  # lazy, avoid cycles
+
+                alpaca = get_alpaca_client()
+                if alpaca and alpaca.is_connected():
+                    try:
+                        tracking = bool(alpaca.get_tracking(timeout_sec=1.5))
+                    except Exception:
+                        tracking = False
+                    if not tracking:
+                        logger.warning(
+                            f"[{target}] ALPACA Tracking=False after mode start — "
+                            "attempting set_tracking(True)"
+                        )
+                        try:
+                            alpaca.set_tracking(True, timeout_sec=2.0)
+                            tracking = bool(alpaca.get_tracking(timeout_sec=1.5))
+                        except Exception as _e:
+                            logger.warning(f"[{target}] set_tracking(True) failed: {_e}")
+                    detail["tracking_confirmed"] = bool(tracking)
+            except Exception as _e:
+                logger.debug(f"[{target}] tracking verification skipped: {_e}")
+
+            detail["success"] = True
             return True
         except Exception as e:
-            logger.error(f"Failed to start solar mode: {e}")
+            logger.error(f"Failed to start {target} mode: {e}")
+            detail["success"] = False
             raise
+        finally:
+            self._last_start_result = detail
 
     def start_lunar_mode(self) -> bool:
         """
@@ -1425,16 +1599,10 @@ class SeestarClient:
     def start_scenery_mode(self) -> bool:
         """Start scenery viewing mode (no sidereal tracking — for manual positioning)."""
         try:
-            try:
-                self._send_command(
-                    "set_setting",
-                    params={"master_cli": True},
-                    expect_response=False,
-                    quiet=True,
-                )
-            except Exception as _e:
-                logger.debug(
-                    f"start_scenery_mode: master claim failed (non-fatal): {_e}"
+            if not self._reclaim_master(quiet=True):
+                logger.warning(
+                    "[Master] Reclaim failed before scenery mode — iPhone Seestar "
+                    "app likely holds master; motion may be ignored"
                 )
 
             self._send_command(
@@ -1496,15 +1664,11 @@ class SeestarClient:
 
         # Reclaim master right before focus operations — the Seestar app can steal
         # master control while this session is still connected.
-        try:
-            self._send_command(
-                "set_setting",
-                params={"master_cli": True},
-                expect_response=False,
-                quiet=True,
+        if not self._reclaim_master(quiet=True):
+            logger.warning(
+                "[Master] Reclaim failed before autofocus — iPhone Seestar "
+                "app likely holds master; motion may be ignored"
             )
-        except Exception as e:
-            logger.debug(f"Autofocus preflight master claim failed (non-fatal): {e}")
 
         attempts = [
             # Matches seestar_alp verify injection for no-param commands.
@@ -2083,6 +2247,7 @@ class SeestarClient:
             "viewing_mode": viewing_mode,
             "host": self.host,
             "port": self.port,
+            "master_state": self._master_state,
         }
 
         if self._recording_start_time:
