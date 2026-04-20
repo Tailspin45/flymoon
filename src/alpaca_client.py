@@ -1476,9 +1476,51 @@ class AlpacaClient:
     def _altaz_to_radec(
         alt: float, az: float, lat: float, lon: float
     ) -> Tuple[float, float]:
-        """Convert Alt/Az to RA(hours)/Dec(degrees) for the current time.
+        """Convert apparent Alt/Az to RA(hours)/Dec(degrees) for the current time.
 
-        Uses the same spherical trig as SeestarClient.goto_altaz.
+        Uses Skyfield's ``from_altaz`` (inverse of ``.apparent().altaz()``) so
+        nutation, aberration, and standard refraction are modelled to the same
+        precision as the Sun/Moon tracking path. Observer elevation is pulled
+        from ``get_observer_coordinates()`` so the geodesy is consistent with
+        the rest of the pipeline.
+
+        Set ``ZIP_ALTAZ_LEGACY=1`` to fall back to the pre-Skyfield spherical
+        trig (kept for one release to allow trivial rollback).
+        """
+        if os.getenv("ZIP_ALTAZ_LEGACY") == "1":
+            return AlpacaClient._altaz_to_radec_legacy(alt, az, lat, lon)
+
+        from skyfield.api import wgs84
+        from src.constants import EARTH_TIMESCALE
+
+        # Use the observer elevation from site_context so we stay consistent
+        # with the prediction pipeline. Fallback to 0 m if unavailable.
+        try:
+            _lat, _lon, elev = get_observer_coordinates()
+        except Exception:
+            elev = 0.0
+
+        t = EARTH_TIMESCALE.now()
+        topos = wgs84.latlon(lat, lon, elevation_m=float(elev or 0.0))
+        # from_altaz returns an apparent position; .radec(epoch='date') gives
+        # apparent-of-date RA/Dec which is what motor-goto expects.
+        apparent = topos.at(t).from_altaz(
+            alt_degrees=float(alt),
+            az_degrees=float(az),
+        )
+        ra, dec, _ = apparent.radec(epoch="date")
+        ra_h = float(ra.hours) % 24.0
+        dec_d = float(dec.degrees)
+        return ra_h, dec_d
+
+    @staticmethod
+    def _altaz_to_radec_legacy(
+        alt: float, az: float, lat: float, lon: float
+    ) -> Tuple[float, float]:
+        """Pre-Skyfield closed-form conversion (rollback path only).
+
+        Kept one release for rollback via ``ZIP_ALTAZ_LEGACY=1``. Does not
+        model refraction, nutation, or aberration.
         """
         from src.constants import EARTH_TIMESCALE
 
