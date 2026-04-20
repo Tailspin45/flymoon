@@ -3961,8 +3961,14 @@ function viewFile(path, name, opts) {
         const _initAfterMeta = async () => {
             _videoFps = await _probeVideoFps(vid, path);
             _initFrameScrubber(vid);
-            updateAfterSeek();
+            // Ensure the playhead is settled at frame 0 and a real frame is
+            // decoded before we size the thumb canvas / draw anything.
+            await _seekToFrame(vid, 0);
             _extractFrameThumbs(vid);
+            // Prime the pump: guarantee the centre panel has content.
+            _captureLandedThumb(vid, 0);
+            _updateFivePanel();
+            updateAfterSeek();
             _maybeAutoIsolate();
         };
         vid.addEventListener('loadedmetadata', _initAfterMeta, { once: true });
@@ -4239,19 +4245,52 @@ async function _scrubPlayLoop() {
 
 var _currentFrame = 0;
 var _renderPending = false;
+var _fivePanelRetryScheduled = false;
+
+// Viewer debug logging. Leave false in production; flip to true when
+// diagnosing filmstrip / playback regressions.
+const _VIDDBG = false;
+function _vdbg(...args) { if (_VIDDBG) try { console.log('[vid]', ...args); } catch (e) {} }
+
+/** Capture whatever the decoder is currently showing into the shared
+ *  offscreen canvas, stored against `frameIdx`. No-op if already captured
+ *  or if the canvas isn't ready. Safe to call from any seek/play code path. */
+function _captureLandedThumb(vid, frameIdx) {
+    if (!_thumbCtx || !_thumbCanvas || !vid) return;
+    if (frameIdx < 0 || frameIdx >= _frameTotalCount) return;
+    if (_frameThumbs[frameIdx]) return;
+    try {
+        _thumbCtx.drawImage(vid, 0, 0, _thumbCanvas.width, _thumbCanvas.height);
+        const url = _thumbCanvas.toDataURL('image/jpeg', 0.85);
+        _frameThumbs[frameIdx] = url;
+        _thumbExtractionPending.delete(frameIdx);
+        _vdbg('captured', frameIdx, 'len=', url.length);
+    } catch (e) {
+        _vdbg('capture failed', frameIdx, e && e.message);
+    }
+}
 
 /** Seek `vid` to the given frame and resolve once the post-seek frame is
  *  actually decoded (requestVideoFrameCallback) or seeked has fired +
- *  a best-effort settle in the fallback path. */
+ *  a best-effort settle in the fallback path. Opportunistically captures
+ *  the landed frame into the thumb cache so playback/stepping also
+ *  populates the filmstrip. */
 function _seekToFrame(vid, frame) {
     if (!vid) return Promise.resolve();
     const fps = _videoFps || 30;
     const clamped = Math.max(0, Math.min((_frameTotalCount || 1) - 1, Math.round(frame)));
     _currentFrame = clamped;
     const useRVFC = typeof vid.requestVideoFrameCallback === 'function';
+    _vdbg('seek start', clamped);
     return new Promise(resolve => {
         let done = false;
-        const finish = () => { if (!done) { done = true; resolve(); } };
+        const finish = () => {
+            if (done) return;
+            done = true;
+            _captureLandedThumb(vid, clamped);
+            _vdbg('seek settle', clamped);
+            resolve();
+        };
         const onSeeked = () => {
             vid.removeEventListener('seeked', onSeeked);
             if (useRVFC) {
@@ -4316,7 +4355,11 @@ async function _probeVideoFps(vid, path) {
                 const median = deltas[Math.floor(deltas.length / 2)];
                 if (median > 0) {
                     const fps = 1 / median;
-                    if (fps > 5 && fps < 480) return Math.round(fps * 1000) / 1000;
+                    if (fps > 5 && fps < 480) {
+                        const rounded = Math.round(fps * 1000) / 1000;
+                        _vdbg('probe rVFC fps=', rounded);
+                        return rounded;
+                    }
                 }
             }
         }
@@ -4328,10 +4371,14 @@ async function _probeVideoFps(vid, path) {
             const r = await fetch('/api/video/fps?path=' + encodeURIComponent(apiPath));
             if (r.ok) {
                 const j = await r.json();
-                if (j && typeof j.fps === 'number' && j.fps > 0) return j.fps;
+                if (j && typeof j.fps === 'number' && j.fps > 0) {
+                    _vdbg('probe server fps=', j.fps);
+                    return j.fps;
+                }
             }
         }
     } catch (e) { /* fall through */ }
+    _vdbg('probe fallback fps=30');
     return 30;
 }
 
@@ -4381,21 +4428,34 @@ const THUMB_QUEUE_THROTTLE_MS = 120;
 
 /** Install a shared offscreen canvas sized from mainVid. Thumb extraction
  *  reuses mainVid's own decoder — no second <video>, no decoder race. */
-function _extractFrameThumbs(mainVid) {
+async function _extractFrameThumbs(mainVid) {
     _frameThumbs = {};
     _thumbExtractionQueue = [];
     _thumbExtractionPending = new Set();
     _thumbGeneration++;
     _thumbChain = Promise.resolve();
 
-    const vw = mainVid.videoWidth || 640;
-    const vh = mainVid.videoHeight || 480;
+    // On large (4K) sources videoWidth can still be 0 right after the probe's
+    // play/pause dance. Poll briefly before sizing the canvas.
+    let tries = 0;
+    while (!(mainVid.videoWidth > 0) && tries < 20) {
+        await new Promise(r => setTimeout(r, 50));
+        tries++;
+    }
+    if (!(mainVid.videoWidth > 0)) {
+        _vdbg('extract bail: videoWidth still 0');
+        return;
+    }
+
+    const vw = mainVid.videoWidth;
+    const vh = mainVid.videoHeight || Math.round(vw * 9 / 16);
     const thumbW = Math.min(vw, 400);
     const thumbH = Math.max(1, Math.round(thumbW * (vh / vw)));
     _thumbCanvas = document.createElement('canvas');
     _thumbCanvas.width = thumbW;
     _thumbCanvas.height = thumbH;
     _thumbCtx = _thumbCanvas.getContext('2d');
+    _vdbg('canvas', thumbW, 'x', thumbH);
 
     _queueFivePanelThumbs(_currentFrame);
 }
@@ -4419,7 +4479,6 @@ function _captureCurrentAsThumb(vid, frameIdx) {
 function _drainThumbQueue() {
     if (!_thumbCtx || !_thumbCanvas) return;
     if (_thumbExtractionQueue.length === 0) return;
-    if (_scrubPlayDir !== 0) return; // don't fight the play loop
     const gen = _thumbGeneration;
     _thumbChain = _thumbChain.then(async () => {
         if (gen !== _thumbGeneration) return;
@@ -4427,11 +4486,25 @@ function _drainThumbQueue() {
         if (!vid || !vid.duration) { _thumbExtractionQueue = []; return; }
         const homeFrame = _currentFrame;
         let movedPlayhead = false;
-        while (_thumbExtractionQueue.length > 0 && gen === _thumbGeneration && _scrubPlayDir === 0) {
+        while (_thumbExtractionQueue.length > 0 && gen === _thumbGeneration) {
             const frameIdx = _thumbExtractionQueue.shift();
             if (frameIdx === undefined) break;
             if (_frameThumbs[frameIdx]) { _thumbExtractionPending.delete(frameIdx); continue; }
             const curFrame = Math.round(vid.currentTime * (_videoFps || 30));
+            if (_scrubPlayDir !== 0) {
+                // Playing: only capture frames we're already sitting on.
+                // Anything else goes back on the queue for the play loop /
+                // _seekToFrame's opportunistic capture to pick up later.
+                if (curFrame === frameIdx) {
+                    _captureCurrentAsThumb(vid, frameIdx);
+                    _updateFivePanel();
+                } else {
+                    _thumbExtractionQueue.push(frameIdx);
+                    break;
+                }
+                continue;
+            }
+            // Paused: may seek to reach the frame.
             if (curFrame === frameIdx) {
                 _captureCurrentAsThumb(vid, frameIdx);
             } else {
@@ -4464,7 +4537,19 @@ function _updateFivePanel() {
     if (!panel) return;
     const total = _frameTotalCount || 1;
     const cur = _currentFrame;
-    _queueFivePanelThumbs(cur);
+    // If the thumb canvas isn't ready yet, draw placeholders and schedule
+    // a single retry once the canvas finishes setup.
+    if (!_thumbCanvas || !_thumbCtx) {
+        if (!_fivePanelRetryScheduled) {
+            _fivePanelRetryScheduled = true;
+            requestAnimationFrame(() => {
+                _fivePanelRetryScheduled = false;
+                _updateFivePanel();
+            });
+        }
+    } else {
+        _queueFivePanelThumbs(cur);
+    }
 
     const offsets = [-2, -1, 0, 1, 2];
     let html = '';
