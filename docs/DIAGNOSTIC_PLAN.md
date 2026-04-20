@@ -710,3 +710,43 @@ All Phase 4 success criteria met. Production code in `src/seestar_client.py` and
 - [ ] All metrics logged
 
 See `docs/diag_phase5_results.md` for full run instructions and success criteria checklist.
+
+---
+
+## Phase 6: Visual Acquisition
+
+### Purpose
+Close the final gap between "telescope said it's tracking the Sun" and
+"the Sun is actually in the middle of the frame." Firmware-reported
+coordinates, Skyfield ephemeris, and motor encoders can all agree while
+the disk sits visibly off-center. Fix it by looking at the picture.
+
+### Scope
+- Grab a single RTSP frame after mode/tracking is confirmed.
+- Detect the bright disk (Hough + contour fallback — same pipeline as
+  `src.solar_timelapse._detect_disk`).
+- Convert pixel offset -> arcsec via configured FoV
+  (`SEESTAR_FOV_DEG_X` / `SEESTAR_FOV_DEG_Y`, defaults 1.27 x 0.71).
+- Issue short `moveaxis` pulses (axis 0 / 1), stop, settle, re-detect.
+- Repeat up to N iterations until the disk is within tolerance of
+  frame center.
+
+### Artifacts
+- `src/disk_center.py` — `detect_disk`, `frame_offset_to_arcsec`,
+  `center_on_disk`.
+- `POST /telescope/center_on_disk` — Flask route for manual triggering.
+- `SEESTAR_AUTO_CENTER=1` (default on) — auto-center after
+  `_goto_then_resume` enters sun/moon mode.
+- `tests/diag_phase4_sun_acquisition.py` — end-to-end runner with a
+  per-iteration offset trajectory and final report.
+
+### Success Criteria
+- `disk_detected` = True on first frame grab.
+- `final_offset_px` within `tolerance_px` (default 8 px on ~1920x1080
+  preview) on both axes.
+- `iterations <= 6`.
+- Per-iteration offsets decrease monotonically to within a small
+  settling band.
+- With iPhone Seestar app open, report shows `master_state=contested`
+  and at least one reclaim-failed WARNING. With app force-quit, report
+  shows `master_state=held` and centering converges.
