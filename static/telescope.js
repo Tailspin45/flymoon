@@ -3912,22 +3912,29 @@ function viewFile(path, name, opts) {
         const slider = document.getElementById('frameScrubSlider');
         slider.addEventListener('input', () => {
             const f = parseInt(slider.value, 10);
-            _currentFrame = f;
-            vid.currentTime = f / _videoFps;
+            _seekToFrame(vid, f);
         });
 
+        const _scheduleViewerRender = () => {
+            if (_renderPending) return;
+            _renderPending = true;
+            requestAnimationFrame(() => {
+                _renderPending = false;
+                const v = document.getElementById('hiddenVid');
+                if (!v) return;
+                _updateScrubPosition(v);
+                _updateFivePanel();
+            });
+        };
         const updateAfterSeek = () => {
             _currentFrame = Math.round(vid.currentTime * _videoFps);
-            _updateScrubPosition(vid);
-            _updateFivePanel();
+            _scheduleViewerRender();
         };
+        // timeupdate only handles loop wrap-around; render is driven by seeked.
         vid.addEventListener('timeupdate', () => {
             if (_loopSegment && _loopSegment.start != null && vid.currentTime >= _loopSegment.end) {
                 vid.currentTime = _loopSegment.start;
             }
-            _currentFrame = Math.round(vid.currentTime * _videoFps);
-            _updateScrubPosition(vid);
-            _updateFivePanel();
         });
         vid.addEventListener('seeked', updateAfterSeek);
         const _isDetClip = /\/det_[^/]+\.mp4$/i.test(path);
@@ -3951,10 +3958,16 @@ function viewFile(path, name, opts) {
                 _runIsolateTransit(apiPath, null);
             });
         };
-        vid.addEventListener('loadedmetadata', () => { _initFrameScrubber(vid); updateAfterSeek(); _maybeAutoIsolate(); });
+        const _initAfterMeta = async () => {
+            _videoFps = await _probeVideoFps(vid, path);
+            _initFrameScrubber(vid);
+            updateAfterSeek();
+            _extractFrameThumbs(vid);
+            _maybeAutoIsolate();
+        };
+        vid.addEventListener('loadedmetadata', _initAfterMeta, { once: true });
         vid.addEventListener('loadeddata', () => { updateAfterSeek(); });
-        if (vid.readyState >= 1) { _initFrameScrubber(vid); updateAfterSeek(); }
-        _extractFrameThumbs(vid);
+        if (vid.readyState >= 1) { _initAfterMeta(); }
     } else {
         const isDiff = name.includes('_diff');
         const isFrame = name.includes('_frame');
@@ -4046,14 +4059,11 @@ function closeFileViewer() {
     _frameThumbs = {};
     _thumbExtractionQueue = [];
     _thumbExtractionPending = new Set();
-    _thumbExtractionBusy = false;
-    _thumbExtractorCanvas = null;
-    _thumbExtractorCtx = null;
+    _thumbCanvas = null;
+    _thumbCtx = null;
+    _thumbGeneration++;
+    _thumbChain = Promise.resolve();
     _currentFrame = 0;
-    if (_thumbExtractorVid) {
-        try { document.body.removeChild(_thumbExtractorVid); } catch (e) {}
-        _thumbExtractorVid = null;
-    }
 
     if (viewer._filesModalWasOpen) {
         const filesModal = document.getElementById('filesModal');
@@ -4171,28 +4181,22 @@ function frameStepStop() {
     if (_frameStepTimer) { clearTimeout(_frameStepTimer); _frameStepTimer = null; }
 }
 
-// Scrubber playback (frame-by-frame at ~_videoFps using rAF)
-var _scrubPlayRAF = null;
+// Scrubber playback — serialized on seek completion, not a fixed interval.
 var _scrubPlayDir = 0;
-var _scrubPlayLastT = null;
+var _scrubPlayRunning = false;
 
 function scrubPlayToggle(dir) {
     if (_scrubPlayDir === dir) {
-        // Already playing this direction — stop
         _scrubPlayStop();
         return;
     }
-    _scrubPlayStop();
     _scrubPlayDir = dir;
-    _scrubPlayLastT = null;
-    _scrubPlayRAF = requestAnimationFrame(_scrubPlayTick);
     _scrubPlayUpdateBtns();
+    if (!_scrubPlayRunning) _scrubPlayLoop();
 }
 
 function _scrubPlayStop() {
-    if (_scrubPlayRAF) { cancelAnimationFrame(_scrubPlayRAF); _scrubPlayRAF = null; }
     _scrubPlayDir = 0;
-    _scrubPlayLastT = null;
     _scrubPlayUpdateBtns();
 }
 
@@ -4203,20 +4207,30 @@ function _scrubPlayUpdateBtns() {
     if (fwd) fwd.style.background = _scrubPlayDir ===  1 ? '#0a4' : '';
 }
 
-function _scrubPlayTick(ts) {
-    if (_scrubPlayDir === 0) return;
-    const interval = 1000 / (_videoFps || 30);
-    if (_scrubPlayLastT === null) _scrubPlayLastT = ts;
-    if (ts - _scrubPlayLastT >= interval) {
-        _scrubPlayLastT = ts;
-        const next = _currentFrame + _scrubPlayDir;
-        if (next < 0 || next >= _frameTotalCount) {
-            _scrubPlayStop();
-            return;
+async function _scrubPlayLoop() {
+    if (_scrubPlayRunning) return;
+    _scrubPlayRunning = true;
+    try {
+        while (_scrubPlayDir !== 0) {
+            const vid = document.getElementById('hiddenVid');
+            if (!vid || !vid.duration) break;
+            vid.pause();
+            const next = _currentFrame + _scrubPlayDir;
+            if (next < 0 || next >= _frameTotalCount) {
+                _scrubPlayStop();
+                break;
+            }
+            const tStart = performance.now();
+            await _seekToFrame(vid, next);
+            const target = 1000 / (_videoFps || 30);
+            const elapsed = performance.now() - tStart;
+            if (elapsed < target) {
+                await new Promise(r => setTimeout(r, target - elapsed));
+            }
         }
-        _stepFrame(_scrubPlayDir);
+    } finally {
+        _scrubPlayRunning = false;
     }
-    _scrubPlayRAF = requestAnimationFrame(_scrubPlayTick);
 }
 
 // ---------------------------------------------------------------------------
@@ -4224,19 +4238,105 @@ function _scrubPlayTick(ts) {
 // ---------------------------------------------------------------------------
 
 var _currentFrame = 0;
+var _renderPending = false;
+
+/** Seek `vid` to the given frame and resolve once the post-seek frame is
+ *  actually decoded (requestVideoFrameCallback) or seeked has fired +
+ *  a best-effort settle in the fallback path. */
+function _seekToFrame(vid, frame) {
+    if (!vid) return Promise.resolve();
+    const fps = _videoFps || 30;
+    const clamped = Math.max(0, Math.min((_frameTotalCount || 1) - 1, Math.round(frame)));
+    _currentFrame = clamped;
+    const useRVFC = typeof vid.requestVideoFrameCallback === 'function';
+    return new Promise(resolve => {
+        let done = false;
+        const finish = () => { if (!done) { done = true; resolve(); } };
+        const onSeeked = () => {
+            vid.removeEventListener('seeked', onSeeked);
+            if (useRVFC) {
+                try { vid.requestVideoFrameCallback(() => finish()); return; } catch (e) {}
+            }
+            // Fallback: allow one browser tick for the frame to present.
+            setTimeout(finish, 16);
+        };
+        vid.addEventListener('seeked', onSeeked, { once: true });
+        try {
+            vid.currentTime = clamped / fps;
+        } catch (e) {
+            vid.removeEventListener('seeked', onSeeked);
+            finish();
+        }
+        // Safety net: never hang forever.
+        setTimeout(finish, 1500);
+    });
+}
 
 function _stepFrame(dir) {
     const vid = document.getElementById('hiddenVid');
     if (!vid || !vid.duration) return;
     vid.pause();
-    const newFrame = Math.max(0, Math.min(_frameTotalCount - 1, _currentFrame + dir));
-    _currentFrame = newFrame;
-    vid.currentTime = newFrame / _videoFps;
+    _seekToFrame(vid, _currentFrame + dir);
+}
+
+/** Probe the video's real fps. Prefer requestVideoFrameCallback sampling
+ *  (fast, client-only); fall back to the ffprobe-backed server route; fall
+ *  back to 30. Resolves to a positive number. */
+async function _probeVideoFps(vid, path) {
+    try {
+        if (typeof vid.requestVideoFrameCallback === 'function') {
+            const deltas = [];
+            const wasMuted = vid.muted;
+            vid.muted = true;
+            await new Promise(res => {
+                let last = null;
+                let count = 0;
+                const cb = (_now, meta) => {
+                    if (last !== null) {
+                        const d = meta.mediaTime - last;
+                        if (d > 0 && d < 1) deltas.push(d);
+                    }
+                    last = meta.mediaTime;
+                    count++;
+                    if (count < 12 && deltas.length < 10) {
+                        try { vid.requestVideoFrameCallback(cb); } catch (e) { res(); }
+                    } else {
+                        res();
+                    }
+                };
+                try { vid.requestVideoFrameCallback(cb); } catch (e) { res(); }
+                vid.play().catch(() => {});
+                setTimeout(res, 1200);
+            });
+            try { vid.pause(); } catch (e) {}
+            vid.muted = wasMuted;
+            try { vid.currentTime = 0; } catch (e) {}
+            if (deltas.length >= 3) {
+                deltas.sort((a, b) => a - b);
+                const median = deltas[Math.floor(deltas.length / 2)];
+                if (median > 0) {
+                    const fps = 1 / median;
+                    if (fps > 5 && fps < 480) return Math.round(fps * 1000) / 1000;
+                }
+            }
+        }
+    } catch (e) { /* fall through */ }
+    // Server fallback
+    try {
+        const apiPath = (path || '').replace(/^\/static\//, '');
+        if (apiPath) {
+            const r = await fetch('/api/video/fps?path=' + encodeURIComponent(apiPath));
+            if (r.ok) {
+                const j = await r.json();
+                if (j && typeof j.fps === 'number' && j.fps > 0) return j.fps;
+            }
+        }
+    } catch (e) { /* fall through */ }
+    return 30;
 }
 
 function _initFrameScrubber(vid) {
     if (!vid || !vid.duration) return;
-    _videoFps = 30;
     _frameTotalCount = Math.round(vid.duration * _videoFps);
     const slider = document.getElementById('frameScrubSlider');
     if (slider) {
@@ -4270,95 +4370,84 @@ function _updateScrubPosition(vid) {
 
 var _frameThumbs = {};      // frame index -> data URL
 var _frameTotalCount = 0;
-var _thumbExtractorVid = null;
-var _thumbExtractorCanvas = null;
-var _thumbExtractorCtx = null;
-var _thumbExtractionBusy = false;
+var _thumbCanvas = null;
+var _thumbCtx = null;
 var _thumbExtractionQueue = [];
 var _thumbExtractionPending = new Set();
+var _thumbChain = Promise.resolve();
+var _thumbGeneration = 0;
 var _lastThumbQueueMs = 0;
 const THUMB_QUEUE_THROTTLE_MS = 120;
 
-/** Prepare a hidden extractor video for lightweight on-demand frame thumbnails. */
+/** Install a shared offscreen canvas sized from mainVid. Thumb extraction
+ *  reuses mainVid's own decoder — no second <video>, no decoder race. */
 function _extractFrameThumbs(mainVid) {
-    if (_thumbExtractorVid) {
-        try { document.body.removeChild(_thumbExtractorVid); } catch (e) {}
-        _thumbExtractorVid = null;
-    }
     _frameThumbs = {};
     _thumbExtractionQueue = [];
     _thumbExtractionPending = new Set();
-    _thumbExtractionBusy = false;
-    _thumbExtractorCanvas = null;
-    _thumbExtractorCtx = null;
+    _thumbGeneration++;
+    _thumbChain = Promise.resolve();
 
-    const extVid = document.createElement('video');
-    extVid.src = mainVid.src;
-    extVid.muted = true;
-    extVid.preload = 'metadata';
-    extVid.style.cssText = 'position:absolute;left:-9999px;width:1px;height:1px;';
-    document.body.appendChild(extVid);
-    _thumbExtractorVid = extVid;
+    const vw = mainVid.videoWidth || 640;
+    const vh = mainVid.videoHeight || 480;
+    const thumbW = Math.min(vw, 400);
+    const thumbH = Math.max(1, Math.round(thumbW * (vh / vw)));
+    _thumbCanvas = document.createElement('canvas');
+    _thumbCanvas.width = thumbW;
+    _thumbCanvas.height = thumbH;
+    _thumbCtx = _thumbCanvas.getContext('2d');
 
-    extVid.addEventListener('loadedmetadata', () => {
-        if (extVid !== _thumbExtractorVid) return;
-
-        const vw = extVid.videoWidth || 640;
-        const vh = extVid.videoHeight || 480;
-        const thumbW = Math.min(vw, 400);
-        const thumbH = Math.max(1, Math.round(thumbW * (vh / vw)));
-        _thumbExtractorCanvas = document.createElement('canvas');
-        _thumbExtractorCanvas.width = thumbW;
-        _thumbExtractorCanvas.height = thumbH;
-        _thumbExtractorCtx = _thumbExtractorCanvas.getContext('2d');
-        _queueFivePanelThumbs(_currentFrame);
-    }, { once: true });
+    _queueFivePanelThumbs(_currentFrame);
 }
 
 function _queueFrameThumb(frameIdx) {
-    if (!_thumbExtractorVid || !_thumbExtractorCtx || !_thumbExtractorCanvas) return;
+    if (!_thumbCtx || !_thumbCanvas) return;
     if (frameIdx < 0 || frameIdx >= _frameTotalCount) return;
     if (_frameThumbs[frameIdx] || _thumbExtractionPending.has(frameIdx)) return;
     _thumbExtractionPending.add(frameIdx);
     _thumbExtractionQueue.push(frameIdx);
 }
 
-function _drainThumbQueue() {
-    if (_thumbExtractionBusy) return;
-    if (!_thumbExtractorVid || !_thumbExtractorCtx || !_thumbExtractorCanvas) return;
-    const frameIdx = _thumbExtractionQueue.shift();
-    if (frameIdx === undefined) return;
-
-    _thumbExtractionBusy = true;
-    const extVid = _thumbExtractorVid;
-    const fps = _videoFps || 30;
-
-    extVid.onseeked = () => {
-        if (extVid !== _thumbExtractorVid) {
-            _thumbExtractionPending.delete(frameIdx);
-            _thumbExtractionBusy = false;
-            requestAnimationFrame(_drainThumbQueue);
-            return;
-        }
-        try {
-            _thumbExtractorCtx.drawImage(extVid, 0, 0, _thumbExtractorCanvas.width, _thumbExtractorCanvas.height);
-            _frameThumbs[frameIdx] = _thumbExtractorCanvas.toDataURL('image/jpeg', 0.85);
-        } catch (e) {
-            // Ignore per-frame extraction failures and continue.
-        }
-        _thumbExtractionPending.delete(frameIdx);
-        _thumbExtractionBusy = false;
-        _updateFivePanel();
-        requestAnimationFrame(_drainThumbQueue);
-    };
-
+function _captureCurrentAsThumb(vid, frameIdx) {
     try {
-        extVid.currentTime = frameIdx / fps;
-    } catch (e) {
-        _thumbExtractionPending.delete(frameIdx);
-        _thumbExtractionBusy = false;
-        requestAnimationFrame(_drainThumbQueue);
-    }
+        _thumbCtx.drawImage(vid, 0, 0, _thumbCanvas.width, _thumbCanvas.height);
+        _frameThumbs[frameIdx] = _thumbCanvas.toDataURL('image/jpeg', 0.85);
+    } catch (e) { /* ignore per-frame failures */ }
+    _thumbExtractionPending.delete(frameIdx);
+}
+
+function _drainThumbQueue() {
+    if (!_thumbCtx || !_thumbCanvas) return;
+    if (_thumbExtractionQueue.length === 0) return;
+    if (_scrubPlayDir !== 0) return; // don't fight the play loop
+    const gen = _thumbGeneration;
+    _thumbChain = _thumbChain.then(async () => {
+        if (gen !== _thumbGeneration) return;
+        const vid = document.getElementById('hiddenVid');
+        if (!vid || !vid.duration) { _thumbExtractionQueue = []; return; }
+        const homeFrame = _currentFrame;
+        let movedPlayhead = false;
+        while (_thumbExtractionQueue.length > 0 && gen === _thumbGeneration && _scrubPlayDir === 0) {
+            const frameIdx = _thumbExtractionQueue.shift();
+            if (frameIdx === undefined) break;
+            if (_frameThumbs[frameIdx]) { _thumbExtractionPending.delete(frameIdx); continue; }
+            const curFrame = Math.round(vid.currentTime * (_videoFps || 30));
+            if (curFrame === frameIdx) {
+                _captureCurrentAsThumb(vid, frameIdx);
+            } else {
+                vid.pause();
+                await _seekToFrame(vid, frameIdx);
+                if (gen !== _thumbGeneration) return;
+                movedPlayhead = true;
+                _captureCurrentAsThumb(vid, frameIdx);
+            }
+            _updateFivePanel();
+        }
+        // Restore user's playhead if we moved it for thumb capture.
+        if (movedPlayhead && gen === _thumbGeneration && _scrubPlayDir === 0) {
+            await _seekToFrame(vid, homeFrame);
+        }
+    }).catch(() => {});
 }
 
 function _queueFivePanelThumbs(centerFrame) {
@@ -4401,10 +4490,11 @@ function _updateFivePanel() {
 
 function _jumpToFrame(f) {
     const vid = document.getElementById('hiddenVid');
-    if (!vid || f < 0 || f >= _frameTotalCount) return;
+    const frame = Math.round(f);
+    if (!vid || frame < 0 || frame >= _frameTotalCount) return;
     vid.pause();
-    _currentFrame = f;
-    vid.currentTime = f / _videoFps;
+    _scrubPlayStop();
+    _seekToFrame(vid, frame);
 }
 
 function toggleMarkFrame() {
