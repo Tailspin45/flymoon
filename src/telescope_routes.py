@@ -2994,6 +2994,74 @@ def isolate_transit_route():
         return handle_error(exc)
 
 
+def video_fps_route():
+    """GET /api/video/fps?path=captures/...
+
+    Probe an MP4's video-stream fps via ffprobe. Returns {"fps": <float>} on
+    success, or 404 {"error": "..."} on any failure (missing file, ffprobe
+    absent, parse error). The frontend falls back to 30 fps on non-200.
+    """
+    rel_path = request.args.get("path", "")
+    if not rel_path:
+        return jsonify({"error": "Missing path"}), 400
+
+    captures_abs = os.path.abspath("static/captures")
+    abs_path = os.path.abspath(os.path.join("static", rel_path))
+    if not abs_path.startswith(captures_abs):
+        return jsonify({"error": "Invalid file path"}), 403
+    if not os.path.exists(abs_path):
+        return jsonify({"error": "File not found"}), 404
+    if not abs_path.lower().endswith(".mp4"):
+        return jsonify({"error": "Only MP4 files supported"}), 400
+
+    ffprobe = os.getenv("FFPROBE_PATH", "") or "ffprobe"
+    # Derive ffprobe from ffmpeg path when FFMPEG is an absolute path and
+    # ffprobe sits next to it (common for bundled builds).
+    if FFMPEG and os.path.isabs(FFMPEG):
+        candidate = os.path.join(os.path.dirname(FFMPEG), "ffprobe")
+        if os.path.isfile(candidate):
+            ffprobe = candidate
+
+    try:
+        r = subprocess.run(
+            [
+                ffprobe,
+                "-v",
+                "error",
+                "-select_streams",
+                "v:0",
+                "-show_entries",
+                "stream=r_frame_rate",
+                "-of",
+                "csv=p=0",
+                abs_path,
+            ],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=3,
+        )
+        if r.returncode != 0:
+            return jsonify({"error": "ffprobe failed"}), 404
+        raw = r.stdout.decode("utf-8", errors="replace").strip()
+        if not raw:
+            return jsonify({"error": "empty ffprobe output"}), 404
+        if "/" in raw:
+            num, den = raw.split("/", 1)
+            fps = float(num) / float(den) if float(den) != 0 else 0.0
+        else:
+            fps = float(raw)
+        if fps <= 0 or fps > 1000:
+            return jsonify({"error": "implausible fps"}), 404
+        return jsonify({"fps": fps}), 200
+    except FileNotFoundError:
+        return jsonify({"error": "ffprobe not installed"}), 404
+    except subprocess.TimeoutExpired:
+        return jsonify({"error": "ffprobe timeout"}), 404
+    except Exception as exc:
+        logger.warning(f"[Telescope] video fps probe error: {exc}")
+        return jsonify({"error": str(exc)}), 404
+
+
 def composite_from_frames_route():
     """POST /telescope/files/composite-from-frames
 
@@ -4386,6 +4454,13 @@ def register_routes(app):
         "telescope_isolate_transit",
         isolate_transit_route,
         methods=["POST"],
+    )
+
+    app.add_url_rule(
+        "/api/video/fps",
+        "api_video_fps",
+        video_fps_route,
+        methods=["GET"],
     )
 
     app.add_url_rule(
