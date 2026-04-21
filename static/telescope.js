@@ -1954,7 +1954,8 @@ function _renderSunCenterStatus(data) {
         : '—';
     const ephStr   = _fmtAltAz(data && data.sun_ephem_alt, data && data.sun_ephem_az);
     const mountStr = _fmtAltAz(data && data.mount_alt,     data && data.mount_az);
-    if (pointingEl)  pointingEl.style.visibility = running ? 'visible' : 'hidden';
+    const hasPointing = (data && data.sun_ephem_alt != null) || (data && data.mount_alt != null);
+    if (pointingEl)  pointingEl.style.visibility = hasPointing ? 'visible' : 'hidden';
     if (ephemLineEl) ephemLineEl.textContent = 'Ephem: ' + ephStr;
     if (scopeLineEl) scopeLineEl.textContent = 'Mount: ' + mountStr;
 

@@ -321,6 +321,7 @@ class SunCenteringService:
         return out
 
     def get_status(self) -> Dict[str, Any]:
+        pointing = self._pointing_snapshot()
         with self._lock:
             age = round(max(0.0, time.time() - self.started_at), 1) if self.started_at else 0.0
             j_age = None
@@ -374,7 +375,7 @@ class SunCenteringService:
                     else round(self.center_flux_core_mean, 2)
                 ),
                 # Pointing diagnostics (live — used by UI reticle)
-                **self._pointing_snapshot(),
+                **pointing,
             }
 
     # =========================================================================
