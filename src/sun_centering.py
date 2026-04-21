@@ -298,6 +298,28 @@ class SunCenteringService:
             "cloud_wait_max_s": s.cloud_wait_max_s,
         }
 
+    def _pointing_snapshot(self) -> Dict[str, Any]:
+        """Return live sun ephem + mount position for the UI reticle readout."""
+        out: Dict[str, Any] = {
+            "sun_ephem_alt": None, "sun_ephem_az": None,
+            "mount_alt": None, "mount_az": None,
+        }
+        try:
+            sun = self.adapter.get_sun_altaz()
+            if sun:
+                out["sun_ephem_alt"] = round(float(sun[0]), 2)
+                out["sun_ephem_az"] = round(float(sun[1]), 2)
+        except Exception:
+            pass
+        try:
+            pos = self._safe_get_position()
+            if pos:
+                out["mount_alt"] = round(float(pos.get("alt", 0)), 2)
+                out["mount_az"] = round(float(pos.get("az", 0)), 2)
+        except Exception:
+            pass
+        return out
+
     def get_status(self) -> Dict[str, Any]:
         with self._lock:
             age = round(max(0.0, time.time() - self.started_at), 1) if self.started_at else 0.0
@@ -351,6 +373,8 @@ class SunCenteringService:
                     if self.center_flux_core_mean is None
                     else round(self.center_flux_core_mean, 2)
                 ),
+                # Pointing diagnostics (live — used by UI reticle)
+                **self._pointing_snapshot(),
             }
 
     # =========================================================================
