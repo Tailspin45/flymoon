@@ -3915,20 +3915,9 @@ function viewFile(path, name, opts) {
             _seekToFrame(vid, f);
         });
 
-        const _scheduleViewerRender = () => {
-            if (_renderPending) return;
-            _renderPending = true;
-            requestAnimationFrame(() => {
-                _renderPending = false;
-                const v = document.getElementById('hiddenVid');
-                if (!v) return;
-                _updateScrubPosition(v);
-                _updateFivePanel();
-            });
-        };
         const updateAfterSeek = () => {
             _currentFrame = Math.round(vid.currentTime * _videoFps);
-            _scheduleViewerRender();
+            _scheduleFivePanelRender();
         };
         // timeupdate only handles loop wrap-around; render is driven by seeked.
         vid.addEventListener('timeupdate', () => {
@@ -4252,9 +4241,31 @@ var _fivePanelRetryScheduled = false;
 const _VIDDBG = false;
 function _vdbg(...args) { if (_VIDDBG) try { console.log('[vid]', ...args); } catch (e) {} }
 
+// Minimum byte length for a data-URL to be considered a real (non-blank)
+// JPEG capture. Mostly-flat frames from a not-ready decoder compress to a
+// few hundred bytes; real 400x225 frames are tens of KB.
+const _MIN_THUMB_BYTES = 500;
+
+/** Schedule a single rAF-batched render of the scrub position + filmstrip.
+ *  Multiple calls within one animation frame collapse to one paint. */
+function _scheduleFivePanelRender() {
+    if (_renderPending) return;
+    _renderPending = true;
+    requestAnimationFrame(() => {
+        _renderPending = false;
+        const v = document.getElementById('hiddenVid');
+        if (!v) return;
+        _updateScrubPosition(v);
+        _updateFivePanel();
+    });
+}
+
 /** Capture whatever the decoder is currently showing into the shared
  *  offscreen canvas, stored against `frameIdx`. No-op if already captured
- *  or if the canvas isn't ready. Safe to call from any seek/play code path. */
+ *  or if the canvas isn't ready. Safe to call from any seek/play code path.
+ *  Schedules a 5-panel re-render when the captured frame is within the
+ *  visible window — essential because the capture happens AFTER the
+ *  'seeked' event's render, so that render had no thumb to show. */
 function _captureLandedThumb(vid, frameIdx) {
     if (!_thumbCtx || !_thumbCanvas || !vid) return;
     if (frameIdx < 0 || frameIdx >= _frameTotalCount) return;
@@ -4262,9 +4273,21 @@ function _captureLandedThumb(vid, frameIdx) {
     try {
         _thumbCtx.drawImage(vid, 0, 0, _thumbCanvas.width, _thumbCanvas.height);
         const url = _thumbCanvas.toDataURL('image/jpeg', 0.85);
+        if (url.length < _MIN_THUMB_BYTES) {
+            // Decoder likely wasn't ready — don't cache a blank. Re-queue so
+            // the drainer can retry once the frame has actually landed.
+            _vdbg('blank capture rejected', frameIdx, 'len=', url.length);
+            _thumbExtractionPending.delete(frameIdx);
+            _queueFrameThumb(frameIdx);
+            return;
+        }
         _frameThumbs[frameIdx] = url;
         _thumbExtractionPending.delete(frameIdx);
         _vdbg('captured', frameIdx, 'len=', url.length);
+        if (Math.abs(frameIdx - _currentFrame) <= 2) {
+            _vdbg('late render scheduled', frameIdx);
+            _scheduleFivePanelRender();
+        }
     } catch (e) {
         _vdbg('capture failed', frameIdx, e && e.message);
     }
@@ -4294,9 +4317,17 @@ function _seekToFrame(vid, frame) {
         const onSeeked = () => {
             vid.removeEventListener('seeked', onSeeked);
             if (useRVFC) {
-                try { vid.requestVideoFrameCallback(() => finish()); return; } catch (e) {}
+                try {
+                    vid.requestVideoFrameCallback(() => finish());
+                    // Belt-and-braces: if rVFC hasn't fired in 250ms, try
+                    // drawing anyway — the decoder almost certainly has the
+                    // frame by then. The outer 1500ms safety timeout still
+                    // applies as the absolute last resort.
+                    setTimeout(finish, 250);
+                    return;
+                } catch (e) {}
             }
-            // Fallback: allow one browser tick for the frame to present.
+            // No rVFC: allow one browser tick for the frame to present.
             setTimeout(finish, 16);
         };
         vid.addEventListener('seeked', onSeeked, { once: true });
@@ -4471,8 +4502,20 @@ function _queueFrameThumb(frameIdx) {
 function _captureCurrentAsThumb(vid, frameIdx) {
     try {
         _thumbCtx.drawImage(vid, 0, 0, _thumbCanvas.width, _thumbCanvas.height);
-        _frameThumbs[frameIdx] = _thumbCanvas.toDataURL('image/jpeg', 0.85);
-    } catch (e) { /* ignore per-frame failures */ }
+        const url = _thumbCanvas.toDataURL('image/jpeg', 0.85);
+        if (url.length < _MIN_THUMB_BYTES) {
+            _vdbg('blank capture rejected', frameIdx, 'len=', url.length);
+            _thumbExtractionPending.delete(frameIdx);
+            _queueFrameThumb(frameIdx);
+            return;
+        }
+        _frameThumbs[frameIdx] = url;
+        _vdbg('captured', frameIdx, 'len=', url.length);
+        if (Math.abs(frameIdx - _currentFrame) <= 2) {
+            _vdbg('late render scheduled', frameIdx);
+            _scheduleFivePanelRender();
+        }
+    } catch (e) { _vdbg('capture failed', frameIdx, e && e.message); }
     _thumbExtractionPending.delete(frameIdx);
 }
 
