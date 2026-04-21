@@ -1820,100 +1820,145 @@ async function apiCall(endpoint, method = 'GET', body = null, options = {}) {
 // CONTROL PANEL — GoTo, Park, Autofocus, Camera Settings, Named Locations
 // ============================================================================
 
+function _drawReticle(ctx, x, y, r, color, alpha) {
+    ctx.save();
+    ctx.globalAlpha = alpha;
+    ctx.strokeStyle = color;
+    ctx.lineWidth = 1.5;
+    const gap = r * 0.38, arm = r * 1.45;
+    ctx.beginPath();
+    ctx.arc(x, y, r, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(x - arm, y); ctx.lineTo(x - gap, y);
+    ctx.moveTo(x + gap,  y); ctx.lineTo(x + arm, y);
+    ctx.moveTo(x, y - arm); ctx.lineTo(x, y - gap);
+    ctx.moveTo(x, y + gap);  ctx.lineTo(x, y + arm);
+    ctx.stroke();
+    ctx.restore();
+}
+
+function _drawSunCenterCanvas(data) {
+    const canvas = document.getElementById('sunCenterCanvas');
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+    const W = canvas.width, H = canvas.height;
+    const cx = W / 2, cy = H / 2;
+
+    ctx.clearRect(0, 0, W, H);
+    ctx.fillStyle = '#060e14';
+    ctx.fillRect(0, 0, W, H);
+
+    // Faint crosshair grid
+    ctx.strokeStyle = '#0e1d28';
+    ctx.lineWidth = 0.5;
+    ctx.beginPath();
+    ctx.moveTo(cx, 0); ctx.lineTo(cx, H);
+    ctx.moveTo(0, cy); ctx.lineTo(W, cy);
+    ctx.stroke();
+
+    const running  = !!(data && data.running);
+    const detected = !!(data && data.disk_detected);
+    const eu       = (data && data.error_u_px != null) ? Number(data.error_u_px) : null;
+    const ev       = (data && data.error_v_px != null) ? Number(data.error_v_px) : null;
+    // Detected disk radius in image pixels; fallback to a typical Sun value.
+    const diskR    = (data && data.disk_info && data.disk_info.radius > 0)
+                        ? Number(data.disk_info.radius) : 60;
+
+    // Map image pixels → canvas pixels.
+    // The analysis frame is 180 px wide; treat that as the reference axis so
+    // the reticle circle naturally represents the Sun's angular size (~0.5°).
+    const imgHalf = 90;                        // half of 180 px frame width
+    const pad     = 8;
+    const scale   = (cx - pad) / imgHalf;      // canvas px per image px
+    const rR      = Math.max(6, Math.min(cx - pad - 2, diskR * scale));
+
+    if (detected && Number.isFinite(eu) && Number.isFinite(ev)) {
+        // White reticle = current disk position in the image.
+        // Red   reticle = image centre (the target).
+        // They overlap when the Sun is perfectly centred.
+        const wx = cx + eu * scale;
+        const wy = cy + ev * scale;
+        const wxc = Math.max(pad, Math.min(W - pad, wx));
+        const wyc = Math.max(pad, Math.min(H - pad, wy));
+
+        const dist = Math.hypot(wxc - cx, wyc - cy);
+        if (dist > rR * 0.3) {
+            ctx.save();
+            ctx.strokeStyle = '#1e3a4a';
+            ctx.lineWidth = 0.8;
+            ctx.setLineDash([3, 3]);
+            ctx.beginPath();
+            ctx.moveTo(cx, cy); ctx.lineTo(wxc, wyc);
+            ctx.stroke();
+            ctx.setLineDash([]);
+            ctx.restore();
+        }
+
+        _drawReticle(ctx, wxc, wyc, rR, '#c8d8e4', 0.9);   // white = disk (Sun)
+        _drawReticle(ctx, cx,  cy,  rR, '#e04444', 0.9);   // red   = target (centre)
+    } else {
+        // No disk detected — red bullseye only; white reticle absent = Sun not in frame.
+        _drawReticle(ctx, cx, cy, rR, '#e04444', running ? 0.85 : 0.35);
+    }
+}
+
 function _renderSunCenterStatus(data) {
     const panel = document.getElementById('sunCenterPanel');
     if (!panel) return;
 
-    const stateEl = document.getElementById('sunCenterState');
-    const modeEl = document.getElementById('sunCenterTolMode');
-    const errEl = document.getElementById('sunCenterErr');
-    const recEl = document.getElementById('sunCenterRecoveries');
-    const searchKindEl = document.getElementById('sunCenterSearchKind');
-    const msgEl = document.getElementById('sunCenterMsg');
-    const startBtn = document.getElementById('sunCenterStartBtn');
-    const stopBtn = document.getElementById('sunCenterStopBtn');
+    const warnEl     = document.getElementById('sunCenterWarn');
+    const stateEl    = document.getElementById('sunCenterState');
+    const phaseEl    = document.getElementById('sunCenterPhase');
+    const msgEl      = document.getElementById('sunCenterMsg');
+    const startBtn   = document.getElementById('sunCenterStartBtn');
+    const stopBtn    = document.getElementById('sunCenterStopBtn');
     const recenterBtn = document.getElementById('sunCenterRecenterBtn');
     const modeSelect = document.getElementById('sunCenterSearchMode');
     const applyModeBtn = document.getElementById('sunCenterApplyModeBtn');
 
-    const running = !!(data && data.running);
-    const state = (data && data.state) ? String(data.state) : 'idle';
+    const running     = !!(data && data.running);
+    const state       = (data && data.state) ? String(data.state) : 'idle';
+    const phase       = (data && data.phase) ? String(data.phase) : '-';
     const unavailable = state === 'unavailable';
-    const tolMode = (data && data.tolerance_mode) ? String(data.tolerance_mode) : 'strict';
-    const serverSearchMode = (data && data.search_pattern_mode) ? String(data.search_pattern_mode) : null;
-    const activeSearchKind = (data && data.search_pattern_kind)
-        ? String(data.search_pattern_kind)
-        : null;
-    const configuredSearchMode = serverSearchMode || _sunCenterSelectedSearchMode || '-';
-    const err = (data && data.error_norm != null) ? Number(data.error_norm) : null;
-    const recov = (data && data.recovery_attempts != null) ? Number(data.recovery_attempts) : 0;
-    const msg = (data && data.message) ? String(data.message) : 'Solar mode only. Experimental feature.';
+    const recov       = (data && data.recovery_attempts != null) ? Number(data.recovery_attempts) : 0;
+    const msg         = (data && data.message) ? String(data.message) : 'Solar mode only.';
 
     if (stateEl) stateEl.textContent = state;
-    if (modeEl) modeEl.textContent = tolMode;
-    if (searchKindEl) {
-        let searchDisplay = '-';
-        if (configuredSearchMode === 'adaptive') {
-            searchDisplay = activeSearchKind ? `adaptive (${activeSearchKind})` : 'adaptive';
-        } else if (configuredSearchMode && configuredSearchMode !== '-') {
-            if (activeSearchKind && activeSearchKind !== configuredSearchMode) {
-                searchDisplay = `${configuredSearchMode} (${activeSearchKind})`;
-            } else {
-                searchDisplay = configuredSearchMode;
-            }
+    if (phaseEl) phaseEl.textContent = phase;
+
+    if (warnEl) {
+        if (running && recov >= 3) {
+            warnEl.textContent = `\u26a0 ${recov} recovery attempt${recov === 1 ? '' : 's'}`;
+            warnEl.style.display = 'block';
         } else {
-            searchDisplay = activeSearchKind || '-';
-        }
-
-        if (_sunCenterSearchModeDirty) {
-            searchKindEl.textContent = `${searchDisplay} (pending ${_sunCenterSelectedSearchMode})`;
-        } else {
-            searchKindEl.textContent = searchDisplay;
-        }
-    }
-    if (errEl) errEl.textContent = Number.isFinite(err) ? err.toFixed(3) : '-';
-    if (recEl) recEl.textContent = String(Number.isFinite(recov) ? recov : 0);
-
-    if (modeSelect) {
-        const allowed = ['adaptive', 'spiral', 'raster', 'random_walk'];
-        if (allowed.includes(serverSearchMode)) {
-            if (_sunCenterSearchModeDirty) {
-                if (serverSearchMode === _sunCenterSelectedSearchMode) {
-                    _sunCenterSearchModeDirty = false;
-                }
-            } else {
-                _sunCenterSelectedSearchMode = serverSearchMode;
-                try { localStorage.setItem('sunCenterSearchMode', _sunCenterSelectedSearchMode); } catch (_) {}
-            }
-        }
-        if (allowed.includes(_sunCenterSelectedSearchMode)) {
-            modeSelect.value = _sunCenterSelectedSearchMode;
+            warnEl.style.display = 'none';
         }
     }
 
-    let footer = msg;
-    const mode = (currentViewingMode || '').toLowerCase();
-    if (mode && mode !== 'sun') {
-        footer = 'Experimental and Solar-only for now. Switch to Solar mode to start.';
-    }
+    const viewMode = (currentViewingMode || '').toLowerCase();
+    const footer = (viewMode && viewMode !== 'sun' && viewMode !== 'solar')
+        ? 'Solar mode only.'
+        : msg;
     if (msgEl) msgEl.textContent = footer;
 
-    if (startBtn) {
-        startBtn.disabled = unavailable || !isConnected || running;
-    }
-    if (stopBtn) stopBtn.disabled = unavailable || !running;
-    if (recenterBtn) recenterBtn.disabled = unavailable || !running;
-    if (modeSelect) modeSelect.disabled = unavailable || !isConnected;
-    if (applyModeBtn) applyModeBtn.disabled = unavailable || !isConnected;
-}
+    if (startBtn)     startBtn.disabled    = unavailable || !isConnected || running;
+    if (stopBtn)      stopBtn.disabled     = unavailable || !running;
+    if (recenterBtn)  recenterBtn.disabled = unavailable || !running;
 
-function sunCenterOnModeChanged() {
-    const modeSelect = document.getElementById('sunCenterSearchMode');
-    const mode = modeSelect ? String(modeSelect.value || '').trim() : '';
-    if (!['adaptive', 'spiral', 'raster', 'random_walk'].includes(mode)) return;
-    _sunCenterSelectedSearchMode = mode;
-    _sunCenterSearchModeDirty = true;
-    try { localStorage.setItem('sunCenterSearchMode', mode); } catch (_) {}
+    const pointingEl  = document.getElementById('sunCenterPointing');
+    const ephemLineEl = document.getElementById('sunCenterEphemLine');
+    const scopeLineEl = document.getElementById('sunCenterScopeLine');
+    const _fmtAltAz = (alt, az) => (alt != null && az != null)
+        ? `ALT ${parseFloat(alt).toFixed(1)}°  AZ ${parseFloat(az).toFixed(1)}°`
+        : '—';
+    const ephStr   = _fmtAltAz(data && data.sun_ephem_alt, data && data.sun_ephem_az);
+    const mountStr = _fmtAltAz(data && data.mount_alt,     data && data.mount_az);
+    if (pointingEl)  pointingEl.style.visibility = running ? 'visible' : 'hidden';
+    if (ephemLineEl) ephemLineEl.textContent = 'Ephem: ' + ephStr;
+    if (scopeLineEl) scopeLineEl.textContent = 'Mount: ' + mountStr;
+
+    _drawSunCenterCanvas(data);
 }
 
 function _markSunCenterApiUnavailable(message) {

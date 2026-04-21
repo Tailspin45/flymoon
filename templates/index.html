@@ -753,31 +753,33 @@
                 <!-- Experimental Sun Centering -->
                 <div class="sidebar-panel" id="sunCenterPanel">
                     <span class="screw screw-tl"></span><span class="screw screw-tr"></span><span class="screw screw-bl"></span><span class="screw screw-br"></span>
-                    <h3>Sun Center (Exp)</h3>
-                    <div style="display:grid; grid-template-columns:1fr 1fr; gap:4px; margin-bottom:4px; font-size:0.74em; color:#9aa3ab;">
-                        <div>State: <span id="sunCenterState" style="color:#dbe7ef; font-family:'SF Mono','Menlo','Consolas',monospace;">idle</span></div>
-                        <div>Mode: <span id="sunCenterTolMode" style="color:#dbe7ef; font-family:'SF Mono','Menlo','Consolas',monospace;">strict</span></div>
-                        <div>Error: <span id="sunCenterErr" style="color:#b8e8ff; font-family:'SF Mono','Menlo','Consolas',monospace;">-</span></div>
-                        <div>Recov: <span id="sunCenterRecoveries" style="color:#dbe7ef; font-family:'SF Mono','Menlo','Consolas',monospace;">0</span></div>
-                        <div>Pattern: <span id="sunCenterSearchKind" style="color:#dbe7ef; font-family:'SF Mono','Menlo','Consolas',monospace;">-</span></div>
+                    <h3 style="margin-bottom:4px; padding-bottom:4px;">Sun Center <span style="font-weight:normal; color:#4a5a65; font-size:0.8em;">(exp)</span></h3>
+                    <div id="sunCenterWarn" style="display:none; font-size:0.68em; color:#f5a623; background:#2a1f0a; border:1px solid #6b4810; border-radius:3px; padding:2px 5px; margin-bottom:3px;"></div>
+                    <div style="display:flex; gap:6px; align-items:flex-start;">
+                        <!-- Left ¼ — buttons + state label -->
+                        <div style="flex:0 0 23%; display:flex; flex-direction:column; gap:3px;">
+                            <button id="sunCenterStartBtn" class="btn btn-primary btn-compact" onclick="sunCenterStart()">Start</button>
+                            <button id="sunCenterStopBtn" class="btn btn-secondary btn-compact" onclick="sunCenterStop()">Stop</button>
+                            <button id="sunCenterRecenterBtn" class="btn btn-secondary btn-compact" onclick="sunCenterRecenter()">⟳</button>
+                            <div style="margin-top:3px; font-size:0.60em; color:#5a6a75; text-align:center; line-height:1.5; font-family:'SF Mono','Menlo','Consolas',monospace; word-break:break-all;">
+                                <span id="sunCenterState">idle</span><br>
+                                <span id="sunCenterPhase" style="color:#3d4e58;">—</span>
+                            </div>
+                        </div>
+                        <!-- Right ¾ — gunsight canvas -->
+                        <div style="flex:1; display:flex; flex-direction:column; align-items:center; gap:3px;">
+                            <canvas id="sunCenterCanvas" width="116" height="116"
+                                style="display:block; border:1px solid #0f2030; border-radius:3px;"></canvas>
+                            <div id="sunCenterMsg"
+                                style="font-size:0.60em; color:#4a5e6a; width:100%; text-align:center;
+                                       white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">
+                                Solar mode only.
+                            </div>
+                        </div>
                     </div>
-                    <div style="display:grid; grid-template-columns:1fr auto; gap:4px; margin-bottom:4px;">
-                        <select id="sunCenterSearchMode" class="input-compact" title="Acquisition search pattern" onchange="sunCenterOnModeChanged()">
-                            <option value="adaptive">adaptive</option>
-                            <option value="spiral">spiral</option>
-                            <option value="raster">raster</option>
-                            <option value="random_walk">random walk</option>
-                        </select>
-                        <button id="sunCenterApplyModeBtn" class="btn btn-secondary btn-compact" onclick="sunCenterApplySearchMode()">Apply</button>
-                    </div>
-                    <div class="button-grid-3col" style="margin-bottom:4px;">
-                        <button id="sunCenterStartBtn" class="btn btn-primary btn-compact" onclick="sunCenterStart()">Start</button>
-                        <button id="sunCenterStopBtn" class="btn btn-secondary btn-compact" onclick="sunCenterStop()">Stop</button>
-                        <button id="sunCenterRecenterBtn" class="btn btn-secondary btn-compact" onclick="sunCenterRecenter()">Recenter</button>
-                    </div>
-                    <div id="sunCenterMsg" style="font-size:0.72em; color:#8f9aa3; min-height:14px;">
-                        Solar mode only for now. Strict-first, auto-fallback to conservative on flail.
-                    </div>
+                    <!-- Pointing readout — below the flex row so it never disturbs the canvas -->
+                    <div id="sunCenterPointing" style="visibility:hidden; margin-top:4px; font-size:0.68em; color:#e0f0ff; font-family:'SF Mono','Menlo','Consolas',monospace; line-height:1.9; white-space:pre; background:#0a1820; border:1px solid #1e3a50; border-radius:3px; padding:3px 5px;"><span id="sunCenterEphemLine">Ephem: —</span>
+<span id="sunCenterScopeLine">Mount: —</span></div>
                 </div>
 
                 <!-- GoTo + Slew combined -->
