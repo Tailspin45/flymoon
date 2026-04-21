@@ -3786,6 +3786,20 @@ function gridFavoriteSelected() {
     showStatus(`${shouldFavorite ? 'Favorited' : 'Unfavorited'} ${paths.length} file${paths.length > 1 ? 's' : ''}`, 'success', 2000);
 }
 
+async function gridRenameSelected() {
+    const files = window.currentFiles || [];
+    const selectedFiles = files.filter(f => gridSelection.selected.has(f.path));
+    if (selectedFiles.length !== 1) {
+        showStatus('Select exactly one file to rename', 'warning', 2500);
+        return;
+    }
+    if (selectedFiles[0].isSimulation) {
+        showStatus('Temporary simulation files cannot be renamed', 'warning', 2500);
+        return;
+    }
+    await renameFavoriteFile(selectedFiles[0].path);
+}
+
 function _syncGridSelectionUI() {
     const grid = document.getElementById('filesGrid');
     if (!grid) return;
@@ -3800,6 +3814,19 @@ function _syncGridSelectionUI() {
         toolbar.style.display = n > 0 ? 'flex' : 'none';
         const cnt = document.getElementById('gridSelCount');
         if (cnt) cnt.textContent = `${n} selected`;
+
+        const files = window.currentFiles || [];
+        const selectedFiles = files.filter(f => gridSelection.selected.has(f.path));
+        const renameBtn = document.getElementById('gridRenameBtn');
+        if (renameBtn) {
+            const canRename = selectedFiles.length === 1 && !selectedFiles[0].isSimulation;
+            renameBtn.disabled = !canRename;
+            renameBtn.title = canRename
+                ? 'Rename selected (single selection)'
+                : selectedFiles.length === 1
+                    ? 'Temporary simulation files cannot be renamed'
+                    : 'Rename selected (single selection)';
+        }
     }
 }
 
@@ -3905,12 +3932,6 @@ function updateFilesGrid() {
             ${detBadge}${gridLabelBadge}
             <div class="file-info">
                 <span class="file-name" title="Click to rename" onclick="event.stopPropagation(); renameFavoriteFile('${file.path}', event)" style="cursor:text;">${displayName}</span>
-                <div class="file-actions">
-                    <button class="btn-icon btn-fav" data-fav-path="${file.path}" onclick="toggleFavorite('${file.path}', event)" title="${getFavorites().has(file.path) ? 'Unfavorite' : 'Favorite'}">${getFavorites().has(file.path) ? '❤️' : '🤍'}</button>
-                    <button class="btn-icon" data-rename-path="${file.path}" onclick="event.stopPropagation(); renameFavoriteFile('${file.path}', event)" title="Rename">✏️</button>
-                    <button class="btn-icon" onclick="event.stopPropagation(); downloadFile('${file.path}', '${file.name}')" title="Download">⬇️</button>
-                    <button class="btn-icon btn-danger" onclick="event.stopPropagation(); deleteFile('${file.path}', '${file.name}', event.metaKey || event.ctrlKey)" title="${getFavorites().has(file.path) ? 'Remove favorite first' : 'Delete (⌘/Ctrl+click to skip confirm)'}" ${getFavorites().has(file.path) ? 'disabled' : ''}>🗑️</button>
-                </div>
             </div>
             ${thumbnail}
         </div>
@@ -4410,13 +4431,17 @@ function viewFile(path, name, opts) {
         const loopAttr = opts.loop ? ' loop' : '';
         body.innerHTML =
             `<div style="display:flex; flex-direction:column; width:100%;" id="frameViewerRoot">` +
-              `<video src="${videoSrc}" playsinline${loopAttr} muted style="position:absolute;left:-9999px;width:1px;height:1px;" id="hiddenVid"></video>` +
               `<div style="position:relative; flex-shrink:0;">` +
                 `<div id="fivePanel" style="display:flex; justify-content:center; align-items:center; gap:3px; padding:4px 4px 0; background:#000;">` +
                   `${[-2,-1,0,1,2].map(off => {
                     const border = off === 0 ? '3px solid #0ff' : '3px solid #333';
+                    // Center slot: embed the video element directly so the browser
+                    // renders frames natively — no canvas/drawImage GPU-copy needed.
+                    const inner = off === 0
+                      ? `<video src="${videoSrc}" playsinline${loopAttr} muted id="hiddenVid" style="display:block;width:100%;height:auto;background:#000;"></video>`
+                      : `<div class="thumb-placeholder" style="width:100%; padding-top:75%; background:#111;"></div>`;
                     return `<div class="fp-slot" data-fp-offset="${off}" style="position:relative; flex:1; min-width:0; border:${border}; border-radius:4px; cursor:pointer; overflow:hidden;" title="">` +
-                      `<div class="thumb-placeholder" style="width:100%; padding-top:75%; background:#111;"></div>` +
+                      inner +
                       `<div class="fp-label" style="position:absolute;bottom:2px;left:0;right:0;text-align:center;color:#888;font-size:0.75em;font-family:monospace;text-shadow:0 0 4px #000;"></div>` +
                       `<div class="fp-mark-dot" style="display:none;position:absolute;top:4px;right:4px;width:12px;height:12px;background:#fd0;border-radius:50%;border:1px solid #000;"></div>` +
                     `</div>`;
@@ -5305,6 +5330,8 @@ function _patchFivePanelThumb(frameIdx) {
     if (!panel) return;
     const slot = panel.querySelector(`[data-frame-slot="${frameIdx}"]`);
     if (!slot) return;
+    // Center slot shows the live video element — don't replace it with a static thumb
+    if (slot.dataset.fpOffset === '0') return;
     const src = _frameThumbs[frameIdx];
     if (!src) return;
     const existing = slot.querySelector('img');
@@ -5322,6 +5349,41 @@ function _patchFivePanelThumb(frameIdx) {
     img.style.height = 'auto';
     if (target && target.parentNode === slot) slot.replaceChild(img, target);
     else slot.prepend(img);
+}
+
+var _pendingCanvasDraw = 0;
+
+// Defer drawImage to the next rAF so the GPU texture is fully committed
+// before we read it. This prevents half-height / torn-frame artifacts that
+// occur when seeked fires while the hardware decoder is still writing the
+// surface. Also cancels any previously queued draw so we never show a stale
+// frame.
+function _scheduleCenterFrameDraw(vid) {
+    if (_pendingCanvasDraw) { cancelAnimationFrame(_pendingCanvasDraw); _pendingCanvasDraw = 0; }
+    _pendingCanvasDraw = requestAnimationFrame(() => {
+        _pendingCanvasDraw = 0;
+        const v = document.getElementById('hiddenVid');
+        if (!v || !v.videoWidth || !v.videoHeight || v.seeking) return;
+        const panel = document.getElementById('fivePanel');
+        if (!panel) return;
+        const slot = panel.querySelector('.fp-slot[data-fp-offset="0"]');
+        if (!slot) return;
+        if (slot.querySelector('img')) return;
+        const cvs = slot.querySelector('canvas');
+        if (!cvs) return;
+        // Cap to 800px wide — Chrome's power-efficient decoder may render the
+        // GPU texture at less than full resolution for tiny/off-screen elements.
+        // drawImage without explicit dest dims copies at GPU-texture size, leaving
+        // the rest of the canvas black (the "half-height" artifact). Explicit dims
+        // force Chrome to scale the texture to fill the entire canvas.
+        const maxW = Math.min(v.videoWidth, 800);
+        const maxH = Math.round(v.videoHeight * maxW / v.videoWidth);
+        if (cvs.width !== maxW || cvs.height !== maxH) {
+            cvs.width = maxW;
+            cvs.height = maxH;
+        }
+        try { cvs.getContext('2d').drawImage(v, 0, 0, maxW, maxH); } catch (_) {}
+    });
 }
 
 /** Render 5 equal big panels: frames [cur-2, cur-1, cur, cur+1, cur+2].
@@ -5365,16 +5427,19 @@ function _updateFivePanel() {
         slot.style.border = isCurrent ? '3px solid #0ff' : '3px solid #333';
         slot.style.opacity = inRange ? '1' : '0.12';
 
-        // Update image: prefer server thumb > canvas preview > placeholder
-        const src = (inRange && _frameThumbs[f]) ? _frameThumbs[f] : '';
+        // Update image: center slot uses the live video element directly;
+        // off-center slots use server thumbnails or a placeholder.
+        const src = (!isCurrent && inRange && _frameThumbs[f]) ? _frameThumbs[f] : '';
         let img = slot.querySelector('img');
-        let cvs = slot.querySelector('canvas');
         let placeholder = slot.querySelector('.thumb-placeholder');
-        const vid = document.getElementById('hiddenVid');
 
-        if (src) {
+        if (isCurrent) {
+            // Center slot: hiddenVid is already embedded here — nothing to do.
+            // Remove any stray img/placeholder that might exist from a prior state.
+            if (img && img.parentNode === slot) slot.removeChild(img);
+            if (placeholder && placeholder.parentNode === slot) slot.removeChild(placeholder);
+        } else if (src) {
             // Server-quality thumb available — use <img>
-            if (cvs && cvs.parentNode === slot) slot.removeChild(cvs);
             if (!img) {
                 img = document.createElement('img');
                 img.style.cssText = 'display:block; width:100%; height:auto;';
@@ -5383,22 +5448,9 @@ function _updateFivePanel() {
                 else slot.insertBefore(img, slot.firstChild);
             }
             if (img.src !== src) img.src = src;
-        } else if (isCurrent && inRange && vid && vid.videoWidth > 0 && vid.readyState >= 2) {
-            // No server thumb yet for center frame — draw instant canvas preview
-            if (img && img.parentNode === slot) slot.removeChild(img);
-            if (!cvs) {
-                cvs = document.createElement('canvas');
-                cvs.style.cssText = 'display:block; width:100%; height:auto;';
-                if (placeholder) slot.replaceChild(cvs, placeholder);
-                else slot.insertBefore(cvs, slot.firstChild);
-            }
-            cvs.width = vid.videoWidth;
-            cvs.height = vid.videoHeight;
-            try { cvs.getContext('2d').drawImage(vid, 0, 0); } catch (_) {}
         } else {
-            // No thumb, no canvas source — show placeholder
+            // No thumb yet — show placeholder
             if (img && img.parentNode === slot) slot.removeChild(img);
-            if (cvs && cvs.parentNode === slot) slot.removeChild(cvs);
             if (!slot.querySelector('.thumb-placeholder')) {
                 placeholder = document.createElement('div');
                 placeholder.className = 'thumb-placeholder';
