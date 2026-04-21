@@ -1861,26 +1861,33 @@ function _drawSunCenterCanvas(data) {
     const detected = !!(data && data.disk_detected);
     const eu       = (data && data.error_u_px != null) ? Number(data.error_u_px) : null;
     const ev       = (data && data.error_v_px != null) ? Number(data.error_v_px) : null;
-    // Detected disk radius in image pixels; fallback to a typical Sun value.
     const diskR    = (data && data.disk_info && data.disk_info.radius > 0)
                         ? Number(data.disk_info.radius) : 60;
 
-    // Map image pixels → canvas pixels.
-    // The analysis frame is 180 px wide; treat that as the reference axis so
-    // the reticle circle naturally represents the Sun's angular size (~0.5°).
-    const imgHalf = 90;                        // half of 180 px frame width
-    const pad     = 8;
-    const scale   = (cx - pad) / imgHalf;      // canvas px per image px
-    const rR      = Math.max(6, Math.min(cx - pad - 2, diskR * scale));
+    const pad  = 8;
+    const rR   = 18;   // fixed reticle ring radius — independent of zoom
+    const room = cx - pad - rR;   // max canvas-px a reticle centre can be from canvas centre
+
+    // Dynamic scale: target the white reticle at 65% of room so it's clearly
+    // offset from the red one even when error is tiny, and never clips off-screen.
+    let scale;
+    if (detected && Number.isFinite(eu) && Number.isFinite(ev)) {
+        const errPx = Math.hypot(eu, ev);
+        if (errPx > 0.5) {
+            scale = (room * 0.65) / errPx;   // puts white reticle at 65% of room
+            scale = Math.min(scale, room / errPx);  // never clip off canvas
+        } else {
+            scale = room / 1;   // near-zero error: just show overlapping reticles
+        }
+    } else {
+        scale = room / 90;   // no disk: revert to full-frame scale
+    }
 
     if (detected && Number.isFinite(eu) && Number.isFinite(ev)) {
-        // White reticle = current disk position in the image.
-        // Red   reticle = image centre (the target).
-        // They overlap when the Sun is perfectly centred.
-        const wx = cx + eu * scale;
-        const wy = cy + ev * scale;
-        const wxc = Math.max(pad, Math.min(W - pad, wx));
-        const wyc = Math.max(pad, Math.min(H - pad, wy));
+        const wx  = cx + eu * scale;
+        const wy  = cy + ev * scale;
+        const wxc = Math.max(pad + rR, Math.min(W - pad - rR, wx));
+        const wyc = Math.max(pad + rR, Math.min(H - pad - rR, wy));
 
         const dist = Math.hypot(wxc - cx, wyc - cy);
         if (dist > rR * 0.3) {

@@ -26,13 +26,41 @@ Adapter interface changes from v1:
 
 from __future__ import annotations
 
+import json
 import math
+import os
 import threading
 import time
 from dataclasses import dataclass
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from src import logger
+
+_CORRECTION_FILE = os.path.join(
+    os.path.dirname(os.path.dirname(__file__)), "data", "pointing_correction.json"
+)
+
+
+def _load_pointing_correction() -> Tuple[float, float]:
+    """Load persisted alt/az pointing correction (degrees). Returns (0, 0) if absent."""
+    try:
+        with open(_CORRECTION_FILE) as f:
+            d = json.load(f)
+        return float(d.get("alt", 0.0)), float(d.get("az", 0.0))
+    except Exception:
+        return 0.0, 0.0
+
+
+def _save_pointing_correction(alt_corr: float, az_corr: float) -> None:
+    """Persist pointing correction so next session benefits from it."""
+    try:
+        os.makedirs(os.path.dirname(_CORRECTION_FILE), exist_ok=True)
+        with open(_CORRECTION_FILE, "w") as f:
+            json.dump({"alt": round(alt_corr, 3), "az": round(az_corr, 3),
+                       "saved_at": time.strftime("%Y-%m-%dT%H:%M:%S")}, f)
+        logger.info("[SunCenter] Saved pointing correction alt=%.2f° az=%.2f°", alt_corr, az_corr)
+    except Exception as exc:
+        logger.warning("[SunCenter] Could not save pointing correction: %s", exc)
 
 # Mean solar angular radius (degrees).  Used to derive plate scale from the
 # detected disk radius in pixels.
@@ -465,7 +493,15 @@ class SunCenteringService:
                     self.state_message = "Waiting for mount to stop slewing before GoTo"
                 return
 
-            self._goto_clamped(sun_alt, sun_az)
+            corr_alt, corr_az = _load_pointing_correction()
+            cmd_alt = sun_alt - corr_alt
+            cmd_az  = sun_az  - corr_az
+            if corr_alt != 0.0 or corr_az != 0.0:
+                logger.info(
+                    "[SunCenter] Applying pointing correction alt=%.2f° az=%.2f°",
+                    corr_alt, corr_az,
+                )
+            self._goto_clamped(cmd_alt, cmd_az)
             self._slew_deadline_mono = now + self.settings.acquire_slew_timeout_s
             self._phase = "slewing"
             self.state_message = "Coarse GoTo to Sun ephemeris"
@@ -815,6 +851,13 @@ class SunCenteringService:
                 logger.info(
                     "[SunCenter] Centered: error=%.4f radii — entering TRACK", self.error_radii
                 )
+                # Record the mount→ephem offset so next acquisition is pre-corrected.
+                snap = self._pointing_snapshot()
+                if snap["sun_ephem_alt"] is not None and snap["mount_alt"] is not None:
+                    _save_pointing_correction(
+                        snap["mount_alt"] - snap["sun_ephem_alt"],
+                        snap["mount_az"]  - snap["sun_ephem_az"],
+                    )
                 self._transition(self.STATE_TRACK, f"Centered (err={self.error_radii:.3f}r)")
                 self._phase = "idle"
                 self._next_refresh_mono = (
