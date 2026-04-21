@@ -1859,8 +1859,27 @@ function _drawSunCenterCanvas(data) {
 
     const running  = !!(data && data.running);
     const detected = !!(data && data.disk_detected);
-    const eu       = (data && data.error_u_px != null) ? Number(data.error_u_px) : null;
-    const ev       = (data && data.error_v_px != null) ? Number(data.error_v_px) : null;
+    const eu_px    = (data && data.error_u_px != null) ? Number(data.error_u_px) : null;
+    const ev_px    = (data && data.error_v_px != null) ? Number(data.error_v_px) : null;
+    const hasPixel = detected && Number.isFinite(eu_px) && Number.isFinite(ev_px);
+
+    // Fallback: derive approximate disk offset from alt/az pointing error
+    const eAlt = (data && data.sun_ephem_alt != null) ? Number(data.sun_ephem_alt) : null;
+    const mAlt = (data && data.mount_alt     != null) ? Number(data.mount_alt)     : null;
+    const eAz  = (data && data.sun_ephem_az  != null) ? Number(data.sun_ephem_az)  : null;
+    const mAz  = (data && data.mount_az      != null) ? Number(data.mount_az)      : null;
+    const hasPointing = Number.isFinite(eAlt) && Number.isFinite(mAlt) &&
+                        Number.isFinite(eAz)  && Number.isFinite(mAz);
+    // ~0.006 deg/px plate scale for Seestar S50 320-wide solar frame
+    const PLATE_DEG_PX = 0.006;
+    let eu = eu_px, ev = ev_px, isEstimated = false;
+    if (!hasPixel && hasPointing) {
+        const cosAlt = Math.cos(eAlt * Math.PI / 180);
+        eu = -(mAz - eAz) * cosAlt / PLATE_DEG_PX;
+        ev =  (mAlt - eAlt)         / PLATE_DEG_PX;
+        isEstimated = true;
+    }
+    const hasError = hasPixel || (isEstimated && running);
 
     const pad = 6;
     const rR  = 10;   // small ring — more room for separation
@@ -1870,7 +1889,6 @@ function _drawSunCenterCanvas(data) {
     // This guarantees both reticles are visually separated regardless of error size.
     let scale = 1;
     let errPx = 0;
-    const hasError = detected && Number.isFinite(eu) && Number.isFinite(ev);
     if (hasError) {
         errPx = Math.hypot(eu, ev);
         scale = errPx > 0.1 ? (room * 0.70) / errPx : room * 7;
@@ -1914,21 +1932,27 @@ function _drawSunCenterCanvas(data) {
             ctx.restore();
         }
 
-        // White reticle (disk position) — solid, drawn on top
-        _drawReticle(ctx, wxc, wyc, rR, '#e8f4ff', 0.95);
+        // White reticle (disk position) — solid when measured, dimmer when estimated
+        const whiteAlpha = isEstimated ? 0.55 : 0.95;
+        _drawReticle(ctx, wxc, wyc, rR, '#e8f4ff', whiteAlpha);
 
-        // Scale indicator bottom-right
-        const zoomLabel = errPx > 0 ? `×${(scale / (room / 90)).toFixed(1)}` : '';
-        if (zoomLabel) {
-            ctx.save();
-            ctx.font = '8px monospace';
-            ctx.fillStyle = '#2a4a5a';
-            ctx.textAlign = 'right';
-            ctx.fillText(zoomLabel, W - 3, H - 3);
-            ctx.restore();
+        // Bottom labels
+        ctx.save();
+        ctx.font = '8px monospace';
+        ctx.textAlign = 'right';
+        if (isEstimated) {
+            ctx.fillStyle = '#3a6a7a';
+            ctx.fillText('~est', W - 3, H - 3);
+        } else {
+            const zoomLabel = errPx > 0 ? `×${(scale / (room / 90)).toFixed(1)}` : '';
+            if (zoomLabel) {
+                ctx.fillStyle = '#2a4a5a';
+                ctx.fillText(zoomLabel, W - 3, H - 3);
+            }
         }
-    } else if (!detected && running) {
-        // Searching — faint label
+        ctx.restore();
+    } else if (!hasError && running) {
+        // No pointing data at all — show searching
         ctx.save();
         ctx.font = '8px monospace';
         ctx.fillStyle = '#2a4a5a';
