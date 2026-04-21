@@ -5089,9 +5089,36 @@ def recenter_sun_centering():
         return handle_error(e)
 
 
+def _route_pointing_data() -> dict:
+    """Compute live sun ephem + mount alt/az for the status response."""
+    out = {"sun_ephem_alt": None, "sun_ephem_az": None, "mount_alt": None, "mount_az": None}
+    try:
+        from tzlocal import get_localzone
+        latitude, longitude, elevation = get_observer_coordinates()
+        observer_position = get_my_pos(lat=latitude, lon=longitude, elevation=elevation, base_ref=EARTH)
+        sun = CelestialObject(name="sun", observer_position=observer_position)
+        sun.update_position(ref_datetime=datetime.now(get_localzone()))
+        coords = sun.get_coordinates()
+        out["sun_ephem_alt"] = round(float(coords["altitude"]), 2)
+        out["sun_ephem_az"] = round(float(coords["azimuthal"]), 2)
+    except Exception:
+        pass
+    try:
+        alpaca = get_alpaca_client()
+        if alpaca and alpaca.is_connected():
+            pos = alpaca.get_position()
+            if pos:
+                out["mount_alt"] = round(float(pos.get("alt", 0)), 2)
+                out["mount_az"] = round(float(pos.get("az", 0)), 2)
+    except Exception:
+        pass
+    return out
+
+
 def get_sun_centering_status():
     """GET /telescope/sun-center/status - read Sun centering service status."""
     try:
+        pointing = _route_pointing_data()
         service = get_sun_center_service()
         if not service:
             return (
@@ -5103,11 +5130,14 @@ def get_sun_centering_status():
                         "tolerance_mode": "strict",
                         "error_norm": None,
                         "recovery_attempts": 0,
+                        **pointing,
                     }
                 ),
                 200,
             )
-        return jsonify(service.get_status()), 200
+        status = service.get_status()
+        status.update(pointing)
+        return jsonify(status), 200
     except Exception as e:
         return handle_error(e)
 
