@@ -1861,36 +1861,48 @@ function _drawSunCenterCanvas(data) {
     const detected = !!(data && data.disk_detected);
     const eu       = (data && data.error_u_px != null) ? Number(data.error_u_px) : null;
     const ev       = (data && data.error_v_px != null) ? Number(data.error_v_px) : null;
-    const diskR    = (data && data.disk_info && data.disk_info.radius > 0)
-                        ? Number(data.disk_info.radius) : 60;
 
-    const pad  = 8;
-    const rR   = 18;   // fixed reticle ring radius — independent of zoom
-    const room = cx - pad - rR;   // max canvas-px a reticle centre can be from canvas centre
+    const pad = 6;
+    const rR  = 10;   // small ring — more room for separation
+    const room = cx - pad - rR;   // max distance from canvas centre a reticle can sit
 
-    // Dynamic scale: target the white reticle at 65% of room so it's clearly
-    // offset from the red one even when error is tiny, and never clips off-screen.
-    let scale;
-    if (detected && Number.isFinite(eu) && Number.isFinite(ev)) {
-        const errPx = Math.hypot(eu, ev);
-        if (errPx > 0.5) {
-            scale = (room * 0.65) / errPx;   // puts white reticle at 65% of room
-            scale = Math.min(scale, room / errPx);  // never clip off canvas
-        } else {
-            scale = room / 1;   // near-zero error: just show overlapping reticles
-        }
-    } else {
-        scale = room / 90;   // no disk: revert to full-frame scale
+    // Dynamic scale: white reticle always at 70% of room from centre.
+    // This guarantees both reticles are visually separated regardless of error size.
+    let scale = 1;
+    let errPx = 0;
+    const hasError = detected && Number.isFinite(eu) && Number.isFinite(ev);
+    if (hasError) {
+        errPx = Math.hypot(eu, ev);
+        scale = errPx > 0.1 ? (room * 0.70) / errPx : room * 7;
     }
 
-    if (detected && Number.isFinite(eu) && Number.isFinite(ev)) {
+    // Red reticle (target = frame centre) — always drawn, dashed ring so white is distinct
+    const redAlpha = running ? 0.9 : 0.4;
+    ctx.save();
+    ctx.globalAlpha = redAlpha;
+    ctx.strokeStyle = '#e04444';
+    ctx.lineWidth = 1.5;
+    ctx.setLineDash([4, 3]);
+    ctx.beginPath(); ctx.arc(cx, cy, rR, 0, Math.PI * 2); ctx.stroke();
+    ctx.setLineDash([]);
+    const gap = rR * 0.4, arm = rR * 1.5;
+    ctx.beginPath();
+    ctx.moveTo(cx - arm, cy); ctx.lineTo(cx - gap, cy);
+    ctx.moveTo(cx + gap,  cy); ctx.lineTo(cx + arm, cy);
+    ctx.moveTo(cx, cy - arm); ctx.lineTo(cx, cy - gap);
+    ctx.moveTo(cx, cy + gap);  ctx.lineTo(cx, cy + arm);
+    ctx.stroke();
+    ctx.restore();
+
+    if (hasError) {
         const wx  = cx + eu * scale;
         const wy  = cy + ev * scale;
         const wxc = Math.max(pad + rR, Math.min(W - pad - rR, wx));
         const wyc = Math.max(pad + rR, Math.min(H - pad - rR, wy));
 
+        // Dashed line from red to white
         const dist = Math.hypot(wxc - cx, wyc - cy);
-        if (dist > rR * 0.3) {
+        if (dist > rR) {
             ctx.save();
             ctx.strokeStyle = '#1e3a4a';
             ctx.lineWidth = 0.8;
@@ -1902,11 +1914,27 @@ function _drawSunCenterCanvas(data) {
             ctx.restore();
         }
 
-        _drawReticle(ctx, wxc, wyc, rR, '#c8d8e4', 0.9);   // white = disk (Sun)
-        _drawReticle(ctx, cx,  cy,  rR, '#e04444', 0.9);   // red   = target (centre)
-    } else {
-        // No disk detected — red bullseye only; white reticle absent = Sun not in frame.
-        _drawReticle(ctx, cx, cy, rR, '#e04444', running ? 0.85 : 0.35);
+        // White reticle (disk position) — solid, drawn on top
+        _drawReticle(ctx, wxc, wyc, rR, '#e8f4ff', 0.95);
+
+        // Scale indicator bottom-right
+        const zoomLabel = errPx > 0 ? `×${(scale / (room / 90)).toFixed(1)}` : '';
+        if (zoomLabel) {
+            ctx.save();
+            ctx.font = '8px monospace';
+            ctx.fillStyle = '#2a4a5a';
+            ctx.textAlign = 'right';
+            ctx.fillText(zoomLabel, W - 3, H - 3);
+            ctx.restore();
+        }
+    } else if (!detected && running) {
+        // Searching — faint label
+        ctx.save();
+        ctx.font = '8px monospace';
+        ctx.fillStyle = '#2a4a5a';
+        ctx.textAlign = 'center';
+        ctx.fillText('searching', cx, H - 4);
+        ctx.restore();
     }
 }
 
