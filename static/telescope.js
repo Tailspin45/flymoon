@@ -3912,22 +3912,26 @@ function viewFile(path, name, opts) {
         const slider = document.getElementById('frameScrubSlider');
         slider.addEventListener('input', () => {
             const f = parseInt(slider.value, 10);
-            _currentFrame = f;
-            vid.currentTime = f / _videoFps;
+            _seekToFrame(vid, f);
         });
 
+        // Do NOT overwrite _currentFrame from vid.currentTime here when a
+        // programmatic seek is in flight: floating-point rounding can push
+        // the value to frame+1, which then made the play-loop advance by two.
+        // Only trust vid.currentTime when the delta is large — i.e. something
+        // external (scrubber drag past target, loop-wrap) moved the playhead.
         const updateAfterSeek = () => {
-            _currentFrame = Math.round(vid.currentTime * _videoFps);
-            _updateScrubPosition(vid);
-            _updateFivePanel();
+            const fromVid = Math.round(vid.currentTime * _videoFps);
+            if (!_programmaticSeekInProgress && Math.abs(fromVid - _currentFrame) > 1) {
+                _currentFrame = fromVid;
+            }
+            _scheduleFivePanelRender();
         };
+        // timeupdate only handles loop wrap-around; render is driven by seeked.
         vid.addEventListener('timeupdate', () => {
             if (_loopSegment && _loopSegment.start != null && vid.currentTime >= _loopSegment.end) {
                 vid.currentTime = _loopSegment.start;
             }
-            _currentFrame = Math.round(vid.currentTime * _videoFps);
-            _updateScrubPosition(vid);
-            _updateFivePanel();
         });
         vid.addEventListener('seeked', updateAfterSeek);
         const _isDetClip = /\/det_[^/]+\.mp4$/i.test(path);
@@ -3951,10 +3955,22 @@ function viewFile(path, name, opts) {
                 _runIsolateTransit(apiPath, null);
             });
         };
-        vid.addEventListener('loadedmetadata', () => { _initFrameScrubber(vid); updateAfterSeek(); _maybeAutoIsolate(); });
+        const _initAfterMeta = async () => {
+            _videoFps = await _probeVideoFps(vid, path);
+            _initFrameScrubber(vid);
+            // Ensure the playhead is settled at frame 0 and a real frame is
+            // decoded before we size the thumb canvas / draw anything.
+            await _seekToFrame(vid, 0);
+            _extractFrameThumbs(vid);
+            // Prime the pump: guarantee the centre panel has content.
+            _captureLandedThumb(vid, 0);
+            _updateFivePanel();
+            updateAfterSeek();
+            _maybeAutoIsolate();
+        };
+        vid.addEventListener('loadedmetadata', _initAfterMeta, { once: true });
         vid.addEventListener('loadeddata', () => { updateAfterSeek(); });
-        if (vid.readyState >= 1) { _initFrameScrubber(vid); updateAfterSeek(); }
-        _extractFrameThumbs(vid);
+        if (vid.readyState >= 1) { _initAfterMeta(); }
     } else {
         const isDiff = name.includes('_diff');
         const isFrame = name.includes('_frame');
@@ -4046,14 +4062,11 @@ function closeFileViewer() {
     _frameThumbs = {};
     _thumbExtractionQueue = [];
     _thumbExtractionPending = new Set();
-    _thumbExtractionBusy = false;
-    _thumbExtractorCanvas = null;
-    _thumbExtractorCtx = null;
+    _thumbCanvas = null;
+    _thumbCtx = null;
+    _thumbGeneration++;
+    _thumbChain = Promise.resolve();
     _currentFrame = 0;
-    if (_thumbExtractorVid) {
-        try { document.body.removeChild(_thumbExtractorVid); } catch (e) {}
-        _thumbExtractorVid = null;
-    }
 
     if (viewer._filesModalWasOpen) {
         const filesModal = document.getElementById('filesModal');
@@ -4171,29 +4184,41 @@ function frameStepStop() {
     if (_frameStepTimer) { clearTimeout(_frameStepTimer); _frameStepTimer = null; }
 }
 
-// Scrubber playback (frame-by-frame at ~_videoFps using rAF)
-var _scrubPlayRAF = null;
+// Scrubber playback. Forward uses native <video>.play() + rVFC so we get
+// smooth decode-native framerate. Reverse uses a step-based loop (no browser
+// supports negative playbackRate on arbitrary codecs).
 var _scrubPlayDir = 0;
-var _scrubPlayLastT = null;
+var _scrubPlayRunning = false;
 
 function scrubPlayToggle(dir) {
     if (_scrubPlayDir === dir) {
-        // Already playing this direction — stop
         _scrubPlayStop();
         return;
     }
-    _scrubPlayStop();
+    // Stop any prior direction cleanly before switching.
+    if (_scrubPlayDir !== 0) _scrubPlayStop();
     _scrubPlayDir = dir;
-    _scrubPlayLastT = null;
-    _scrubPlayRAF = requestAnimationFrame(_scrubPlayTick);
     _scrubPlayUpdateBtns();
+    if (dir === 1) {
+        _nativePlayForward();
+    } else if (dir === -1) {
+        if (!_scrubPlayRunning) _reversePlayLoop();
+    }
 }
 
 function _scrubPlayStop() {
-    if (_scrubPlayRAF) { cancelAnimationFrame(_scrubPlayRAF); _scrubPlayRAF = null; }
     _scrubPlayDir = 0;
-    _scrubPlayLastT = null;
+    const vid = document.getElementById('hiddenVid');
+    if (vid && !vid.paused) {
+        try { vid.pause(); } catch (e) {}
+    }
+    if (typeof _scrubPlayCleanup === 'function') {
+        try { _scrubPlayCleanup(); } catch (e) {}
+    }
+    _scrubPlayCleanup = null;
+    _scrubPlayRunning = false;
     _scrubPlayUpdateBtns();
+    _vdbg('native play stopped');
 }
 
 function _scrubPlayUpdateBtns() {
@@ -4203,20 +4228,82 @@ function _scrubPlayUpdateBtns() {
     if (fwd) fwd.style.background = _scrubPlayDir ===  1 ? '#0a4' : '';
 }
 
-function _scrubPlayTick(ts) {
-    if (_scrubPlayDir === 0) return;
-    const interval = 1000 / (_videoFps || 30);
-    if (_scrubPlayLastT === null) _scrubPlayLastT = ts;
-    if (ts - _scrubPlayLastT >= interval) {
-        _scrubPlayLastT = ts;
-        const next = _currentFrame + _scrubPlayDir;
-        if (next < 0 || next >= _frameTotalCount) {
-            _scrubPlayStop();
-            return;
+// Native forward playback. Let the <video> element decode at its natural
+// rate; rVFC fires once per presented frame and drives the filmstrip.
+function _nativePlayForward() {
+    const vid = document.getElementById('hiddenVid');
+    if (!vid || !vid.duration) return;
+    _scrubPlayRunning = true;
+    const useRVFC = typeof vid.requestVideoFrameCallback === 'function';
+    let rvfcHandle = null;
+    let rvfcCount = 0;
+    let tuId = null;
+    const onFrame = (_now, meta) => {
+        if (_scrubPlayDir !== 1) return;
+        const mt = (meta && typeof meta.mediaTime === 'number')
+            ? meta.mediaTime : vid.currentTime;
+        const f = Math.round(mt * (_videoFps || 30));
+        if (f !== _currentFrame) {
+            _currentFrame = f;
+            _captureLandedThumb(vid, f);
+            _scheduleFivePanelRender();
+            if (rvfcCount < 3) { _vdbg('rVFC frame', f); rvfcCount++; }
         }
-        _stepFrame(_scrubPlayDir);
+        rvfcHandle = vid.requestVideoFrameCallback(onFrame);
+    };
+    const onTimeUpdate = () => {
+        if (_scrubPlayDir !== 1) return;
+        const f = Math.round(vid.currentTime * (_videoFps || 30));
+        if (f !== _currentFrame) {
+            _currentFrame = f;
+            _captureLandedThumb(vid, f);
+            _scheduleFivePanelRender();
+        }
+    };
+    const onEnded = () => {
+        if (_loopSegment) return; // loop handler owns wrap
+        _scrubPlayStop();
+    };
+    _scrubPlayCleanup = () => {
+        if (useRVFC && rvfcHandle != null && typeof vid.cancelVideoFrameCallback === 'function') {
+            try { vid.cancelVideoFrameCallback(rvfcHandle); } catch (e) {}
+        }
+        if (tuId != null) vid.removeEventListener('timeupdate', onTimeUpdate);
+        vid.removeEventListener('ended', onEnded);
+    };
+    vid.addEventListener('ended', onEnded);
+    if (useRVFC) {
+        rvfcHandle = vid.requestVideoFrameCallback(onFrame);
+    } else {
+        tuId = 1;
+        vid.addEventListener('timeupdate', onTimeUpdate);
     }
-    _scrubPlayRAF = requestAnimationFrame(_scrubPlayTick);
+    _vdbg('native play started');
+    const p = vid.play();
+    if (p && typeof p.catch === 'function') p.catch(() => _scrubPlayStop());
+}
+
+// Reverse step-play. Seeks one frame at a time. Prefetches N-1 thumb so
+// the filmstrip doesn't lag the cursor.
+async function _reversePlayLoop() {
+    if (_scrubPlayRunning) return;
+    _scrubPlayRunning = true;
+    try {
+        while (_scrubPlayDir === -1) {
+            const vid = document.getElementById('hiddenVid');
+            if (!vid || !vid.duration) break;
+            if (!vid.paused) { try { vid.pause(); } catch (e) {} }
+            const next = _currentFrame - 1;
+            if (next < 0) {
+                _scrubPlayStop();
+                break;
+            }
+            _queueFrameThumb(next - 1);
+            await _seekToFrame(vid, next);
+        }
+    } finally {
+        _scrubPlayRunning = false;
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -4224,19 +4311,192 @@ function _scrubPlayTick(ts) {
 // ---------------------------------------------------------------------------
 
 var _currentFrame = 0;
+var _renderPending = false;
+var _fivePanelRetryScheduled = false;
+var _programmaticSeekInProgress = false;
+var _scrubPlayCleanup = null;
+
+// Viewer debug logging. Leave false in production; flip to true when
+// diagnosing filmstrip / playback regressions.
+const _VIDDBG = false;
+function _vdbg(...args) { if (_VIDDBG) try { console.log('[vid]', ...args); } catch (e) {} }
+
+// Minimum byte length for a data-URL to be considered a real (non-blank)
+// JPEG capture. Mostly-flat frames from a not-ready decoder compress to a
+// few hundred bytes; real 400x225 frames are tens of KB.
+const _MIN_THUMB_BYTES = 500;
+
+/** Schedule a single rAF-batched render of the scrub position + filmstrip.
+ *  Multiple calls within one animation frame collapse to one paint. */
+function _scheduleFivePanelRender() {
+    if (_renderPending) return;
+    _renderPending = true;
+    requestAnimationFrame(() => {
+        _renderPending = false;
+        const v = document.getElementById('hiddenVid');
+        if (!v) return;
+        _updateScrubPosition(v);
+        _updateFivePanel();
+    });
+}
+
+/** Capture whatever the decoder is currently showing into the shared
+ *  offscreen canvas, stored against `frameIdx`. No-op if already captured
+ *  or if the canvas isn't ready. Safe to call from any seek/play code path.
+ *  Schedules a 5-panel re-render when the captured frame is within the
+ *  visible window — essential because the capture happens AFTER the
+ *  'seeked' event's render, so that render had no thumb to show. */
+function _captureLandedThumb(vid, frameIdx) {
+    if (!_thumbCtx || !_thumbCanvas || !vid) return;
+    if (frameIdx < 0 || frameIdx >= _frameTotalCount) return;
+    if (_frameThumbs[frameIdx]) return;
+    try {
+        _thumbCtx.drawImage(vid, 0, 0, _thumbCanvas.width, _thumbCanvas.height);
+        const url = _thumbCanvas.toDataURL('image/jpeg', 0.85);
+        if (url.length < _MIN_THUMB_BYTES) {
+            // Decoder likely wasn't ready — don't cache a blank. Re-queue so
+            // the drainer can retry once the frame has actually landed.
+            _vdbg('blank capture rejected', frameIdx, 'len=', url.length);
+            _thumbExtractionPending.delete(frameIdx);
+            _queueFrameThumb(frameIdx);
+            return;
+        }
+        _frameThumbs[frameIdx] = url;
+        _thumbExtractionPending.delete(frameIdx);
+        _vdbg('captured', frameIdx, 'len=', url.length);
+        if (Math.abs(frameIdx - _currentFrame) <= 2) {
+            _vdbg('late render scheduled', frameIdx);
+            _scheduleFivePanelRender();
+        }
+    } catch (e) {
+        _vdbg('capture failed', frameIdx, e && e.message);
+    }
+}
+
+/** Seek `vid` to the given frame and resolve once the post-seek frame is
+ *  actually decoded (requestVideoFrameCallback) or seeked has fired +
+ *  a best-effort settle in the fallback path. Opportunistically captures
+ *  the landed frame into the thumb cache so playback/stepping also
+ *  populates the filmstrip. */
+function _seekToFrame(vid, frame) {
+    if (!vid) return Promise.resolve();
+    const fps = _videoFps || 30;
+    const clamped = Math.max(0, Math.min((_frameTotalCount || 1) - 1, Math.round(frame)));
+    _currentFrame = clamped;
+    _programmaticSeekInProgress = true;
+    const useRVFC = typeof vid.requestVideoFrameCallback === 'function';
+    _vdbg('seek start', clamped);
+    return new Promise(resolve => {
+        let done = false;
+        const finish = () => {
+            if (done) return;
+            done = true;
+            _captureLandedThumb(vid, clamped);
+            _programmaticSeekInProgress = false;
+            _vdbg('seek settle', clamped);
+            resolve();
+        };
+        const onSeeked = () => {
+            vid.removeEventListener('seeked', onSeeked);
+            if (useRVFC) {
+                try {
+                    vid.requestVideoFrameCallback(() => finish());
+                    // Belt-and-braces: if rVFC hasn't fired in 250ms, try
+                    // drawing anyway — the decoder almost certainly has the
+                    // frame by then. The outer 1500ms safety timeout still
+                    // applies as the absolute last resort.
+                    setTimeout(finish, 250);
+                    return;
+                } catch (e) {}
+            }
+            // No rVFC: allow one browser tick for the frame to present.
+            setTimeout(finish, 16);
+        };
+        vid.addEventListener('seeked', onSeeked, { once: true });
+        try {
+            vid.currentTime = clamped / fps;
+        } catch (e) {
+            vid.removeEventListener('seeked', onSeeked);
+            finish();
+        }
+        // Safety net: never hang forever.
+        setTimeout(finish, 1500);
+    });
+}
 
 function _stepFrame(dir) {
     const vid = document.getElementById('hiddenVid');
     if (!vid || !vid.duration) return;
     vid.pause();
-    const newFrame = Math.max(0, Math.min(_frameTotalCount - 1, _currentFrame + dir));
-    _currentFrame = newFrame;
-    vid.currentTime = newFrame / _videoFps;
+    _seekToFrame(vid, _currentFrame + dir);
+}
+
+/** Probe the video's real fps. Prefer requestVideoFrameCallback sampling
+ *  (fast, client-only); fall back to the ffprobe-backed server route; fall
+ *  back to 30. Resolves to a positive number. */
+async function _probeVideoFps(vid, path) {
+    try {
+        if (typeof vid.requestVideoFrameCallback === 'function') {
+            const deltas = [];
+            const wasMuted = vid.muted;
+            vid.muted = true;
+            await new Promise(res => {
+                let last = null;
+                let count = 0;
+                const cb = (_now, meta) => {
+                    if (last !== null) {
+                        const d = meta.mediaTime - last;
+                        if (d > 0 && d < 1) deltas.push(d);
+                    }
+                    last = meta.mediaTime;
+                    count++;
+                    if (count < 12 && deltas.length < 10) {
+                        try { vid.requestVideoFrameCallback(cb); } catch (e) { res(); }
+                    } else {
+                        res();
+                    }
+                };
+                try { vid.requestVideoFrameCallback(cb); } catch (e) { res(); }
+                vid.play().catch(() => {});
+                setTimeout(res, 1200);
+            });
+            try { vid.pause(); } catch (e) {}
+            vid.muted = wasMuted;
+            try { vid.currentTime = 0; } catch (e) {}
+            if (deltas.length >= 3) {
+                deltas.sort((a, b) => a - b);
+                const median = deltas[Math.floor(deltas.length / 2)];
+                if (median > 0) {
+                    const fps = 1 / median;
+                    if (fps > 5 && fps < 480) {
+                        const rounded = Math.round(fps * 1000) / 1000;
+                        _vdbg('probe rVFC fps=', rounded);
+                        return rounded;
+                    }
+                }
+            }
+        }
+    } catch (e) { /* fall through */ }
+    // Server fallback
+    try {
+        const apiPath = (path || '').replace(/^\/static\//, '');
+        if (apiPath) {
+            const r = await fetch('/api/video/fps?path=' + encodeURIComponent(apiPath));
+            if (r.ok) {
+                const j = await r.json();
+                if (j && typeof j.fps === 'number' && j.fps > 0) {
+                    _vdbg('probe server fps=', j.fps);
+                    return j.fps;
+                }
+            }
+        }
+    } catch (e) { /* fall through */ }
+    _vdbg('probe fallback fps=30');
+    return 30;
 }
 
 function _initFrameScrubber(vid) {
     if (!vid || !vid.duration) return;
-    _videoFps = 30;
     _frameTotalCount = Math.round(vid.duration * _videoFps);
     const slider = document.getElementById('frameScrubSlider');
     if (slider) {
@@ -4270,95 +4530,122 @@ function _updateScrubPosition(vid) {
 
 var _frameThumbs = {};      // frame index -> data URL
 var _frameTotalCount = 0;
-var _thumbExtractorVid = null;
-var _thumbExtractorCanvas = null;
-var _thumbExtractorCtx = null;
-var _thumbExtractionBusy = false;
+var _thumbCanvas = null;
+var _thumbCtx = null;
 var _thumbExtractionQueue = [];
 var _thumbExtractionPending = new Set();
+var _thumbChain = Promise.resolve();
+var _thumbGeneration = 0;
 var _lastThumbQueueMs = 0;
 const THUMB_QUEUE_THROTTLE_MS = 120;
 
-/** Prepare a hidden extractor video for lightweight on-demand frame thumbnails. */
-function _extractFrameThumbs(mainVid) {
-    if (_thumbExtractorVid) {
-        try { document.body.removeChild(_thumbExtractorVid); } catch (e) {}
-        _thumbExtractorVid = null;
-    }
+/** Install a shared offscreen canvas sized from mainVid. Thumb extraction
+ *  reuses mainVid's own decoder — no second <video>, no decoder race. */
+async function _extractFrameThumbs(mainVid) {
     _frameThumbs = {};
     _thumbExtractionQueue = [];
     _thumbExtractionPending = new Set();
-    _thumbExtractionBusy = false;
-    _thumbExtractorCanvas = null;
-    _thumbExtractorCtx = null;
+    _thumbGeneration++;
+    _thumbChain = Promise.resolve();
 
-    const extVid = document.createElement('video');
-    extVid.src = mainVid.src;
-    extVid.muted = true;
-    extVid.preload = 'metadata';
-    extVid.style.cssText = 'position:absolute;left:-9999px;width:1px;height:1px;';
-    document.body.appendChild(extVid);
-    _thumbExtractorVid = extVid;
+    // On large (4K) sources videoWidth can still be 0 right after the probe's
+    // play/pause dance. Poll briefly before sizing the canvas.
+    let tries = 0;
+    while (!(mainVid.videoWidth > 0) && tries < 20) {
+        await new Promise(r => setTimeout(r, 50));
+        tries++;
+    }
+    if (!(mainVid.videoWidth > 0)) {
+        _vdbg('extract bail: videoWidth still 0');
+        return;
+    }
 
-    extVid.addEventListener('loadedmetadata', () => {
-        if (extVid !== _thumbExtractorVid) return;
+    const vw = mainVid.videoWidth;
+    const vh = mainVid.videoHeight || Math.round(vw * 9 / 16);
+    const thumbW = Math.min(vw, 400);
+    const thumbH = Math.max(1, Math.round(thumbW * (vh / vw)));
+    _thumbCanvas = document.createElement('canvas');
+    _thumbCanvas.width = thumbW;
+    _thumbCanvas.height = thumbH;
+    _thumbCtx = _thumbCanvas.getContext('2d');
+    _vdbg('canvas', thumbW, 'x', thumbH);
 
-        const vw = extVid.videoWidth || 640;
-        const vh = extVid.videoHeight || 480;
-        const thumbW = Math.min(vw, 400);
-        const thumbH = Math.max(1, Math.round(thumbW * (vh / vw)));
-        _thumbExtractorCanvas = document.createElement('canvas');
-        _thumbExtractorCanvas.width = thumbW;
-        _thumbExtractorCanvas.height = thumbH;
-        _thumbExtractorCtx = _thumbExtractorCanvas.getContext('2d');
-        _queueFivePanelThumbs(_currentFrame);
-    }, { once: true });
+    _queueFivePanelThumbs(_currentFrame);
 }
 
 function _queueFrameThumb(frameIdx) {
-    if (!_thumbExtractorVid || !_thumbExtractorCtx || !_thumbExtractorCanvas) return;
+    if (!_thumbCtx || !_thumbCanvas) return;
     if (frameIdx < 0 || frameIdx >= _frameTotalCount) return;
     if (_frameThumbs[frameIdx] || _thumbExtractionPending.has(frameIdx)) return;
     _thumbExtractionPending.add(frameIdx);
     _thumbExtractionQueue.push(frameIdx);
 }
 
-function _drainThumbQueue() {
-    if (_thumbExtractionBusy) return;
-    if (!_thumbExtractorVid || !_thumbExtractorCtx || !_thumbExtractorCanvas) return;
-    const frameIdx = _thumbExtractionQueue.shift();
-    if (frameIdx === undefined) return;
-
-    _thumbExtractionBusy = true;
-    const extVid = _thumbExtractorVid;
-    const fps = _videoFps || 30;
-
-    extVid.onseeked = () => {
-        if (extVid !== _thumbExtractorVid) {
+function _captureCurrentAsThumb(vid, frameIdx) {
+    try {
+        _thumbCtx.drawImage(vid, 0, 0, _thumbCanvas.width, _thumbCanvas.height);
+        const url = _thumbCanvas.toDataURL('image/jpeg', 0.85);
+        if (url.length < _MIN_THUMB_BYTES) {
+            _vdbg('blank capture rejected', frameIdx, 'len=', url.length);
             _thumbExtractionPending.delete(frameIdx);
-            _thumbExtractionBusy = false;
-            requestAnimationFrame(_drainThumbQueue);
+            _queueFrameThumb(frameIdx);
             return;
         }
-        try {
-            _thumbExtractorCtx.drawImage(extVid, 0, 0, _thumbExtractorCanvas.width, _thumbExtractorCanvas.height);
-            _frameThumbs[frameIdx] = _thumbExtractorCanvas.toDataURL('image/jpeg', 0.85);
-        } catch (e) {
-            // Ignore per-frame extraction failures and continue.
+        _frameThumbs[frameIdx] = url;
+        _vdbg('captured', frameIdx, 'len=', url.length);
+        if (Math.abs(frameIdx - _currentFrame) <= 2) {
+            _vdbg('late render scheduled', frameIdx);
+            _scheduleFivePanelRender();
         }
-        _thumbExtractionPending.delete(frameIdx);
-        _thumbExtractionBusy = false;
-        _updateFivePanel();
-        requestAnimationFrame(_drainThumbQueue);
-    };
+    } catch (e) { _vdbg('capture failed', frameIdx, e && e.message); }
+    _thumbExtractionPending.delete(frameIdx);
+}
 
-    try {
-        extVid.currentTime = frameIdx / fps;
-    } catch (e) {
-        _thumbExtractionPending.delete(frameIdx);
-        _thumbExtractionBusy = false;
-        requestAnimationFrame(_drainThumbQueue);
-    }
+function _drainThumbQueue() {
+    if (!_thumbCtx || !_thumbCanvas) return;
+    if (_thumbExtractionQueue.length === 0) return;
+    const gen = _thumbGeneration;
+    _thumbChain = _thumbChain.then(async () => {
+        if (gen !== _thumbGeneration) return;
+        const vid = document.getElementById('hiddenVid');
+        if (!vid || !vid.duration) { _thumbExtractionQueue = []; return; }
+        const homeFrame = _currentFrame;
+        let movedPlayhead = false;
+        while (_thumbExtractionQueue.length > 0 && gen === _thumbGeneration) {
+            const frameIdx = _thumbExtractionQueue.shift();
+            if (frameIdx === undefined) break;
+            if (_frameThumbs[frameIdx]) { _thumbExtractionPending.delete(frameIdx); continue; }
+            const curFrame = Math.round(vid.currentTime * (_videoFps || 30));
+            if (_scrubPlayDir !== 0) {
+                // Playing: only capture frames we're already sitting on.
+                // Anything else goes back on the queue for the play loop /
+                // _seekToFrame's opportunistic capture to pick up later.
+                if (curFrame === frameIdx) {
+                    _captureCurrentAsThumb(vid, frameIdx);
+                    _updateFivePanel();
+                } else {
+                    _thumbExtractionQueue.push(frameIdx);
+                    break;
+                }
+                continue;
+            }
+            // Paused: may seek to reach the frame.
+            if (curFrame === frameIdx) {
+                _captureCurrentAsThumb(vid, frameIdx);
+            } else {
+                vid.pause();
+                await _seekToFrame(vid, frameIdx);
+                if (gen !== _thumbGeneration) return;
+                movedPlayhead = true;
+                _captureCurrentAsThumb(vid, frameIdx);
+            }
+            _updateFivePanel();
+        }
+        // Restore user's playhead if we moved it for thumb capture.
+        if (movedPlayhead && gen === _thumbGeneration && _scrubPlayDir === 0) {
+            await _seekToFrame(vid, homeFrame);
+        }
+    }).catch(() => {});
 }
 
 function _queueFivePanelThumbs(centerFrame) {
@@ -4375,7 +4662,22 @@ function _updateFivePanel() {
     if (!panel) return;
     const total = _frameTotalCount || 1;
     const cur = _currentFrame;
-    _queueFivePanelThumbs(cur);
+    // If the thumb canvas isn't ready yet, draw placeholders and schedule
+    // a single retry once the canvas finishes setup.
+    if (!_thumbCanvas || !_thumbCtx) {
+        if (!_fivePanelRetryScheduled) {
+            _fivePanelRetryScheduled = true;
+            requestAnimationFrame(() => {
+                _fivePanelRetryScheduled = false;
+                _updateFivePanel();
+            });
+        }
+    } else if (_scrubPlayDir !== 1) {
+        // Skip bulk queueing during native forward play: rVFC captures the
+        // landed frame on every tick, so the center populates organically
+        // and we avoid contending with the decoder.
+        _queueFivePanelThumbs(cur);
+    }
 
     const offsets = [-2, -1, 0, 1, 2];
     let html = '';
@@ -4401,10 +4703,11 @@ function _updateFivePanel() {
 
 function _jumpToFrame(f) {
     const vid = document.getElementById('hiddenVid');
-    if (!vid || f < 0 || f >= _frameTotalCount) return;
+    const frame = Math.round(f);
+    if (!vid || frame < 0 || frame >= _frameTotalCount) return;
     vid.pause();
-    _currentFrame = f;
-    vid.currentTime = f / _videoFps;
+    _scrubPlayStop();
+    _seekToFrame(vid, frame);
 }
 
 function toggleMarkFrame() {
