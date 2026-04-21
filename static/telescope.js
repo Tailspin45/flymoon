@@ -4354,8 +4354,16 @@ function viewFile(path, name, opts) {
             _seekToFrame(vid, f);
         });
 
+        // Do NOT overwrite _currentFrame from vid.currentTime here when a
+        // programmatic seek is in flight: floating-point rounding can push
+        // the value to frame+1, which then made the play-loop advance by two.
+        // Only trust vid.currentTime when the delta is large — i.e. something
+        // external (scrubber drag past target, loop-wrap) moved the playhead.
         const updateAfterSeek = () => {
-            _currentFrame = Math.round(vid.currentTime * _videoFps);
+            const fromVid = Math.round(vid.currentTime * _videoFps);
+            if (!_programmaticSeekInProgress && Math.abs(fromVid - _currentFrame) > 1) {
+                _currentFrame = fromVid;
+            }
             _scheduleFivePanelRender();
         };
         // timeupdate only handles loop wrap-around; render is driven by seeked.
@@ -4616,7 +4624,9 @@ function frameStepStop() {
     if (_frameStepTimer) { clearTimeout(_frameStepTimer); _frameStepTimer = null; }
 }
 
-// Scrubber playback — serialized on seek completion, not a fixed interval.
+// Scrubber playback. Forward uses native <video>.play() + rVFC so we get
+// smooth decode-native framerate. Reverse uses a step-based loop (no browser
+// supports negative playbackRate on arbitrary codecs).
 var _scrubPlayDir = 0;
 var _scrubPlayRunning = false;
 
@@ -4625,14 +4635,30 @@ function scrubPlayToggle(dir) {
         _scrubPlayStop();
         return;
     }
+    // Stop any prior direction cleanly before switching.
+    if (_scrubPlayDir !== 0) _scrubPlayStop();
     _scrubPlayDir = dir;
     _scrubPlayUpdateBtns();
-    if (!_scrubPlayRunning) _scrubPlayLoop();
+    if (dir === 1) {
+        _nativePlayForward();
+    } else if (dir === -1) {
+        if (!_scrubPlayRunning) _reversePlayLoop();
+    }
 }
 
 function _scrubPlayStop() {
     _scrubPlayDir = 0;
+    const vid = document.getElementById('hiddenVid');
+    if (vid && !vid.paused) {
+        try { vid.pause(); } catch (e) {}
+    }
+    if (typeof _scrubPlayCleanup === 'function') {
+        try { _scrubPlayCleanup(); } catch (e) {}
+    }
+    _scrubPlayCleanup = null;
+    _scrubPlayRunning = false;
     _scrubPlayUpdateBtns();
+    _vdbg('native play stopped');
 }
 
 function _scrubPlayUpdateBtns() {
@@ -4642,26 +4668,78 @@ function _scrubPlayUpdateBtns() {
     if (fwd) fwd.style.background = _scrubPlayDir ===  1 ? '#0a4' : '';
 }
 
-async function _scrubPlayLoop() {
+// Native forward playback. Let the <video> element decode at its natural
+// rate; rVFC fires once per presented frame and drives the filmstrip.
+function _nativePlayForward() {
+    const vid = document.getElementById('hiddenVid');
+    if (!vid || !vid.duration) return;
+    _scrubPlayRunning = true;
+    const useRVFC = typeof vid.requestVideoFrameCallback === 'function';
+    let rvfcHandle = null;
+    let rvfcCount = 0;
+    let tuId = null;
+    const onFrame = (_now, meta) => {
+        if (_scrubPlayDir !== 1) return;
+        const mt = (meta && typeof meta.mediaTime === 'number')
+            ? meta.mediaTime : vid.currentTime;
+        const f = Math.round(mt * (_videoFps || 30));
+        if (f !== _currentFrame) {
+            _currentFrame = f;
+            _captureLandedThumb(vid, f);
+            _scheduleFivePanelRender();
+            if (rvfcCount < 3) { _vdbg('rVFC frame', f); rvfcCount++; }
+        }
+        rvfcHandle = vid.requestVideoFrameCallback(onFrame);
+    };
+    const onTimeUpdate = () => {
+        if (_scrubPlayDir !== 1) return;
+        const f = Math.round(vid.currentTime * (_videoFps || 30));
+        if (f !== _currentFrame) {
+            _currentFrame = f;
+            _captureLandedThumb(vid, f);
+            _scheduleFivePanelRender();
+        }
+    };
+    const onEnded = () => {
+        if (_loopSegment) return; // loop handler owns wrap
+        _scrubPlayStop();
+    };
+    _scrubPlayCleanup = () => {
+        if (useRVFC && rvfcHandle != null && typeof vid.cancelVideoFrameCallback === 'function') {
+            try { vid.cancelVideoFrameCallback(rvfcHandle); } catch (e) {}
+        }
+        if (tuId != null) vid.removeEventListener('timeupdate', onTimeUpdate);
+        vid.removeEventListener('ended', onEnded);
+    };
+    vid.addEventListener('ended', onEnded);
+    if (useRVFC) {
+        rvfcHandle = vid.requestVideoFrameCallback(onFrame);
+    } else {
+        tuId = 1;
+        vid.addEventListener('timeupdate', onTimeUpdate);
+    }
+    _vdbg('native play started');
+    const p = vid.play();
+    if (p && typeof p.catch === 'function') p.catch(() => _scrubPlayStop());
+}
+
+// Reverse step-play. Seeks one frame at a time. Prefetches N-1 thumb so
+// the filmstrip doesn't lag the cursor.
+async function _reversePlayLoop() {
     if (_scrubPlayRunning) return;
     _scrubPlayRunning = true;
     try {
-        while (_scrubPlayDir !== 0) {
+        while (_scrubPlayDir === -1) {
             const vid = document.getElementById('hiddenVid');
             if (!vid || !vid.duration) break;
-            vid.pause();
-            const next = _currentFrame + _scrubPlayDir;
-            if (next < 0 || next >= _frameTotalCount) {
+            if (!vid.paused) { try { vid.pause(); } catch (e) {} }
+            const next = _currentFrame - 1;
+            if (next < 0) {
                 _scrubPlayStop();
                 break;
             }
-            const tStart = performance.now();
+            _queueFrameThumb(next - 1);
             await _seekToFrame(vid, next);
-            const target = 1000 / (_videoFps || 30);
-            const elapsed = performance.now() - tStart;
-            if (elapsed < target) {
-                await new Promise(r => setTimeout(r, target - elapsed));
-            }
         }
     } finally {
         _scrubPlayRunning = false;
@@ -4675,6 +4753,8 @@ async function _scrubPlayLoop() {
 var _currentFrame = 0;
 var _renderPending = false;
 var _fivePanelRetryScheduled = false;
+var _programmaticSeekInProgress = false;
+var _scrubPlayCleanup = null;
 
 // Viewer debug logging. Leave false in production; flip to true when
 // diagnosing filmstrip / playback regressions.
@@ -4743,6 +4823,7 @@ function _seekToFrame(vid, frame) {
     const fps = _videoFps || 30;
     const clamped = Math.max(0, Math.min((_frameTotalCount || 1) - 1, Math.round(frame)));
     _currentFrame = clamped;
+    _programmaticSeekInProgress = true;
     const useRVFC = typeof vid.requestVideoFrameCallback === 'function';
     _vdbg('seek start', clamped);
     return new Promise(resolve => {
@@ -4751,6 +4832,7 @@ function _seekToFrame(vid, frame) {
             if (done) return;
             done = true;
             _captureLandedThumb(vid, clamped);
+            _programmaticSeekInProgress = false;
             _vdbg('seek settle', clamped);
             resolve();
         };
@@ -5142,7 +5224,10 @@ function _updateFivePanel() {
                 _updateFivePanel();
             });
         }
-    } else {
+    } else if (_scrubPlayDir !== 1) {
+        // Skip bulk queueing during native forward play: rVFC captures the
+        // landed frame on every tick, so the center populates organically
+        // and we avoid contending with the decoder.
         _queueFivePanelThumbs(cur);
     }
 
