@@ -611,6 +611,21 @@
                     </div>
                 </div>
 
+                <!-- Locations — compact -->
+                <div class="sidebar-panel">
+                    <span class="screw screw-tl"></span><span class="screw screw-tr"></span><span class="screw screw-bl"></span><span class="screw screw-br"></span>
+                    <h3>Locations</h3>
+                    <select id="savedLocations" class="input-compact" style="width:100%; margin-bottom:3px;"></select>
+                    <!-- Go / Del / Save as equal-width 3-column cluster -->
+                    <div class="button-grid-3col" style="margin-bottom:3px;">
+                        <button class="btn btn-primary btn-compact" onclick="gotoSavedLocation()" title="Go to selected location">Go</button>
+                        <button class="btn btn-danger btn-compact" onclick="deleteSelectedLocation()" title="Delete selected location">Del</button>
+                        <button class="btn btn-secondary btn-compact" onclick="saveCurrentLocation()">Save</button>
+                    </div>
+                    <input type="text" id="saveLocationName" class="input-compact" placeholder="Name to save" style="width:100%; box-sizing:border-box;">
+                    <div id="locationsStatus" style="font-size:0.68em; color:#6a7a85; margin-top:2px; min-height:12px;"></div>
+                </div>
+
                 <!-- Data Sources activity panel -->
                 <div class="sidebar-panel panel-dense" id="dataSourcesPanel" style="flex:1;">
                     <span class="screw screw-tl"></span><span class="screw screw-tr"></span><span class="screw screw-bl"></span><span class="screw screw-br"></span>
@@ -816,21 +831,6 @@
                             <div></div>
                         </div>
                     </div>
-                </div>
-
-                <!-- Locations — compact -->
-                <div class="sidebar-panel">
-                    <span class="screw screw-tl"></span><span class="screw screw-tr"></span><span class="screw screw-bl"></span><span class="screw screw-br"></span>
-                    <h3>Locations</h3>
-                    <select id="savedLocations" class="input-compact" style="width:100%; margin-bottom:3px;"></select>
-                    <!-- Go / Del / Save as equal-width 3-column cluster -->
-                    <div class="button-grid-3col" style="margin-bottom:3px;">
-                        <button class="btn btn-primary btn-compact" onclick="gotoSavedLocation()" title="Go to selected location">Go</button>
-                        <button class="btn btn-danger btn-compact" onclick="deleteSelectedLocation()" title="Delete selected location">Del</button>
-                        <button class="btn btn-secondary btn-compact" onclick="saveCurrentLocation()">Save</button>
-                    </div>
-                    <input type="text" id="saveLocationName" class="input-compact" placeholder="Name to save" style="width:100%; box-sizing:border-box;">
-                    <div id="locationsStatus" style="font-size:0.68em; color:#6a7a85; margin-top:2px; min-height:12px;"></div>
                 </div>
 
                 <!-- Focus + Camera — merged -->
