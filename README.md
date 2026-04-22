@@ -199,8 +199,7 @@ Zipcatcher uses ALPACA for telescope motion plus camera/focuser telemetry where 
 - **LP Filter / Dew Heater** — currently controlled via Seestar JSON-RPC (`set_setting` / `pi_output_set2`), not ALPACA.
 
 <p align="center">
-<img width="391" height="673" alt="Alpaca panel" src="https://github.com/user-attachments/assets/02823808-ac62-4c69-9d1a-58679770f4bb" />
-
+<img width="383" height="761" alt="Screenshot 2026-04-22 at 12 58 34 PM" src="https://github.com/user-attachments/assets/eafde01d-c7b0-4c7e-8a74-0adb16778dcf" />
 </p>
 
 ---
@@ -237,7 +236,7 @@ Favorited files can be renamed directly from either the filmstrip or the expande
 A collapsible **Data Sources** panel in the sidebar shows per-source activity odometers (FlightAware, OpenSky, OpenAIP) with the last-updated timestamp and request count for the current session.
 
 <p align="center">
-  <img width="386" height="141" alt="Screenshot 2026-04-07 at 8 26 02 AM" src="https://github.com/user-attachments/assets/26bd6099-8fc0-4754-bab2-ba34f2cf229b" />
+<img width="384" height="143" alt="Screenshot 2026-04-22 at 12 08 19 PM" src="https://github.com/user-attachments/assets/75622219-7283-4bfa-8ada-6c0603930325" />
 </p>
 
 ---
