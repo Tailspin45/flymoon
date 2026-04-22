@@ -1373,14 +1373,30 @@ class AlpacaClient:
             self._poll_thread = None
 
     def _poll_loop(self):
-        while True:
-            if not self._poll_running or not self._connected:
-                break
+        reconnect_delay = 15.0
+        while self._poll_running:
+            if not self._connected:
+                time.sleep(min(reconnect_delay, self._poll_interval))
+                if not self._poll_running:
+                    break
+                if not self._connected:
+                    logger.info(f"ALPACA: attempting reconnect to {self.host}:{self.port} ...")
+                    try:
+                        ok = self.connect()
+                    except Exception as e:
+                        logger.warning(f"ALPACA: reconnect raised: {e}")
+                        ok = False
+                    if ok:
+                        reconnect_delay = 15.0
+                    else:
+                        reconnect_delay = min(reconnect_delay * 1.5, 120.0)
+                        logger.warning(f"ALPACA: reconnect failed, retrying in {reconnect_delay:.0f}s")
+                continue
             try:
                 self._poll_once()
             except Exception as e:
                 logger.debug(f"ALPACA poll error: {e}")
-            if not self._poll_running or not self._connected:
+            if not self._poll_running:
                 break
             time.sleep(self._poll_interval)
 
@@ -1396,11 +1412,11 @@ class AlpacaClient:
             logger.warning(f"ALPACA telemetry: {detail}")
         if self._poll_cycle_failures >= 6:
             logger.warning(
-                "ALPACA telemetry polling stopped after repeated failures — "
-                "motor panel disabled until you disconnect and reconnect the telescope."
+                "ALPACA telemetry polling paused after repeated failures — "
+                "will attempt auto-reconnect in background"
             )
             self._connected = False
-            self._poll_running = False
+            # _poll_running stays True so the loop can auto-reconnect
 
     def _poll_once(self):
         """Single poll cycle: position + state flags."""
