@@ -1549,25 +1549,39 @@ def connect_telescope():
             client.reset_connect_log_verbosity()
         client.connect()
 
-        # Also connect ALPACA for motor control (firmware 3.0+)
+        # Also connect ALPACA for motor control (firmware 3.0+).
+        # Retry a few times with a short delay: on Seestar, the ALPACA HTTP
+        # service (port 32323) can lag a few seconds behind JSON-RPC (port 4700).
         alpaca = get_alpaca_client()
         alpaca_ok = False
         if alpaca:
             # Share the discovered host if JSON-RPC found it
             if not alpaca.host and client.host:
                 alpaca.host = client.host
-            try:
-                alpaca_ok = alpaca.connect()
+            for _alpaca_attempt in range(3):
+                try:
+                    alpaca_ok = alpaca.connect()
+                except Exception as ae:
+                    logger.warning(
+                        f"[Telescope] ALPACA connect error (attempt {_alpaca_attempt + 1}): {ae}"
+                    )
                 if alpaca_ok:
                     logger.info(
                         f"[Telescope] ALPACA connected to {alpaca.host}:{alpaca.port}"
+                        f" (attempt {_alpaca_attempt + 1})"
                     )
-                else:
-                    logger.warning(
-                        "[Telescope] ALPACA connection failed — motor commands will use JSON-RPC fallback"
+                    break
+                if _alpaca_attempt < 2:
+                    logger.info(
+                        f"[Telescope] ALPACA not ready yet, retrying in 2 s "
+                        f"(attempt {_alpaca_attempt + 1}/3)…"
                     )
-            except Exception as ae:
-                logger.warning(f"[Telescope] ALPACA connect error: {ae}")
+                    time.sleep(2)
+            if not alpaca_ok:
+                logger.warning(
+                    "[Telescope] ALPACA connection failed after 3 attempts — "
+                    "background reconnect loop will keep retrying"
+                )
 
         # Put scope into solar mode so RTSP stream is available. Always sun (not
         # time-of-day moon) — transit app is sun-first; moon is user-selected later.
@@ -4810,20 +4824,33 @@ def _auto_connect_background():
 
     def _post_connect(client):
         """Steps to run once connected: start solar mode, ALPACA, and resume timelapse."""
-        # Connect ALPACA for motor control
+        # Connect ALPACA for motor control (retry: ALPACA service lags JSON-RPC on Seestar).
         alpaca = get_alpaca_client()
         if alpaca and not alpaca.is_connected():
             if not alpaca.host and client.host:
                 alpaca.host = client.host
-            try:
-                if alpaca.connect():
+            alpaca_ok = False
+            for _attempt in range(3):
+                try:
+                    alpaca_ok = alpaca.connect()
+                except Exception as ae:
+                    logger.warning(
+                        f"[Telescope] Auto-connect: ALPACA error (attempt {_attempt + 1}): {ae}"
+                    )
+                if alpaca_ok:
                     logger.info(
                         f"[Telescope] Auto-connect: ALPACA connected to {alpaca.host}:{alpaca.port}"
+                        f" (attempt {_attempt + 1})"
                     )
-                else:
-                    logger.warning("[Telescope] Auto-connect: ALPACA connection failed")
-            except Exception as ae:
-                logger.warning(f"[Telescope] Auto-connect: ALPACA error: {ae}")
+                    break
+                if _attempt < 2:
+                    import time as _t2
+                    _t2.sleep(2)
+            if not alpaca_ok:
+                logger.warning(
+                    "[Telescope] Auto-connect: ALPACA connection failed after 3 attempts — "
+                    "background reconnect loop will keep retrying"
+                )
 
         # Always solar mode for RTSP (see telescope_connect)
         if hasattr(client, "_viewing_mode") and client._viewing_mode is None:
@@ -4951,7 +4978,7 @@ def _build_sun_center_adapter() -> SunCenteringAdapter:
         if not alpaca or not alpaca.is_connected():
             return {}
         try:
-            return alpaca.get_position()
+            return alpaca.get_cached_position()
         except Exception as exc:
             logger.debug("[SunCenter] get_position failed: %s", exc)
             return {}
@@ -5106,7 +5133,7 @@ def _route_pointing_data() -> dict:
     try:
         alpaca = get_alpaca_client()
         if alpaca and alpaca.is_connected():
-            pos = alpaca.get_position()
+            pos = alpaca.get_cached_position()
             if pos:
                 out["mount_alt"] = round(float(pos.get("alt", 0)), 2)
                 out["mount_az"] = round(float(pos.get("az", 0)), 2)

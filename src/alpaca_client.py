@@ -46,7 +46,7 @@ class AlpacaClient:
     DEVICE_TYPE = "telescope"
     DEVICE_NUMBER = 0
     CLIENT_ID = 1
-    DEFAULT_TIMEOUT = 5  # seconds per HTTP request
+    DEFAULT_TIMEOUT = 3  # seconds per HTTP request
 
     def __init__(
         self,
@@ -358,6 +358,7 @@ class AlpacaClient:
                 self._persist_host_to_env(self.host)
             else:
                 logger.error("ALPACA connect: no host and discovery failed")
+                self._start_polling()  # keep reconnect loop alive for when scope appears
                 return False
 
         # Quick TCP reachability check; if stale IP, try discovery
@@ -377,12 +378,14 @@ class AlpacaClient:
                 logger.error(
                     f"ALPACA connect: {self.host}:{self.port} not reachable after discovery"
                 )
+                self._start_polling()  # keep reconnect loop alive
                 return False
 
         result = self._put("connected", {"Connected": "true"})
         if "error" in result:
             logger.error(f"ALPACA connect failed: {result['error']}")
             self._connected = False
+            self._start_polling()  # keep reconnect loop alive
             return False
 
         check = self._get("connected")
@@ -406,6 +409,7 @@ class AlpacaClient:
                 f"ALPACA connect: connected=true sent but Value={check.get('Value')}"
             )
             self._connected = False
+            self._start_polling()  # keep reconnect loop alive
             return False
 
     def disconnect(self) -> bool:
@@ -1373,10 +1377,12 @@ class AlpacaClient:
             self._poll_thread = None
 
     def _poll_loop(self):
-        reconnect_delay = 15.0
+        # Start with a short delay so the first reconnect attempt is fast
+        # (Seestar's ALPACA service lags a few seconds behind JSON-RPC on boot).
+        reconnect_delay = 3.0
         while self._poll_running:
             if not self._connected:
-                time.sleep(min(reconnect_delay, self._poll_interval))
+                time.sleep(reconnect_delay)
                 if not self._poll_running:
                     break
                 if not self._connected:
@@ -1387,9 +1393,9 @@ class AlpacaClient:
                         logger.warning(f"ALPACA: reconnect raised: {e}")
                         ok = False
                     if ok:
-                        reconnect_delay = 15.0
+                        reconnect_delay = 3.0
                     else:
-                        reconnect_delay = min(reconnect_delay * 1.5, 120.0)
+                        reconnect_delay = min(reconnect_delay * 2.0, 60.0)
                         logger.warning(f"ALPACA: reconnect failed, retrying in {reconnect_delay:.0f}s")
                 continue
             try:
