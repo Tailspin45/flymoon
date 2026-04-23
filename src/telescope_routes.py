@@ -157,12 +157,8 @@ def _ensure_rtsp_ready(
         return rtsp_url
 
     mode = getattr(client, "_viewing_mode", None)
-    # Also attempt reassertion when mode is None (server restarted while scope was
-    # already in solar/lunar mode — firmware events no longer update _viewing_mode).
-    # Default to solar since detection and sun-centering are solar-only operations.
-    if allow_mode_reassert and mode in ("sun", "moon", None):
-        reassert_mode = mode if mode in ("sun", "moon") else "sun"
-        host_mode = f"{client.host}:{reassert_mode}"
+    if allow_mode_reassert and mode in ("sun", "moon"):
+        host_mode = f"{client.host}:{mode}"
         now = time.monotonic()
         last_attempt = _rtsp_recover_last_attempt_by_host_mode.get(host_mode, 0.0)
         if now - last_attempt >= _RTSP_RECOVERY_COOLDOWN_SECONDS:
@@ -171,9 +167,9 @@ def _ensure_rtsp_ready(
                 logger.warning(
                     "[RTSP] Probe failed (mode=%s) — reasserting %s live view",
                     mode,
-                    reassert_mode,
+                    mode,
                 )
-                if reassert_mode == "moon":
+                if mode == "moon":
                     client.start_lunar_mode()
                 else:
                     client.start_solar_mode()
@@ -182,7 +178,7 @@ def _ensure_rtsp_ready(
                     client.host, timeout_seconds=max(timeout_seconds, 6)
                 )
                 if rtsp_url:
-                    logger.info("[RTSP] Stream recovered after %s mode reassertion", reassert_mode)
+                    logger.info("[RTSP] Stream recovered after %s mode reassertion", mode)
                     return rtsp_url
             except Exception as e:
                 logger.debug("[RTSP] Mode reassertion failed: %s", e)
@@ -190,6 +186,23 @@ def _ensure_rtsp_ready(
             logger.debug(
                 "[RTSP] Probe failed (mode=%s) and recovery is cooling down", mode
             )
+    elif allow_mode_reassert and mode is None:
+        # Mode unknown (server restarted while scope was already live) — retry the
+        # probe once with a short delay instead of sending iscope_start_view, which
+        # would disrupt an already-running stream.
+        host_mode = f"{client.host}:unknown"
+        now = time.monotonic()
+        last_attempt = _rtsp_recover_last_attempt_by_host_mode.get(host_mode, 0.0)
+        if now - last_attempt >= _RTSP_RECOVERY_COOLDOWN_SECONDS:
+            _rtsp_recover_last_attempt_by_host_mode[host_mode] = now
+            logger.debug("[RTSP] Mode unknown — retrying probe after short wait")
+            time.sleep(1.5)
+            rtsp_url = _resolve_rtsp_stream_url(
+                client.host, timeout_seconds=max(timeout_seconds, 6)
+            )
+            if rtsp_url:
+                logger.info("[RTSP] Stream found on retry (mode was unknown)")
+                return rtsp_url
 
     host_mode_warn_key = f"{getattr(client, 'host', 'unknown')}:{mode or 'unknown'}"
     now = time.monotonic()
