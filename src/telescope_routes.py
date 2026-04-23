@@ -157,8 +157,12 @@ def _ensure_rtsp_ready(
         return rtsp_url
 
     mode = getattr(client, "_viewing_mode", None)
-    if allow_mode_reassert and mode in ("sun", "moon"):
-        host_mode = f"{client.host}:{mode}"
+    # Also attempt reassertion when mode is None (server restarted while scope was
+    # already in solar/lunar mode — firmware events no longer update _viewing_mode).
+    # Default to solar since detection and sun-centering are solar-only operations.
+    if allow_mode_reassert and mode in ("sun", "moon", None):
+        reassert_mode = mode if mode in ("sun", "moon") else "sun"
+        host_mode = f"{client.host}:{reassert_mode}"
         now = time.monotonic()
         last_attempt = _rtsp_recover_last_attempt_by_host_mode.get(host_mode, 0.0)
         if now - last_attempt >= _RTSP_RECOVERY_COOLDOWN_SECONDS:
@@ -167,9 +171,9 @@ def _ensure_rtsp_ready(
                 logger.warning(
                     "[RTSP] Probe failed (mode=%s) — reasserting %s live view",
                     mode,
-                    mode,
+                    reassert_mode,
                 )
-                if mode == "moon":
+                if reassert_mode == "moon":
                     client.start_lunar_mode()
                 else:
                     client.start_solar_mode()
@@ -178,7 +182,7 @@ def _ensure_rtsp_ready(
                     client.host, timeout_seconds=max(timeout_seconds, 6)
                 )
                 if rtsp_url:
-                    logger.info("[RTSP] Stream recovered after %s mode reassertion", mode)
+                    logger.info("[RTSP] Stream recovered after %s mode reassertion", reassert_mode)
                     return rtsp_url
             except Exception as e:
                 logger.debug("[RTSP] Mode reassertion failed: %s", e)
