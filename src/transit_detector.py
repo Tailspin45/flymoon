@@ -613,6 +613,7 @@ class TransitDetector:
         self._limb_mask: Optional[np.ndarray] = None  # bool H×W — excluded limb ring
         self._disk_weight: Optional[np.ndarray] = None  # float32 H×W — smooth weight
         self._disk_detected = False
+        self._disk_state_updated_at: float = 0.0  # wall time of last disk-state update
 
         # Center-flux telemetry (cloud-robust centering cue)
         self._center_flux_core_mean: float = 0.0
@@ -692,6 +693,7 @@ class TransitDetector:
         self._limb_mask = None
         self._disk_weight = None
         self._disk_detected = False
+        self._disk_state_updated_at = 0.0
         self._center_flux_core_mean = 0.0
         self._center_flux_ring_mean = 0.0
         self._center_flux_frame_mean = 0.0
@@ -756,6 +758,7 @@ class TransitDetector:
             "recent_gate_misses": list(self._gate_miss_events)[-10:],
             "recording_active": self._rec_process is not None,
             "disk_detected": self._disk_detected,
+            "disk_state_age_s": round(time.time() - self._disk_state_updated_at, 2) if self._disk_state_updated_at else None,
             "disc_lost_warning": self._disc_lost_warning,
             "disc_lost_frames": self._disc_lost_frames,
             "analysis_resolution": f"{ANALYSIS_WIDTH}x{ANALYSIS_HEIGHT}@{ANALYSIS_FPS}fps",
@@ -1089,6 +1092,7 @@ class TransitDetector:
                     ANALYSIS_HEIGHT, ANALYSIS_WIDTH, cx, cy, r, self.disk_margin_pct
                 )
                 self._disk_detected = True
+                self._disk_state_updated_at = time.time()
                 # Reset disc-lost watchdog when disc is (re-)acquired
                 if self._disc_lost_frames > 0 or self._disc_lost_warning:
                     if self._disc_lost_warning:
@@ -1101,6 +1105,7 @@ class TransitDetector:
             elif self._disk_detected:
                 logger.debug("[Detector] Disk lost — falling back to rectangular masks")
                 self._disk_detected = False
+                self._disk_state_updated_at = time.time()
 
         # --- Disc-lost watchdog ---
         if not self._disk_detected:

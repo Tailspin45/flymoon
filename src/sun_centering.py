@@ -106,7 +106,7 @@ class SunCenteringSettings:
     precheck_busy_timeout_s: float = 60.0
 
     # ── Calibrate ───────────────────────────────────────────────────────────
-    probe_deg: float = 0.10          # GoTo offset for each Jacobian probe
+    probe_deg: float = 0.30          # GoTo offset for each Jacobian probe
     probe_slew_timeout_s: float = 15.0
     probe_settle_s: float = 1.5
     min_jacobian_det: float = 0.01   # determinant gate; below this → retry
@@ -277,6 +277,15 @@ class SunCenteringService:
         with self._lock:
             if not self._running:
                 return False
+            # Stop any in-progress slew so the mount is at rest for the new acquisition.
+            try:
+                self.adapter.stop_axes()
+            except Exception as exc:
+                logger.debug("[SunCenter] stop_axes in recenter failed: %s", exc)
+            # Reset the precheck deadline so a fresh 60-s window starts now.
+            self._precheck_busy_deadline_mono = (
+                time.monotonic() + float(self.settings.precheck_busy_timeout_s)
+            )
             self.recovery_attempts = 0
             self._center_iter_count = 0
             self._transition(self.STATE_ACQUIRE, "Manual recenter requested")
@@ -785,6 +794,30 @@ class SunCenteringService:
             self._phase = "initial"
             return
 
+        # Validate column magnitudes against the plate-scale estimate.
+        # Each column of J maps 1° of mount motion → pixels; expected ≈ 1/plate_scale.
+        # Reject if any column is off by more than 4× — probe signal was below noise floor.
+        expected_px_per_deg = 1.0 / (self.plate_scale_deg_per_px or SUN_ANGULAR_RADIUS_DEG / 56.0)
+        for col_name, col_vec in (("alt", col_alt), ("az", col_az)):
+            col_mag = math.hypot(col_vec[0], col_vec[1])
+            if col_mag == 0.0:
+                continue
+            ratio = col_mag / expected_px_per_deg
+            if ratio < 0.25 or ratio > 4.0:
+                logger.warning(
+                    "[SunCenter] Jacobian %s-column magnitude %.1f px/° is %.1f× "
+                    "from plate-scale estimate (%.1f px/°) — "
+                    "probe too small or noise-dominated; recalibrating",
+                    col_name, col_mag, ratio, expected_px_per_deg,
+                )
+                self._jacobian_valid = False
+                self._transition(
+                    self.STATE_ACQUIRE,
+                    f"Jacobian {col_name}-column implausible ({ratio:.1f}×) — recalibrate",
+                )
+                self._phase = "initial"
+                return
+
         # Invert 2×2: J_inv = (1/det)*[[j11,-j01],[-j10,j00]]
         j_inv = [
             [ j11 / det, -j01 / det],
@@ -879,6 +912,13 @@ class SunCenteringService:
                 return
 
             dalt, daz = self._jacobian_correction()
+
+            # Safety cap: limit each axis to ~1° per step to prevent catastrophic
+            # overcorrection if the Jacobian is still noisy.
+            _max_step = 1.0
+            dalt = max(-_max_step, min(_max_step, dalt))
+            daz = max(-_max_step, min(_max_step, daz))
+
             pos = self._safe_get_position()
             ref_alt = pos.get("alt") or self._last_sun_alt()
             ref_az = pos.get("az") or self._last_sun_az()
@@ -1177,6 +1217,13 @@ class SunCenteringService:
             "az": round(az, 4),
             "response": resp,
         }
+        if isinstance(resp, dict) and resp.get("ErrorNumber", 0) != 0:
+            err_msg = resp.get("ErrorMessage", f"ErrorNumber={resp['ErrorNumber']}")
+            logger.warning("[SunCenter] GoTo rejected by ALPACA: %s", err_msg)
+            self._enter_fail_safe(f"GoTo ALPACA error: {err_msg}")
+        elif isinstance(resp, dict) and "error" in resp:
+            logger.warning("[SunCenter] GoTo failed: %s", resp["error"])
+            self._enter_fail_safe(f"GoTo failed: {resp['error']}")
         return resp
 
     def _enable_tracking(self) -> None:
@@ -1250,8 +1297,8 @@ class SunCenteringService:
                 return
 
             # Resolve image dimensions from analysis_resolution string.
-            # Seestar S50 solar analysis is landscape (320×180).
-            width, height = 320.0, 180.0
+            # Seestar S50 solar analysis is portrait (180×320).
+            width, height = 180.0, 320.0
             rez = str(det.get("analysis_resolution", ""))
             if "x" in rez:
                 try:
@@ -1262,14 +1309,22 @@ class SunCenteringService:
                 except Exception:
                     logger.warning(
                         "[SunCenter] Cannot parse analysis_resolution %r; "
-                        "using 320×180 fallback",
+                        "using 180×320 fallback",
                         rez,
                     )
             elif rez:
                 logger.warning(
-                    "[SunCenter] analysis_resolution %r has no 'x'; using 320×180 fallback",
+                    "[SunCenter] analysis_resolution %r has no 'x'; using 180×320 fallback",
                     rez,
                 )
+
+            # Reject stale detector state — disk coords must be ≤5 s old.
+            disk_age = det.get("disk_state_age_s")
+            if disk_age is not None and float(disk_age) > 5.0:
+                logger.debug(
+                    "[SunCenter] Disk state is %.1fs old — treating as no disk", disk_age
+                )
+                return
 
             # Plausibility gate on disk radius.
             min_dim = min(width, height)
@@ -1279,6 +1334,15 @@ class SunCenteringService:
                 logger.debug(
                     "[SunCenter] Rejecting implausible disk radius %.2fpx (hard bounds [%.1f, %.1f])",
                     rr, hard_min, hard_max,
+                )
+                return
+
+            # Reject detections where the disk circle extends outside the frame.
+            if cx - rr < 0 or cx + rr > width or cy - rr < 0 or cy + rr > height:
+                logger.debug(
+                    "[SunCenter] Rejecting out-of-bounds disk: cx=%.1f cy=%.1f r=%.1f "
+                    "frame=%dx%d",
+                    cx, cy, rr, int(width), int(height),
                 )
                 return
 
