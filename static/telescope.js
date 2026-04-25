@@ -2037,7 +2037,7 @@ function _markSunCenterApiUnavailable(message) {
     _renderSunCenterStatus(sunCenterStatus);
 
     if (!_sunCenterApiWarningShown) {
-        _sunCenterApiWarningShown = true;
+        _sunCenterApiWarningShown = truepython patch_sun_centering.py --dry-run;
         showStatus(message, 'warning', 9000);
     }
 }
@@ -8963,24 +8963,33 @@ function _radarDrawFrame(ts) {
 
     // ── sweep wedge (always visible; only rotates when active) ──────────────
     {
-        const wedgeAlpha = _radarSweepActive ? 0.10 : 0.05;
+        const wedgeAlpha = _radarSweepActive ? 0.12 : 0.06;
         const lineAlpha  = _radarSweepActive ? 0.85 : 0.35;
         ctx.save();
         ctx.translate(cx, cy);
         ctx.rotate(sweepAng);
         // Radial gradient: bright at centre, fades to transparent at rim
         const grad = ctx.createRadialGradient(0, 0, 0, 0, 0, R);
-        grad.addColorStop(0,   `rgba(0,255,80,${wedgeAlpha * 2.5})`);
-        grad.addColorStop(0.4, `rgba(0,255,80,${wedgeAlpha * 1.2})`);
-        grad.addColorStop(1,   `rgba(0,255,80,0)`);
-        ctx.beginPath();
-        ctx.moveTo(0, 0);
-        // arc goes counter-clockwise (anticlockwise=true) so glow trails behind the line
-        ctx.arc(0, 0, R, -Math.PI/2, -Math.PI/2 - Math.PI*0.55, true);
-        ctx.closePath();
-        ctx.fillStyle = grad;
-        ctx.fill();
-        ctx.restore();
+        grad.addColorStop(0,    `rgba(32,255,108,${wedgeAlpha * 2.7})`);
+        grad.addColorStop(0.45, `rgba(24,245,100,${wedgeAlpha * 1.35})`);
+        grad.addColorStop(0.88, `rgba(10,210,84,${wedgeAlpha * 0.2})`);
+        grad.addColorStop(1,    `rgba(10,210,84,0)`);
+        // Draw as N thin segments with decreasing globalAlpha so trailing edge fades
+        // smoothly instead of cutting off abruptly
+        const _N = 24, _span = Math.PI * 0.55;
+        for (let i = 0; i < _N; i++) {
+            const t  = i / _N;
+            const a0 = -Math.PI/2 - _span * t;
+            const a1 = -Math.PI/2 - _span * (t + 1/_N);
+            ctx.globalAlpha = 1 - t;
+            ctx.beginPath();
+            ctx.moveTo(0, 0);
+            ctx.arc(0, 0, R, a0, a1, true);
+            ctx.closePath();
+            ctx.fillStyle = grad;
+            ctx.fill();
+        }
+        ctx.restore();  // also resets globalAlpha
 
         ctx.save();
         ctx.strokeStyle = `rgba(0,255,80,${lineAlpha})`;
